@@ -1,0 +1,66 @@
+# Default values for the AegisGraph chart.
+
+backend:
+  image:
+    repository: ghcr.io/aegisgraph/aegisgraph
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+  resources: {}
+  logLevel: info
+  analyzerInterval: 30s
+
+frontend:
+  enabled: true
+  image:
+    repository: ghcr.io/aegisgraph/aegisgraph-dashboard
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+
+service:
+  apiPort: 8080
+  ingestPort: 8081
+  frontendPort: 80
+
+# In-cluster PostgreSQL + Apache AGE (graph core). Disable and set
+# externalDSN-style env via backend if you bring your own managed Postgres.
+postgres:
+  enabled: true
+  image: apache/age:PG16_latest
+  graph: aegis
+  auth:
+    user: aegis
+    password: aegis
+    database: aegisgraph
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClass: ""
+
+# In-cluster NATS JetStream (event bus).
+nats:
+  enabled: true
+  image: nats:2.10-alpine
+  stream: AEGIS
+  subject: aegis.events.*
+
+# Optional OpenSearch full-text index. Leave url empty to disable.
+opensearch:
+  url: ""
+
+# Action layer: PR/MR commenters. Tokens go into a Secret; empty → dry-run.
+github:
+  token: ""
+  apiUrl: https://api.github.com
+  dryRun: false
+gitlab:
+  token: ""
+  apiUrl: https://gitlab.com/api/v4
+  dryRun: false
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: aegisgraph.local

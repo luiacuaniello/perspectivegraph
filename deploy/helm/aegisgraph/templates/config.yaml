@@ -1,0 +1,52 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "aegisgraph.fullname" . }}-secrets
+  labels:
+    {{- include "aegisgraph.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: {{ .Values.postgres.auth.password | quote }}
+  GITHUB_TOKEN: {{ .Values.github.token | quote }}
+  GITLAB_TOKEN: {{ .Values.gitlab.token | quote }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "aegisgraph.fullname" . }}-config
+  labels:
+    {{- include "aegisgraph.labels" . | nindent 4 }}
+data:
+  POSTGRES_HOST: {{ include "aegisgraph.postgresHost" . | quote }}
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: {{ .Values.postgres.auth.user | quote }}
+  POSTGRES_DB: {{ .Values.postgres.auth.database | quote }}
+  AGE_GRAPH_NAME: {{ .Values.postgres.graph | quote }}
+  NATS_URL: {{ printf "nats://%s:4222" (include "aegisgraph.natsHost" .) | quote }}
+  NATS_STREAM: {{ .Values.nats.stream | quote }}
+  NATS_SUBJECT: {{ .Values.nats.subject | quote }}
+  API_ADDR: {{ printf ":%d" (int .Values.service.apiPort) | quote }}
+  INGEST_ADDR: {{ printf ":%d" (int .Values.service.ingestPort) | quote }}
+  ANALYZER_INTERVAL: {{ .Values.backend.analyzerInterval | quote }}
+  OPENSEARCH_URL: {{ .Values.opensearch.url | quote }}
+  GITHUB_API_URL: {{ .Values.github.apiUrl | quote }}
+  GITHUB_DRY_RUN: {{ .Values.github.dryRun | quote }}
+  GITLAB_API_URL: {{ .Values.gitlab.apiUrl | quote }}
+  GITLAB_DRY_RUN: {{ .Values.gitlab.dryRun | quote }}
+  LOG_LEVEL: {{ .Values.backend.logLevel | quote }}
+{{- if .Values.postgres.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "aegisgraph.fullname" . }}-pg-init
+  labels:
+    {{- include "aegisgraph.labels" . | nindent 4 }}
+data:
+  init-age.sql: |
+    CREATE EXTENSION IF NOT EXISTS age;
+    LOAD 'age';
+    SET search_path = ag_catalog, "$user", public;
+    SELECT create_graph('{{ .Values.postgres.graph }}')
+    WHERE NOT EXISTS (SELECT 1 FROM ag_catalog.ag_graph WHERE name = '{{ .Values.postgres.graph }}');
+{{- end }}

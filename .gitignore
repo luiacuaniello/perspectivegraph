@@ -1,0 +1,31 @@
+# Go
+/backend/bin/
+/backend/aegisgraph
+*.test
+*.out
+coverage.*
+
+# Node / frontend
+node_modules/
+/frontend/dist/
+/frontend/.vite/
+*.local
+
+# TypeScript composite build outputs (emitted by `tsc -b`)
+*.tsbuildinfo
+/frontend/vite.config.js
+/frontend/vite.config.d.ts
+
+# Env & secrets
+.env
+*.pem
+*.key
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Data volumes (docker)
+/.data/

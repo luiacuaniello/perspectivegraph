@@ -1,0 +1,243 @@
+package action
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha1"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"strings"
+	"sync"
+
+	"github.com/aegisgraph/aegisgraph/internal/analyzer"
+	"github.com/aegisgraph/aegisgraph/pkg/ontology"
+)
+
+// prRef identifies a pull/merge request to comment on. slug is "owner/repo"
+// (GitHub) or "group/project" (GitLab); number is the PR or MR number.
+type prRef struct {
+	slug   string
+	number int
+}
+
+// poster abstracts the forge-specific REST calls. The shared Commenter handles
+// rendering, deduplication, and upsert; each forge only implements find/create/
+// update against its own API.
+type poster interface {
+	forge() string
+	enabled() bool // false → dry-run (log instead of call)
+	find(ctx context.Context, ref prRef, marker string) (commentID string, err error)
+	create(ctx context.Context, ref prRef, body string) error
+	update(ctx context.Context, ref prRef, commentID, body string) error
+}
+
+// Commenter posts (or updates) a comment on the PR/MR that introduced a finding
+// sitting on a critical attack path. It satisfies analyzer.Sink.
+//
+// The analyzer fires every few seconds, so the commenter is idempotent on two
+// levels: an in-memory body hash skips the API when nothing changed, and a
+// hidden marker lets it update the existing comment instead of posting anew
+// (which survives restarts).
+type Commenter struct {
+	p      poster
+	mu     sync.Mutex
+	posted map[string]string // dedupe key -> last body hash
+}
+
+func newCommenter(p poster) *Commenter {
+	return &Commenter{p: p, posted: map[string]string{}}
+}
+
+func (c *Commenter) OnCriticalPaths(ctx context.Context, paths []analyzer.AttackPath) {
+	for _, p := range paths {
+		slug, num, ok := prTarget(p)
+		if !ok {
+			continue // no PR/MR context on this path
+		}
+		ref := prRef{slug: slug, number: num}
+		marker := fmt.Sprintf("<!-- aegisgraph:attack-path:%s -->", p.ID)
+		body := marker + "\n" + commentBody(p)
+		if err := c.upsert(ctx, ref, p.ID, marker, body); err != nil {
+			slog.Error("pr commenter failed", "forge", c.p.forge(), "slug", slug, "number", num, "path", p.ID, "err", err)
+		}
+	}
+}
+
+func (c *Commenter) upsert(ctx context.Context, ref prRef, pathID, marker, body string) error {
+	key := fmt.Sprintf("%s:%s#%d#%s", c.p.forge(), ref.slug, ref.number, pathID)
+	h := hashString(body)
+
+	c.mu.Lock()
+	unchanged := c.posted[key] == h
+	c.mu.Unlock()
+	if unchanged {
+		return nil
+	}
+
+	if !c.p.enabled() {
+		slog.Info("pr commenter (dry-run)", "forge", c.p.forge(), "slug", ref.slug, "number", ref.number, "path", pathID)
+		fmt.Printf("\n--- would comment on %s %s#%d ---\n%s\n", c.p.forge(), ref.slug, ref.number, body)
+		c.remember(key, h)
+		return nil
+	}
+
+	id, err := c.p.find(ctx, ref, marker)
+	if err != nil {
+		return err
+	}
+	if id != "" {
+		if err := c.p.update(ctx, ref, id, body); err != nil {
+			return err
+		}
+		slog.Info("updated PR comment", "forge", c.p.forge(), "slug", ref.slug, "number", ref.number)
+	} else {
+		if err := c.p.create(ctx, ref, body); err != nil {
+			return err
+		}
+		slog.Info("created PR comment", "forge", c.p.forge(), "slug", ref.slug, "number", ref.number)
+	}
+	c.remember(key, h)
+	return nil
+}
+
+func (c *Commenter) remember(key, hash string) {
+	c.mu.Lock()
+	c.posted[key] = hash
+	c.mu.Unlock()
+}
+
+// ── comment rendering (forge-agnostic) ──────────────────────────────
+
+// prTarget finds the first node on the path carrying PR/MR context and returns
+// the repo slug and PR/MR number to comment on.
+func prTarget(p analyzer.AttackPath) (slug string, number int, ok bool) {
+	for _, n := range p.Nodes {
+		s, _ := n.Properties[ontology.PropRepoSlug].(string)
+		num := toInt(n.Properties[ontology.PropPRNumber])
+		if s != "" && num > 0 && strings.Contains(s, "/") {
+			return s, num, true
+		}
+	}
+	return "", 0, false
+}
+
+func commentBody(p analyzer.AttackPath) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "## 🚨 AegisGraph — reachable attack path detected\n\n")
+	if p.RuntimeConfirmed {
+		b.WriteString("> ⚡ **Actively exploited** — a runtime sensor (Falco) has fired on this path.\n\n")
+	}
+	fmt.Fprintf(&b, "This change sits on a **verified attack path** "+
+		"(exploit likelihood **%.0f%%**) from an internet-exposed entry point "+
+		"to a crown-jewel asset (`%s`).\n\n", p.Score*100, p.Target().Name)
+
+	b.WriteString("**Path**\n```\n")
+	b.WriteString(strings.TrimLeft(RenderPath(p), "\n"))
+	b.WriteString("```\n\n")
+
+	if fixes := remediation(p); len(fixes) > 0 {
+		b.WriteString("**Suggested remediation**\n")
+		for _, f := range fixes {
+			fmt.Fprintf(&b, "- %s\n", f)
+		}
+		b.WriteString("\n")
+	}
+
+	fmt.Fprintf(&b, "<sub>Posted by AegisGraph · path `%s`. Cut any one edge on the path "+
+		"to break it — you don't have to fix every finding.</sub>\n", p.ID)
+	return b.String()
+}
+
+// remediation builds a fix hint per finding node on the path.
+func remediation(p analyzer.AttackPath) []string {
+	var out []string
+	for _, n := range p.Nodes {
+		switch n.Label {
+		case ontology.LabelCVE:
+			if fv, _ := n.Properties["fixed_version"].(string); fv != "" {
+				out = append(out, fmt.Sprintf("Upgrade the affected dependency to `%s` to remediate **%s**.", fv, n.Name))
+			} else {
+				out = append(out, fmt.Sprintf("Patch or remove the dependency affected by **%s**.", n.Name))
+			}
+		case ontology.LabelWeakness:
+			loc := location(n)
+			msg, _ := n.Properties["message"].(string)
+			if msg == "" {
+				msg = "Fix the flagged code weakness"
+			}
+			out = append(out, fmt.Sprintf("%s%s", msg, loc))
+		case ontology.LabelSecret:
+			out = append(out, fmt.Sprintf("Rotate the exposed credential and remove it%s; load it from a secret manager instead.", location(n)))
+		}
+	}
+	return out
+}
+
+func location(n ontology.Node) string {
+	path, _ := n.Properties["path"].(string)
+	if path == "" {
+		return ""
+	}
+	if line := toInt(n.Properties["line"]); line > 0 {
+		return fmt.Sprintf(" (`%s:%d`)", path, line)
+	}
+	return fmt.Sprintf(" (`%s`)", path)
+}
+
+func toInt(v any) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	default:
+		return 0
+	}
+}
+
+func hashString(s string) string {
+	sum := sha1.Sum([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
+
+// requestJSON is a small JSON HTTP helper shared by the forge posters.
+func requestJSON(ctx context.Context, client *http.Client, method, url string, headers map[string]string, in, out any) error {
+	var reader io.Reader
+	if in != nil {
+		b, err := json.Marshal(in)
+		if err != nil {
+			return err
+		}
+		reader = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, reader)
+	if err != nil {
+		return err
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	if in != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return fmt.Errorf("%s %s: %s: %s", method, url, resp.Status, bytes.TrimSpace(msg))
+	}
+	if out != nil {
+		return json.NewDecoder(resp.Body).Decode(out)
+	}
+	return nil
+}

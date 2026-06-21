@@ -1,0 +1,31 @@
+[
+  {
+    "rule": "Terminal shell in container",
+    "priority": "Critical",
+    "time": "2026-06-08T12:05:00Z",
+    "output": "A shell was spawned in a container (user=root container=payments image=payments-api:1.4.2 proc=bash)",
+    "output_fields": {
+      "container.id": "a1b2c3d4e5f6",
+      "container.name": "payments",
+      "container.image.repository": "payments-api",
+      "container.image.tag": "1.4.2",
+      "k8s.pod.name": "payments-7d9c8f",
+      "k8s.ns.name": "prod",
+      "proc.cmdline": "bash -i"
+    },
+    "source": "syscall",
+    "tags": ["container", "shell", "mitre_execution"]
+  },
+  {
+    "rule": "Unexpected outbound connection",
+    "priority": "Warning",
+    "time": "2026-06-08T12:05:02Z",
+    "output": "Outbound connection to suspicious endpoint (container=payments dest=198.51.100.7:443)",
+    "output_fields": {
+      "container.name": "payments",
+      "fd.name": "198.51.100.7:443"
+    },
+    "source": "syscall",
+    "tags": ["network", "mitre_exfiltration"]
+  }
+]

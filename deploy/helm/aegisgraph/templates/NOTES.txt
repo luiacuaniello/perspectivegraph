@@ -1,0 +1,33 @@
+AegisGraph {{ .Chart.AppVersion }} is deploying. 🛡️
+
+Components:
+  • backend (API :{{ .Values.service.apiPort }}, ingestion :{{ .Values.service.ingestPort }})
+  {{- if .Values.frontend.enabled }}
+  • dashboard (frontend)
+  {{- end }}
+  {{- if .Values.postgres.enabled }}
+  • PostgreSQL + Apache AGE (graph core)
+  {{- end }}
+  {{- if .Values.nats.enabled }}
+  • NATS JetStream (event bus)
+  {{- end }}
+
+Reach the dashboard and API:
+{{- if .Values.ingress.enabled }}
+  http://{{ .Values.ingress.host }}/            (dashboard)
+  http://{{ .Values.ingress.host }}/graphql     (GraphQL)
+{{- else }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "aegisgraph.backendHost" . }} {{ .Values.service.apiPort }}:{{ .Values.service.apiPort }}
+  {{- if .Values.frontend.enabled }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "aegisgraph.fullname" . }}-frontend 8080:{{ .Values.service.frontendPort }}
+  {{- end }}
+{{- end }}
+
+Feed a scanner report (example, with PR context for the commenter):
+  curl -XPOST "http://<ingest-host>/ingest/semgrep?repo=app&slug=acme/app&pr=42" \
+    -H 'Content-Type: application/json' --data-binary @semgrep.json
+
+{{- if not .Values.github.token }}
+
+NOTE: no github.token set — the PR commenter runs in dry-run (logs only).
+{{- end }}

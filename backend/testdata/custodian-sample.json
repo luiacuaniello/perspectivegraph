@@ -1,0 +1,44 @@
+{
+  "provider": "aws",
+  "account_id": "123456789012",
+  "policies": [
+    {
+      "policy": "elb-internet-facing",
+      "resource": "aws.elbv2",
+      "resources": [
+        { "LoadBalancerName": "public-alb", "Scheme": "internet-facing", "Targets": ["i-0web1"] }
+      ]
+    },
+    {
+      "policy": "ec2-with-instance-profile",
+      "resource": "aws.ec2",
+      "resources": [
+        {
+          "InstanceId": "i-0web1",
+          "PublicIpAddress": "203.0.113.10",
+          "IamInstanceProfile": { "Arn": "arn:aws:iam::123456789012:instance-profile/web-admin" },
+          "Tags": [{ "Key": "Name", "Value": "web-frontend" }]
+        }
+      ]
+    },
+    {
+      "policy": "iam-admin-roles",
+      "resource": "aws.iam-role",
+      "resources": [
+        {
+          "RoleName": "web-admin",
+          "Arn": "arn:aws:iam::123456789012:role/web-admin",
+          "AdminAccess": true,
+          "CanAccess": [{ "type": "bucket", "name": "customer-exports" }]
+        }
+      ]
+    },
+    {
+      "policy": "s3-sensitive-data",
+      "resource": "aws.s3",
+      "resources": [
+        { "Name": "customer-exports", "Public": false, "Sensitive": true }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+apiVersion: v2
+name: aegisgraph
+description: AegisGraph — The Open DevSecOps Context Engine
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - security
+  - devsecops
+  - attack-paths
+  - graph
+home: https://github.com/aegisgraph/aegisgraph
+sources:
+  - https://github.com/aegisgraph/aegisgraph
+maintainers:
+  - name: AegisGraph contributors

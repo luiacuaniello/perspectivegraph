@@ -1,0 +1,58 @@
+# Local development stack for AegisGraph.
+#   docker compose up -d
+# Brings up the graph core (Postgres + Apache AGE), the event bus (NATS
+# JetStream), and the optional full-text index (OpenSearch).
+
+services:
+  # ── Graph core: PostgreSQL with the Apache AGE extension ────────────
+  postgres:
+    image: apache/age:PG16_latest
+    container_name: aegis-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aegis}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aegis}
+      POSTGRES_DB: ${POSTGRES_DB:-aegisgraph}
+    ports:
+      - "5432:5432"
+    volumes:
+      - aegis-pgdata:/var/lib/postgresql/data
+      # Runs once on first boot to create + load the AGE graph.
+      - ./deploy/postgres/init-age.sql:/docker-entrypoint-initdb.d/init-age.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aegis} -d ${POSTGRES_DB:-aegisgraph}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Event bus: NATS JetStream ───────────────────────────────────────
+  nats:
+    image: nats:2.10-alpine
+    container_name: aegis-nats
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222"   # client
+      - "8222:8222"   # monitoring
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Optional full-text index: OpenSearch ────────────────────────────
+  opensearch:
+    image: opensearchproject/opensearch:2.13.0
+    container_name: aegis-opensearch
+    environment:
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
+      - DISABLE_SECURITY_PLUGIN=true
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+    ports:
+      - "9200:9200"
+    profiles: ["search"]   # opt-in: `docker compose --profile search up`
+
+volumes:
+  aegis-pgdata:
