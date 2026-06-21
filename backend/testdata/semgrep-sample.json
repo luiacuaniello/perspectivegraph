@@ -1,0 +1,55 @@
+{
+  "version": "1.86.0",
+  "results": [
+    {
+      "check_id": "python.lang.security.audit.dangerous-subprocess-use.dangerous-subprocess-use",
+      "path": "src/payments/handler.py",
+      "start": { "line": 42, "col": 5 },
+      "end": { "line": 42, "col": 48 },
+      "extra": {
+        "message": "Detected subprocess function 'check_output' with user-controlled input. This can lead to OS command injection.",
+        "severity": "ERROR",
+        "metadata": {
+          "cwe": ["CWE-78: Improper Neutralization of Special Elements used in an OS Command"],
+          "owasp": ["A03:2021 - Injection"],
+          "category": "security",
+          "confidence": "HIGH",
+          "vulnerability_class": ["Command Injection"]
+        }
+      }
+    },
+    {
+      "check_id": "generic.secrets.security.detected-aws-secret-access-key.detected-aws-secret-access-key",
+      "path": "src/payments/config.py",
+      "start": { "line": 7, "col": 18 },
+      "end": { "line": 7, "col": 58 },
+      "extra": {
+        "message": "AWS Secret Access Key detected hardcoded in source.",
+        "severity": "ERROR",
+        "metadata": {
+          "cwe": ["CWE-798: Use of Hard-coded Credentials"],
+          "category": "secrets",
+          "confidence": "HIGH"
+        }
+      }
+    },
+    {
+      "check_id": "python.django.security.injection.sql.sql-injection-using-raw.sql-injection-using-raw",
+      "path": "src/payments/repository.py",
+      "start": { "line": 88, "col": 12 },
+      "end": { "line": 88, "col": 64 },
+      "extra": {
+        "message": "Detected raw SQL query built from user input; use parameterized queries.",
+        "severity": "WARNING",
+        "metadata": {
+          "cwe": ["CWE-89: SQL Injection"],
+          "owasp": ["A03:2021 - Injection"],
+          "category": "security",
+          "confidence": "MEDIUM"
+        }
+      }
+    }
+  ],
+  "errors": [],
+  "paths": { "scanned": ["src/payments/handler.py", "src/payments/config.py", "src/payments/repository.py"] }
+}

@@ -1,0 +1,198 @@
+{
+  "_comment": "A `kubectl get ... -o json` slice. PerspectiveGraph auto-discovers the exposure path internet \u2192 Ingress \u2192 Service \u2192 Pod \u2192 ServiceAccount \u2192 cluster-admin, plus Pod\u2192Image (so a scanner CVE on the image lands on a reachable path). Includes an internet-exposed privileged pod (metrics-agent) that ESCAPES_TO cluster-admin (container escape, ATT&CK T1611).",
+  "apiVersion": "v1",
+  "kind": "List",
+  "items": [
+    {
+      "apiVersion": "networking.k8s.io/v1",
+      "kind": "Ingress",
+      "metadata": {
+        "name": "payments-ingress",
+        "namespace": "prod"
+      },
+      "spec": {
+        "rules": [
+          {
+            "host": "pay.example.com",
+            "http": {
+              "paths": [
+                {
+                  "path": "/",
+                  "backend": {
+                    "service": {
+                      "name": "payments-svc",
+                      "port": {
+                        "number": 8080
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "payments-svc",
+        "namespace": "prod"
+      },
+      "spec": {
+        "type": "ClusterIP",
+        "selector": {
+          "app": "payments"
+        },
+        "ports": [
+          {
+            "port": 8080
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "payments-7d9f",
+        "namespace": "prod",
+        "labels": {
+          "app": "payments"
+        }
+      },
+      "spec": {
+        "serviceAccountName": "payments-sa",
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "payments",
+            "image": "registry.example.com/payments-api:1.4.2"
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "ServiceAccount",
+      "metadata": {
+        "name": "payments-sa",
+        "namespace": "prod"
+      }
+    },
+    {
+      "apiVersion": "rbac.authorization.k8s.io/v1",
+      "kind": "ClusterRole",
+      "metadata": {
+        "name": "cluster-admin"
+      },
+      "rules": [
+        {
+          "apiGroups": [
+            "*"
+          ],
+          "resources": [
+            "*"
+          ],
+          "verbs": [
+            "*"
+          ]
+        }
+      ]
+    },
+    {
+      "apiVersion": "rbac.authorization.k8s.io/v1",
+      "kind": "ClusterRoleBinding",
+      "metadata": {
+        "name": "payments-sa-admin"
+      },
+      "subjects": [
+        {
+          "kind": "ServiceAccount",
+          "name": "payments-sa",
+          "namespace": "prod"
+        }
+      ],
+      "roleRef": {
+        "kind": "ClusterRole",
+        "name": "cluster-admin"
+      }
+    },
+    {
+      "apiVersion": "rbac.authorization.k8s.io/v1",
+      "kind": "ClusterRole",
+      "metadata": {
+        "name": "deployer"
+      },
+      "rules": [
+        {
+          "apiGroups": [
+            ""
+          ],
+          "resources": [
+            "pods"
+          ],
+          "verbs": [
+            "create",
+            "get",
+            "list"
+          ]
+        }
+      ]
+    },
+    {
+      "apiVersion": "rbac.authorization.k8s.io/v1",
+      "kind": "ClusterRoleBinding",
+      "metadata": {
+        "name": "payments-sa-deployer"
+      },
+      "subjects": [
+        {
+          "kind": "ServiceAccount",
+          "name": "payments-sa",
+          "namespace": "prod"
+        }
+      ],
+      "roleRef": {
+        "kind": "ClusterRole",
+        "name": "deployer"
+      }
+    },
+    {
+      "kind": "Service",
+      "metadata": {
+        "name": "metrics-lb",
+        "namespace": "monitoring"
+      },
+      "spec": {
+        "type": "LoadBalancer",
+        "selector": {
+          "app": "metrics"
+        }
+      }
+    },
+    {
+      "kind": "Pod",
+      "metadata": {
+        "name": "metrics-agent",
+        "namespace": "monitoring",
+        "labels": {
+          "app": "metrics"
+        }
+      },
+      "spec": {
+        "serviceAccountName": "default",
+        "containers": [
+          {
+            "name": "node-exporter",
+            "image": "prom/node-exporter:1.7.0",
+            "securityContext": {
+              "privileged": true
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

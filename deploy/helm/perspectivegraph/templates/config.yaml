@@ -1,0 +1,70 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "perspectivegraph.fullname" . }}-secrets
+  labels:
+    {{- include "perspectivegraph.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: {{ .Values.postgres.auth.password | quote }}
+  GITHUB_TOKEN: {{ .Values.github.token | quote }}
+  GITLAB_TOKEN: {{ .Values.gitlab.token | quote }}
+  API_TOKENS: {{ .Values.auth.apiTokens | quote }}
+  INGEST_HMAC_SECRET: {{ .Values.ingest.hmacSecret | quote }}
+  INGEST_HMAC_SECRETS: {{ .Values.ingest.hmacSecrets | quote }}
+  TICKET_WEBHOOK_URL: {{ .Values.ticket.webhookUrl | quote }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "perspectivegraph.fullname" . }}-config
+  labels:
+    {{- include "perspectivegraph.labels" . | nindent 4 }}
+data:
+  POSTGRES_HOST: {{ include "perspectivegraph.postgresHost" . | quote }}
+  POSTGRES_PORT: {{ include "perspectivegraph.postgresPort" . | quote }}
+  POSTGRES_USER: {{ .Values.postgres.auth.user | quote }}
+  POSTGRES_DB: {{ .Values.postgres.auth.database | quote }}
+  AGE_GRAPH_NAME: {{ .Values.postgres.graph | quote }}
+  NATS_URL: {{ include "perspectivegraph.natsUrl" . | quote }}
+  NATS_STREAM: {{ .Values.nats.stream | quote }}
+  NATS_SUBJECT: {{ .Values.nats.subject | quote }}
+  API_ADDR: {{ printf ":%d" (int .Values.service.apiPort) | quote }}
+  INGEST_ADDR: {{ printf ":%d" (int .Values.service.ingestPort) | quote }}
+  ANALYZER_INTERVAL: {{ .Values.backend.analyzerInterval | quote }}
+  OPENSEARCH_URL: {{ .Values.opensearch.url | quote }}
+  GITHUB_API_URL: {{ .Values.github.apiUrl | quote }}
+  GITHUB_DRY_RUN: {{ .Values.github.dryRun | quote }}
+  GITLAB_API_URL: {{ .Values.gitlab.apiUrl | quote }}
+  GITLAB_DRY_RUN: {{ .Values.gitlab.dryRun | quote }}
+  LOG_LEVEL: {{ .Values.backend.logLevel | quote }}
+  API_RATE_RPS: {{ .Values.auth.apiRateRps | quote }}
+  INGEST_RATE_RPS: {{ .Values.auth.ingestRateRps | quote }}
+  GRAPH_TTL: {{ .Values.graph.ttl | quote }}
+  OIDC_ISSUER: {{ .Values.auth.oidc.issuer | quote }}
+  OIDC_AUDIENCE: {{ .Values.auth.oidc.audience | quote }}
+  OIDC_JWKS_URL: {{ .Values.auth.oidc.jwksUrl | quote }}
+{{- if .Values.persistence.enabled }}
+  # File-backed governance stores live on the mounted PVC so they survive restarts.
+  SUPPRESSIONS_PATH: {{ printf "%s/suppressions.json" .Values.persistence.mountPath | quote }}
+  TICKETS_PATH: {{ printf "%s/tickets.json" .Values.persistence.mountPath | quote }}
+  VALIDATIONS_PATH: {{ printf "%s/validations.json" .Values.persistence.mountPath | quote }}
+  HISTORY_PATH: {{ printf "%s/history.json" .Values.persistence.mountPath | quote }}
+  AUDIT_LOG_PATH: {{ printf "%s/audit.log" .Values.persistence.mountPath | quote }}
+{{- end }}
+{{- if .Values.postgres.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "perspectivegraph.fullname" . }}-pg-init
+  labels:
+    {{- include "perspectivegraph.labels" . | nindent 4 }}
+data:
+  init-age.sql: |
+    CREATE EXTENSION IF NOT EXISTS age;
+    LOAD 'age';
+    SET search_path = ag_catalog, "$user", public;
+    SELECT create_graph('{{ .Values.postgres.graph }}')
+    WHERE NOT EXISTS (SELECT 1 FROM ag_catalog.ag_graph WHERE name = '{{ .Values.postgres.graph }}');
+{{- end }}

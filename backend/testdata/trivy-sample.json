@@ -1,0 +1,32 @@
+{
+  "SchemaVersion": 2,
+  "ArtifactName": "payments-api:1.4.2",
+  "ArtifactType": "container_image",
+  "Results": [
+    {
+      "Target": "payments-api:1.4.2 (debian 11.6)",
+      "Class": "lang-pkgs",
+      "Type": "jar",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-2021-44228",
+          "PkgName": "log4j-core",
+          "InstalledVersion": "2.14.1",
+          "FixedVersion": "2.15.0",
+          "Severity": "CRITICAL",
+          "Title": "Log4Shell: remote code execution via JNDI lookup",
+          "CVSS": { "nvd": { "V3Score": 10.0 }, "redhat": { "V3Score": 9.8 } }
+        },
+        {
+          "VulnerabilityID": "CVE-2022-22965",
+          "PkgName": "spring-beans",
+          "InstalledVersion": "5.3.16",
+          "FixedVersion": "5.3.18",
+          "Severity": "HIGH",
+          "Title": "Spring4Shell: RCE via data binding",
+          "CVSS": { "nvd": { "V3Score": 9.8 } }
+        }
+      ]
+    }
+  ]
+}

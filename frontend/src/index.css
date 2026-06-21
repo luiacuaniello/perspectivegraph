@@ -1,0 +1,212 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Design tokens. Every color is space-separated RGB channels so Tailwind's
+   `/<alpha>` modifiers work (see tailwind.config.js). Light is the default;
+   `.dark` (set on <html> by src/theme.ts) swaps in the dark palette. The light
+   values are exactly the previous theme, so the light UI is unchanged.
+   ───────────────────────────────────────────────────────────────────────── */
+:root {
+  /* Surfaces & accent */
+  --c-ink: 238 241 246; /* #eef1f6 canvas */
+  --c-panel: 255 255 255; /* #ffffff cards */
+  --c-panel-2: 247 249 252; /* #f7f9fc raised/inset */
+  --c-edge: 223 228 236; /* #dfe4ec hairline */
+  --c-accent: 69 109 163; /* #456da3 steel blue */
+  --c-accent-strong: 58 93 140; /* #3a5d8c */
+  --c-muted: 100 116 139; /* #64748b secondary text */
+  --c-shadow: 31 41 55; /* shadow base */
+
+  /* Slate ramp (Tailwind defaults) */
+  --c-slate-50: 248 250 252;
+  --c-slate-100: 241 245 249;
+  --c-slate-200: 226 232 240;
+  --c-slate-300: 203 213 225;
+  --c-slate-400: 148 163 184;
+  --c-slate-500: 100 116 139;
+  --c-slate-600: 71 85 105;
+  --c-slate-700: 51 65 85;
+  --c-slate-800: 30 41 59;
+  --c-slate-900: 15 23 42;
+
+  /* Effects */
+  --c-fg: 31 39 51; /* #1f2733 base text */
+  --skeleton-sheen: 255 255 255;
+  --skeleton-sheen-alpha: 0.65;
+  --graph-dot: 214 221 231; /* #d6dde7 canvas dot grid */
+  color-scheme: light;
+}
+
+.dark {
+  /* Surfaces & accent — deep, slightly blue-tinted slate */
+  --c-ink: 14 18 25; /* app canvas */
+  --c-panel: 23 28 38; /* cards */
+  --c-panel-2: 30 37 49; /* raised/inset */
+  --c-edge: 42 51 67; /* hairline */
+  --c-accent: 124 160 222; /* brighter steel blue for contrast on dark */
+  --c-accent-strong: 152 184 236;
+  --c-muted: 150 164 186; /* secondary text */
+  --c-shadow: 0 0 0;
+
+  /* Slate ramp inverted: 900 = lightest (headings), 400 = faint */
+  --c-slate-50: 26 32 43;
+  --c-slate-100: 31 38 51;
+  --c-slate-200: 42 51 67;
+  --c-slate-300: 58 70 90;
+  --c-slate-400: 124 138 158;
+  --c-slate-500: 150 164 186;
+  --c-slate-600: 174 185 204;
+  --c-slate-700: 195 205 221;
+  --c-slate-800: 220 227 239;
+  --c-slate-900: 237 241 248;
+
+  --c-fg: 224 230 240;
+  --skeleton-sheen: 255 255 255;
+  --skeleton-sheen-alpha: 0.06;
+  --graph-dot: 38 46 61;
+  color-scheme: dark;
+}
+
+/* Status colors stay Tailwind defaults in light; in dark the dark `-600/-700`
+   text shades are too low-contrast on dark surfaces, so lighten them. The
+   substring selector also covers alpha variants (e.g. text-amber-700/70). */
+.dark [class*="text-amber-700"] {
+  color: #fcd34d;
+}
+.dark [class*="text-amber-600"] {
+  color: #fbbf24;
+}
+.dark [class*="text-red-700"] {
+  color: #fca5a5;
+}
+.dark [class*="text-red-600"] {
+  color: #f87171;
+}
+.dark [class*="text-emerald-700"] {
+  color: #6ee7b7;
+}
+.dark [class*="text-emerald-600"] {
+  color: #34d399;
+}
+.dark [class*="text-teal-700"] {
+  color: #5eead4;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: rgb(var(--c-ink));
+  color: rgb(var(--c-fg));
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* Smooth the canvas/text swap when toggling theme. */
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+/* Headings: tighter tracking for a more polished, app-like feel. */
+h1,
+h2,
+h3 {
+  letter-spacing: -0.011em;
+}
+
+::selection {
+  background: rgb(var(--c-accent) / 0.22);
+}
+
+/* Accessible, consistent keyboard focus across every interactive control,
+   without a ring flashing on mouse click. */
+:focus-visible {
+  outline: 2px solid rgb(var(--c-accent));
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+button:focus:not(:focus-visible),
+a:focus:not(:focus-visible),
+select:focus:not(:focus-visible),
+input:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* A calm default transition for interactive elements. */
+button,
+a,
+select,
+input,
+[role="button"] {
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease,
+    opacity 0.15s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Skeleton shimmer for loading states. */
+@keyframes pg-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: rgb(var(--c-panel-2));
+  border-radius: 8px;
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgb(var(--skeleton-sheen) / var(--skeleton-sheen-alpha)),
+    transparent
+  );
+  animation: pg-shimmer 1.4s infinite;
+}
+
+/* The environment-graph canvas dot grid, themed. */
+.graph-canvas-bg {
+  background-image: radial-gradient(circle, rgb(var(--graph-dot)) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+/* Slim, theme-matched scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--c-edge)) transparent;
+}
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--c-edge));
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--c-slate-300));
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}

@@ -1,0 +1,156 @@
+# PerspectiveGraph stack.
+#
+#   docker compose up -d                          # infra only (Postgres+AGE, NATS)
+#   docker compose --profile app up -d --build    # full stack incl. backend + dashboard
+#   docker compose --profile app --profile search up -d --build   # + OpenSearch
+#
+# Infra ports bind to 127.0.0.1 (loopback only) so a laptop demo never exposes
+# Postgres/NATS/OpenSearch to the LAN. Every service drops new privileges; the
+# backend additionally runs read-only, non-root and with all capabilities
+# dropped (it's a static binary that writes nothing to disk).
+
+# Shared hardening applied to every service.
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+  restart: unless-stopped
+
+services:
+  # ── Graph core: PostgreSQL with the Apache AGE extension ────────────
+  postgres:
+    <<: *hardening
+    # Pinned by digest for reproducible, tamper-evident pulls.
+    image: apache/age:release_PG16_1.6.0@sha256:16aa423d20a31aed36a3313244bf7aa00731325862f20ed584510e381f2feaed
+    container_name: perspective-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-perspective}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-perspective}
+      POSTGRES_DB: ${POSTGRES_DB:-perspectivegraph}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - perspective-pgdata:/var/lib/postgresql/data
+      # Runs once on first boot to create + load the AGE graph.
+      - ./deploy/postgres/init-age.sql:/docker-entrypoint-initdb.d/init-age.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-perspective} -d ${POSTGRES_DB:-perspectivegraph}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Event bus: NATS JetStream ───────────────────────────────────────
+  nats:
+    <<: *hardening
+    image: nats:2.12.11-alpine@sha256:006a95e54643c0a2a33dfcee4654e9115f7540ebb8804822d3e2d82bf8515f61
+    container_name: perspective-nats
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "127.0.0.1:4222:4222"   # client
+      - "127.0.0.1:8222:8222"   # monitoring
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Backend: ingestion + normalization + analyzer + GraphQL API ─────
+  backend:
+    <<: *hardening
+    build:
+      context: ./backend
+    image: perspectivegraph-backend:local
+    container_name: perspective-backend
+    # Hardened runtime: non-root (distroless), immutable rootfs, no caps.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-perspective}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-perspective}
+      POSTGRES_DB: ${POSTGRES_DB:-perspectivegraph}
+      AGE_GRAPH_NAME: ${AGE_GRAPH_NAME:-perspective}
+      NATS_URL: nats://nats:4222
+      API_ADDR: ":8080"
+      INGEST_ADDR: ":8081"
+      ANALYZER_INTERVAL: ${ANALYZER_INTERVAL:-30s}
+      ANALYZER_MAX_HOPS: ${ANALYZER_MAX_HOPS:-12}
+      # Opt-in: compute critical paths in the DB (AGE Cypher) instead of the
+      # default in-process Dijkstra. Off by default (variable-length enumeration
+      # is unbounded in the worst case; safe-rails: statement_timeout + LIMIT).
+      ANALYZER_DB_PATHS: ${ANALYZER_DB_PATHS:-false}
+      # Staleness pruning: nodes/edges not re-observed within GRAPH_TTL are
+      # removed (leader-only) so departed assets can't produce phantom paths.
+      # Empty/0 disables it (the default).
+      GRAPH_TTL: ${GRAPH_TTL:-}
+      # Set to http://opensearch:9200 when running with --profile search.
+      OPENSEARCH_URL: ${OPENSEARCH_URL:-}
+      THREATINTEL: ${THREATINTEL:-off}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Auth (optional) — pass through when set; open with a loud warning otherwise.
+      INGEST_HMAC_SECRET: ${INGEST_HMAC_SECRET:-}
+      API_TOKENS: ${API_TOKENS:-}
+      # Triage/suppression persistence (optional). Empty → in-memory only. To
+      # persist, point this at a path on a writable volume (the backend rootfs is
+      # read-only) and mount one, e.g. a named volume at /var/lib/perspectivegraph.
+      SUPPRESSIONS_PATH: ${SUPPRESSIONS_PATH:-}
+      # Temporal history persistence (path age / MTTR / trend). Same volume note
+      # as above. Empty → in-memory only (resets on restart).
+      HISTORY_PATH: ${HISTORY_PATH:-}
+      # Remediation ticketing: local board persistence + optional dispatch to an
+      # external tracker. Same writable-volume note for TICKETS_PATH.
+      TICKETS_PATH: ${TICKETS_PATH:-}
+      TICKET_WEBHOOK_URL: ${TICKET_WEBHOOK_URL:-}
+      # Red-team / BAS validation verdicts (precision/recall). Same writable-volume
+      # note for VALIDATIONS_PATH.
+      VALIDATIONS_PATH: ${VALIDATIONS_PATH:-}
+      # Tamper-evident audit log (writes AND reads of the attack map). Empty →
+      # disabled. The rootfs is read-only; /tmp is a tmpfs, or mount a volume for
+      # durability. Verify the hash chain with: perspectivegraph verify-audit <path>
+      AUDIT_LOG_PATH: ${AUDIT_LOG_PATH:-}
+    ports:
+      - "127.0.0.1:8080:8080"   # GraphQL API / BFF
+      - "127.0.0.1:8081:8081"   # ingestion webhooks (for `make seed`)
+    profiles: ["app"]
+
+  # ── Frontend: React dashboard served by nginx (proxies /graphql) ────
+  frontend:
+    <<: *hardening
+    build:
+      context: ./frontend
+    image: perspectivegraph-dashboard:local
+    container_name: perspective-frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3000:80"
+    profiles: ["app"]
+
+  # ── Optional full-text index: OpenSearch ────────────────────────────
+  opensearch:
+    <<: *hardening
+    image: opensearchproject/opensearch:3.7.0@sha256:123e6591a47b1d54686890551bdb35739c85193ecded381219fc9e059e18128f
+    container_name: perspective-opensearch
+    environment:
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
+      - DISABLE_SECURITY_PLUGIN=true
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+    ports:
+      - "127.0.0.1:9200:9200"
+    profiles: ["search"]   # opt-in: `docker compose --profile search up`
+
+volumes:
+  perspective-pgdata:

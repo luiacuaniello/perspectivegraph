@@ -1,0 +1,7 @@
+{
+  "_comment": "Data-classification findings (AWS Macie / DLP style). Each record marks the named asset a crown jewel with an authoritative 'classified:<source>:<kind>' basis — real classifier evidence, stronger than guessing from the asset name. The asset id matches the cloud feed (Bucket:customer-exports), so it merges onto the existing node and upgrades its basis from 'inferred:customer' to 'classified:macie:pii'.",
+  "source": "macie",
+  "records": [
+    { "asset": "customer-exports", "label": "Bucket", "kind": "pii" }
+  ]
+}

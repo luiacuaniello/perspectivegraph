@@ -1,0 +1,6 @@
+{
+  "image": "payments-api:1.4.2",
+  "repository": "payments-api",
+  "slug": "acme/payments-api",
+  "sha": "deadbeef"
+}

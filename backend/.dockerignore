@@ -1,0 +1,8 @@
+bin/
+*.test
+*.out
+Dockerfile
+.dockerignore
+.env
+.env.*
+.DS_Store

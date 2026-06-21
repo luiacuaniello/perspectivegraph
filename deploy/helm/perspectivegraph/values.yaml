@@ -1,0 +1,127 @@
+# Default values for the PerspectiveGraph chart.
+
+backend:
+  image:
+    repository: ghcr.io/luiacuaniello/perspectivegraph
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+  resources: {}
+  logLevel: info
+  analyzerInterval: 30s
+  # Tiny utility image used by the dependency-wait initContainers (needs `nc`).
+  # Pin to a digest in security-sensitive environments.
+  waitImage: busybox:1.37
+
+frontend:
+  enabled: true
+  image:
+    repository: ghcr.io/luiacuaniello/perspectivegraph-dashboard
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+
+service:
+  apiPort: 8080
+  ingestPort: 8081
+  frontendPort: 80
+
+# In-cluster PostgreSQL + Apache AGE (graph core). To bring your own managed
+# Postgres set enabled=false and point externalHost/externalPort at it — the
+# instance must have the Apache AGE extension and the graph created (see
+# deploy/postgres/init-age.sql). auth.* is used for the external instance too.
+postgres:
+  enabled: true
+  externalHost: ""
+  externalPort: 5432
+  image: apache/age:release_PG16_1.6.0@sha256:16aa423d20a31aed36a3313244bf7aa00731325862f20ed584510e381f2feaed
+  graph: perspective
+  auth:
+    user: perspective
+    password: perspective
+    database: perspectivegraph
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClass: ""
+
+# In-cluster NATS JetStream (event bus). To bring your own set enabled=false
+# and point externalUrl at it (e.g. nats://my-nats.internal:4222).
+nats:
+  enabled: true
+  externalUrl: ""
+  image: nats:2.12.11-alpine@sha256:006a95e54643c0a2a33dfcee4654e9115f7540ebb8804822d3e2d82bf8515f61
+  stream: PERSPECTIVE
+  subject: perspective.events.*
+
+# Optional OpenSearch full-text index. Leave url empty to disable.
+opensearch:
+  url: ""
+
+# Action layer: PR/MR commenters. Tokens go into a Secret; empty → dry-run.
+github:
+  token: ""
+  apiUrl: https://api.github.com
+  dryRun: false
+gitlab:
+  token: ""
+  apiUrl: https://gitlab.com/api/v4
+  dryRun: false
+
+# Remediation ticketing: dispatch each new ticket to an external tracker
+# (Jira/GitHub/SOAR) over a webhook. Empty → local/dry-run (logged, tracked
+# in-cluster). The URL is a secret (it can embed a token), so it lands in the Secret.
+ticket:
+  webhookUrl: ""
+
+# ── Security & governance ───────────────────────────────────────────────────
+# A default install is UNAUTHENTICATED — acceptable only inside a trusted cluster
+# for a demo. PerspectiveGraph is a map of how to attack the org, so for ANY
+# deployment reachable beyond a trusted boundary set auth.apiTokens (and ideally
+# ingest.hmacSecret + persistence for the audit log). These land in the Secret;
+# an empty value means the control is OFF.
+auth:
+  # Bearer tokens → role[:tenant], comma-separated: "tok:viewer,tok2:admin:globex".
+  # Empty ⇒ the read/write API is OPEN (no authentication). Generate with e.g.
+  # --set auth.apiTokens="$(openssl rand -hex 16):admin".
+  apiTokens: ""
+  # Optional OIDC/JWT verification alongside (or instead of) static tokens.
+  # Empty issuer ⇒ disabled.
+  oidc:
+    issuer: ""
+    audience: ""
+    jwksUrl: ""
+  # Per-client-IP rate limits (requests/sec). 0 ⇒ disabled.
+  apiRateRps: 60
+  ingestRateRps: 30
+
+# Ingestion authenticity: HMAC secret(s) that scanners must sign webhook bodies
+# with. Empty ⇒ ingestion accepts unsigned bodies (anyone who can reach the
+# ingest port can forge scanner data). hmacSecrets is the per-tenant form
+# ("tenant:secret,tenant2:secret2"). Both land in the Secret.
+ingest:
+  hmacSecret: ""
+  hmacSecrets: ""
+
+# Durable governance state. The suppression / ticket / red-team-validation /
+# posture-history / audit-log stores are file-backed and single-writer; without a
+# volume they are in-memory and reset on every pod restart (and the tamper-evident
+# audit log never survives). Enabling this mounts a ReadWriteOnce PVC on the
+# backend — which is why backend.replicas MUST stay 1 while it is on.
+persistence:
+  enabled: false
+  size: 1Gi
+  storageClass: ""
+  mountPath: /data
+
+# Graph staleness pruning (GRAPH_TTL): drop nodes/edges not re-observed within
+# this window so assets that left the source feeds stop generating phantom attack
+# paths. Empty ⇒ disabled. Example: "168h" (7 days).
+graph:
+  ttl: ""
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: perspectivegraph.local

@@ -1,0 +1,78 @@
+{
+  "_comment": "Simulates what the Cloud (Custodian) + Runtime (Falco) collectors contribute: the infra/identity subgraph. Ids for the image (Image:98b06dcdd2c1656f), CVE (CVE:6c58f4a6711be1a5), repository (Repository:818ecf749bd26593) and the Semgrep command-injection weakness (Weakness:681467edeb629421) match what the Trivy and Semgrep collectors generate from their sample reports. The payments container declares only its image_ref (no hand-stitched HOSTS edge): the resolver INFERS the Container->Image join from that ref and stamps it with confidence (tag match = 0.85), so the kill chain shows a 'heuristic join' badge on that hop. Posting all three correlates them into TWO attack paths to TWO crown jewels: (A) Trivy/Log4Shell -> admin IAM role, and (B) Semgrep/command-injection -> customers PII database.",
+  "source": "context",
+  "kind": "relationship",
+  "observed_at": "2026-06-08T12:00:00Z",
+  "nodes": [
+    {
+      "id": "LoadBalancer:edge-alb",
+      "label": "LoadBalancer",
+      "name": "edge-alb (0.0.0.0/0)",
+      "properties": { "internet_exposed": true }
+    },
+    {
+      "id": "Container:40c4770202821f32",
+      "label": "Container",
+      "name": "payments (ns: prod)",
+      "properties": { "image_ref": "payments-api:1.4.2" }
+    },
+    {
+      "id": "Image:98b06dcdd2c1656f",
+      "label": "Image",
+      "name": "payments-api:1.4.2"
+    },
+    {
+      "id": "CVE:6c58f4a6711be1a5",
+      "label": "CVE",
+      "name": "CVE-2021-44228"
+    },
+    {
+      "id": "Repository:818ecf749bd26593",
+      "label": "Repository",
+      "name": "payments-api"
+    },
+    {
+      "id": "Weakness:681467edeb629421",
+      "label": "Weakness",
+      "name": "command injection (src/payments/handler.py:42)"
+    },
+    {
+      "id": "IAM_Role:payments-admin",
+      "label": "IAM_Role",
+      "name": "payments-admin (AdministratorAccess)",
+      "properties": { "crown_jewel": true }
+    },
+    {
+      "id": "VirtualMachine:customers-db",
+      "label": "VirtualMachine",
+      "name": "customers-db (PII)",
+      "properties": { "crown_jewel": true }
+    }
+  ],
+  "edges": [
+    {
+      "type": "EXPOSES",
+      "from": "LoadBalancer:edge-alb",
+      "to": "Container:40c4770202821f32",
+      "exploit_probability": 0.9
+    },
+    {
+      "type": "BUILT_FROM",
+      "from": "Image:98b06dcdd2c1656f",
+      "to": "Repository:818ecf749bd26593",
+      "exploit_probability": 0.9
+    },
+    {
+      "type": "EXPLOITS",
+      "from": "CVE:6c58f4a6711be1a5",
+      "to": "IAM_Role:payments-admin",
+      "exploit_probability": 0.8
+    },
+    {
+      "type": "EXPLOITS",
+      "from": "Weakness:681467edeb629421",
+      "to": "VirtualMachine:customers-db",
+      "exploit_probability": 0.7
+    }
+  ]
+}

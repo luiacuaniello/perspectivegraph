@@ -1,0 +1,44 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "perspectivegraph.fullname" . }}
+  labels:
+    {{- include "perspectivegraph.labels" . | nindent 4 }}
+  annotations:
+    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          # Ingestion webhooks (CI posts scanner output here).
+          - path: /ingest
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "perspectivegraph.backendHost" . }}
+                port:
+                  number: {{ .Values.service.ingestPort }}
+          # GraphQL API.
+          - path: /graphql
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "perspectivegraph.backendHost" . }}
+                port:
+                  number: {{ .Values.service.apiPort }}
+          {{- if .Values.frontend.enabled }}
+          # Dashboard (catch-all).
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "perspectivegraph.fullname" . }}-frontend
+                port:
+                  number: {{ .Values.service.frontendPort }}
+          {{- end }}
+{{- end }}

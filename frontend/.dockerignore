@@ -1,0 +1,11 @@
+node_modules/
+node_modules.nosync/
+dist/
+.vite/
+Dockerfile
+.dockerignore
+*.tsbuildinfo
+*.log
+.env
+.env.*
+.DS_Store

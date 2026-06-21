@@ -1,0 +1,15 @@
+{
+  "_comment": "Supply-chain provenance for the payments-api image, as a CI step would assemble it from cosign + SLSA attestation + an SBOM (syft/trivy). The image is INTENTIONALLY unsigned (signed=false) with a low SLSA level: because it sits on the internet -> crown-jewel path, this trips the built-in 'no-internet-to-unsigned-image' invariant (an unsigned build is a tampering vector into a reachable workload). The SBOM lists the bill of materials as Library/Package nodes the image DEPENDS_ON.",
+  "image": "payments-api:1.4.2",
+  "signed": false,
+  "slsa_level": 1,
+  "provenance_builder": "github-actions",
+  "source_repo": "payments-api",
+  "slug": "acme/payments-api",
+  "sbom": [
+    { "name": "log4j-core", "version": "2.14.1", "type": "library", "purl": "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1" },
+    { "name": "spring-core", "version": "5.3.18", "type": "library", "purl": "pkg:maven/org.springframework/spring-core@5.3.18" },
+    { "name": "jackson-databind", "version": "2.13.0", "type": "library", "purl": "pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.13.0" },
+    { "name": "openssl", "version": "1.1.1k", "type": "application", "purl": "pkg:deb/debian/openssl@1.1.1k" }
+  ]
+}

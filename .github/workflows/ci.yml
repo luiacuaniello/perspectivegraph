@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend (Go)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: backend/go.sum
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./...
+      # Supply-chain gate: fail on a vulnerability the code actually reaches.
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      # SAST gate: static security analysis of the tool's OWN source — a security
+      # tool should hold itself to the bar it sets. Excluded rules are by-design
+      # for this codebase: G104 (cleanup Close() errors), G404 (Monte-Carlo PRNG,
+      # non-security), G401/G505 (sha1 used only as a non-crypto fingerprint),
+      # G304 (file paths are operator-config, never request-tainted). Everything
+      # else stays on; the few benign hits carry a justified `// #nosec`.
+      - name: gosec (SAST)
+        run: go run github.com/securego/gosec/v2/cmd/gosec@latest -quiet -exclude=G104,G404,G401,G505,G304 ./...
+
+  secrets:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Catches an API token / private key accidentally committed — table stakes
+      # for a repo whose whole job is finding exposures. Free for public repos &
+      # personal accounts; orgs set GITLEAKS_LICENSE.
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  age-integration:
+    name: AGE store integration
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      CGO_ENABLED: "0"
+      # Exercises the real, hand-written Cypher path (injection-sensitive) that
+      # unit tests with the in-memory store can't cover.
+      PERSPECTIVE_TEST_POSTGRES_DSN: "host=localhost port=5432 user=perspective password=perspective dbname=perspectivegraph sslmode=disable"
+    services:
+      postgres:
+        image: apache/age:release_PG16_1.6.0@sha256:16aa423d20a31aed36a3313244bf7aa00731325862f20ed584510e381f2feaed
+        env:
+          POSTGRES_USER: perspective
+          POSTGRES_PASSWORD: perspective
+          POSTGRES_DB: perspectivegraph
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U perspective -d perspectivegraph"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: backend/go.sum
+      # The contract test creates the AGE extension + graph itself; just run it.
+      - name: Run AGE store contract test
+        run: go test -run TestAGEStoreContract -v ./internal/graph/...
+      # Leader election's mutual-exclusion / failover needs a real Postgres
+      # advisory lock; run it against the same service DB.
+      - name: Run leader-election integration test
+        run: go test -run TestAdvisoryLockMutualExclusion -v ./internal/leader/...
+
+  frontend:
+    name: Frontend (React)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      # `npm install` (not `npm ci`): the lockfile pins platform-specific native
+      # deps (rolldown/esbuild), and a lock generated on a different OS lacks this
+      # runner's variants — `npm ci` would fail on a known npm bug (npm/cli#4828).
+      - run: npm install --no-audit --no-fund
+      - run: npm run build
+      - name: Unit tests (Vitest)
+        run: npm test
+      # Supply-chain gate: fail on a high/critical advisory in the JS deps.
+      - name: npm audit
+        run: npm audit --audit-level=high
+
+  images:
+    name: Container images (Trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build images
+        run: |
+          docker build -t perspectivegraph-backend:ci backend
+          docker build -t perspectivegraph-dashboard:ci frontend
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sh -s -- -b /usr/local/bin
+      # Fail on fixable HIGH/CRITICAL in the image layers (unfixable OS CVEs
+      # don't block — there's nothing to do about them until a base rebuild).
+      - name: Scan images
+        run: |
+          for img in perspectivegraph-backend:ci perspectivegraph-dashboard:ci; do
+            trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$img"
+          done

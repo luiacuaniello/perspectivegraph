@@ -1,0 +1,137 @@
+{
+  "UserDetailList": [
+    {
+      "UserName": "ci-bot",
+      "Arn": "arn:aws:iam::123456789012:user/ci-bot",
+      "GroupList": [],
+      "AttachedManagedPolicies": [],
+      "UserPolicyList": [
+        {
+          "PolicyName": "self-service",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              { "Effect": "Allow", "Action": "iam:AttachUserPolicy", "Resource": "*" },
+              { "Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject"], "Resource": "*" }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "GroupDetailList": [],
+  "RoleDetailList": [
+    {
+      "RoleName": "public-deployer",
+      "Arn": "arn:aws:iam::123456789012:role/public-deployer",
+      "AssumeRolePolicyDocument": {
+        "Version": "2012-10-17",
+        "Statement": [
+          { "Effect": "Allow", "Principal": "*", "Action": "sts:AssumeRole" }
+        ]
+      },
+      "AttachedManagedPolicies": [
+        { "PolicyName": "DeployAccess", "PolicyArn": "arn:aws:iam::123456789012:policy/DeployAccess" }
+      ],
+      "RolePolicyList": [],
+      "Tags": []
+    },
+    {
+      "RoleName": "admin-role",
+      "Arn": "arn:aws:iam::123456789012:role/admin-role",
+      "AssumeRolePolicyDocument": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": { "AWS": "arn:aws:iam::123456789012:user/ci-bot" },
+            "Action": "sts:AssumeRole"
+          }
+        ]
+      },
+      "AttachedManagedPolicies": [
+        { "PolicyName": "AdministratorAccess", "PolicyArn": "arn:aws:iam::aws:policy/AdministratorAccess" }
+      ],
+      "RolePolicyList": [],
+      "Tags": []
+    },
+    {
+      "RoleName": "app-readonly",
+      "Arn": "arn:aws:iam::123456789012:role/app-readonly",
+      "AssumeRolePolicyDocument": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": { "Service": "ec2.amazonaws.com" },
+            "Action": "sts:AssumeRole"
+          }
+        ]
+      },
+      "AttachedManagedPolicies": [],
+      "RolePolicyList": [
+        {
+          "PolicyName": "read-only",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              { "Effect": "Allow", "Action": ["s3:GetObject", "dynamodb:GetItem"], "Resource": "*" }
+            ]
+          }
+        }
+      ],
+      "Tags": []
+    }
+  ],
+  "Policies": [
+    {
+      "PolicyName": "AdministratorAccess",
+      "Arn": "arn:aws:iam::aws:policy/AdministratorAccess",
+      "DefaultVersionId": "v1",
+      "PolicyVersionList": [
+        {
+          "VersionId": "v1",
+          "IsDefaultVersion": true,
+          "Document": {
+            "Version": "2012-10-17",
+            "Statement": [
+              { "Effect": "Allow", "Action": "*", "Resource": "*" }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "PolicyName": "DeployAccess",
+      "Arn": "arn:aws:iam::123456789012:policy/DeployAccess",
+      "DefaultVersionId": "v3",
+      "PolicyVersionList": [
+        {
+          "VersionId": "v1",
+          "IsDefaultVersion": false,
+          "Document": {
+            "Version": "2012-10-17",
+            "Statement": [
+              { "Effect": "Allow", "Action": "s3:GetObject", "Resource": "*" }
+            ]
+          }
+        },
+        {
+          "VersionId": "v3",
+          "IsDefaultVersion": true,
+          "Document": {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": ["iam:PassRole", "lambda:CreateFunction", "lambda:UpdateFunctionCode"],
+                "Resource": "*"
+              },
+              { "Effect": "Allow", "Action": "s3:GetObject", "Resource": "*" }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

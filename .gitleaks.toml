@@ -1,0 +1,13 @@
+# gitleaks configuration.
+# Extends the built-in ruleset and allowlists the FAKE example secrets that live
+# in test fixtures — they exist only to exercise the secret-scrubber and are not
+# real credentials. Everything else is scanned normally.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test fixtures: non-real example secrets used to test the scrubber"
+paths = [
+  '''backend/internal/scrub/scrub_test.go''',
+  '''backend/testdata/.*''',
+]

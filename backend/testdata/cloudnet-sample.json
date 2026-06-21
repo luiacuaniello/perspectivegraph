@@ -1,0 +1,35 @@
+{
+  "_comment": "Real AWS describe-* shapes. PerspectiveGraph discovers reachability: i-web is internet-exposed (0.0.0.0/0), sg-db admits ingress from sg-web, so i-web --CONNECTS_TO--> i-db; i-db is a crown jewel by tag. Result: internet → i-web → i-db, with no hand-stitched edges.",
+  "provider": "aws",
+  "security_groups": [
+    {
+      "GroupId": "sg-web",
+      "GroupName": "web-sg",
+      "IpPermissions": [
+        { "IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "IpRanges": [{ "CidrIp": "0.0.0.0/0" }] }
+      ]
+    },
+    {
+      "GroupId": "sg-db",
+      "GroupName": "db-sg",
+      "IpPermissions": [
+        { "IpProtocol": "tcp", "FromPort": 5432, "ToPort": 5432, "UserIdGroupPairs": [{ "GroupId": "sg-web" }] }
+      ]
+    }
+  ],
+  "instances": [
+    {
+      "InstanceId": "i-web",
+      "SecurityGroups": [{ "GroupId": "sg-web" }],
+      "Tags": [{ "Key": "Name", "Value": "web-tier" }]
+    },
+    {
+      "InstanceId": "i-db",
+      "SecurityGroups": [{ "GroupId": "sg-db" }],
+      "Tags": [{ "Key": "Name", "Value": "customer-db" }, { "Key": "classification", "Value": "pii" }]
+    }
+  ],
+  "vpc_peerings": [
+    { "RequesterVpcInfo": { "VpcId": "vpc-app" }, "AccepterVpcInfo": { "VpcId": "vpc-data" } }
+  ]
+}

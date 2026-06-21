@@ -1,0 +1,21 @@
+{{- if .Values.persistence.enabled }}
+# Durable home for the file-backed governance stores (suppressions, tickets,
+# red-team validations, posture/MTTR history) and the tamper-evident audit log.
+# ReadWriteOnce + single-writer design ⇒ backend.replicas must stay 1 (enforced
+# by a fail guard in backend.yaml).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "perspectivegraph.fullname" . }}-data
+  labels:
+    {{- include "perspectivegraph.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with .Values.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size }}
+{{- end }}

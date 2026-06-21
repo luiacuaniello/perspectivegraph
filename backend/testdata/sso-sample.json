@@ -1,0 +1,20 @@
+{
+  "_comment": "Okta directory export (as an Okta/Entra admin-API sync would produce). The IdP is internet-facing (SSO portal). The federated_roles are AWS role ARNs that converge with the roles the IAM collector discovered (iam-sample.json) — so federating into them inherits their privesc. alice has NO MFA and federates into admin-role (AdministratorAccess): the modern kill chain internet -> Okta -> alice -> admin-role -> account-admin lights up, highly traversable because there's no MFA to phish past. bob has MFA and only a privesc-capable role, so his path is discounted.",
+  "provider": "okta",
+  "internet_login": true,
+  "users": [
+    {
+      "email": "alice@acme.com",
+      "mfa": false,
+      "admin": true,
+      "groups": ["cloud-admins"],
+      "federated_roles": ["arn:aws:iam::123456789012:role/admin-role"]
+    },
+    {
+      "email": "bob@acme.com",
+      "mfa": true,
+      "groups": ["developers"],
+      "federated_roles": ["arn:aws:iam::123456789012:role/public-deployer"]
+    }
+  ]
+}

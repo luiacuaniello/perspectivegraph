@@ -1,0 +1,1433 @@
+{
+	"info": {
+		"name": "PerspectiveGraph API",
+		"description": "All PerspectiveGraph endpoints: health checks, the scanner-webhook ingest API (:8081) and the GraphQL API (:8080).\n\nRun the **Ingest** folder top-to-bottom to reproduce the demo (`make seed`): six core sources + two discovery collectors (Kubernetes, cloud network) that correlate into six ranked attack paths. The analyzer recomputes paths on its interval (default 30s), so give it a moment before querying GraphQL.\n\nAdjust `apiUrl` / `ingestUrl` collection variables to point at another deployment.\n\nThreat intel: run the backend with THREATINTEL=on to enrich CVEs with CISA KEV (exploited in the wild) + FIRST EPSS (30-day exploitation probability); the GraphQL queries below expose node.kev / node.epss and posture.kevOnPaths.\n\nAuth: if the backend runs with INGEST_HMAC_SECRET / API_TOKENS set, fill the collection variables `ingestHmacSecret` and `apiToken` — a pre-request script then signs ingest requests (HMAC) and adds the bearer token to GraphQL requests automatically. Leave them empty for an open (dev) backend.\n\nMulti-tenant: set the `tenant` collection variable (and use that tenant's `ingestHmacSecret`/`apiToken`) to scope ingest + queries to one tenant; the pre-request script adds the X-Tenant header automatically.\n\nAction layer: drift alerts fire to ALERT_WEBHOOK_URL when a new path appears; per-path Falco/Sigma detections are on the GraphQL AttackPath; GET /export/ndjson is the SIEM enrichment feed.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "apiUrl",
+			"value": "http://localhost:8080"
+		},
+		{
+			"key": "ingestUrl",
+			"value": "http://localhost:8081"
+		},
+		{
+			"key": "slug",
+			"value": "acme/payments-api"
+		},
+		{
+			"key": "pr",
+			"value": "42"
+		},
+		{
+			"key": "sha",
+			"value": "deadbeef"
+		},
+		{
+			"key": "ingestHmacSecret",
+			"value": ""
+		},
+		{
+			"key": "apiToken",
+			"value": ""
+		},
+		{
+			"key": "tenant",
+			"value": ""
+		},
+		{
+			"key": "suppressPathId",
+			"value": "ap-demo-0001"
+		},
+		{
+			"key": "ticketId",
+			"value": "tk-replace-me"
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"// Auto-sign ingest webhooks (HMAC) and authorize GraphQL (bearer) when the",
+					"// corresponding collection variables are set. Bearer covers GraphQL, exports",
+					"const url = pm.request.url.toString();",
+					"if (url.includes('/ingest/')) {",
+					"  const tenant = pm.variables.get('tenant');",
+					"  if (tenant) { pm.request.headers.upsert({ key: 'X-Tenant', value: tenant }); }",
+					"  const secret = pm.variables.get('ingestHmacSecret');",
+					"  if (secret) {",
+					"    const body = (pm.request.body && pm.request.body.raw) ? pm.request.body.raw : '';",
+					"    const sig = 'sha256=' + CryptoJS.HmacSHA256(body, secret).toString(CryptoJS.enc.Hex);",
+					"    pm.request.headers.upsert({ key: 'X-PerspectiveGraph-Signature', value: sig });",
+					"  }",
+					"}",
+					"if (url.includes('/graphql') || url.includes('/export/') || url.includes('/suppressions') || url.includes('/tickets') || url.includes('/validations')) {",
+					"  const token = pm.variables.get('apiToken');",
+					"  if (token) {",
+					"    pm.request.headers.upsert({ key: 'Authorization', value: 'Bearer ' + token });",
+					"  }",
+					"}"
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"pm.test('status is 2xx', () => pm.response.to.be.success);"
+				]
+			}
+		}
+	],
+	"item": [
+		{
+			"name": "Health",
+			"item": [
+				{
+					"name": "API health",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{apiUrl}}/healthz",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"healthz"
+							]
+						},
+						"description": "GraphQL/BFF server liveness."
+					}
+				},
+				{
+					"name": "Ingest health",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{ingestUrl}}/healthz",
+							"host": [
+								"{{ingestUrl}}"
+							],
+							"path": [
+								"healthz"
+							]
+						},
+						"description": "Webhook receiver liveness."
+					}
+				},
+				{
+					"name": "Prometheus metrics",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{apiUrl}}/metrics",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"metrics"
+							]
+						},
+						"description": "Prometheus exposition: ingest/normalize/analyzer-pass/dead-letter counters + Go runtime. Always open, unthrottled."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Ingest — scanner webhooks",
+			"description": "Same payloads and order as `make seed` (six sources). Re-posting is idempotent (deterministic node ids, upsert semantics).",
+			"item": [
+				{
+					"name": "1. Infra & identity context",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{ingestUrl}}/ingest/events",
+							"host": [
+								"{{ingestUrl}}"
+							],
+							"path": [
+								"ingest",
+								"events"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"_comment\": \"Simulates what the Cloud (Custodian) + Runtime (Falco) collectors contribute: the infra/identity subgraph. Ids for the image (Image:98b06dcdd2c1656f), CVE (CVE:6c58f4a6711be1a5), repository (Repository:818ecf749bd26593) and the Semgrep command-injection weakness (Weakness:681467edeb629421) match what the Trivy and Semgrep collectors generate from their sample reports. Posting all three correlates them into TWO attack paths to TWO crown jewels: (A) Trivy/Log4Shell -> admin IAM role, and (B) Semgrep/command-injection -> customers PII database.\",\n  \"source\": \"context\",\n  \"kind\": \"relationship\",\n  \"observed_at\": \"2026-06-08T12:00:00Z\",\n  \"nodes\": [\n    {\n      \"id\": \"LoadBalancer:edge-alb\",\n      \"label\": \"LoadBalancer\",\n      \"name\": \"edge-alb (0.0.0.0/0)\",\n      \"properties\": { \"internet_exposed\": true }\n    },\n    {\n      \"id\": \"Container:40c4770202821f32\",\n      \"label\": \"Container\",\n      \"name\": \"payments (ns: prod)\",\n      \"properties\": {}\n    },\n    {\n      \"id\": \"Image:98b06dcdd2c1656f\",\n      \"label\": \"Image\",\n      \"name\": \"payments-api:1.4.2\"\n    },\n    {\n      \"id\": \"CVE:6c58f4a6711be1a5\",\n      \"label\": \"CVE\",\n      \"name\": \"CVE-2021-44228\"\n    },\n    {\n      \"id\": \"Repository:818ecf749bd26593\",\n      \"label\": \"Repository\",\n      \"name\": \"payments-api\"\n    },\n    {\n      \"id\": \"Weakness:681467edeb629421\",\n      \"label\": \"Weakness\",\n      \"name\": \"command injection (src/payments/handler.py:42)\"\n    },\n    {\n      \"id\": \"IAM_Role:payments-admin\",\n      \"label\": \"IAM_Role\",\n      \"name\": \"payments-admin (AdministratorAccess)\",\n      \"properties\": { \"crown_jewel\": true }\n    },\n    {\n      \"id\": \"VirtualMachine:customers-db\",\n      \"label\": \"VirtualMachine\",\n      \"name\": \"customers-db (PII)\",\n      \"properties\": { \"crown_jewel\": true }\n    }\n  ],\n  \"edges\": [\n    {\n      \"type\": \"EXPOSES\",\n      \"from\": \"LoadBalancer:edge-alb\",\n      \"to\": \"Container:40c4770202821f32\",\n      \"exploit_probability\": 0.9\n    },\n    {\n      \"type\": \"HOSTS\",\n      \"from\": \"Container:40c4770202821f32\",\n      \"to\": \"Image:98b06dcdd2c1656f\",\n      \"exploit_probability\": 0.95\n    },\n    {\n      \"type\": \"BUILT_FROM\",\n      \"from\": \"Image:98b06dcdd2c1656f\",\n      \"to\": \"Repository:818ecf749bd26593\",\n      \"exploit_probability\": 0.9\n    },\n    {\n      \"type\": \"EXPLOITS\",\n      \"from\": \"CVE:6c58f4a6711be1a5\",\n      \"to\": \"IAM_Role:payments-admin\",\n      \"exploit_probability\": 0.8\n    },\n    {\n      \"type\": \"EXPLOITS\",\n      \"from\": \"Weakness:681467edeb629421\",\n      \"to\": \"VirtualMachine:customers-db\",\n      \"exploit_probability\": 0.7\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Pre-normalized events: the cloud/runtime subgraph (load balancer, containers, IAM role, data stores) that scanner findings correlate against."
+					}
+				},
+				{
+					"name": "2. Trivy report (dependency CVEs)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{ingestUrl}}/ingest/trivy?slug={{slug}}&pr={{pr}}&sha={{sha}}",
+							"host": [
+								"{{ingestUrl}}"
+							],
+							"path": [
+								"ingest",
+								"trivy"
+							],
+							"query": [
+								{
+									"key": "slug",
+									"value": "{{slug}}"
+								},
+								{
+									"key": "pr",
+									"value": "{{pr}}"
+								},
+								{
+									"key": "sha",
+									"value": "{{sha}}"
+								}
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"SchemaVersion\": 2,\n  \"ArtifactName\": \"payments-api:1.4.2\",\n  \"ArtifactType\": \"container_image\",\n  \"Results\": [\n    {\n      \"Target\": \"payments-api:1.4.2 (debian 11.6)\",\n      \"Class\": \"lang-pkgs\",\n      \"Type\": \"jar\",\n      \"Vulnerabilities\": [\n        {\n          \"VulnerabilityID\": \"CVE-2021-44228\",\n          \"PkgName\": \"log4j-core\",\n          \"InstalledVersion\": \"2.14.1\",\n          \"FixedVersion\": \"2.15.0\",\n          \"Severity\": \"CRITICAL\",\n          \"Title\": \"Log4Shell: remote code execution via JNDI lookup\",\n          \"CVSS\": { \"nvd\": { \"V3Score\": 10.0 }, \"redhat\": { \"V3Score\": 9.8 } }\n        },\n        {\n          \"VulnerabilityID\": \"CVE-2022-22965\",\n          \"PkgName\": \"spring-beans\",\n          \"InstalledVersion\": \"5.3.16\",\n          \"FixedVersion\": \"5.3.18\",\n          \"Severity\": \"HIGH\",\n          \"Title\": \"Spring4Shell: RCE via data binding\",\n          \"CVSS\": { \"nvd\": { \"V3Score\": 9.8 } }\n        }\n      ]\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Trivy JSON report. The slug/pr/sha query params attach PR context so the action layer can comment on the originating pull request."
+					}
+				},
+				{
+					"name": "3. CI build provenance (image ↔ repo)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{ingestUrl}}/ingest/build",
+							"host": [
+								"{{ingestUrl}}"
+							],
+							"path": [
+								"ingest",
+								"build"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"image\": \"payments-api:1.4.2\",\n  \"repository\": \"payments-api\",\n  \"slug\": \"acme/payments-api\",\n  \"sha\": \"deadbeef\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Which repository the image was built from: emits the Image --BUILT_FROM--> Repository edge that connects SAST findings to runtime workloads. Posted by a CI step right after the image push."
+					}
+				},
+				{
+					"name": "4. Semgrep report (SAST)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{ingestUrl}}/ingest/semgrep?repo=payments-api&slug={{slug}}&pr={{pr}}&sha={{sha}}",
+							"host": [
+								"{{ingestUrl}}"
+							],
+							"path": [
+								"ingest",
+								"semgrep"
+							],
+							"query": [
+								{
+									"key": "repo",
+									"value": "payments-api"
+								},
+								{
+									"key": "slug",
+									"value": "{{slug}}"
+								},
+								{
+									"key": "pr",
+									"value": "{{pr}}"
+								},
+								{
+									"key": "sha",
+									"value": "{{sha}}"
+								}
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"version\": \"1.86.0\",\n  \"results\": [\n    {\n      \"check_id\": \"python.lang.security.audit.dangerous-subprocess-use.dangerous-subprocess-use\",\n      \"path\": \"src/payments/handler.py\",\n      \"start\": { \"line\": 42, \"col\": 5 },\n      \"end\": { \"line\": 42, \"col\": 48 },\n      \"extra\": {\n        \"message\": \"Detected subprocess function 'check_output' with user-controlled input. This can lead to OS command injection.\",\n        \"severity\": \"ERROR\",\n        \"metadata\": {\n          \"cwe\": [\"CWE-78: Improper Neutralization of Special Elements used in an OS Command\"],\n          \"owasp\": [\"A03:2021 - Injection\"],\n          \"category\": \"security\",\n          \"confidence\": \"HIGH\",\n          \"vulnerability_class\": [\"Command Injection\"]\n        }\n      }\n    },\n    {\n      \"check_id\": \"generic.secrets.security.detected-aws-secret-access-key.detected-aws-secret-access-key\",\n      \"path\": \"src/payments/config.py\",\n      \"start\": { \"line\": 7, \"col\": 18 },\n      \"end\": { \"line\": 7, \"col\": 58 },\n      \"extra\": {\n        \"message\": \"AWS Secret Access Key detected hardcoded in source.\",\n        \"severity\": \"ERROR\",\n        \"metadata\": {\n          \"cwe\": [\"CWE-798: Use of Hard-coded Credentials\"],\n          \"category\": \"secrets\",\n          \"confidence\": \"HIGH\"\n        }\n      }\n    },\n    {\n      \"check_id\": \"python.django.security.injection.sql.sql-injection-using-raw.sql-injection-using-raw\",\n      \"path\": \"src/payments/repository.py\",\n      \"start\": { \"line\": 88, \"col\": 12 },\n      \"end\": { \"line\": 88, \"col\": 64 },\n      \"extra\": {\n        \"message\": \"Detected raw SQL query built from user input; use parameterized queries.\",\n        \"severity\": \"WARNING\",\n        \"metadata\": {\n          \"cwe\": [\"CWE-89: SQL Injection\"],\n          \"owasp\": [\"A03:2021 - Injection\"],\n          \"category\": \"security\",\n          \"confidence\": \"MEDIUM\"\n        }\n      }\n    }\n  ],\n  \"errors\": [],\n  \"paths\": { \"scanned\": [\"src/payments/handler.py\", \"src/payments/config.py\", \"src/payments/repository.py\"] }\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Semgrep JSON output: code weaknesses and exposed secrets, linked to the repository."
+					}
+				},
+				{
+					"name": "5. Cloud Custodian export",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{ingestUrl}}/ingest/custodian",
+							"host": [
+								"{{ingestUrl}}"
+							],
+							"path": [
+								"ingest",
+								"custodian"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"provider\": \"aws\",\n  \"account_id\": \"123456789012\",\n  \"policies\": [\n    {\n      \"policy\": \"elb-internet-facing\",\n      \"resource\": \"aws.elbv2\",\n      \"resources\": [\n        { \"LoadBalancerName\": \"public-alb\", \"Scheme\": \"internet-facing\", \"Targets\": [\"i-0web1\"] }\n      ]\n    },\n    {\n      \"policy\": \"ec2-with-instance-profile\",\n      \"resource\": \"aws.ec2\",\n      \"resources\": [\n        {\n          \"InstanceId\": \"i-0web1\",\n          \"PublicIpAddress\": \"203.0.113.10\",\n          \"IamInstanceProfile\": { \"Arn\": \"arn:aws:iam::123456789012:instance-profile/web-admin\" },\n          \"Tags\": [{ \"Key\": \"Name\", \"Value\": \"web-frontend\" }]\n        }\n      ]\n    },\n    {\n      \"policy\": \"iam-admin-roles\",\n      \"resource\": \"aws.iam-role\",\n      \"resources\": [\n        {\n          \"RoleName\": \"web-admin\",\n          \"Arn\": \"arn:aws:iam::123456789012:role/web-admin\",\n          \"AdminAccess\": true,\n          \"CanAccess\": [{ \"type\": \"bucket\", \"name\": \"customer-exports\" }]\n        }\n      ]\n    },\n    {\n      \"policy\": \"s3-sensitive-data\",\n      \"resource\": \"aws.s3\",\n      \"resources\": [\n        { \"Name\": \"customer-exports\", \"Public\": false, \"Sensitive\": true }\n      ]\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Cloud inventory/identity export: ALB, EC2, IAM role, S3 — adds the cloud attack surface."
+					}
+				},
+				{
+					"name": "6. Falco alerts (runtime)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{ingestUrl}}/ingest/falco",
+							"host": [
+								"{{ingestUrl}}"
+							],
+							"path": [
+								"ingest",
+								"falco"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "[\n  {\n    \"rule\": \"Terminal shell in container\",\n    \"priority\": \"Critical\",\n    \"time\": \"2026-06-08T12:05:00Z\",\n    \"output\": \"A shell was spawned in a container (user=root container=payments image=payments-api:1.4.2 proc=bash)\",\n    \"output_fields\": {\n      \"container.id\": \"a1b2c3d4e5f6\",\n      \"container.name\": \"payments\",\n      \"container.image.repository\": \"payments-api\",\n      \"container.image.tag\": \"1.4.2\",\n      \"k8s.pod.name\": \"payments-7d9c8f\",\n      \"k8s.ns.name\": \"prod\",\n      \"proc.cmdline\": \"bash -i\"\n    },\n    \"source\": \"syscall\",\n    \"tags\": [\"container\", \"shell\", \"mitre_execution\"]\n  },\n  {\n    \"rule\": \"Unexpected outbound connection\",\n    \"priority\": \"Warning\",\n    \"time\": \"2026-06-08T12:05:02Z\",\n    \"output\": \"Outbound connection to suspicious endpoint (container=payments dest=198.51.100.7:443)\",\n    \"output_fields\": {\n      \"container.name\": \"payments\",\n      \"fd.name\": \"198.51.100.7:443\"\n    },\n    \"source\": \"syscall\",\n    \"tags\": [\"network\", \"mitre_exfiltration\"]\n  }\n]",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Runtime alerts. Marks the affected container, flipping every path through it to runtime-confirmed (ranked first)."
+					}
+				},
+				{
+					"name": "Custom event (template)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{ingestUrl}}/ingest/events",
+							"host": [
+								"{{ingestUrl}}"
+							],
+							"path": [
+								"ingest",
+								"events"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"source\": \"my-scanner\",\n  \"kind\": \"relationship\",\n  \"observed_at\": \"2026-01-01T00:00:00Z\",\n  \"nodes\": [\n    {\n      \"id\": \"LoadBalancer:example-lb\",\n      \"label\": \"LoadBalancer\",\n      \"name\": \"example-lb\",\n      \"properties\": {\n        \"internet_exposed\": true\n      }\n    },\n    {\n      \"id\": \"Bucket:example-data\",\n      \"label\": \"Bucket\",\n      \"name\": \"example-data (PII)\",\n      \"properties\": {\n        \"crown_jewel\": true\n      }\n    }\n  ],\n  \"edges\": [\n    {\n      \"type\": \"EXPOSES\",\n      \"from\": \"LoadBalancer:example-lb\",\n      \"to\": \"Bucket:example-data\",\n      \"exploit_probability\": 0.6\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Minimal template for hand-crafted events: any nodes/edges with the ontology labels. Edges whose endpoints are not in the graph yet are retried with backoff until the nodes arrive."
+					}
+				},
+				{
+					"name": "7. Kubernetes dump (discovery)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{ingestUrl}}/ingest/k8s",
+							"host": [
+								"{{ingestUrl}}"
+							],
+							"path": [
+								"ingest",
+								"k8s"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"_comment\": \"A `kubectl get ... -o json` slice. PerspectiveGraph auto-discovers the exposure path internet → Ingress → Service → Pod → ServiceAccount → cluster-admin, plus Pod→Image (so a scanner CVE on the image lands on a reachable path).\",\n  \"apiVersion\": \"v1\",\n  \"kind\": \"List\",\n  \"items\": [\n    {\n      \"apiVersion\": \"networking.k8s.io/v1\",\n      \"kind\": \"Ingress\",\n      \"metadata\": { \"name\": \"payments-ingress\", \"namespace\": \"prod\" },\n      \"spec\": {\n        \"rules\": [\n          {\n            \"host\": \"pay.example.com\",\n            \"http\": { \"paths\": [ { \"path\": \"/\", \"backend\": { \"service\": { \"name\": \"payments-svc\", \"port\": { \"number\": 8080 } } } } ] }\n          }\n        ]\n      }\n    },\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Service\",\n      \"metadata\": { \"name\": \"payments-svc\", \"namespace\": \"prod\" },\n      \"spec\": { \"type\": \"ClusterIP\", \"selector\": { \"app\": \"payments\" }, \"ports\": [ { \"port\": 8080 } ] }\n    },\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": { \"name\": \"payments-7d9f\", \"namespace\": \"prod\", \"labels\": { \"app\": \"payments\" } },\n      \"spec\": {\n        \"serviceAccountName\": \"payments-sa\",\n        \"nodeName\": \"node-1\",\n        \"containers\": [ { \"name\": \"payments\", \"image\": \"registry.example.com/payments-api:1.4.2\" } ]\n      }\n    },\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"ServiceAccount\",\n      \"metadata\": { \"name\": \"payments-sa\", \"namespace\": \"prod\" }\n    },\n    {\n      \"apiVersion\": \"rbac.authorization.k8s.io/v1\",\n      \"kind\": \"ClusterRole\",\n      \"metadata\": { \"name\": \"cluster-admin\" },\n      \"rules\": [ { \"apiGroups\": [\"*\"], \"resources\": [\"*\"], \"verbs\": [\"*\"] } ]\n    },\n    {\n      \"apiVersion\": \"rbac.authorization.k8s.io/v1\",\n      \"kind\": \"ClusterRoleBinding\",\n      \"metadata\": { \"name\": \"payments-sa-admin\" },\n      \"subjects\": [ { \"kind\": \"ServiceAccount\", \"name\": \"payments-sa\", \"namespace\": \"prod\" } ],\n      \"roleRef\": { \"kind\": \"ClusterRole\", \"name\": \"cluster-admin\" }\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Raw `kubectl get … -o json`. Auto-discovers exposure topology: Ingress→Service→Pod→ServiceAccount→Role (internet → cluster-admin), with no hand-stitched ids."
+					}
+				},
+				{
+					"name": "8. Cloud network (discovery)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{ingestUrl}}/ingest/cloudnet",
+							"host": [
+								"{{ingestUrl}}"
+							],
+							"path": [
+								"ingest",
+								"cloudnet"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"_comment\": \"Real AWS describe-* shapes. PerspectiveGraph discovers reachability: i-web is internet-exposed (0.0.0.0/0), sg-db admits ingress from sg-web, so i-web --CONNECTS_TO--> i-db; i-db is a crown jewel by tag. Result: internet → i-web → i-db, with no hand-stitched edges.\",\n  \"provider\": \"aws\",\n  \"security_groups\": [\n    {\n      \"GroupId\": \"sg-web\",\n      \"GroupName\": \"web-sg\",\n      \"IpPermissions\": [\n        { \"IpProtocol\": \"tcp\", \"FromPort\": 443, \"ToPort\": 443, \"IpRanges\": [{ \"CidrIp\": \"0.0.0.0/0\" }] }\n      ]\n    },\n    {\n      \"GroupId\": \"sg-db\",\n      \"GroupName\": \"db-sg\",\n      \"IpPermissions\": [\n        { \"IpProtocol\": \"tcp\", \"FromPort\": 5432, \"ToPort\": 5432, \"UserIdGroupPairs\": [{ \"GroupId\": \"sg-web\" }] }\n      ]\n    }\n  ],\n  \"instances\": [\n    {\n      \"InstanceId\": \"i-web\",\n      \"SecurityGroups\": [{ \"GroupId\": \"sg-web\" }],\n      \"Tags\": [{ \"Key\": \"Name\", \"Value\": \"web-tier\" }]\n    },\n    {\n      \"InstanceId\": \"i-db\",\n      \"SecurityGroups\": [{ \"GroupId\": \"sg-db\" }],\n      \"Tags\": [{ \"Key\": \"Name\", \"Value\": \"customer-db\" }, { \"Key\": \"classification\", \"Value\": \"pii\" }]\n    }\n  ],\n  \"vpc_peerings\": [\n    { \"RequesterVpcInfo\": { \"VpcId\": \"vpc-app\" }, \"AccepterVpcInfo\": { \"VpcId\": \"vpc-data\" } }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "AWS describe-* shapes (security groups / instances / VPC peerings). Auto-discovers reachability: internet-facing SGs + SG-to-SG → CONNECTS_TO (internet → web → PII db)."
+					}
+				},
+				{
+					"name": "9. IAM authorization (privesc discovery)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{ingestUrl}}/ingest/iam",
+							"host": [
+								"{{ingestUrl}}"
+							],
+							"path": [
+								"ingest",
+								"iam"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"_comment\": \"Real `aws iam get-account-authorization-details` shape. PerspectiveGraph flattens each principal's effective permissions and matches privesc primitives: public-deployer is publicly assumable (trust Principal:*) AND has iam:PassRole+lambda:CreateFunction, so internet \\u2192 public-deployer --CAN_ESCALATE_TO--> account-admin (crown jewel). ci-bot can iam:AttachUserPolicy (escalates) and is trusted to assume admin-role. app-readonly is benign and must NOT be flagged \\u2014 a precision check.\",\n  \"UserDetailList\": [\n    {\n      \"UserName\": \"ci-bot\",\n      \"Arn\": \"arn:aws:iam::123456789012:user/ci-bot\",\n      \"GroupList\": [],\n      \"AttachedManagedPolicies\": [],\n      \"UserPolicyList\": [\n        {\n          \"PolicyName\": \"self-service\",\n          \"PolicyDocument\": {\n            \"Version\": \"2012-10-17\",\n            \"Statement\": [\n              {\n                \"Effect\": \"Allow\",\n                \"Action\": \"iam:AttachUserPolicy\",\n                \"Resource\": \"*\"\n              },\n              {\n                \"Effect\": \"Allow\",\n                \"Action\": [\n                  \"s3:GetObject\",\n                  \"s3:PutObject\"\n                ],\n                \"Resource\": \"*\"\n              }\n            ]\n          }\n        }\n      ]\n    }\n  ],\n  \"GroupDetailList\": [],\n  \"RoleDetailList\": [\n    {\n      \"RoleName\": \"public-deployer\",\n      \"Arn\": \"arn:aws:iam::123456789012:role/public-deployer\",\n      \"AssumeRolePolicyDocument\": {\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n          {\n            \"Effect\": \"Allow\",\n            \"Principal\": \"*\",\n            \"Action\": \"sts:AssumeRole\"\n          }\n        ]\n      },\n      \"AttachedManagedPolicies\": [\n        {\n          \"PolicyName\": \"DeployAccess\",\n          \"PolicyArn\": \"arn:aws:iam::123456789012:policy/DeployAccess\"\n        }\n      ],\n      \"RolePolicyList\": [],\n      \"Tags\": []\n    },\n    {\n      \"RoleName\": \"admin-role\",\n      \"Arn\": \"arn:aws:iam::123456789012:role/admin-role\",\n      \"AssumeRolePolicyDocument\": {\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n          {\n            \"Effect\": \"Allow\",\n            \"Principal\": {\n              \"AWS\": \"arn:aws:iam::123456789012:user/ci-bot\"\n            },\n            \"Action\": \"sts:AssumeRole\"\n          }\n        ]\n      },\n      \"AttachedManagedPolicies\": [\n        {\n          \"PolicyName\": \"AdministratorAccess\",\n          \"PolicyArn\": \"arn:aws:iam::aws:policy/AdministratorAccess\"\n        }\n      ],\n      \"RolePolicyList\": [],\n      \"Tags\": []\n    },\n    {\n      \"RoleName\": \"app-readonly\",\n      \"Arn\": \"arn:aws:iam::123456789012:role/app-readonly\",\n      \"AssumeRolePolicyDocument\": {\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n          {\n            \"Effect\": \"Allow\",\n            \"Principal\": {\n              \"Service\": \"ec2.amazonaws.com\"\n            },\n            \"Action\": \"sts:AssumeRole\"\n          }\n        ]\n      },\n      \"AttachedManagedPolicies\": [],\n      \"RolePolicyList\": [\n        {\n          \"PolicyName\": \"read-only\",\n          \"PolicyDocument\": {\n            \"Version\": \"2012-10-17\",\n            \"Statement\": [\n              {\n                \"Effect\": \"Allow\",\n                \"Action\": [\n                  \"s3:GetObject\",\n                  \"dynamodb:GetItem\"\n                ],\n                \"Resource\": \"*\"\n              }\n            ]\n          }\n        }\n      ],\n      \"Tags\": []\n    }\n  ],\n  \"Policies\": [\n    {\n      \"PolicyName\": \"AdministratorAccess\",\n      \"Arn\": \"arn:aws:iam::aws:policy/AdministratorAccess\",\n      \"DefaultVersionId\": \"v1\",\n      \"PolicyVersionList\": [\n        {\n          \"VersionId\": \"v1\",\n          \"IsDefaultVersion\": true,\n          \"Document\": {\n            \"Version\": \"2012-10-17\",\n            \"Statement\": [\n              {\n                \"Effect\": \"Allow\",\n                \"Action\": \"*\",\n                \"Resource\": \"*\"\n              }\n            ]\n          }\n        }\n      ]\n    },\n    {\n      \"PolicyName\": \"DeployAccess\",\n      \"Arn\": \"arn:aws:iam::123456789012:policy/DeployAccess\",\n      \"DefaultVersionId\": \"v3\",\n      \"PolicyVersionList\": [\n        {\n          \"VersionId\": \"v1\",\n          \"IsDefaultVersion\": false,\n          \"Document\": {\n            \"Version\": \"2012-10-17\",\n            \"Statement\": [\n              {\n                \"Effect\": \"Allow\",\n                \"Action\": \"s3:GetObject\",\n                \"Resource\": \"*\"\n              }\n            ]\n          }\n        },\n        {\n          \"VersionId\": \"v3\",\n          \"IsDefaultVersion\": true,\n          \"Document\": {\n            \"Version\": \"2012-10-17\",\n            \"Statement\": [\n              {\n                \"Effect\": \"Allow\",\n                \"Action\": [\n                  \"iam:PassRole\",\n                  \"lambda:CreateFunction\",\n                  \"lambda:UpdateFunctionCode\"\n                ],\n                \"Resource\": \"*\"\n              },\n              {\n                \"Effect\": \"Allow\",\n                \"Action\": \"s3:GetObject\",\n                \"Resource\": \"*\"\n              }\n            ]\n          }\n        }\n      ]\n    }\n  ]\n}"
+						},
+						"description": "Posts the account's IAM reality. Emits CAN_ESCALATE_TO edges to a synthetic account-admin crown jewel; roles trusting Principal:* are marked internet_exposed. Read-only: needs only iam:GetAccountAuthorizationDetails."
+					},
+					"response": []
+				},
+				{
+					"name": "10. Supply-chain provenance (cosign/SLSA/SBOM)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"_comment\": \"Supply-chain provenance for the payments-api image, as a CI step would assemble it from cosign + SLSA attestation + an SBOM (syft/trivy). The image is INTENTIONALLY unsigned (signed=false) with a low SLSA level: because it sits on the internet -> crown-jewel path, this trips the built-in 'no-internet-to-unsigned-image' invariant (an unsigned build is a tampering vector into a reachable workload). The SBOM lists the bill of materials as Library/Package nodes the image DEPENDS_ON.\",\n  \"image\": \"payments-api:1.4.2\",\n  \"signed\": false,\n  \"slsa_level\": 1,\n  \"provenance_builder\": \"github-actions\",\n  \"source_repo\": \"payments-api\",\n  \"slug\": \"acme/payments-api\",\n  \"sbom\": [\n    { \"name\": \"log4j-core\", \"version\": \"2.14.1\", \"type\": \"library\", \"purl\": \"pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1\" },\n    { \"name\": \"spring-core\", \"version\": \"5.3.18\", \"type\": \"library\", \"purl\": \"pkg:maven/org.springframework/spring-core@5.3.18\" },\n    { \"name\": \"jackson-databind\", \"version\": \"2.13.0\", \"type\": \"library\", \"purl\": \"pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.13.0\" },\n    { \"name\": \"openssl\", \"version\": \"1.1.1k\", \"type\": \"application\", \"purl\": \"pkg:deb/debian/openssl@1.1.1k\" }\n  ]\n}\n",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{ingestUrl}}/ingest/supplychain",
+							"host": [
+								"{{ingestUrl}}"
+							],
+							"path": [
+								"ingest",
+								"supplychain"
+							]
+						},
+						"description": "Supply-chain trust + bill of materials for an image: signed (cosign), slsa_level (SLSA attestation), and an SBOM (plain component list OR a CycloneDX document from syft/trivy). An internet-reachable unsigned image trips the no-internet-to-unsigned-image policy invariant. Real use: cosign verify / cosign verify-attestation --type slsaprovenance / syft <image> -o cyclonedx-json."
+					}
+				},
+				{
+					"name": "11. SSO / IdP federation (Okta → cloud)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"_comment\": \"Okta directory export (as an Okta/Entra admin-API sync would produce). The IdP is internet-facing (SSO portal). The federated_roles are AWS role ARNs that converge with the roles the IAM collector discovered (iam-sample.json) — so federating into them inherits their privesc. alice has NO MFA and federates into admin-role (AdministratorAccess): the modern kill chain internet -> Okta -> alice -> admin-role -> account-admin lights up, highly traversable because there's no MFA to phish past. bob has MFA and only a privesc-capable role, so his path is discounted.\",\n  \"provider\": \"okta\",\n  \"internet_login\": true,\n  \"users\": [\n    {\n      \"email\": \"alice@acme.com\",\n      \"mfa\": false,\n      \"admin\": true,\n      \"groups\": [\"cloud-admins\"],\n      \"federated_roles\": [\"arn:aws:iam::123456789012:role/admin-role\"]\n    },\n    {\n      \"email\": \"bob@acme.com\",\n      \"mfa\": true,\n      \"groups\": [\"developers\"],\n      \"federated_roles\": [\"arn:aws:iam::123456789012:role/public-deployer\"]\n    }\n  ]\n}\n",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{ingestUrl}}/ingest/sso",
+							"host": [
+								"{{ingestUrl}}"
+							],
+							"path": [
+								"ingest",
+								"sso"
+							]
+						},
+						"description": "Identity-federation from an external IdP (Okta/Entra/…): IdentityProvider(internet) --AUTHENTICATES--> User --ASSUMES--> IAM_Role. Federated role ARNs converge with the IAM collector, so a no-MFA user federating into an admin/escalation role lights up the modern path internet → SSO → user → cloud admin. Assemble from the Okta/Entra admin API."
+					}
+				},
+				{
+					"name": "12. Data classification (Macie/DLP → crown jewel)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"_comment\": \"Macie/DLP-style data-classification finding. Marks the named asset a crown jewel with an authoritative classified:<source>:<kind> basis (stronger than the name heuristic). Asset id matches the cloud feed (Bucket:customer-exports) so it merges onto the existing node.\",\n  \"source\": \"macie\",\n  \"records\": [\n    {\n      \"asset\": \"customer-exports\",\n      \"label\": \"Bucket\",\n      \"kind\": \"pii\"\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{ingestUrl}}/ingest/dataclass",
+							"host": [
+								"{{ingestUrl}}"
+							],
+							"path": [
+								"ingest",
+								"dataclass"
+							]
+						},
+						"description": "A real classifier finding marks the asset a crown jewel (basis classified:<source>:<kind>). label defaults to Bucket; use Database for an RDS/SQL store."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "GraphQL",
+			"item": [
+				{
+					"name": "Dashboard (everything)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{apiUrl}}/graphql",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "query Dashboard {\n  posture { criticalPaths runtimeConfirmed policyViolations nodes edges }\n  attackPaths {\n    id\n    score\n    runtimeConfirmed\n    nodes { id label name internetExposed crownJewel crownJewelBasis classification secretsScrubbed runtimeAlert severity cvss }\n    steps { edgeType from to probability attack { id name tactic } }\n    remediations { title kind filename rationale content }\n  }\n  invariantViolations { invariantId description severity nodes { id label name } }\n  graph {\n    nodes { id label name internetExposed crownJewel runtimeAlert }\n    edges { type from to probability attack { id tactic } }\n  }\n}",
+								"variables": ""
+							}
+						},
+						"description": "Everything the dashboard polls: posture, ranked attack paths with kill chain + generated remediations, policy violations, and the full graph. Paths are computed by an in-process Dijkstra by default; set ANALYZER_DB_PATHS=true to compute them in-database (AGE Cypher, safe-railed, bounded by ANALYZER_MAX_HOPS)."
+					}
+				},
+				{
+					"name": "Status (cheap fingerprint for polling)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{apiUrl}}/graphql",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "{ status { version passes paths analyzedAt prunedNodes prunedEdges lastPrunedAt } }",
+								"variables": ""
+							}
+						},
+						"description": "Cheap analysis fingerprint. Clients poll this every few seconds and only refetch the full dashboard when version/passes change, instead of re-pulling the whole graph."
+					},
+					"response": []
+				},
+				{
+					"name": "Temporal history (trend / MTTR / path age)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{apiUrl}}/graphql",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "{ history(points: 200) { openPaths resolvedPaths mttrSeconds oldestOpenSince persistent trend { at criticalPaths riskPct } } attackPaths { id openForSeconds firstSeen reopens } }",
+								"variables": ""
+							}
+						},
+						"description": "The temporal layer: exposure trend over time, MTTR (mean time-to-remediate of resolved paths), how long each path has been open (openForSeconds), and regression flags (reopens). Set HISTORY_PATH to persist across restarts."
+					}
+				},
+				{
+					"name": "Score provenance (confidence / weight basis)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{apiUrl}}/graphql",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "{ attackPaths { id score scoreUpperBound correlatedHops confidence confidenceLabel steps { edgeType probability weightBasis weightConfidence } } }",
+								"variables": ""
+							}
+						},
+						"description": "Honest probabilities. Every path reports a confidence (high|medium|low) and every hop a weightBasis — kev|epss|runtime (observed evidence) vs cvss|severity|heuristic (estimate). It also exposes the independence assumption behind the score: score is the product of the hops (independent), scoreUpperBound is the weakest hop (the score if they share a common cause), and correlatedHops flags when ≥2 hops rest on the same basis — so the true exploitability lies in [score, scoreUpperBound] instead of a falsely-precise point."
+					}
+				},
+				{
+					"name": "Attack paths scoped to one application",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{apiUrl}}/graphql",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "{ applications attackPaths(app: \"acme/payments-api\") { id score nodes { name } } graph(app: \"acme/payments-api\") { nodes { name label } } }",
+								"variables": ""
+							}
+						},
+						"description": "The graph is environment-wide; `app` scopes paths and the graph view to one application (repo slug or cloud `app` tag). `applications` lists the available identifiers. Paths are computed by an in-process Dijkstra by default; set ANALYZER_DB_PATHS=true to compute them in-database (AGE Cypher, safe-railed, bounded by ANALYZER_MAX_HOPS)."
+					}
+				},
+				{
+					"name": "Remediation plan (choke-point optimizer)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{apiUrl}}/graphql",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "{ remediationPlan { title kind pathCount coveragePct verification { verified pathsEliminated riskReductionPct removedEdges } } }",
+								"variables": ""
+							}
+						},
+						"description": "The fewest fixes that eliminate the most critical-path risk, ranked by a greedy choke-point set-cover. Each fix carries the ready-to-apply artifact (content) and the paths it cuts. Add (app: \"...\") to scope to one application."
+					}
+				},
+				{
+					"name": "Detection-as-code (Falco/Sigma)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{apiUrl}}/graphql",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "{ attackPaths { id detections { kind title filename content rationale } } }",
+								"variables": ""
+							}
+						},
+						"description": "Per-path Falco + Sigma rules that detect exploitation of the path's exposed workload (scoped by container/namespace, referencing the CVE + crown jewel)."
+					}
+				},
+				{
+					"name": "IAM privilege-escalation paths",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{apiUrl}}/graphql",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "{ attackPaths { id score steps { edgeType from to probability attack { id name tactic } } nodes { name label internetExposed crownJewel } } }",
+								"variables": ""
+							}
+						},
+						"description": "After POST /ingest/iam, paths whose steps include a CAN_ESCALATE_TO edge are IAM privilege-escalation chains, e.g. internet → public-deployer (trust *) → CAN_ESCALATE_TO → account-admin (effective). Filter client-side on steps[].edgeType == \"CAN_ESCALATE_TO\"."
+					},
+					"response": []
+				},
+				{
+					"name": "Monte Carlo risk quantification",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{apiUrl}}/graphql",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "{ riskSimulation(iterations: 5000) { iterations anyCompromiseProbability anyCiLow anyCiHigh sensitivityLow sensitivityHigh expectedCompromised crownJewels { name label compromiseProbability ciLow ciHigh } } }",
+								"variables": ""
+							}
+						},
+						"description": "Per-trial edge realization -> P(crown jewel compromised) with a 95% Wilson CI, plus P(at least one compromised) and the expected count. Captures path multiplicity that the per-path product cannot. Reproducible per seed."
+					},
+					"response": []
+				},
+				{
+					"name": "K-shortest paths to a crown jewel",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{apiUrl}}/graphql",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "{ kShortestPaths(target: \"customers-db (PII)\", k: 5) { id score nodes { name label } steps { edgeType from to probability attack { id name tactic } } } }",
+								"variables": ""
+							}
+						},
+						"description": "Yen's algorithm: the top-k highest-probability routes to a crown jewel (target accepts a node id or name), best first - so cutting the single best edge doesn't hide the alternates."
+					},
+					"response": []
+				},
+				{
+					"name": "What-if: cut an edge -> residual risk",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{apiUrl}}/graphql",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "{ whatIf(cuts: [{from: \"public-deployer\", to: \"account-admin (effective)\", type: \"CAN_ESCALATE_TO\"}], iterations: 5000) { removedEdges riskReduction beforeRisk { anyCompromiseProbability } afterRisk { anyCompromiseProbability crownJewels { name compromiseProbability } } after { score nodes { name } } } }",
+								"variables": ""
+							}
+						},
+						"description": "Simulate cutting a set of edges (proposed remediation). from/to accept id or name; type is optional. Returns surviving paths and the quantified risk reduction, with common random numbers so the before/after delta is the cut's effect, not noise."
+					},
+					"response": []
+				},
+				{
+					"name": "KEV / EPSS exposure (threat intel)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{apiUrl}}/graphql",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "{ posture { kevOnPaths } graph { nodes { name label kev epss } } }",
+								"variables": ""
+							}
+						},
+						"description": "CVE nodes enriched with CISA KEV (kev) and FIRST EPSS (epss), plus posture.kevOnPaths (distinct KEV CVEs on a critical path). Requires the backend running with THREATINTEL=on."
+					}
+				},
+				{
+					"name": "Attack paths + remediations",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{apiUrl}}/graphql",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "{ attackPaths { id score runtimeConfirmed nodes { name label } steps { edgeType from to probability attack { id name tactic } } remediations { title kind filename rationale content } } }",
+								"variables": ""
+							}
+						},
+						"description": "Ranked paths (runtime-confirmed first). `remediations.content` holds the generated artifact (K8s NetworkPolicy / Terraform). Paths are computed by an in-process Dijkstra by default; set ANALYZER_DB_PATHS=true to compute them in-database (AGE Cypher, safe-railed, bounded by ANALYZER_MAX_HOPS)."
+					}
+				},
+				{
+					"name": "Posture summary",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{apiUrl}}/graphql",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "{ posture { nodes edges criticalPaths runtimeConfirmed policyViolations } }",
+								"variables": ""
+							}
+						},
+						"description": "High-level counters for the overview cards."
+					}
+				},
+				{
+					"name": "Policy violations",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{apiUrl}}/graphql",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "{ invariantViolations { invariantId description severity nodes { id label name } } }",
+								"variables": ""
+							}
+						},
+						"description": "Architectural invariants currently broken (e.g. no-internet-to-crown-jewel)."
+					}
+				},
+				{
+					"name": "Environment graph",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{apiUrl}}/graphql",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "{ graph { nodes { id label name internetExposed crownJewel runtimeAlert severity cvss } edges { type from to probability attack { id tactic } } } }",
+								"variables": ""
+							}
+						},
+						"description": "The full node/edge view the graph canvas renders."
+					}
+				},
+				{
+					"name": "Full-text search",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{apiUrl}}/graphql",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "{ search(query: \"log4j\", size: 10) { id label name score } }",
+								"variables": ""
+							}
+						},
+						"description": "Requires the optional OpenSearch index (make up-search + OPENSEARCH_URL). Returns [] when the index is disabled."
+					}
+				},
+				{
+					"name": "Schema introspection",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{apiUrl}}/graphql",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "{ __schema { queryType { fields { name description } } } }",
+								"variables": ""
+							}
+						},
+						"description": "Lists every root query with its description — same metadata the GraphiQL Docs panel shows."
+					}
+				}
+			]
+		},
+		{
+			"name": "Exports",
+			"item": [
+				{
+					"name": "Enrichment feed (NDJSON)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{apiUrl}}/export/ndjson",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"export",
+								"ndjson"
+							]
+						},
+						"description": "One NDJSON record per asset on a critical path (on_critical_path, max_path_score, kev, runtime_confirmed, …) — the enrichment feed a SIEM (Splunk/Elastic/Sentinel) pulls to prioritize alerts. Tenant-scoped + auth-gated like GraphQL."
+					}
+				},
+				{
+					"name": "OSCAL assessment-results (compliance)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{apiUrl}}/export/oscal",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"export",
+								"oscal"
+							]
+						},
+						"description": "Renders the tenant's attack-path posture as a NIST OSCAL 1.1.2 assessment-results document: each path -> observation + risk, each undermined NIST 800-53 control -> not-satisfied finding. The artifact GRC tooling consumes."
+					},
+					"response": []
+				},
+				{
+					"name": "Export signing public key",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{apiUrl}}/export/pubkey",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"export",
+								"pubkey"
+							]
+						},
+						"description": "Returns the Ed25519 public key (when EXPORT_SIGNING_KEY is set) consumers use to verify the detached X-PerspectiveGraph-Signature header on the OSCAL/SIEM exports. Open (the key is public); 404 when export signing is disabled."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Triage / suppression",
+			"description": "Accept-risk / false-positive / mitigating-control / duplicate decisions that take a specific attack path off the active board, with an accountable owner and optional expiry. Keyed by attack-path id (from the GraphQL attackPaths query). Run order create → list → delete leaves the store clean.",
+			"item": [
+				{
+					"name": "1. Suppress a path (triage decision)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"pathId\": \"{{suppressPathId}}\",\n  \"reason\": \"accept-risk\",\n  \"owner\": \"secops@acme\",\n  \"note\": \"Compensating WAF rule in place; revisit next quarter.\",\n  \"ttlDays\": 30\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{apiUrl}}/suppressions",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"suppressions"
+							]
+						},
+						"description": "Take one attack path off the active board with an accountable triage decision. reason ∈ accept-risk | false-positive | mitigating-control | duplicate; owner is required; ttlDays (or expiresAt, RFC3339) is an optional auto-expiry after which the path returns to the board. Admin role when auth is enabled."
+					}
+				},
+				{
+					"name": "2. List suppressions (triage board)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{apiUrl}}/suppressions",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"suppressions"
+							]
+						},
+						"description": "The tenant’s triage board, including lapsed (expired) decisions so they stay visible. Viewer role when auth is enabled."
+					}
+				},
+				{
+					"name": "3. Un-suppress a path",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{apiUrl}}/suppressions/{{suppressPathId}}",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"suppressions",
+								"{{suppressPathId}}"
+							]
+						},
+						"description": "Return a path to the active board (deletes its suppression). Idempotent. Admin role when auth is enabled."
+					}
+				}
+			]
+		},
+		{
+			"name": "Remediation ticketing",
+			"description": "Closed-loop action: owned, tracked tickets per attack path. Run order create → list → close.",
+			"item": [
+				{
+					"name": "1. Open ticket (owned remediation)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"pathId\": \"{{suppressPathId}}\",\n  \"owner\": \"secops@acme\",\n  \"title\": \"Remediate exposed payments path\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{apiUrl}}/tickets",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"tickets"
+							]
+						},
+						"description": "Open an owned, tracked remediation ticket for a path (idempotent per open path). pathId = attackPaths { id }; owner required. Admin role when auth is enabled. With TICKET_WEBHOOK_URL set, the ticket is also dispatched to an external tracker. Tip: copy the returned id into the ticketId collection variable to close it below."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"// Capture the created ticket id so '3. Close ticket' can use it.",
+									"const id = pm.response.json().id;",
+									"if (id) pm.collectionVariables.set('ticketId', id);"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "2. List tickets (work board)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{apiUrl}}/tickets",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"tickets"
+							]
+						},
+						"description": "The tenant’s remediation work board. Viewer role when auth is enabled."
+					}
+				},
+				{
+					"name": "3. Close ticket (work done)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{apiUrl}}/tickets/{{ticketId}}/close",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"tickets",
+								"{{ticketId}}",
+								"close"
+							]
+						},
+						"description": "Mark the remediation done. Set the ticketId variable from the create response first. Admin role when auth is enabled."
+					}
+				}
+			]
+		},
+		{
+			"name": "Red-team / BAS validation",
+			"description": "Ground the engine against reality: record whether paths are real (confirmed/refuted/partial) and what the engine missed, and read the precision/recall it implies. A BAS platform posts here; metrics also via GraphQL { validation { precision recall } }.",
+			"item": [
+				{
+					"name": "1. Record a verdict (confirmed)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"pathId\": \"{{suppressPathId}}\",\n  \"outcome\": \"confirmed\",\n  \"source\": \"caldera\",\n  \"evidence\": \"atomic test T1190 reached the crown jewel\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{apiUrl}}/validations",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"validations"
+							]
+						},
+						"description": "Record a red-team/BAS verdict on a path: outcome ∈ confirmed | refuted | partial (references a path id from attackPaths) | missed (a real path the engine did NOT surface — needs route, not pathId). source required. Admin role when auth is on. Feeds the precision/recall metric."
+					}
+				},
+				{
+					"name": "2. Record a MISSED path (false negative)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"outcome\": \"missed\",\n  \"source\": \"red-team\",\n  \"route\": \"Okta → SaaS → data export (engine missed it)\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{apiUrl}}/validations",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"validations"
+							]
+						},
+						"description": "A real path the tester found that the engine did not surface — a false negative that lowers recall. No pathId; describe it in route."
+					}
+				},
+				{
+					"name": "3. List verdicts + precision/recall",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{apiUrl}}/validations",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"validations"
+							]
+						},
+						"description": "All verdicts for the tenant plus the rolled-up metrics: precision = confirmed/(confirmed+refuted), recall = confirmed/(confirmed+missed) — over the tested subset, not a global claim."
+					}
+				}
+			]
+		}
+	]
+}

@@ -1,0 +1,63 @@
+{
+  "_comment": "Real AWS/Custodian export shapes: ALB Scheme + app tag, EC2 PublicIpAddress/IamInstanceProfile/Tags, IAM AttachedManagedPolicies, S3 with tag-based data classification. LB→EC2 is inferred from the shared app tag; the admin role's reach over crown-jewel data stores is inferred from AdministratorAccess.",
+  "provider": "aws",
+  "account_id": "123456789012",
+  "policies": [
+    {
+      "policy": "elb-internet-facing",
+      "resource": "aws.elbv2",
+      "resources": [
+        {
+          "LoadBalancerName": "public-alb",
+          "Scheme": "internet-facing",
+          "DNSName": "public-alb-1234.eu-south-1.elb.amazonaws.com",
+          "Tags": [{ "Key": "app", "Value": "web" }]
+        }
+      ]
+    },
+    {
+      "policy": "ec2-with-instance-profile",
+      "resource": "aws.ec2",
+      "resources": [
+        {
+          "InstanceId": "i-0web1",
+          "PublicIpAddress": "203.0.113.10",
+          "IamInstanceProfile": { "Arn": "arn:aws:iam::123456789012:instance-profile/web-admin" },
+          "Tags": [
+            { "Key": "Name", "Value": "web-frontend" },
+            { "Key": "app", "Value": "web" }
+          ]
+        }
+      ]
+    },
+    {
+      "policy": "iam-admin-roles",
+      "resource": "aws.iam-role",
+      "resources": [
+        {
+          "RoleName": "web-admin",
+          "Arn": "arn:aws:iam::123456789012:role/web-admin",
+          "AttachedManagedPolicies": [
+            {
+              "PolicyName": "AdministratorAccess",
+              "PolicyArn": "arn:aws:iam::aws:policy/AdministratorAccess"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "policy": "s3-data-classification",
+      "resource": "aws.s3",
+      "resources": [
+        {
+          "Name": "customer-exports",
+          "Tags": [
+            { "Key": "classification", "Value": "pii" },
+            { "Key": "app", "Value": "web" }
+          ]
+        }
+      ]
+    }
+  ]
+}

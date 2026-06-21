@@ -1,0 +1,137 @@
+{{- if and .Values.persistence.enabled (gt (int .Values.backend.replicas) 1) -}}
+{{- fail "persistence.enabled stores governance state (suppressions/tickets/validations/history/audit) on a single-writer ReadWriteOnce volume; set backend.replicas to 1 while it is on — multiple replicas would split-brain the stores and cannot co-mount an RWO PVC." -}}
+{{- end -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "perspectivegraph.backendHost" . }}
+  labels:
+    {{- include "perspectivegraph.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  replicas: {{ .Values.backend.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: backend
+    spec:
+      {{- if or .Values.postgres.enabled .Values.nats.enabled }}
+      # Wait for the bundled infra to accept TCP before the backend starts, so it
+      # connects to Apache AGE on the first try instead of crash-looping on NATS or
+      # silently falling back to the in-memory graph when Postgres is slow to boot.
+      # (Only the bundled components are gated; external endpoints are assumed up.)
+      initContainers:
+        {{- if .Values.postgres.enabled }}
+        - name: wait-for-postgres
+          image: {{ .Values.backend.waitImage }}
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z {{ include "perspectivegraph.postgresHost" . }} {{ include "perspectivegraph.postgresPort" . }}; do
+                echo "waiting for postgres {{ include "perspectivegraph.postgresHost" . }}:{{ include "perspectivegraph.postgresPort" . }} …"; sleep 2;
+              done
+        {{- end }}
+        {{- if .Values.nats.enabled }}
+        - name: wait-for-nats
+          image: {{ .Values.backend.waitImage }}
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z {{ include "perspectivegraph.natsHost" . }} 4222; do
+                echo "waiting for nats {{ include "perspectivegraph.natsHost" . }}:4222 …"; sleep 2;
+              done
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: perspectivegraph
+          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          ports:
+            - name: api
+              containerPort: {{ .Values.service.apiPort }}
+            - name: ingest
+              containerPort: {{ .Values.service.ingestPort }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "perspectivegraph.fullname" . }}-config
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "perspectivegraph.fullname" . }}-secrets
+                  key: POSTGRES_PASSWORD
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "perspectivegraph.fullname" . }}-secrets
+                  key: GITHUB_TOKEN
+            - name: GITLAB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "perspectivegraph.fullname" . }}-secrets
+                  key: GITLAB_TOKEN
+            - name: API_TOKENS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "perspectivegraph.fullname" . }}-secrets
+                  key: API_TOKENS
+            - name: INGEST_HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "perspectivegraph.fullname" . }}-secrets
+                  key: INGEST_HMAC_SECRET
+            - name: INGEST_HMAC_SECRETS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "perspectivegraph.fullname" . }}-secrets
+                  key: INGEST_HMAC_SECRETS
+            - name: TICKET_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "perspectivegraph.fullname" . }}-secrets
+                  key: TICKET_WEBHOOK_URL
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: api
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          {{- if .Values.persistence.enabled }}
+          volumeMounts:
+            - name: data
+              mountPath: {{ .Values.persistence.mountPath }}
+          {{- end }}
+      {{- if .Values.persistence.enabled }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "perspectivegraph.fullname" . }}-data
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "perspectivegraph.backendHost" . }}
+  labels:
+    {{- include "perspectivegraph.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: backend
+  ports:
+    - name: api
+      port: {{ .Values.service.apiPort }}
+      targetPort: api
+    - name: ingest
+      port: {{ .Values.service.ingestPort }}
+      targetPort: ingest

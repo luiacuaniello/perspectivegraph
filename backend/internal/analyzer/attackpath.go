@@ -1,0 +1,468 @@
+// Package analyzer turns the graph into ranked attack paths.
+//
+// An attack path P is a sequence of nodes v₁ → … → vₖ from an internet-exposed
+// seed to a crown-jewel target. Each edge carries an exploit probability
+// p ∈ (0,1]; the path score is the product S(P) = ∏ p. We convert each edge to
+// a cost w = -ln(p) so that maximizing S(P) becomes a shortest-path problem
+// (minimizing Σ w), which we solve with Dijkstra from every seed.
+//
+// The product assumes the hops are independent. When they share a common cause
+// (the same weakness gating several steps) they are positively correlated, and
+// the product is then a *lower* bound for "all hops succeed"; the comonotonic
+// upper bound is the weakest single hop, min p. We expose both (Score and
+// ScoreUpperBound) plus a CorrelatedHops flag rather than pretending the point
+// estimate is exact — see AttackPath.
+package analyzer
+
+import (
+	"container/heap"
+	"context"
+	"fmt"
+	"log/slog"
+	"math"
+	"sort"
+	"time"
+
+	"github.com/luiacuaniello/perspectivegraph/internal/graph"
+	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
+)
+
+// Step is one hop along an attack path.
+type Step struct {
+	EdgeType    ontology.EdgeType `json:"edge_type"`
+	From        string            `json:"from"`
+	To          string            `json:"to"`
+	Probability float64           `json:"probability"`
+	// Identity-resolution provenance for *this hop*: set when the join was
+	// inferred by the normalizer (e.g. a container stitched to its image), so a
+	// reader can flag — and distrust — a heuristic correlation. Confidence < 1
+	// means "verify this link"; it also already discounts Probability above.
+	ResolutionMethod     string  `json:"resolution_method,omitempty"`
+	ResolutionConfidence float64 `json:"resolution_confidence,omitempty"`
+	// WeightBasis records where this hop's probability came from — kev | epss |
+	// runtime (evidence) vs cvss | severity | heuristic (estimate) — and
+	// WeightConfidence how much to trust it [0,1]. So the score can say which hops
+	// rest on observed exploitation and which are educated guesses.
+	WeightBasis      string  `json:"weight_basis,omitempty"`
+	WeightConfidence float64 `json:"weight_confidence,omitempty"`
+}
+
+// AttackPath is a scored route from an exposed seed to a crown jewel.
+type AttackPath struct {
+	ID    string          `json:"id"`
+	Score float64         `json:"score"` // S(P) = ∏ p, in (0,1]
+	Nodes []ontology.Node `json:"nodes"`
+	Steps []Step          `json:"steps"`
+	// RuntimeConfirmed is true when some node on the path carries a live Falco
+	// runtime alert — the path isn't just reachable, it's being exercised.
+	RuntimeConfirmed bool `json:"runtime_confirmed"`
+	// Confidence is how much to trust this path's Score given how its edge weights
+	// were derived: the mean of the hops' WeightConfidence, in [0,1]. ConfidenceLabel
+	// is the qualitative band (high|medium|low) — an honest answer to "why 58%?"
+	// that distinguishes an evidence-backed estimate from a pile of severity guesses.
+	Confidence      float64 `json:"confidence,omitempty"`
+	ConfidenceLabel string  `json:"confidence_label,omitempty"`
+	// ScoreUpperBound is the path score if its hops share a common cause instead of
+	// being independent: the weakest single hop's probability — the comonotonic
+	// (Fréchet) upper bound for "all hops succeed". The headline Score multiplies the
+	// hops as if independent, which is a *lower* bound once they are positively
+	// correlated, so the true exploitability lies in [Score, ScoreUpperBound]. A wide
+	// gap means the independence assumption behind Score is doing a lot of the work.
+	ScoreUpperBound float64 `json:"score_upper_bound,omitempty"`
+	// CorrelatedHops is true when two or more hops rest on the same weight basis
+	// (several heuristic topology defaults, two runtime-confirmed hops, …): a
+	// concrete reason the hops may not be independent, so the band above is grounded
+	// rather than theoretical. It does not change Score — it tells the reader the
+	// product may understate the real risk.
+	CorrelatedHops bool `json:"correlated_hops,omitempty"`
+}
+
+// Seed and target node of the path, for convenience.
+func (p AttackPath) Source() ontology.Node { return p.Nodes[0] }
+func (p AttackPath) Target() ontology.Node { return p.Nodes[len(p.Nodes)-1] }
+
+// FindCriticalPaths returns, for every (seed, crown-jewel) pair that is
+// reachable, the single highest-probability path, sorted by score descending.
+func FindCriticalPaths(snap graph.Snapshot) []AttackPath {
+	nodes := snap.NodeByID()
+	adj := buildAdjacency(snap.Edges, nodes)
+
+	var seeds, jewels []string
+	for _, n := range snap.Nodes {
+		if n.Bool(ontology.PropInternetExposed) {
+			seeds = append(seeds, n.ID)
+		}
+		if n.Bool(ontology.PropCrownJewel) {
+			jewels = append(jewels, n.ID)
+		}
+	}
+
+	var paths []AttackPath
+	for _, seed := range seeds {
+		dist, prev := dijkstra(seed, adj)
+		for _, jewel := range jewels {
+			if seed == jewel {
+				continue
+			}
+			d, ok := dist[jewel]
+			if !ok || math.IsInf(d, 1) {
+				continue // unreachable
+			}
+			paths = append(paths, reconstruct(seed, jewel, prev, adj, nodes))
+		}
+	}
+
+	// Runtime-confirmed paths first, then by score descending.
+	sort.SliceStable(paths, func(i, j int) bool {
+		if paths[i].RuntimeConfirmed != paths[j].RuntimeConfirmed {
+			return paths[i].RuntimeConfirmed
+		}
+		return paths[i].Score > paths[j].Score
+	})
+	return paths
+}
+
+// dbPathTimeout bounds a DB-side path query from the client side, on top of the
+// store's own statement_timeout, so a pathological variable-length enumeration
+// can never hang the analyzer — it deadlines and falls back to Dijkstra.
+const dbPathTimeout = 10 * time.Second
+
+// CriticalPathsVia returns ranked critical paths. By default it uses the
+// in-process Dijkstra over the snapshot — a polynomial, bounded algorithm that is
+// the right engine for the per-pass "all paths" computation. When useDB is set
+// and the store supports it (graph.PathStore — AGE, via a Cypher variable-length
+// match), it computes them in the database instead, but defensively: a tight
+// timeout means a runaway enumeration falls back to Dijkstra rather than hanging.
+func CriticalPathsVia(ctx context.Context, store graph.Store, snap graph.Snapshot, maxHops int, useDB bool) []AttackPath {
+	if useDB {
+		if pf, ok := graph.AsPathStore(store); ok {
+			qctx, cancel := context.WithTimeout(ctx, dbPathTimeout)
+			defer cancel()
+			if raws, err := pf.CriticalPaths(qctx, maxHops); err == nil {
+				return rankRawPaths(raws)
+			} else {
+				slog.Warn("db pathfinder failed/timed out, falling back to in-process Dijkstra", "err", err)
+			}
+		}
+	}
+	return FindCriticalPaths(snap)
+}
+
+// rankRawPaths scores raw DB paths, keeps the highest-probability one per
+// (source, target), and sorts them like FindCriticalPaths (runtime-confirmed
+// first, then score descending).
+func rankRawPaths(raws []graph.RawPath) []AttackPath {
+	best := map[string]AttackPath{}
+	for _, rp := range raws {
+		ap, ok := attackPathFromRaw(rp)
+		if !ok {
+			continue
+		}
+		key := ap.Source().ID + "\x00" + ap.Target().ID
+		if cur, exists := best[key]; !exists || ap.Score > cur.Score {
+			best[key] = ap
+		}
+	}
+	out := make([]AttackPath, 0, len(best))
+	for _, ap := range best {
+		out = append(out, ap)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].RuntimeConfirmed != out[j].RuntimeConfirmed {
+			return out[i].RuntimeConfirmed
+		}
+		if out[i].Score != out[j].Score {
+			return out[i].Score > out[j].Score
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
+func attackPathFromRaw(rp graph.RawPath) (AttackPath, bool) {
+	if len(rp.Nodes) < 2 || len(rp.Edges) != len(rp.Nodes)-1 {
+		return AttackPath{}, false
+	}
+	score := 1.0
+	minP := 1.0 // weakest hop → the comonotonic (shared-cause) upper bound on the path
+	runtime := rp.Nodes[0].Bool(ontology.PropRuntimeAlert)
+	steps := make([]Step, 0, len(rp.Edges))
+	for i, e := range rp.Edges {
+		p := e.ExploitProbability
+		if p <= 0 {
+			p = 0.01
+		}
+		if p > 1 {
+			p = 1
+		}
+		method, conf := resolutionOf(e.Properties)
+		basis, basisConf := weightBasisOf(e, rp.Nodes[i], rp.Nodes[i+1])
+		steps = append(steps, Step{EdgeType: e.Type, From: e.From, To: e.To, Probability: p, ResolutionMethod: method, ResolutionConfidence: conf, WeightBasis: basis, WeightConfidence: basisConf})
+		score *= p
+		if p < minP {
+			minP = p
+		}
+		if rp.Nodes[i+1].Bool(ontology.PropRuntimeAlert) {
+			runtime = true
+		}
+	}
+	src, dst := rp.Nodes[0], rp.Nodes[len(rp.Nodes)-1]
+	pConf, pLabel := pathConfidence(steps)
+	return AttackPath{
+		ID:               fmt.Sprintf("ap-%s-%s", shortID(src.ID), shortID(dst.ID)),
+		Score:            score,
+		Nodes:            rp.Nodes,
+		Steps:            steps,
+		RuntimeConfirmed: runtime,
+		Confidence:       pConf,
+		ConfidenceLabel:  pLabel,
+		ScoreUpperBound:  minP,
+		CorrelatedHops:   hopsCorrelated(steps),
+	}, true
+}
+
+// hopsCorrelated reports whether the path leans on a repeated weight basis — the
+// concrete, data-driven signal that its hops may share a common cause and so
+// violate the independence the product score assumes. Two hops resting on the
+// same basis (e.g. two heuristic topology defaults, or two runtime-confirmed
+// hops) are the realistic correlation; a single hop, or all-distinct bases,
+// leaves the product defensible. This is a deliberately conservative proxy: it
+// never inflates Score, it only flags when the [Score, ScoreUpperBound] band is
+// worth reading.
+func hopsCorrelated(steps []Step) bool {
+	if len(steps) < 2 {
+		return false
+	}
+	seen := make(map[string]int, len(steps))
+	for _, s := range steps {
+		if s.WeightBasis == "" {
+			continue
+		}
+		seen[s.WeightBasis]++
+		if seen[s.WeightBasis] >= 2 {
+			return true
+		}
+	}
+	return false
+}
+
+// ── Dijkstra ────────────────────────────────────────────────────────
+
+type outEdge struct {
+	to        string
+	typ       ontology.EdgeType
+	weight    float64 // -ln(p)
+	prob      float64
+	resMethod string
+	resConf   float64
+	basis     string  // provenance of `prob` (kev|epss|runtime|cvss|severity|heuristic)
+	basisConf float64 // how much to trust `prob`, [0,1]
+}
+
+// weightBasisOf classifies where an edge's exploit probability came from and how
+// much to trust it. Threat-intel stamps kev/epss directly; otherwise we infer:
+// a runtime-confirmed endpoint is observed evidence, a vuln edge with a CVSS
+// score is severity-derived but anchored, a bare severity label is a guess, and
+// everything else (topology/identity defaults) is an assumed heuristic.
+func weightBasisOf(e ontology.Edge, from, to ontology.Node) (string, float64) {
+	if b, ok := e.Properties[ontology.PropWeightBasis].(string); ok && b != "" {
+		return b, basisConfidence(b)
+	}
+	if from.Bool(ontology.PropRuntimeAlert) || to.Bool(ontology.PropRuntimeAlert) {
+		return "runtime", basisConfidence("runtime")
+	}
+	switch e.Type {
+	case ontology.EdgeAffects, ontology.EdgeExploits:
+		if to.Properties[ontology.PropCVSS] != nil || from.Properties[ontology.PropCVSS] != nil {
+			return "cvss", basisConfidence("cvss")
+		}
+		return "severity", basisConfidence("severity")
+	default:
+		return "heuristic", basisConfidence("heuristic")
+	}
+}
+
+// basisConfidence maps a weight's provenance to how much to trust it. Observed
+// exploitation (kev/runtime) tops the scale; data-driven prediction (epss) is
+// close; a CVSS-anchored guess is middling; a bare severity label or an assumed
+// topology default is low — the honest discount on invented probabilities.
+func basisConfidence(basis string) float64 {
+	switch basis {
+	case "kev":
+		return 0.95
+	case "runtime":
+		return 0.9
+	case "epss":
+		return 0.85
+	case "cvss":
+		return 0.6
+	case "severity":
+		return 0.4
+	case "heuristic":
+		return 0.35
+	default:
+		return 0.3
+	}
+}
+
+// pathConfidence summarizes how trustworthy a path's score is from its hops'
+// weight provenance: the mean hop confidence, plus a qualitative band so a CISO
+// gets "55%, low confidence" rather than false precision.
+func pathConfidence(steps []Step) (float64, string) {
+	if len(steps) == 0 {
+		return 0, ""
+	}
+	sum := 0.0
+	for _, st := range steps {
+		sum += st.WeightConfidence
+	}
+	c := sum / float64(len(steps))
+	switch {
+	case c >= 0.7:
+		return c, "high"
+	case c >= 0.45:
+		return c, "medium"
+	default:
+		return c, "low"
+	}
+}
+
+func buildAdjacency(edges []ontology.Edge, nodes map[string]ontology.Node) map[string][]outEdge {
+	adj := make(map[string][]outEdge)
+	for _, e := range edges {
+		p := e.ExploitProbability
+		if p <= 0 {
+			p = 0.01 // unknown edges remain traversable but costly
+		}
+		if p > 1 {
+			p = 1
+		}
+		method, conf := resolutionOf(e.Properties)
+		basis, basisConf := weightBasisOf(e, nodes[e.From], nodes[e.To])
+		adj[e.From] = append(adj[e.From], outEdge{
+			to:        e.To,
+			typ:       e.Type,
+			weight:    -math.Log(p),
+			prob:      p,
+			resMethod: method,
+			resConf:   conf,
+			basis:     basis,
+			basisConf: basisConf,
+		})
+	}
+	return adj
+}
+
+// resolutionOf extracts identity-resolution provenance from an edge's property
+// bag, tolerating the numeric types both graph stores hand back (memory: float64;
+// AGE agtype: float64/json.Number/int). Returns ("", 0) when the join wasn't
+// inferred — the common case for hard, tool-asserted edges.
+func resolutionOf(props map[string]any) (method string, confidence float64) {
+	if props == nil {
+		return "", 0
+	}
+	method, _ = props[ontology.PropResolutionMethod].(string)
+	switch v := props[ontology.PropResolutionConfidence].(type) {
+	case float64:
+		confidence = v
+	case float32:
+		confidence = float64(v)
+	case int:
+		confidence = float64(v)
+	case int64:
+		confidence = float64(v)
+	}
+	return method, confidence
+}
+
+func dijkstra(src string, adj map[string][]outEdge) (dist map[string]float64, prev map[string]Step) {
+	dist = map[string]float64{src: 0}
+	prev = map[string]Step{}
+	pq := &minHeap{{node: src, d: 0}}
+
+	for pq.Len() > 0 {
+		cur := heap.Pop(pq).(heapItem)
+		if cur.d > dist[cur.node] {
+			continue // stale entry
+		}
+		for _, e := range adj[cur.node] {
+			nd := cur.d + e.weight
+			if old, ok := dist[e.to]; !ok || nd < old {
+				dist[e.to] = nd
+				prev[e.to] = Step{EdgeType: e.typ, From: cur.node, To: e.to, Probability: e.prob, ResolutionMethod: e.resMethod, ResolutionConfidence: e.resConf, WeightBasis: e.basis, WeightConfidence: e.basisConf}
+				heap.Push(pq, heapItem{node: e.to, d: nd})
+			}
+		}
+	}
+	return dist, prev
+}
+
+func reconstruct(seed, jewel string, prev map[string]Step, adj map[string][]outEdge, nodes map[string]ontology.Node) AttackPath {
+	var steps []Step
+	for at := jewel; at != seed; {
+		st := prev[at]
+		steps = append(steps, st)
+		at = st.From
+	}
+	// steps are jewel→seed; reverse to seed→jewel.
+	for i, j := 0, len(steps)-1; i < j; i, j = i+1, j-1 {
+		steps[i], steps[j] = steps[j], steps[i]
+	}
+
+	pathNodes := []ontology.Node{nodes[seed]}
+	score := 1.0
+	minP := 1.0 // weakest hop → the comonotonic (shared-cause) upper bound
+	runtimeConfirmed := nodes[seed].Bool(ontology.PropRuntimeAlert)
+	for _, st := range steps {
+		n := nodes[st.To]
+		pathNodes = append(pathNodes, n)
+		score *= st.Probability
+		if st.Probability < minP {
+			minP = st.Probability
+		}
+		if n.Bool(ontology.PropRuntimeAlert) {
+			runtimeConfirmed = true
+		}
+	}
+
+	conf, label := pathConfidence(steps)
+	return AttackPath{
+		ID:               fmt.Sprintf("ap-%s-%s", shortID(seed), shortID(jewel)),
+		Score:            score,
+		Nodes:            pathNodes,
+		Steps:            steps,
+		RuntimeConfirmed: runtimeConfirmed,
+		Confidence:       conf,
+		ConfidenceLabel:  label,
+		ScoreUpperBound:  minP,
+		CorrelatedHops:   hopsCorrelated(steps),
+	}
+}
+
+func shortID(id string) string {
+	if len(id) > 12 {
+		return id[len(id)-12:]
+	}
+	return id
+}
+
+// ── priority queue ──────────────────────────────────────────────────
+
+type heapItem struct {
+	node string
+	d    float64
+}
+
+type minHeap []heapItem
+
+func (h minHeap) Len() int           { return len(h) }
+func (h minHeap) Less(i, j int) bool { return h[i].d < h[j].d }
+func (h minHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *minHeap) Push(x any)        { *h = append(*h, x.(heapItem)) }
+func (h *minHeap) Pop() any {
+	old := *h
+	n := len(old)
+	it := old[n-1]
+	*h = old[:n-1]
+	return it
+}
