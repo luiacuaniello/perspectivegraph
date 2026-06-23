@@ -1,8 +1,8 @@
 // Package supplychain ingests software supply-chain provenance for a container
 // image: its signature (cosign), its build attestation (SLSA), and its bill of
 // materials (SBOM). It is the layer that lets PerspectiveGraph reason about a
-// modern supply-chain attack — a tampered or unsigned image that runs in prod
-// and reaches a crown jewel — not just CVEs in known dependencies.
+// modern supply-chain attack - a tampered or unsigned image that runs in prod
+// and reaches a crown jewel - not just CVEs in known dependencies.
 //
 // It is a sibling of the build collector and stamps the *same* Image node with
 // trust signals (signed / slsa_level / provenance_builder) and a DEPENDS_ON edge
@@ -97,7 +97,7 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 
 		// SBOM inventory: each component is a Library/Package the image DEPENDS_ON.
 		// MERGE-keyed by name:version, so it converges with the same nodes Trivy
-		// reports — SBOM adds the components that have no CVE, completing the bill.
+		// reports - SBOM adds the components that have no CVE, completing the bill.
 		for _, comp := range comps {
 			if comp.Name == "" {
 				continue

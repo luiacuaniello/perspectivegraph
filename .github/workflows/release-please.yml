@@ -1,0 +1,22 @@
+# Release automation. On every push to main, release-please reads the
+# Conventional Commits since the last release and maintains a "release PR" that
+# bumps the version + updates CHANGELOG.md. Merging that PR tags the release and
+# creates the GitHub Release - no manual tagging after v0.2.0.
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

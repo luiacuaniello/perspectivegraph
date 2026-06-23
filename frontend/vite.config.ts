@@ -13,7 +13,7 @@ export default defineConfig({
         target: process.env.PERSPECTIVE_API ?? "http://localhost:8080",
         changeOrigin: true,
       },
-      // Downloadable exports (SIEM NDJSON, OSCAL) — same-origin in dev too.
+      // Downloadable exports (SIEM NDJSON, OSCAL) - same-origin in dev too.
       "/export": {
         target: process.env.PERSPECTIVE_API ?? "http://localhost:8080",
         changeOrigin: true,

@@ -1,7 +1,7 @@
 // Package falco converts Falco runtime alerts into ontology events.
 //
 // Falco watches kernel syscalls (via eBPF) and fires when a container does
-// something suspicious at runtime — spawning a shell, opening an unexpected
+// something suspicious at runtime - spawning a shell, opening an unexpected
 // socket, writing to a sensitive path. PerspectiveGraph turns each alert into a
 // runtime annotation on the affected Container node (runtime_alert=true). The
 // analyzer then flags any attack path that traverses such a node as *actively
@@ -111,7 +111,7 @@ func decode(r io.Reader) ([]alert, error) {
 	}
 
 	// A streaming decoder reads consecutive JSON objects wherever the
-	// boundaries fall — unlike line-splitting, which broke on pretty-printed
+	// boundaries fall - unlike line-splitting, which broke on pretty-printed
 	// single alerts spanning multiple lines.
 	var out []alert
 	dec := json.NewDecoder(bytes.NewReader(trimmed))

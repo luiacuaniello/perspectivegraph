@@ -292,7 +292,7 @@ func (r WhatIfResult) RiskReduction() float64 {
 // WhatIf recomputes critical paths and quantified risk with the given edges
 // removed. Both risk runs use the same `seed` for reproducibility; note this is
 // NOT a true common-random-numbers variance reduction (the two graphs have
-// different edge sets, so the same RNG draws map to different edges) — so make
+// different edge sets, so the same RNG draws map to different edges) - so make
 // the delta meaningful by running enough iterations, not by relying on CRN.
 func WhatIf(snap graph.Snapshot, cuts []EdgeCut, iterations int, seed uint64) WhatIfResult {
 	reduced := cutEdges(snap, cuts)

@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/graphql-go/graphql"
+	"github.com/luiacuaniello/perspectivegraph/internal/action"
+	"github.com/luiacuaniello/perspectivegraph/internal/ai"
 	"github.com/luiacuaniello/perspectivegraph/internal/analyzer"
 	"github.com/luiacuaniello/perspectivegraph/internal/attck"
 	"github.com/luiacuaniello/perspectivegraph/internal/audit"
@@ -48,6 +50,9 @@ type API struct {
 	exportSigner *exportsign.Signer
 	exfil        *secwatch.Watcher // exfiltration detector (attack-map bulk reads)
 	authGuard    *secwatch.Watcher // auth brute-force lockout
+	authInfo     AuthInfo          // public auth config for the SPA login gate
+	prOpener     action.PROpener   // opens remediation pull requests (nil → disabled)
+	ai           ai.Client         // AI-native layer (nil/Nop → disabled)
 }
 
 func New(manager *graph.Manager, svc *analyzer.Service, idx search.Indexer) *API {
@@ -126,8 +131,8 @@ func tenantOf(ctx context.Context) string {
 	return auth.PrincipalFromContext(ctx).Tenant
 }
 
-// auditView records a *read* of the sensitive "attack map" — the ranked paths,
-// the raw graph, or an export — to the tamper-evident audit log, so a deployment
+// auditView records a *read* of the sensitive "attack map" - the ranked paths,
+// the raw graph, or an export - to the tamper-evident audit log, so a deployment
 // can answer "who viewed (or exfiltrated) which attack paths". The tool itself is
 // a map of how to breach the org, so its reads are governed, not just its writes.
 // A no-op unless AUDIT_LOG_PATH is configured (a.audit is then audit.Nop).
@@ -136,7 +141,7 @@ func (a *API) auditView(ctx context.Context, action string, fields map[string]an
 	a.audit.Record(action, p.Subject, p.Role.String(), p.Tenant, fields)
 	// Exfiltration watch: a principal pulling an unusual volume of attack paths
 	// (bulk reads/exports) in a short window is the tool's own data walking out the
-	// door — fire one alert per principal per cooldown.
+	// door - fire one alert per principal per cooldown.
 	if a.exfil.Enabled() {
 		if n := viewCount(fields); n > 0 {
 			a.exfil.Observe(p.Subject+"@"+p.Tenant, n)
@@ -186,9 +191,9 @@ func (a *API) Schema() (graphql.Schema, error) {
 			"name":                 &graphql.Field{Type: graphql.String, Resolve: field[ontology.Node](func(n ontology.Node) any { return n.Name })},
 			"internetExposed":      &graphql.Field{Type: graphql.Boolean, Resolve: field[ontology.Node](func(n ontology.Node) any { return n.Bool(ontology.PropInternetExposed) })},
 			"crownJewel":           &graphql.Field{Type: graphql.Boolean, Resolve: field[ontology.Node](func(n ontology.Node) any { return n.Bool(ontology.PropCrownJewel) })},
-			"crownJewelBasis":      &graphql.Field{Type: graphql.String, Description: "Why this node is a crown jewel: \"tagged\" (explicit), \"classified:<source>:<kind>\" (a real classifier — Macie/DLP), or \"inferred:<signal>\" (guessed from a sensitive-data signal).", Resolve: field[ontology.Node](func(n ontology.Node) any { return n.Properties[ontology.PropCrownJewelBasis] })},
+			"crownJewelBasis":      &graphql.Field{Type: graphql.String, Description: "Why this node is a crown jewel: \"tagged\" (explicit), \"classified:<source>:<kind>\" (a real classifier - Macie/DLP), or \"inferred:<signal>\" (guessed from a sensitive-data signal).", Resolve: field[ontology.Node](func(n ontology.Node) any { return n.Properties[ontology.PropCrownJewelBasis] })},
 			"classification":       &graphql.Field{Type: graphql.String, Description: "Data classification from a real classifier (Macie/DLP/tag policy): pii|phi|pci|financial|secret|…", Resolve: field[ontology.Node](func(n ontology.Node) any { return n.Properties[ontology.PropClassification] })},
-			"secretsScrubbed":      &graphql.Field{Type: graphql.Boolean, Description: "True when a secret-looking value (token, key, password) was redacted out of this node's properties at ingest. The finding is kept; the credential is not — so the attack map never hands out a live secret.", Resolve: field[ontology.Node](func(n ontology.Node) any { return n.Bool(ontology.PropSecretsScrubbed) })},
+			"secretsScrubbed":      &graphql.Field{Type: graphql.Boolean, Description: "True when a secret-looking value (token, key, password) was redacted out of this node's properties at ingest. The finding is kept; the credential is not - so the attack map never hands out a live secret.", Resolve: field[ontology.Node](func(n ontology.Node) any { return n.Bool(ontology.PropSecretsScrubbed) })},
 			"runtimeAlert":         &graphql.Field{Type: graphql.Boolean, Resolve: field[ontology.Node](func(n ontology.Node) any { return n.Bool(ontology.PropRuntimeAlert) })},
 			"severity":             &graphql.Field{Type: graphql.String, Resolve: field[ontology.Node](func(n ontology.Node) any { return n.Properties[ontology.PropSeverity] })},
 			"cvss":                 &graphql.Field{Type: graphql.Float, Resolve: field[ontology.Node](func(n ontology.Node) any { return n.Properties[ontology.PropCVSS] })},
@@ -197,7 +202,7 @@ func (a *API) Schema() (graphql.Schema, error) {
 			"resolutionMethod":     &graphql.Field{Type: graphql.String, Description: "How this node's identity was inferred by the resolver (digest|tag|name). Absent when the identity was asserted by a tool, not inferred.", Resolve: field[ontology.Node](func(n ontology.Node) any { return n.Properties[ontology.PropResolutionMethod] })},
 			"resolutionConfidence": &graphql.Field{Type: graphql.Float, Description: "How confident the inferred identity/join is, [0,1]. <1 means a heuristic correlation an analyst should verify.", Resolve: field[ontology.Node](func(n ontology.Node) any { return n.Properties[ontology.PropResolutionConfidence] })},
 			"resolutionAlias":      &graphql.Field{Type: graphql.String, Description: "The raw reference that was matched to produce this inferred identity.", Resolve: field[ontology.Node](func(n ontology.Node) any { return n.Properties[ontology.PropResolutionAlias] })},
-			"signed":               &graphql.Field{Type: graphql.Boolean, Description: "Supply-chain: image signature verified (cosign). Null when never assessed — distinct from false (verified unsigned).", Resolve: field[ontology.Node](func(n ontology.Node) any { return n.Properties[ontology.PropSigned] })},
+			"signed":               &graphql.Field{Type: graphql.Boolean, Description: "Supply-chain: image signature verified (cosign). Null when never assessed - distinct from false (verified unsigned).", Resolve: field[ontology.Node](func(n ontology.Node) any { return n.Properties[ontology.PropSigned] })},
 			"slsaLevel":            &graphql.Field{Type: graphql.Int, Description: "Supply-chain: SLSA build-provenance level [0..4]; higher is a more trustworthy build.", Resolve: field[ontology.Node](func(n ontology.Node) any { return n.Properties[ontology.PropSLSALevel] })},
 			"sbomComponents":       &graphql.Field{Type: graphql.Int, Description: "Supply-chain: number of SBOM components recorded for this image.", Resolve: field[ontology.Node](func(n ontology.Node) any { return n.Properties[ontology.PropSBOMComponents] })},
 		},
@@ -264,7 +269,7 @@ func (a *API) Schema() (graphql.Schema, error) {
 
 	remediationEffectType := graphql.NewObject(graphql.ObjectConfig{
 		Name:        "RemediationEffect",
-		Description: "Closed-loop verification of a remediation: the result of simulating its removal (what-if) over the current graph — proof the fix cuts the path, not just a generated scaffold.",
+		Description: "Closed-loop verification of a remediation: the result of simulating its removal (what-if) over the current graph - proof the fix cuts the path, not just a generated scaffold.",
 		Fields: graphql.Fields{
 			"removedEdges":     &graphql.Field{Type: graphql.Int, Description: "Graph edges the fix actually severs."},
 			"pathsBefore":      &graphql.Field{Type: graphql.Int},
@@ -285,7 +290,7 @@ func (a *API) Schema() (graphql.Schema, error) {
 			"rationale": &graphql.Field{Type: graphql.String, Resolve: field[remediation.Suggestion](func(s remediation.Suggestion) any { return s.Rationale })},
 			"verification": &graphql.Field{
 				Type:        remediationEffectType,
-				Description: "Simulated effect of applying this fix — the closed-loop proof it cuts the path.",
+				Description: "Simulated effect of applying this fix - the closed-loop proof it cuts the path.",
 				Resolve: func(p graphql.ResolveParams) (any, error) {
 					return a.verifyCut(p.Context, p.Source.(remediation.Suggestion).Cut)
 				},
@@ -320,7 +325,7 @@ func (a *API) Schema() (graphql.Schema, error) {
 			"coveragePct": &graphql.Field{Type: graphql.Float, Resolve: field[remediation.Fix](func(f remediation.Fix) any { return f.CoveragePct })},
 			"verification": &graphql.Field{
 				Type:        remediationEffectType,
-				Description: "Independently simulated effect of this fix (what-if) — verifies it removes the credited paths, not just claims to.",
+				Description: "Independently simulated effect of this fix (what-if) - verifies it removes the credited paths, not just claims to.",
 				Resolve: func(p graphql.ResolveParams) (any, error) {
 					return a.verifyCut(p.Context, p.Source.(remediation.Fix).Suggestion.Cut)
 				},
@@ -347,7 +352,7 @@ func (a *API) Schema() (graphql.Schema, error) {
 
 	ticketType := graphql.NewObject(graphql.ObjectConfig{
 		Name:        "Ticket",
-		Description: "An owned, tracked unit of remediation work for this path — the closed-loop accountability a generated fix lacks.",
+		Description: "An owned, tracked unit of remediation work for this path - the closed-loop accountability a generated fix lacks.",
 		Fields: graphql.Fields{
 			"id":          &graphql.Field{Type: graphql.String, Resolve: field[ticket.Ticket](func(t ticket.Ticket) any { return t.ID })},
 			"owner":       &graphql.Field{Type: graphql.String, Resolve: field[ticket.Ticket](func(t ticket.Ticket) any { return t.Owner })},
@@ -360,7 +365,7 @@ func (a *API) Schema() (graphql.Schema, error) {
 
 	validationType := graphql.NewObject(graphql.ObjectConfig{
 		Name:        "Validation",
-		Description: "A red-team/BAS verdict on whether this path is real: confirmed | refuted | partial — the evidence that turns a modeled path into a tested one.",
+		Description: "A red-team/BAS verdict on whether this path is real: confirmed | refuted | partial - the evidence that turns a modeled path into a tested one.",
 		Fields: graphql.Fields{
 			"outcome":  &graphql.Field{Type: graphql.String, Resolve: field[validation.Record](func(r validation.Record) any { return string(r.Outcome) })},
 			"source":   &graphql.Field{Type: graphql.String, Description: "The BAS tool or tester that produced the verdict.", Resolve: field[validation.Record](func(r validation.Record) any { return r.Source })},
@@ -376,9 +381,12 @@ func (a *API) Schema() (graphql.Schema, error) {
 			"score":            &graphql.Field{Type: graphql.Float, Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.Score })},
 			"runtimeConfirmed": &graphql.Field{Type: graphql.Boolean, Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.RuntimeConfirmed })},
 			"confidence":       &graphql.Field{Type: graphql.Float, Description: "How much to trust this path's score given how its edge weights were derived (mean hop weight-confidence, [0,1]).", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.Confidence })},
-			"confidenceLabel":  &graphql.Field{Type: graphql.String, Description: "Qualitative band for the score's trustworthiness: high|medium|low — an honest answer to \"why this %?\" instead of false precision.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.ConfidenceLabel })},
-			"scoreUpperBound":  &graphql.Field{Type: graphql.Float, Description: "The path score if its hops share a common cause rather than being independent: the weakest hop's probability (the comonotonic upper bound). The headline score multiplies hops as if independent — a lower bound under positive correlation — so the true exploitability lies in [score, scoreUpperBound]. A wide gap means the independence assumption matters.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.ScoreUpperBound })},
-			"correlatedHops":   &graphql.Field{Type: graphql.Boolean, Description: "True when two or more hops rest on the same weight basis — a concrete reason the hops may not be independent, so the score/scoreUpperBound band is grounded rather than theoretical. Does not change the score.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.CorrelatedHops })},
+			"confidenceLabel":  &graphql.Field{Type: graphql.String, Description: "Qualitative band for the score's trustworthiness: high|medium|low - an honest answer to \"why this %?\" instead of false precision.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.ConfidenceLabel })},
+			"scoreUpperBound":  &graphql.Field{Type: graphql.Float, Description: "The path score if its hops share a common cause rather than being independent: the weakest hop's probability (the comonotonic upper bound). The headline score multiplies hops as if independent - a lower bound under positive correlation - so the true exploitability lies in [score, scoreUpperBound]. A wide gap means the independence assumption matters.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.ScoreUpperBound })},
+			"correlatedHops":   &graphql.Field{Type: graphql.Boolean, Description: "True when two or more hops rest on the same weight basis - a concrete reason the hops may not be independent, so the score/scoreUpperBound band is grounded rather than theoretical. Does not change the score.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.CorrelatedHops })},
+			"priority":         &graphql.Field{Type: graphql.Float, Description: "Composite triage priority [0,100] blending exploitability (score) and trust (confidence) with corroboration (runtime-confirmed, KEV on path), target sensitivity (classified > tagged > inferred jewel), and entry blast radius. Paths are returned priority-first, so attackPaths(limit:N) is the actionable Top-N.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.Priority })},
+			"priorityLabel":    &graphql.Field{Type: graphql.String, Description: "Priority band: P1 (≥70) | P2 (≥40) | P3 - the \"fix these first\" bucket.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.PriorityLabel })},
+			"priorityFactors":  &graphql.Field{Type: graphql.NewList(graphql.String), Description: "Human-readable reasons behind the priority (e.g. \"runtime-confirmed (active)\", \"KEV on path\", \"classified PII target\", \"entry shared by N paths\") - explainable triage, not a black-box rank.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.PriorityFactors })},
 			"nodes":            &graphql.Field{Type: graphql.NewList(nodeType), Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.Nodes })},
 			"steps":            &graphql.Field{Type: graphql.NewList(stepType), Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.Steps })},
 			"suppressed": &graphql.Field{
@@ -423,7 +431,7 @@ func (a *API) Schema() (graphql.Schema, error) {
 			},
 			"reopens": &graphql.Field{
 				Type:        graphql.Int,
-				Description: "How many times this path resolved and then came back — a flapping/regression signal.",
+				Description: "How many times this path resolved and then came back - a flapping/regression signal.",
 				Resolve: func(p graphql.ResolveParams) (any, error) {
 					if rec, ok := a.history.Get(tenantOf(p.Context), p.Source.(analyzer.AttackPath).ID); ok {
 						return rec.Reopens, nil
@@ -578,7 +586,7 @@ func (a *API) Schema() (graphql.Schema, error) {
 
 	historyType := graphql.NewObject(graphql.ObjectConfig{
 		Name:        "History",
-		Description: "The temporal view: the exposure trend plus MTTR and open-path aging — what a point-in-time scanner can't tell you.",
+		Description: "The temporal view: the exposure trend plus MTTR and open-path aging - what a point-in-time scanner can't tell you.",
 		Fields: graphql.Fields{
 			"trend":         &graphql.Field{Type: graphql.NewList(posturePointType), Resolve: field[historyView](func(h historyView) any { return h.Trend })},
 			"openPaths":     &graphql.Field{Type: graphql.Int, Resolve: field[historyView](func(h historyView) any { return h.Stats.OpenPaths })},
@@ -638,7 +646,7 @@ func (a *API) Schema() (graphql.Schema, error) {
 		Fields: graphql.Fields{
 			"attackPaths": &graphql.Field{
 				Type:        graphql.NewList(pathType),
-				Description: "Critical attack paths from the latest analysis pass, ranked (runtime-confirmed first, then score). Optionally scoped to one application and capped.",
+				Description: "Critical attack paths from the latest analysis pass, ranked by composite triage priority (P1 first), so limit:N is the actionable Top-N. Optionally scoped to one application and capped.",
 				Args: graphql.FieldConfigArgument{
 					"app":   &graphql.ArgumentConfig{Type: graphql.String, Description: "Only paths touching this application (repo_slug or app tag)."},
 					"limit": &graphql.ArgumentConfig{Type: graphql.Int, DefaultValue: 0},
@@ -800,14 +808,14 @@ func (a *API) Schema() (graphql.Schema, error) {
 			},
 			"validation": &graphql.Field{
 				Type:        validationMetricsType,
-				Description: "Red-team/BAS validation metrics — precision/recall over the tested subset. The evidence that the engine is grounded against reality, not just modeled.",
+				Description: "Red-team/BAS validation metrics - precision/recall over the tested subset. The evidence that the engine is grounded against reality, not just modeled.",
 				Resolve: func(p graphql.ResolveParams) (any, error) {
 					return a.validation.Metrics(tenantOf(p.Context)), nil
 				},
 			},
 			"history": &graphql.Field{
 				Type:        historyType,
-				Description: "The temporal view: exposure trend over time, MTTR, and how long paths have been open — the management/accountability layer a point-in-time scan lacks.",
+				Description: "The temporal view: exposure trend over time, MTTR, and how long paths have been open - the management/accountability layer a point-in-time scan lacks.",
 				Args: graphql.FieldConfigArgument{
 					"points": &graphql.ArgumentConfig{Type: graphql.Int, DefaultValue: 200, Description: "How many recent trend samples to return (most recent last)."},
 				},
@@ -826,6 +834,13 @@ func (a *API) Schema() (graphql.Schema, error) {
 				Description: "Whether full-text search (OpenSearch) is configured. The UI uses this to tell “feature off” apart from “no matches”.",
 				Resolve: func(graphql.ResolveParams) (any, error) {
 					return a.search.Enabled(), nil
+				},
+			},
+			"aiEnabled": &graphql.Field{
+				Type:        graphql.Boolean,
+				Description: "Whether the AI-native layer (ANTHROPIC_API_KEY) is configured. The UI uses this to show/hide the AI assistant, summary, and explain features.",
+				Resolve: func(graphql.ResolveParams) (any, error) {
+					return a.aiEnabled(), nil
 				},
 			},
 			"riskSimulation": &graphql.Field{
@@ -948,8 +963,8 @@ const maxRiskIterations = 50000
 const verifyIterations = 800
 
 // verifyCut closes the remediation loop: it simulates removing the edge a fix
-// severs (what-if over the current graph) and reports the proven effect — paths
-// eliminated and risk reduction — so the dashboard can show "verified: removes N
+// severs (what-if over the current graph) and reports the proven effect - paths
+// eliminated and risk reduction - so the dashboard can show "verified: removes N
 // paths" instead of trusting the generator. Returns nil when the fix carries no
 // structured cut edge.
 func (a *API) verifyCut(ctx context.Context, cut remediation.CutEdge) (any, error) {

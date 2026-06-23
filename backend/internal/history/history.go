@@ -1,6 +1,6 @@
 // Package history gives PerspectiveGraph a memory: it turns the analyzer's
 // point-in-time passes into a time series, so the questions security management
-// actually asks have answers — "how long has this path been open?", "what's our
+// actually asks have answers - "how long has this path been open?", "what's our
 // MTTR?", "is our exposure trending down?", "did that path we fixed come back?".
 //
 // It records two things per tenant, fed once per (changed) analyzer pass:
@@ -189,7 +189,7 @@ func (s *Store) ObservePass(tenant string, open []Observation, riskPct float64) 
 }
 
 // SampleTrend records a posture point only (no path lifecycle), so the exposure
-// trend stays continuous on analyzer passes that change-detection skipped — a
+// trend stays continuous on analyzer passes that change-detection skipped - a
 // steady "12 paths for the last hour" line is itself information. Coalesced to one
 // point per window; it only flushes to disk when it actually appends a new point.
 func (s *Store) SampleTrend(tenant string, criticalPaths int, riskPct float64) {

@@ -230,7 +230,7 @@ func anyCompromiseRate(seeds, jewels []string, adj map[string][]probEdge, iterat
 
 // wilson returns the 95% Wilson score interval for a binomial proportion. It
 // behaves near 0 and 1 (where the naive Wald interval would spill outside [0,1])
-// — important here, since crown-jewel probabilities cluster at the extremes.
+// - important here, since crown-jewel probabilities cluster at the extremes.
 func wilson(successes, n int) (low, high float64) {
 	if n == 0 {
 		return 0, 0

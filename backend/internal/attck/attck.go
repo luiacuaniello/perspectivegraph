@@ -1,6 +1,6 @@
 // Package attck maps PerspectiveGraph's ontology edge types to MITRE ATT&CK
 // techniques, so each hop of an attack path is labelled with the adversary
-// technique (and tactic) it represents — turning a probability-ranked route into
+// technique (and tactic) it represents - turning a probability-ranked route into
 // a recognizable kill chain a defender can map to detections and controls.
 //
 // The mapping is a documented best-fit heuristic, consistent with the rest of the

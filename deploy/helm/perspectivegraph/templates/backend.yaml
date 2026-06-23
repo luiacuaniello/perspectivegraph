@@ -1,5 +1,5 @@
 {{- if and .Values.persistence.enabled (gt (int .Values.backend.replicas) 1) -}}
-{{- fail "persistence.enabled stores governance state (suppressions/tickets/validations/history/audit) on a single-writer ReadWriteOnce volume; set backend.replicas to 1 while it is on — multiple replicas would split-brain the stores and cannot co-mount an RWO PVC." -}}
+{{- fail "persistence.enabled stores governance state (suppressions/tickets/validations/history/audit) on a single-writer ReadWriteOnce volume; set backend.replicas to 1 while it is on - multiple replicas would split-brain the stores and cannot co-mount an RWO PVC." -}}
 {{- end -}}
 apiVersion: apps/v1
 kind: Deployment
@@ -97,6 +97,26 @@ spec:
                 secretKeyRef:
                   name: {{ include "perspectivegraph.fullname" . }}-secrets
                   key: TICKET_WEBHOOK_URL
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "perspectivegraph.fullname" . }}-secrets
+                  key: ANTHROPIC_API_KEY
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "perspectivegraph.fullname" . }}-secrets
+                  key: HF_TOKEN
+            - name: STORE_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "perspectivegraph.fullname" . }}-secrets
+                  key: STORE_ENCRYPTION_KEY
+            - name: EXPORT_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "perspectivegraph.fullname" . }}-secrets
+                  key: EXPORT_SIGNING_KEY
           readinessProbe:
             httpGet:
               path: /healthz

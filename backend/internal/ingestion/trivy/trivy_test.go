@@ -143,7 +143,7 @@ func TestParseErrors(t *testing.T) {
 
 // FuzzParse asserts the contract every ingest parser must hold: it consumes
 // untrusted webhook bytes, so it must NEVER panic, and any node/edge it emits
-// must be well-formed (non-empty ids, ontology-valid labels/types) — otherwise a
+// must be well-formed (non-empty ids, ontology-valid labels/types) - otherwise a
 // crafted report could crash the ingest goroutine or smuggle a malformed element
 // toward the graph store.
 func FuzzParse(f *testing.F) {
@@ -160,7 +160,7 @@ func FuzzParse(f *testing.F) {
 	f.Fuzz(func(t *testing.T, data string) {
 		events, err := c.Parse(strings.NewReader(data), ingestion.Options{})
 		if err != nil {
-			return // a rejected report is a fine outcome — just no panic
+			return // a rejected report is a fine outcome - just no panic
 		}
 		for _, ev := range events {
 			for _, n := range ev.Nodes {

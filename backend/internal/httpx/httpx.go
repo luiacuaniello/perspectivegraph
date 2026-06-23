@@ -1,5 +1,5 @@
 // Package httpx is the minimal JSON-over-HTTP helper shared by the action
-// layer (forge REST APIs) and the search indexer (OpenSearch) — one request/
+// layer (forge REST APIs) and the search indexer (OpenSearch) - one request/
 // status-check/decode implementation instead of a copy per package.
 package httpx
 

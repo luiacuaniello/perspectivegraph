@@ -6,7 +6,7 @@ import "strings"
 // (e.g. "iam:AttachRolePolicy", "iam:*", "*"). Resource/Condition scoping is
 // intentionally ignored in this MVP, so detection can over-report (a permission
 // scoped to one resource is treated as account-wide) but never miss the obvious
-// escalation — the honest trade-off PMapper makes resource-aware.
+// escalation - the honest trade-off PMapper makes resource-aware.
 type actionSet struct {
 	patterns []string
 }
@@ -78,7 +78,7 @@ type primitive struct {
 }
 
 // primitives is the detection table (a curated subset of the well-known AWS IAM
-// privesc paths — Rhino Security Labs / PMapper). Each, if matched, means the
+// privesc paths - Rhino Security Labs / PMapper). Each, if matched, means the
 // principal can grant itself or assume admin-equivalent privileges.
 var primitives = []primitive{
 	{"iam:AttachRolePolicy (attach AdministratorAccess to a role)", func(a actionSet) bool { return a.Allows("iam:AttachRolePolicy") }},

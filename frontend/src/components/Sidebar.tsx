@@ -1,6 +1,6 @@
 import { ShieldIcon, TargetIcon, XIcon } from "./icons";
 
-export type View = "overview" | "paths" | "plan" | "graph" | "violations" | "search";
+export type View = "overview" | "paths" | "plan" | "graph" | "violations" | "search" | "assistant";
 
 interface Item {
   view: View;
@@ -22,9 +22,11 @@ interface Props {
   // Mobile drawer state (ignored on desktop, where the sidebar is always shown).
   open?: boolean;
   onClose?: () => void;
+  // Show the AI assistant entry only when the backend has ANTHROPIC_API_KEY set.
+  aiEnabled?: boolean;
 }
 
-// "analyzed 12s ago" — a coarse relative time so a tester can see the data is
+// "analyzed 12s ago" - a coarse relative time so a tester can see the data is
 // fresh (and how stale it is if the analyzer stalls).
 function ago(iso?: string | null): string | null {
   if (!iso) return null;
@@ -79,6 +81,12 @@ const icons = {
       <path d="M13.5 13.5 L17 17" />
     </svg>
   ),
+  assistant: (
+    <svg viewBox="0 0 20 20" className="h-4 w-4" {...stroke}>
+      <path d="M9 2.5 L10.2 6 L13.5 7.2 L10.2 8.4 L9 12 L7.8 8.4 L4.5 7.2 L7.8 6 Z" />
+      <path d="M14.5 11.5 L15.2 13.3 L17 14 L15.2 14.7 L14.5 16.5 L13.8 14.7 L12 14 L13.8 13.3 Z" />
+    </svg>
+  ),
 };
 
 export default function Sidebar({
@@ -91,6 +99,7 @@ export default function Sidebar({
   pruned,
   open = false,
   onClose,
+  aiEnabled = false,
 }: Props) {
   const items: Item[] = [
     { view: "overview", label: "Overview", icon: icons.overview },
@@ -99,6 +108,7 @@ export default function Sidebar({
     { view: "graph", label: "Graph", icon: icons.graph },
     { view: "violations", label: "Violations", icon: icons.violations, badge: violationCount, badgeTone: "warn" },
     { view: "search", label: "Search", icon: icons.search },
+    ...(aiEnabled ? [{ view: "assistant" as const, label: "AI assistant", icon: icons.assistant }] : []),
   ];
 
   return (

@@ -1,7 +1,7 @@
 // Package auth secures the two front doors and resolves the caller's identity:
 //
 //   - the ingest webhook (write path) with a per-tenant HMAC-SHA256 signature
-//     over the request body — the secret never travels on the wire;
+//     over the request body - the secret never travels on the wire;
 //   - the GraphQL API (read path) with bearer credentials, either static tokens
 //     or OIDC/JWT, mapped to an RBAC role and a tenant.
 //
@@ -128,13 +128,13 @@ func (c Chain) Authenticate(r *http.Request) (Principal, bool) {
 //
 //		token:role[:tenant[:expiry[:app1|app2]]]
 //
-//	  - token  — the bearer value, OR "sha256$<hex>" to store only a hash of it
+//	  - token  - the bearer value, OR "sha256$<hex>" to store only a hash of it
 //	    (so the live secret never sits in config/env at rest).
-//	  - role   — viewer | operator | admin.
-//	  - tenant — optional (defaults to DefaultTenant; empty field keeps the default).
-//	  - expiry — optional YYYY-MM-DD; the token is rejected after the end of that
+//	  - role   - viewer | operator | admin.
+//	  - tenant - optional (defaults to DefaultTenant; empty field keeps the default).
+//	  - expiry - optional YYYY-MM-DD; the token is rejected after the end of that
 //	    UTC day (token lifecycle / rotation).
-//	  - apps   — optional pipe-separated application allowlist; the principal can
+//	  - apps   - optional pipe-separated application allowlist; the principal can
 //	    only read attack paths / assets touching one of these apps (object RBAC).
 type TokenStore struct {
 	entries []tokenEntry
@@ -264,7 +264,17 @@ func RequireRole(authn Authenticator, min Role, rec audit.Recorder, guard *secwa
 		p, ok := authn.Authenticate(r)
 		if !ok || p.Role < min {
 			rec.Record("auth.deny", "unknown", "", "", map[string]any{"path": r.URL.Path, "remote": ip})
-			guard.Observe(ip, 1) // count the failure; may trip the lockout + alert
+			// Only a *rejected credential* counts toward the brute-force lockout -
+			// i.e. a bearer token was presented and authentication failed (!ok). An
+			// anonymous request (no Authorization header) isn't credential guessing,
+			// and a valid token with an insufficient role (ok but p.Role < min) is an
+			// authorization miss, not a brute-force attempt. Counting either would let
+			// a login-gated SPA polling before sign-in - or any unauthenticated
+			// client - trip the lockout on itself; raw request volume is already
+			// bounded by the per-IP rate limiter.
+			if !ok && bearer(r) != "" {
+				guard.Observe(ip, 1) // may trip the lockout + alert
+			}
 			unauthorized(w, "invalid or insufficient credentials")
 			return
 		}
@@ -283,7 +293,7 @@ func unauthorized(w http.ResponseWriter, msg string) {
 func tooManyRequests(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusTooManyRequests)
-	_, _ = w.Write([]byte(`{"errors":[{"message":"too many failed attempts — temporarily locked out"}]}`))
+	_, _ = w.Write([]byte(`{"errors":[{"message":"too many failed attempts - temporarily locked out"}]}`))
 }
 
 func clientIP(r *http.Request) string {

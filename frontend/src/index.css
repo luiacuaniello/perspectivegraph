@@ -40,7 +40,7 @@
 }
 
 .dark {
-  /* Surfaces & accent — deep, slightly blue-tinted slate */
+  /* Surfaces & accent - deep, slightly blue-tinted slate */
   --c-ink: 14 18 25; /* app canvas */
   --c-panel: 23 28 38; /* cards */
   --c-panel-2: 30 37 49; /* raised/inset */

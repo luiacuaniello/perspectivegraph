@@ -3,7 +3,7 @@
 // tool's persisted state IS a map of how to attack the org plus who has viewed
 // it, so a stolen volume or backup shouldn't hand that over in plaintext.
 //
-// A nil/Nop sealer is passthrough (encryption disabled — the default). The AEAD
+// A nil/Nop sealer is passthrough (encryption disabled - the default). The AEAD
 // sealer uses AES-256-GCM with a random per-record nonce; sealed blobs carry a
 // magic prefix so Open can transparently read data written before encryption was
 // turned on (a one-way migration: enable the key, old plaintext is still read,

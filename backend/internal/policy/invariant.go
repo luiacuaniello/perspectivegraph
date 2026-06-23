@@ -1,4 +1,4 @@
-// Package policy evaluates architectural invariants over the graph — the
+// Package policy evaluates architectural invariants over the graph - the
 // "policy as a graph" idea. An invariant is a forbidden shape: either a node
 // that must not exist (e.g. a public data store) or a path that must not
 // connect two kinds of node (e.g. anything internet-exposed reaching a crown

@@ -1,5 +1,5 @@
 // Package iam turns an AWS account's IAM reality into a privilege-escalation
-// graph — the "BloodHound for cloud" question scanners never answer: not "which
+// graph - the "BloodHound for cloud" question scanners never answer: not "which
 // policy is too broad" but "who can become admin, and from where". It consumes
 // the output of `aws iam get-account-authorization-details` (the whole account's
 // users, roles, groups and policies in one document), flattens each principal's
@@ -11,12 +11,12 @@
 //	trust grants assume to a peer→ peer ──ASSUMES──▶ role   (role chaining)
 //
 // The synthetic "account-admin" node is the crown jewel: full account control.
-// Combined with the network/topology collectors, a complete path emerges —
+// Combined with the network/topology collectors, a complete path emerges -
 // internet ─▶ instance ─▶ assumes role ─▶ CAN_ESCALATE_TO ─▶ account compromise.
 //
 // Honest simplifications (documented, not hidden): Resource scoping, Condition
 // keys, explicit Deny and NotAction are ignored, so an Allow is treated as
-// account-wide. Detection therefore over-reports rather than misses — the same
+// account-wide. Detection therefore over-reports rather than misses - the same
 // trade PMapper makes when it drops resource awareness for speed.
 package iam
 
@@ -89,7 +89,7 @@ type awsTag struct {
 }
 
 // policyDoc is an IAM policy document. The IAM API returns it URL-encoded as a
-// string; the CLI returns it as a decoded JSON object — we accept both.
+// string; the CLI returns it as a decoded JSON object - we accept both.
 type policyDoc struct {
 	Statement []statement `json:"Statement"`
 }
@@ -226,7 +226,7 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 	adminID := g.stub(ontology.LabelIAMRole, "perspectivegraph:account-admin")
 	g.upsert(ontology.Node{ID: adminID, Label: ontology.LabelIAMRole, Name: "account-admin (effective)",
 		Properties: map[string]any{ontology.PropCrownJewel: true, "admin": true,
-			"synthetic": true, "note": "full account control — IAM escalation target"}})
+			"synthetic": true, "note": "full account control - IAM escalation target"}})
 
 	// Users.
 	for _, u := range d.UserDetailList {
@@ -287,7 +287,7 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 		g.escalation(id, allowedActions(docs), adminID)
 	}
 
-	// Second pass: role chaining — a principal the trust policy names can assume
+	// Second pass: role chaining - a principal the trust policy names can assume
 	// the role. Resolved now that every principal node id is known.
 	for _, ro := range d.RoleDetailList {
 		roleID, ok := arnToID[ro.Arn]

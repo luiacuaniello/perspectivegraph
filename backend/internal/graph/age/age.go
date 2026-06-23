@@ -40,7 +40,7 @@ import (
 
 // maxOpenConns sizes the per-store connection pool. AGE session state (LOAD +
 // search_path) is re-established at the start of every transaction (see withAGE),
-// so any pooled connection is safe to use — there is no need to pin to one.
+// so any pooled connection is safe to use - there is no need to pin to one.
 const maxOpenConns = 8
 
 // graphNameRe is the strict identifier pattern a graph name must match before it
@@ -87,7 +87,7 @@ func Open(ctx context.Context, dsn, graphName string) (*Store, error) {
 }
 
 // OpenOrCreate is like Open but creates the target graph if it does not exist
-// yet — used to spin up a tenant's isolated graph on first reference.
+// yet - used to spin up a tenant's isolated graph on first reference.
 func OpenOrCreate(ctx context.Context, dsn, graphName string) (*Store, error) {
 	s, err := newStore(dsn, graphName)
 	if err != nil {
@@ -130,7 +130,7 @@ func (s *Store) Ping(ctx context.Context) error {
 }
 
 // UpsertNode creates or updates a vertex with NATIVE agtype properties (so the
-// graph is queryable in Cypher — internet_exposed/crown_jewel drive the DB-side
+// graph is queryable in Cypher - internet_exposed/crown_jewel drive the DB-side
 // path finder). `SET n += {…}` does the property-merge contract for us (later
 // writes win per key; omitted keys, e.g. an empty name, are preserved), so no
 // read-modify-write round-trip is needed.
@@ -257,6 +257,70 @@ func (s *Store) Snapshot(ctx context.Context) (graph.Snapshot, error) {
 	return snap, err
 }
 
+// SnapshotSince returns the nodes and edges whose last_seen stamp is at or after
+// `since` (unix seconds) - the incremental delta the analyzer patches onto its
+// cached snapshot instead of pulling the whole graph each pass. The filter runs
+// natively (the same last_seen the pruner uses), so only the changed slice leaves
+// Postgres. Elements without a last_seen are excluded (`null >= since` is false in
+// Cypher) - they predate stamping and are already in the consumer's full snapshot.
+func (s *Store) SnapshotSince(ctx context.Context, since int64) (graph.Delta, error) {
+	var d graph.Delta
+	nodeQ, err := s.cypherSQL(
+		fmt.Sprintf(`MATCH (n) WHERE n.last_seen >= %d RETURN n.id, label(n), n.name, properties(n)`, since),
+		`id agtype, label agtype, name agtype, props agtype`)
+	if err != nil {
+		return d, err
+	}
+	edgeQ, err := s.cypherSQL(
+		fmt.Sprintf(`MATCH (a)-[e]->(b) WHERE e.last_seen >= %d RETURN type(e), a.id, b.id, properties(e)`, since),
+		`etype agtype, src agtype, dst agtype, props agtype`)
+	if err != nil {
+		return d, err
+	}
+	err = s.withAGE(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, nodeQ)
+		if err != nil {
+			return fmt.Errorf("query nodes: %w", err)
+		}
+		for rows.Next() {
+			var id, label, name, props string
+			if err := rows.Scan(&id, &label, &name, &props); err != nil {
+				rows.Close()
+				return err
+			}
+			d.Nodes = append(d.Nodes, ontology.Node{
+				ID:         agString(id),
+				Label:      ontology.Label(agString(label)),
+				Name:       agString(name),
+				Properties: nativeProps(props),
+			})
+		}
+		rows.Close()
+
+		erows, err := tx.QueryContext(ctx, edgeQ)
+		if err != nil {
+			return fmt.Errorf("query edges: %w", err)
+		}
+		defer erows.Close()
+		for erows.Next() {
+			var etype, src, dst, props string
+			if err := erows.Scan(&etype, &src, &dst, &props); err != nil {
+				return err
+			}
+			p, rest := edgeProps(props)
+			d.Edges = append(d.Edges, ontology.Edge{
+				Type:               ontology.EdgeType(agString(etype)),
+				From:               agString(src),
+				To:                 agString(dst),
+				ExploitProbability: p,
+				Properties:         rest,
+			})
+		}
+		return erows.Err()
+	})
+	return d, err
+}
+
 func (s *Store) Close() error { return s.db.Close() }
 
 // ── DB-side path finding (the reason AGE exists) ────────────────────
@@ -328,7 +392,7 @@ func (s *Store) CriticalPaths(ctx context.Context, maxHops int) ([]graph.RawPath
 			return err
 		}
 		if len(out) >= maxPathsReturned {
-			slog.Warn("db pathfinder hit the path LIMIT; results may be incomplete — lower ANALYZER_MAX_HOPS or disable ANALYZER_DB_PATHS",
+			slog.Warn("db pathfinder hit the path LIMIT; results may be incomplete - lower ANALYZER_MAX_HOPS or disable ANALYZER_DB_PATHS",
 				"limit", maxPathsReturned)
 		}
 		return nil
@@ -342,7 +406,7 @@ func (s *Store) CriticalPaths(ctx context.Context, maxHops int) ([]graph.RawPath
 // is null (not true), so un-stamped elements are left alone. Deleting a node also
 // detaches it (DETACH DELETE), so its edges go with it.
 func (s *Store) Prune(ctx context.Context, before time.Time) (graph.PruneStats, error) {
-	cutoff := before.Unix() // an int64 — safe to inline, no injection surface
+	cutoff := before.Unix() // an int64 - safe to inline, no injection surface
 
 	countNodes, err := s.cypherSQL(
 		fmt.Sprintf("MATCH (n) WHERE n.last_seen < %d RETURN count(n)", cutoff), `c agtype`)
@@ -405,7 +469,7 @@ func scanCount(ctx context.Context, tx *sql.Tx, query string) (int, error) {
 }
 
 // stripAgtype removes AGE's `::vertex`/`::edge`/`::path` type annotations from an
-// agtype text value, leaving valid JSON — but ONLY outside JSON strings, so a
+// agtype text value, leaving valid JSON - but ONLY outside JSON strings, so a
 // property value like "foo::vertex" survives intact (a naive global replace would
 // silently corrupt it and drop the whole path).
 func stripAgtype(s string) string {
@@ -607,7 +671,7 @@ func cypherValue(v any) string {
 	case json.Number:
 		return x.String()
 	default:
-		// Arrays/maps/anything exotic: store as a JSON string — safe and
+		// Arrays/maps/anything exotic: store as a JSON string - safe and
 		// round-trippable as text (lossy on the original type, but rare here).
 		b, err := json.Marshal(x)
 		if err != nil {
@@ -620,8 +684,8 @@ func cypherValue(v any) string {
 // nativeProps parses an agtype properties() map and drops the reserved
 // id/name/props keys (kept as separate fields), so Properties matches the
 // in-memory store. For BACKWARD COMPATIBILITY it also merges a legacy `props`
-// JSON string (the pre-migration storage format) underneath the native keys —
-// native wins — so a graph written by an older build still yields correct
+// JSON string (the pre-migration storage format) underneath the native keys -
+// native wins - so a graph written by an older build still yields correct
 // seeds/jewels without a destructive reseed.
 func nativeProps(raw string) map[string]any {
 	m := unmarshalProps(raw)

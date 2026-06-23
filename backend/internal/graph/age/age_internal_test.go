@@ -16,7 +16,7 @@ func TestDollarTagAvoidsCollision(t *testing.T) {
 		t.Errorf("unexpected tag shape: %q", tag)
 	}
 	if strings.Contains(body, tag) {
-		t.Errorf("tag %q occurs in body — would allow breakout", tag)
+		t.Errorf("tag %q occurs in body - would allow breakout", tag)
 	}
 }
 

@@ -5,7 +5,7 @@
 // A Watcher counts weighted events per key within a window and fires a single
 // alert when the count crosses a threshold, then stays quiet for a cooldown so a
 // sustained attack doesn't storm the alert channel. Tripped reports whether a key
-// is currently in its post-trip cooldown — used to lock out a brute-forcing IP.
+// is currently in its post-trip cooldown - used to lock out a brute-forcing IP.
 // A nil or zero-threshold Watcher is a no-op, so callers never branch.
 package secwatch
 
@@ -79,7 +79,7 @@ func (w *Watcher) Observe(key string, n int) bool {
 		return false
 	}
 	if last, ok := w.lastAlert[key]; ok && now.Sub(last) < w.cooldown {
-		return false // already alerted recently — stay quiet
+		return false // already alerted recently - stay quiet
 	}
 	w.lastAlert[key] = now
 	if w.onAlert != nil {
@@ -88,7 +88,7 @@ func (w *Watcher) Observe(key string, n int) bool {
 	return true
 }
 
-// Tripped reports whether key is within the cooldown following a trip — i.e.
+// Tripped reports whether key is within the cooldown following a trip - i.e.
 // currently "locked". Used to short-circuit a brute-forcing client.
 func (w *Watcher) Tripped(key string) bool {
 	if !w.Enabled() {

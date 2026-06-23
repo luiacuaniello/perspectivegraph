@@ -47,7 +47,7 @@ func (s *Store) UpsertNode(_ context.Context, n ontology.Node) error {
 	return nil
 }
 
-// UpsertEdge rejects edges whose endpoints are not in the graph yet — same
+// UpsertEdge rejects edges whose endpoints are not in the graph yet - same
 // contract as the AGE store: the broker redelivers the event with backoff, so
 // the edge lands once its nodes arrive instead of dangling.
 func (s *Store) UpsertEdge(_ context.Context, e ontology.Edge) error {
@@ -78,8 +78,30 @@ func (s *Store) Snapshot(_ context.Context) (graph.Snapshot, error) {
 	return snap, nil
 }
 
+// SnapshotSince returns the nodes and edges observed at or after `since` (unix
+// seconds) - the incremental delta the analyzer patches onto its cached snapshot
+// instead of re-reading the whole graph. Elements without a last_seen stamp are
+// omitted: they predate staleness tracking and are already in the consumer's
+// initial full snapshot, so a delta never needs to re-ship them.
+func (s *Store) SnapshotSince(_ context.Context, since int64) (graph.Delta, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var d graph.Delta
+	for _, n := range s.nodes {
+		if ls, ok := graph.LastSeen(n.Properties); ok && ls >= since {
+			d.Nodes = append(d.Nodes, n)
+		}
+	}
+	for _, e := range s.edges {
+		if ls, ok := graph.LastSeen(e.Properties); ok && ls >= since {
+			d.Edges = append(d.Edges, e)
+		}
+	}
+	return d, nil
+}
+
 // Prune removes nodes and edges last observed before the cutoff (and any edge
-// left dangling by a removed node). Elements with no last_seen stamp are kept —
+// left dangling by a removed node). Elements with no last_seen stamp are kept -
 // they predate staleness tracking and must not vanish silently.
 func (s *Store) Prune(_ context.Context, before time.Time) (graph.PruneStats, error) {
 	cutoff := before.Unix()

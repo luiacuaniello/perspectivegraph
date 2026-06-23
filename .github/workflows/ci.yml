@@ -29,7 +29,7 @@ jobs:
       # Supply-chain gate: fail on a vulnerability the code actually reaches.
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
-      # SAST gate: static security analysis of the tool's OWN source — a security
+      # SAST gate: static security analysis of the tool's OWN source - a security
       # tool should hold itself to the bar it sets. Excluded rules are by-design
       # for this codebase: G104 (cleanup Close() errors), G404 (Monte-Carlo PRNG,
       # non-security), G401/G505 (sha1 used only as a non-crypto fingerprint),
@@ -45,7 +45,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      # Catches an API token / private key accidentally committed — table stakes
+      # Catches an API token / private key accidentally committed - table stakes
       # for a repo whose whole job is finding exposures. Free for public repos &
       # personal accounts; orgs set GITLEAKS_LICENSE.
       - uses: gitleaks/gitleaks-action@v2
@@ -104,7 +104,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       # `npm install` (not `npm ci`): the lockfile pins platform-specific native
       # deps (rolldown/esbuild), and a lock generated on a different OS lacks this
-      # runner's variants — `npm ci` would fail on a known npm bug (npm/cli#4828).
+      # runner's variants - `npm ci` would fail on a known npm bug (npm/cli#4828).
       - run: npm install --no-audit --no-fund
       - run: npm run build
       - name: Unit tests (Vitest)
@@ -127,7 +127,7 @@ jobs:
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
             | sh -s -- -b /usr/local/bin
       # Fail on fixable HIGH/CRITICAL in the image layers (unfixable OS CVEs
-      # don't block — there's nothing to do about them until a base rebuild).
+      # don't block - there's nothing to do about them until a base rebuild).
       - name: Scan images
         run: |
           for img in perspectivegraph-backend:ci perspectivegraph-dashboard:ci; do

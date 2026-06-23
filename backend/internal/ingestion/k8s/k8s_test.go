@@ -10,7 +10,7 @@ import (
 )
 
 // A non-admin Role that grants an escalation primitive (here: read all secrets)
-// must draw a CAN_ESCALATE_TO edge to the synthetic cluster-admin crown jewel —
+// must draw a CAN_ESCALATE_TO edge to the synthetic cluster-admin crown jewel -
 // the deep-RBAC modeling the shallow name/wildcard check misses.
 func TestRBACEscalationPrimitive(t *testing.T) {
 	in := `[

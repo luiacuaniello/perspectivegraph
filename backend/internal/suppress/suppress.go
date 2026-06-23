@@ -1,13 +1,13 @@
 // Package suppress is the triage/suppression loop: an analyst's decision to take
-// a specific attack path off the active board — because the risk is accepted, the
+// a specific attack path off the active board - because the risk is accepted, the
 // correlation is a false positive, a compensating control already covers it, or
-// it duplicates another path — without deleting the underlying graph data.
+// it duplicates another path - without deleting the underlying graph data.
 //
 // A suppression is keyed by attack-path id (stable across passes for the same
 // seed→crown-jewel pair) and tenant, and always carries an accountable owner and
 // a reason; it may carry an expiry, after which the path automatically returns to
 // the active set (so "accept for 30 days" can't silently become "accept forever").
-// The store is the system of record for who decided what, and why — the audit of
+// The store is the system of record for who decided what, and why - the audit of
 // the tool's own findings that a security tool must have.
 package suppress
 
@@ -60,7 +60,7 @@ type Record struct {
 	PathID    string     `json:"path_id"`
 	Tenant    string     `json:"tenant"`
 	Reason    Reason     `json:"reason"`
-	Owner     string     `json:"owner"`          // accountable human/team — required
+	Owner     string     `json:"owner"`          // accountable human/team - required
 	Note      string     `json:"note,omitempty"` // optional free-text justification
 	CreatedAt time.Time  `json:"created_at"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"` // nil = no expiry
@@ -108,7 +108,7 @@ func WithSealer(sealer cryptostore.Sealer) Option {
 }
 
 // New builds a store. When path is non-empty it is loaded from disk (a missing
-// file is fine — it's created on first write) and every mutation is persisted.
+// file is fine - it's created on first write) and every mutation is persisted.
 func New(path string, opts ...Option) (*Store, error) {
 	s := &Store{
 		path:     path,
@@ -172,7 +172,7 @@ func (s *Store) Put(r Record) (Record, error) {
 }
 
 // Delete removes a suppression (un-suppresses the path). Removing one that does
-// not exist is not an error — the desired end state is reached either way.
+// not exist is not an error - the desired end state is reached either way.
 func (s *Store) Delete(tenant, pathID string) error {
 	if s == nil {
 		return errors.New("suppress: store not configured")
@@ -187,7 +187,7 @@ func (s *Store) Delete(tenant, pathID string) error {
 }
 
 // Get returns the suppression for a path if one exists and is still in force.
-// Expired suppressions are reported as absent — the path is active again.
+// Expired suppressions are reported as absent - the path is active again.
 func (s *Store) Get(tenant, pathID string) (Record, bool) {
 	if s == nil {
 		return Record{}, false
@@ -202,8 +202,8 @@ func (s *Store) Get(tenant, pathID string) (Record, bool) {
 	return r, true
 }
 
-// List returns every suppression for a tenant — including expired ones, so the
-// triage board can show lapsed decisions — newest first.
+// List returns every suppression for a tenant - including expired ones, so the
+// triage board can show lapsed decisions - newest first.
 func (s *Store) List(tenant string) []Record {
 	if s == nil {
 		return nil
@@ -248,7 +248,7 @@ type fileShape struct {
 func (s *Store) load() error {
 	b, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil // first run — nothing to load
+		return nil // first run - nothing to load
 	}
 	if err != nil {
 		return err
@@ -273,7 +273,7 @@ func (s *Store) load() error {
 }
 
 // persist writes the whole store atomically (temp file + rename) with owner-only
-// permissions — the suppression board reveals which exposures are knowingly left
+// permissions - the suppression board reveals which exposures are knowingly left
 // open, so it is treated as sensitive.
 func (s *Store) persist() error {
 	if s.path == "" {

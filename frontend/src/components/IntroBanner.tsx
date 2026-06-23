@@ -64,7 +64,7 @@ export default function IntroBanner({ onDismiss }: { onDismiss: () => void }) {
 
       <h2 className="text-sm font-semibold text-slate-900">How to read this dashboard</h2>
       <p className="mt-1 max-w-3xl text-[13px] leading-relaxed text-slate-600">
-        PerspectiveGraph doesn’t list every vulnerability — it shows the <span className="font-medium text-slate-800">routes an
+        PerspectiveGraph doesn’t list every vulnerability - it shows the <span className="font-medium text-slate-800">routes an
         attacker could actually walk</span>. Each <span className="font-medium text-slate-800">attack path</span> starts
         where the internet can reach you and ends at something worth stealing:
       </p>
@@ -90,13 +90,13 @@ export default function IntroBanner({ onDismiss }: { onDismiss: () => void }) {
           <span className="font-semibold text-red-600">%</span>
           <span>
             The percentage is the <span className="font-medium text-slate-800">exploit likelihood</span> of that whole
-            route — higher means easier for an attacker. Start at the top.
+            route - higher means easier for an attacker. Start at the top.
           </span>
         </li>
         <li className="flex gap-2">
           <ZapIcon className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
           <span>
-            A live-activity marker means the path is <span className="font-medium text-slate-800">runtime-confirmed</span> —
+            A live-activity marker means the path is <span className="font-medium text-slate-800">runtime-confirmed</span> -
             something is exploiting it right now, not just in theory.
           </span>
         </li>
@@ -111,7 +111,7 @@ export default function IntroBanner({ onDismiss }: { onDismiss: () => void }) {
           <CheckIcon className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
           <span>
             <span className="font-medium text-slate-800">Remediation</span> shows the fewest fixes that remove the most
-            risk — the choke points. Fix those first.
+            risk - the choke points. Fix those first.
           </span>
         </li>
       </ul>

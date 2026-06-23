@@ -67,7 +67,7 @@ func TestWindowExpiry(t *testing.T) {
 }
 
 func TestWeightedCount(t *testing.T) {
-	// A single bulk export (n=large) trips on its own — the exfil case.
+	// A single bulk export (n=large) trips on its own - the exfil case.
 	w := New(100, time.Minute, time.Minute, func(string, int) {})
 	if !w.Observe("principal", 250) {
 		t.Fatal("a single large-count observation should trip the threshold")

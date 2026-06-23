@@ -1,9 +1,9 @@
 // Package threatintel enriches CVE nodes with real-world exploitation signal so
 // edge weights reflect what attackers actually do, not just severity labels:
 //
-//   - CISA KEV (Known Exploited Vulnerabilities) — a binary "exploited in the
+//   - CISA KEV (Known Exploited Vulnerabilities) - a binary "exploited in the
 //     wild" flag. A KEV CVE on a reachable path is confirmed, not theoretical.
-//   - FIRST EPSS (Exploit Prediction Scoring System) — the probability a CVE
+//   - FIRST EPSS (Exploit Prediction Scoring System) - the probability a CVE
 //     will be exploited in the next 30 days, [0,1].
 //
 // It is optional (like the search index): with it disabled the Noop source is

@@ -1,5 +1,5 @@
 // Package k8s discovers network-exposure and identity topology from a
-// Kubernetes cluster dump and emits it as ontology relationships — the edges no
+// Kubernetes cluster dump and emits it as ontology relationships - the edges no
 // scanner produces but every attack path needs:
 //
 //	Ingress ──ROUTES_TO──▶ Service ──EXPOSES──▶ Pod(Container)
@@ -7,7 +7,7 @@
 //	Pod ──HOSTS──▶ Image   (inferred from the image ref by the normalizer)
 //
 // Input is the JSON of `kubectl get ingress,service,pod,serviceaccount,
-// clusterrole,clusterrolebinding,rolebinding -A -o json` — a List whose items
+// clusterrole,clusterrolebinding,rolebinding -A -o json` - a List whose items
 // the collector walks by kind. This turns a real cluster into discoverable
 // attack surface without hand-stitched ids.
 package k8s
@@ -114,7 +114,7 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 		g.upsert(ontology.Node{ID: id, Label: ontology.LabelContainer, Name: p.Metadata.Name, Properties: props})
 		podsByNS[ns] = append(podsByNS[ns], podRef{id: id, labels: p.Metadata.Labels})
 
-		// A host-breaking pod can escape its container to the node — and from the
+		// A host-breaking pod can escape its container to the node - and from the
 		// node, the cluster (ATT&CK T1611). Model it as a direct route to cluster-admin.
 		if escape != "" {
 			g.edge(ontology.EdgeEscapesTo, id, clusterAdmin(g), 0.95)
@@ -359,7 +359,7 @@ func decode(r io.Reader) ([]item, error) {
 }
 
 // selectorMatches reports whether labels is a superset of selector (and the
-// selector is non-empty — an empty selector matches nothing, like K8s).
+// selector is non-empty - an empty selector matches nothing, like K8s).
 func selectorMatches(selector, labels map[string]string) bool {
 	if len(selector) == 0 {
 		return false
@@ -388,7 +388,7 @@ func isAdminName(name string) bool {
 }
 
 // escalateReason reports the first RBAC privilege-escalation primitive a (non
-// wildcard-admin) role grants — the verb/resource combos that let a workload
+// wildcard-admin) role grants - the verb/resource combos that let a workload
 // bootstrap itself to cluster-admin. Returns "" when the role is benign.
 func escalateReason(it item) string {
 	for _, r := range it.Rules {
@@ -422,7 +422,7 @@ func anyOf(have []string, want ...string) bool {
 }
 
 // clusterAdmin ensures the synthetic K8s cluster-admin crown jewel exists (full
-// cluster control), the target every escalation primitive reaches — the K8s
+// cluster control), the target every escalation primitive reaches - the K8s
 // analogue of the IAM collector's account-admin.
 func clusterAdmin(g *builder) string {
 	id := ontology.NewID(ontology.LabelIAMRole, "perspectivegraph:cluster-admin")

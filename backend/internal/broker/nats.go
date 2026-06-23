@@ -25,7 +25,7 @@ const dlqSubject = "perspectivegraph.dlq"
 
 // maxDeliver caps redeliveries of a failing event. Edge upserts fail (and Nak)
 // until their endpoint nodes arrive, which normally resolves within a couple
-// of passes — an event still failing after this many attempts is poison and is
+// of passes - an event still failing after this many attempts is poison and is
 // terminated instead of looping forever.
 const maxDeliver = 8
 
@@ -116,7 +116,7 @@ func (b *Broker) Consume(ctx context.Context, durable string, handler func(conte
 		if err := json.Unmarshal(msg.Data(), &ev); err != nil {
 			slog.Error("drop malformed event", "err", err)
 			b.deadLetter(ctx, msg.Data())
-			_ = msg.Term() // poison message — do not redeliver
+			_ = msg.Term() // poison message - do not redeliver
 			return
 		}
 		if err := handler(ctx, ev); err != nil {
@@ -125,7 +125,7 @@ func (b *Broker) Consume(ctx context.Context, durable string, handler func(conte
 				attempt = meta.NumDelivered
 			}
 			if attempt >= maxDeliver {
-				slog.Error("handler failed, giving up after max deliveries — dead-lettering",
+				slog.Error("handler failed, giving up after max deliveries - dead-lettering",
 					"source", ev.Source, "attempts", attempt, "err", err)
 				b.deadLetter(ctx, msg.Data())
 				_ = msg.Term()

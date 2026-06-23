@@ -17,7 +17,7 @@ type ticketRequest struct {
 	Route  string `json:"route"`
 }
 
-// listTickets handles GET /tickets — the remediation work board for the tenant.
+// listTickets handles GET /tickets - the remediation work board for the tenant.
 // Viewer is enough.
 func (a *API) listTickets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -27,7 +27,7 @@ func (a *API) listTickets(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// createTicket handles POST /tickets — open an owned remediation ticket for a
+// createTicket handles POST /tickets - open an owned remediation ticket for a
 // path (idempotent per open path). Admin-only.
 func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 	if !a.adminWritable(r) {
@@ -62,7 +62,7 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, tk)
 }
 
-// closeTicket handles POST /tickets/{id}/close — mark the work done. Admin-only.
+// closeTicket handles POST /tickets/{id}/close - mark the work done. Admin-only.
 func (a *API) closeTicket(w http.ResponseWriter, r *http.Request) {
 	if !a.adminWritable(r) {
 		writeJSONError(w, http.StatusForbidden, "admin role required to close tickets")

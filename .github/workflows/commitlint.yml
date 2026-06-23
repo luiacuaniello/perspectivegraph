@@ -1,0 +1,34 @@
+# Validates that pull-request titles follow Conventional Commits - the local
+# commit-msg hook covers individual commits; this covers the squash-merge title
+# (and contributors who didn't enable the hook). Pairs with branch protection:
+# make "Conventional PR title" a required check.
+name: PR title
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  lint:
+    name: Conventional PR title
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            docs
+            style
+            refactor
+            perf
+            test
+            build
+            ci
+            chore
+            revert

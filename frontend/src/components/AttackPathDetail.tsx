@@ -1,11 +1,13 @@
 import { useState } from "react";
 import {
+  aiExplain,
   closeTicket,
   createSuppression,
   createTicket,
   createValidation,
   deleteSuppression,
   humanDuration,
+  openRemediationPR,
   runWhatIf,
   type AttackPath,
   type Node,
@@ -35,6 +37,8 @@ interface Props {
   onShowInGraph?: () => void;
   // Called after a successful suppress / un-suppress so the dashboard can refetch.
   onTriaged?: () => void;
+  // Show the "Explain (AI)" control only when the backend has Claude configured.
+  aiEnabled?: boolean;
 }
 
 const REASONS: { value: SuppressionReason; label: string; hint: string }[] = [
@@ -70,7 +74,7 @@ function TriageControl({ path, onTriaged }: { path: AttackPath; onTriaged?: () =
 
   const submit = () => {
     if (!owner.trim()) {
-      setErr("Owner is required — a suppression must be accountable.");
+      setErr("Owner is required - a suppression must be accountable.");
       return;
     }
     setBusy(true);
@@ -256,6 +260,81 @@ function TicketControl({ path, onChanged }: { path: AttackPath; onChanged?: () =
   );
 }
 
+// AiExplainControl asks Claude to explain this path in plain English. Renders the
+// button plus a full-width answer block that wraps onto its own line.
+function AiExplainControl({ path }: { path: AttackPath }) {
+  const [busy, setBusy] = useState(false);
+  const [text, setText] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const explain = () => {
+    setBusy(true);
+    setErr(null);
+    aiExplain(path.id)
+      .then(setText)
+      .catch((e) => setErr(String(e.message ?? e)))
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <>
+      <Button variant="secondary" onClick={explain} disabled={busy} title="Explain this path in plain English with Claude">
+        {busy ? "Explaining…" : text ? "Re-explain (AI)" : "Explain (AI)"}
+      </Button>
+      {err && <span className="text-[12px] text-red-600">{err}</span>}
+      {text && (
+        <p className="basis-full whitespace-pre-wrap rounded-lg border border-edge bg-ink px-3 py-2 text-[13px] leading-relaxed text-slate-700">
+          {text}
+        </p>
+      )}
+    </>
+  );
+}
+
+// RemediationPRControl opens a pull request with this path's generated fix
+// (branch + commit + PR). The backend needs a GitHub token; admin role when auth
+// is on. Closes the loop: the fix arrives as a PR to review, not a copy-paste.
+function RemediationPRControl({ path }: { path: AttackPath }) {
+  const [busy, setBusy] = useState(false);
+  const [url, setUrl] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  if (url) {
+    return (
+      <a
+        href={url}
+        target="_blank"
+        rel="noreferrer"
+        className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-700 underline"
+      >
+        Fix PR opened ↗
+      </a>
+    );
+  }
+  const open = () => {
+    setBusy(true);
+    setErr(null);
+    openRemediationPR(path.id)
+      .then((r) => setUrl(r.url))
+      .catch((e) => setErr(String(e.message ?? e)))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <Button
+        variant="secondary"
+        onClick={open}
+        disabled={busy}
+        icon={<ScissorsIcon className="h-3.5 w-3.5" />}
+        title="Open a pull request with the generated fix for this path (needs a GitHub token on the backend)"
+      >
+        {busy ? "Opening PR…" : "Open fix PR"}
+      </Button>
+      {err && <span className="text-[11px] text-red-600">{err}</span>}
+    </span>
+  );
+}
+
 // VALIDATION_META maps a red-team/BAS verdict to a chip tone + label.
 const VALIDATION_META: Record<ValidationOutcome, { tone: Tone; label: string }> = {
   confirmed: { tone: "info", label: "validated real" },
@@ -265,12 +344,12 @@ const VALIDATION_META: Record<ValidationOutcome, { tone: Tone; label: string }> 
 };
 
 const VALIDATION_OPTIONS: { value: ValidationOutcome; label: string }[] = [
-  { value: "confirmed", label: "Confirmed — exploitable end-to-end" },
-  { value: "refuted", label: "Refuted — not traversable (false positive)" },
-  { value: "partial", label: "Partial — partially traversable" },
+  { value: "confirmed", label: "Confirmed - exploitable end-to-end" },
+  { value: "refuted", label: "Refuted - not traversable (false positive)" },
+  { value: "partial", label: "Partial - partially traversable" },
 ];
 
-// ValidationControl records a red-team/BAS test result for this path — the
+// ValidationControl records a red-team/BAS test result for this path - the
 // evidence that turns a modeled path into a tested one (feeds precision/recall).
 function ValidationControl({ path, onChanged }: { path: AttackPath; onChanged?: () => void }) {
   const [open, setOpen] = useState(false);
@@ -282,7 +361,7 @@ function ValidationControl({ path, onChanged }: { path: AttackPath; onChanged?: 
 
   const submit = () => {
     if (!source.trim()) {
-      setErr("Source is required — a verdict needs provenance (the tool/tester).");
+      setErr("Source is required - a verdict needs provenance (the tool/tester).");
       return;
     }
     setBusy(true);
@@ -345,17 +424,17 @@ function ValidationControl({ path, onChanged }: { path: AttackPath; onChanged?: 
   );
 }
 
-// NodeBadges renders the risk/trust flags on a kill-chain node — one consistent
+// NodeBadges renders the risk/trust flags on a kill-chain node - one consistent
 // chip vocabulary (Badge), tooltips carrying the plain-language meaning.
 function NodeBadges({ node }: { node: Node }) {
   const basis = node.crownJewelBasis ?? "";
   const inferredJewel = basis.startsWith("inferred");
   const classifiedJewel = basis.startsWith("classified");
   const jewelTitle = inferredJewel
-    ? `Inferred crown jewel (${basis.replace("inferred:", "signal: ")}) — guessed from a sensitive-data signal, not an explicit tag. Verify the classification.`
+    ? `Inferred crown jewel (${basis.replace("inferred:", "signal: ")}) - guessed from a sensitive-data signal, not an explicit tag. Verify the classification.`
     : classifiedJewel
-      ? `Crown jewel from a real data classifier (${basis.replace("classified:", "")}) — authoritative, not a name guess.`
-      : "Crown jewel — a high-value traversal target.";
+      ? `Crown jewel from a real data classifier (${basis.replace("classified:", "")}) - authoritative, not a name guess.`
+      : "Crown jewel - a high-value traversal target.";
   return (
     <span className="flex flex-wrap items-center gap-1.5">
       {node.internetExposed && (
@@ -369,12 +448,12 @@ function NodeBadges({ node }: { node: Node }) {
         </Badge>
       )}
       {node.classification && (
-        <Badge tone="danger" title={`Data classification: ${node.classification.toUpperCase()} (from a real classifier — Macie/DLP/tag policy).`}>
+        <Badge tone="danger" title={`Data classification: ${node.classification.toUpperCase()} (from a real classifier - Macie/DLP/tag policy).`}>
           {node.classification.toLowerCase()}
         </Badge>
       )}
       {node.secretsScrubbed && (
-        <Badge tone="neutral" title="A secret value (token, key, password) was redacted out of this node at ingest — the finding is kept, the credential is not, so the attack map never stores a live secret.">
+        <Badge tone="neutral" title="A secret value (token, key, password) was redacted out of this node at ingest - the finding is kept, the credential is not, so the attack map never stores a live secret.">
           secret scrubbed
         </Badge>
       )}
@@ -384,12 +463,12 @@ function NodeBadges({ node }: { node: Node }) {
         </Badge>
       )}
       {node.kev && (
-        <Badge tone="danger" icon={<FlameIcon className="h-3 w-3" />} title="In CISA's Known Exploited Vulnerabilities catalog — exploited in the wild" className="font-bold uppercase">
+        <Badge tone="danger" icon={<FlameIcon className="h-3 w-3" />} title="In CISA's Known Exploited Vulnerabilities catalog - exploited in the wild" className="font-bold uppercase">
           KEV
         </Badge>
       )}
       {node.epss != null && node.epss > 0 && (
-        <Badge tone="neutral" title="FIRST EPSS — probability of exploitation within 30 days">
+        <Badge tone="neutral" title="FIRST EPSS - probability of exploitation within 30 days">
           EPSS {(node.epss * 100).toFixed(0)}%
         </Badge>
       )}
@@ -400,7 +479,7 @@ function NodeBadges({ node }: { node: Node }) {
         </Badge>
       )}
       {node.signed === false && (
-        <Badge tone="danger" icon={<AlertTriangleIcon className="h-3 w-3" />} title="Supply-chain: signature NOT verified (cosign) — an unsigned build is a tampering vector.">
+        <Badge tone="danger" icon={<AlertTriangleIcon className="h-3 w-3" />} title="Supply-chain: signature NOT verified (cosign) - an unsigned build is a tampering vector.">
           unsigned
         </Badge>
       )}
@@ -410,7 +489,7 @@ function NodeBadges({ node }: { node: Node }) {
         </Badge>
       )}
       {node.slsaLevel != null && node.slsaLevel > 0 && (
-        <Badge tone="neutral" title="SLSA build-provenance level [0..4] — higher is a more trustworthy build.">
+        <Badge tone="neutral" title="SLSA build-provenance level [0..4] - higher is a more trustworthy build.">
           SLSA L{node.slsaLevel}
         </Badge>
       )}
@@ -463,6 +542,12 @@ const CONFIDENCE_TONE: Record<string, string> = {
   low: "border-amber-500/40 bg-amber-500/10 text-amber-700",
 };
 
+const PRIORITY_TONE: Record<string, string> = {
+  P1: "bg-red-600 text-white",
+  P2: "bg-amber-500/20 text-amber-700",
+  P3: "bg-slate-500/15 text-slate-600",
+};
+
 // BASIS_META maps a hop's weight provenance to a short label and whether it is
 // observed evidence (green) or an estimate/assumption (grey).
 const BASIS_META: Record<string, { label: string; evidence: boolean }> = {
@@ -483,7 +568,7 @@ function BasisChip({ basis }: { basis: string }) {
       title={
         meta.evidence
           ? "This hop's probability rests on observed exploitation evidence (KEV / EPSS / runtime)."
-          : "This hop's probability is an estimate — severity/CVSS-derived or an assumed topology default, not observed."
+          : "This hop's probability is an estimate - severity/CVSS-derived or an assumed topology default, not observed."
       }
     >
       {meta.label}
@@ -491,7 +576,7 @@ function BasisChip({ basis }: { basis: string }) {
   );
 }
 
-export default function AttackPathDetail({ path, onShowInGraph, onTriaged }: Props) {
+export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEnabled }: Props) {
   const entry = path.nodes[0];
   const target = path.nodes[path.nodes.length - 1];
 
@@ -532,6 +617,21 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged }: Pro
             <div className="mt-1 text-xs text-muted">
               {path.steps.length} hops · {path.nodes.map((n) => n.label).join(" → ")}
             </div>
+            {path.priorityLabel && (
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                <span
+                  className={`rounded-md px-1.5 py-0.5 text-[11px] font-bold tabular-nums ${PRIORITY_TONE[path.priorityLabel] ?? PRIORITY_TONE.P3}`}
+                  title="Composite triage priority [0,100]: blends exploitability + trust with runtime/KEV corroboration, target sensitivity, and entry blast radius - the 'fix first' signal."
+                >
+                  {path.priorityLabel} · priority {path.priority?.toFixed(0)}
+                </span>
+                {path.priorityFactors?.map((f) => (
+                  <span key={f} className="rounded-md bg-slate-500/10 px-1.5 py-0.5 text-[10px] text-slate-600">
+                    {f}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
           <div className="flex shrink-0 flex-col items-end gap-1">
             <div className="rounded-lg bg-red-500/15 px-3 py-1 text-xl font-bold tabular-nums text-red-700">
@@ -539,7 +639,7 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged }: Pro
             </div>
             <span className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted">
               exploit score
-              <InfoTip text="How likely an attacker can walk this whole route — the product of each hop’s probability (p). Higher = easier to exploit." />
+              <InfoTip text="How likely an attacker can walk this whole route - the product of each hop’s probability (p). Higher = easier to exploit." />
             </span>
             {path.confidenceLabel && (
               <span
@@ -554,7 +654,7 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged }: Pro
               path.scoreUpperBound - path.score > 0.05 && (
                 <span
                   className="flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300"
-                  title="The exploit score multiplies the hops as if they were independent. Two or more hops here rest on the same basis (a shared cause), so the product is a lower bound — if they're correlated the real exploitability could be as high as the weakest hop. The true value lies in this band."
+                  title="The exploit score multiplies the hops as if they were independent. Two or more hops here rest on the same basis (a shared cause), so the product is a lower bound - if they're correlated the real exploitability could be as high as the weakest hop. The true value lies in this band."
                 >
                   ↑ up to {(path.scoreUpperBound * 100).toFixed(0)}% if correlated
                 </span>
@@ -565,7 +665,7 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged }: Pro
         {hasStatus && (
           <div className="flex flex-wrap items-center gap-1.5">
             {path.runtimeConfirmed && (
-              <Badge tone="danger" icon={<ZapIcon className="h-3.5 w-3.5" />} className="text-[11px] font-bold" title="Runtime-confirmed by Falco — this path is being exercised right now.">
+              <Badge tone="danger" icon={<ZapIcon className="h-3.5 w-3.5" />} className="text-[11px] font-bold" title="Runtime-confirmed by Falco - this path is being exercised right now.">
                 ACTIVELY EXPLOITED
               </Badge>
             )}
@@ -575,7 +675,7 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged }: Pro
               </Badge>
             )}
             {path.reopens != null && path.reopens > 0 && (
-              <Badge tone="warn" title="This path resolved and then came back — a regression, likely reintroduced by a deploy.">
+              <Badge tone="warn" title="This path resolved and then came back - a regression, likely reintroduced by a deploy.">
                 ⟳ reopened {path.reopens}×
               </Badge>
             )}
@@ -583,7 +683,7 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged }: Pro
             {path.validation && (
               <Badge
                 tone={VALIDATION_META[path.validation.outcome].tone}
-                title={`Red-team/BAS verdict from ${path.validation.source}${path.validation.evidence ? ` — ${path.validation.evidence}` : ""}. Feeds the precision/recall metric.`}
+                title={`Red-team/BAS verdict from ${path.validation.source}${path.validation.evidence ? ` - ${path.validation.evidence}` : ""}. Feeds the precision/recall metric.`}
               >
                 {VALIDATION_META[path.validation.outcome].label} · {path.validation.source}
               </Badge>
@@ -591,7 +691,7 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged }: Pro
           </div>
         )}
 
-        {/* Action toolbar — Investigate (left) vs Decide (right). */}
+        {/* Action toolbar - Investigate (left) vs Decide (right). */}
         <div className="flex flex-wrap items-center gap-2 border-t border-edge pt-3.5">
           {onShowInGraph && (
             <Button variant="secondary" onClick={onShowInGraph}>
@@ -600,6 +700,8 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged }: Pro
           )}
           <span className="mx-auto" />
           <ValidationControl path={path} onChanged={onTriaged} />
+          <RemediationPRControl path={path} />
+          {aiEnabled && <AiExplainControl path={path} />}
           <TriageControl path={path} onTriaged={onTriaged} />
           <TicketControl path={path} onChanged={onTriaged} />
         </div>
@@ -630,7 +732,7 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged }: Pro
                 {whatIf.result.riskReduction > 0.0005 ? (
                   <span className="text-emerald-700">↓ {(whatIf.result.riskReduction * 100).toFixed(1)} pts removed</span>
                 ) : (
-                  <span className="text-amber-700">no global drop — other paths still reach a jewel</span>
+                  <span className="text-amber-700">no global drop - other paths still reach a jewel</span>
                 )}
               </span>
               <span className="text-slate-400">·</span>
@@ -666,7 +768,7 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged }: Pro
                       target="_blank"
                       rel="noreferrer"
                       className="inline-flex items-center gap-1 rounded bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent transition hover:bg-accent/20"
-                      title={`MITRE ATT&CK ${path.steps[i].attack!.id} — ${path.steps[i].attack!.name} · tactic: ${path.steps[i].attack!.tactic}`}
+                      title={`MITRE ATT&CK ${path.steps[i].attack!.id} - ${path.steps[i].attack!.name} · tactic: ${path.steps[i].attack!.tactic}`}
                     >
                       <CrosshairIcon className="h-3 w-3" />
                       {path.steps[i].attack!.id} · {path.steps[i].attack!.tactic}
@@ -678,7 +780,7 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged }: Pro
                       tone="warn"
                       dashed
                       icon={<AlertTriangleIcon className="h-3 w-3" />}
-                      title={`This hop was inferred by the resolver (${path.steps[i].resolutionMethod} match), not asserted by a tool. Confidence ${(path.steps[i].resolutionConfidence! * 100).toFixed(0)}% — verify this link; the probability above is already discounted for it.`}
+                      title={`This hop was inferred by the resolver (${path.steps[i].resolutionMethod} match), not asserted by a tool. Confidence ${(path.steps[i].resolutionConfidence! * 100).toFixed(0)}% - verify this link; the probability above is already discounted for it.`}
                     >
                       heuristic join · {(path.steps[i].resolutionConfidence! * 100).toFixed(0)}%
                     </Badge>
@@ -728,7 +830,7 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged }: Pro
         <section>
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted">Detection-as-code ({path.detections.length})</h3>
           <p className="mb-2 text-xs text-muted">
-            Remediation cuts the path; these Falco/Sigma rules <span className="font-medium">watch</span> it — deploy them to catch
+            Remediation cuts the path; these Falco/Sigma rules <span className="font-medium">watch</span> it - deploy them to catch
             exploitation of the exposed workload.
           </p>
           <div className="flex flex-col gap-3">

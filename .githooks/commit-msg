@@ -1,0 +1,30 @@
+#!/bin/sh
+# Enforce Conventional Commits locally (no dependencies - just a regex).
+# Enable once with:  git config core.hooksPath .githooks
+# Bypass for a one-off with:  git commit --no-verify
+#
+# Allowed:  <type>[optional scope][!]: <subject>
+#   types: feat fix docs style refactor perf test build ci chore revert
+subject=$(head -n1 "$1")
+
+# Let merge/revert/fixup/squash commits through untouched.
+case "$subject" in
+  "Merge "*|"Revert "*|"fixup! "*|"squash! "*) exit 0 ;;
+esac
+
+pattern='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9_./-]+\))?!?: .+'
+if printf '%s' "$subject" | grep -Eq "$pattern"; then
+  exit 0
+fi
+
+cat >&2 <<EOF
+✗ Commit message does not follow Conventional Commits.
+
+  Got:    $subject
+  Expect: <type>[(scope)][!]: <subject>
+  Types:  feat fix docs style refactor perf test build ci chore revert
+  Example: feat(analyzer): add incremental snapshotting
+
+  (bypass with: git commit --no-verify)
+EOF
+exit 1

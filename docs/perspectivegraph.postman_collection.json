@@ -1,7 +1,7 @@
 {
 	"info": {
 		"name": "PerspectiveGraph API",
-		"description": "All PerspectiveGraph endpoints: health checks, the scanner-webhook ingest API (:8081) and the GraphQL API (:8080).\n\nRun the **Ingest** folder top-to-bottom to reproduce the demo (`make seed`): six core sources + two discovery collectors (Kubernetes, cloud network) that correlate into six ranked attack paths. The analyzer recomputes paths on its interval (default 30s), so give it a moment before querying GraphQL.\n\nAdjust `apiUrl` / `ingestUrl` collection variables to point at another deployment.\n\nThreat intel: run the backend with THREATINTEL=on to enrich CVEs with CISA KEV (exploited in the wild) + FIRST EPSS (30-day exploitation probability); the GraphQL queries below expose node.kev / node.epss and posture.kevOnPaths.\n\nAuth: if the backend runs with INGEST_HMAC_SECRET / API_TOKENS set, fill the collection variables `ingestHmacSecret` and `apiToken` — a pre-request script then signs ingest requests (HMAC) and adds the bearer token to GraphQL requests automatically. Leave them empty for an open (dev) backend.\n\nMulti-tenant: set the `tenant` collection variable (and use that tenant's `ingestHmacSecret`/`apiToken`) to scope ingest + queries to one tenant; the pre-request script adds the X-Tenant header automatically.\n\nAction layer: drift alerts fire to ALERT_WEBHOOK_URL when a new path appears; per-path Falco/Sigma detections are on the GraphQL AttackPath; GET /export/ndjson is the SIEM enrichment feed.",
+		"description": "All PerspectiveGraph endpoints: health checks, the scanner-webhook ingest API (:8081) and the GraphQL API (:8080).\n\nRun the **Ingest** folder top-to-bottom to reproduce the demo (`make seed`): six core sources + two discovery collectors (Kubernetes, cloud network) that correlate into six ranked attack paths. The analyzer recomputes paths on its interval (default 30s), so give it a moment before querying GraphQL.\n\nAdjust `apiUrl` / `ingestUrl` collection variables to point at another deployment.\n\nThreat intel: run the backend with THREATINTEL=on to enrich CVEs with CISA KEV (exploited in the wild) + FIRST EPSS (30-day exploitation probability); the GraphQL queries below expose node.kev / node.epss and posture.kevOnPaths.\n\nAuth: if the backend runs with INGEST_HMAC_SECRET / API_TOKENS set, fill the collection variables `ingestHmacSecret` and `apiToken` - a pre-request script then signs ingest requests (HMAC) and adds the bearer token to GraphQL requests automatically. Leave them empty for an open (dev) backend.\n\nMulti-tenant: set the `tenant` collection variable (and use that tenant's `ingestHmacSecret`/`apiToken`) to scope ingest + queries to one tenant; the pre-request script adds the X-Tenant header automatically.\n\nAction layer: drift alerts fire to ALERT_WEBHOOK_URL when a new path appears; per-path Falco/Sigma detections are on the GraphQL AttackPath; GET /export/ndjson is the SIEM enrichment feed.",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"variable": [
@@ -136,14 +136,49 @@
 								"metrics"
 							]
 						},
-						"description": "Prometheus exposition: ingest/normalize/analyzer-pass/dead-letter counters + Go runtime. Always open, unthrottled."
+						"description": "Prometheus exposition: ingest/normalize/analyzer-pass/dead-letter counters + Go runtime. Scale metrics: perspectivegraph_analyzer_graph_{nodes,edges} (graph size), _analyzer_pathfind_seconds (parallel per-seed Dijkstra latency), _analyzer_snapshot_seconds + _analyzer_snapshots_total{mode=\"full|delta\"} (incremental snapshotting). Always open, unthrottled."
 					},
 					"response": []
+				},
+				{
+					"name": "Connector health (agentless pull status)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{ingestUrl}}/connectors",
+							"host": [
+								"{{ingestUrl}}"
+							],
+							"path": [
+								"connectors"
+							]
+						},
+						"description": "Status of the agentless PULL connectors (e.g. aws): last run, events emitted, errors. Empty when CONNECTORS_ENABLED is unset."
+					}
+				},
+				{
+					"name": "Auth config (SPA login bootstrap)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{apiUrl}}/auth/config",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"auth",
+								"config"
+							]
+						},
+						"description": "PUBLIC (no auth): tells the dashboard login gate whether auth is required and, for SSO, the OIDC coordinates (issuer/clientId/authorizeUrl/tokenUrl/scopes) to run the Authorization-Code + PKCE flow."
+					}
 				}
 			]
 		},
 		{
-			"name": "Ingest — scanner webhooks",
+			"name": "Ingest - scanner webhooks",
 			"description": "Same payloads and order as `make seed` (six sources). Re-posting is idempotent (deterministic node ids, upsert semantics).",
 			"item": [
 				{
@@ -335,7 +370,7 @@
 								}
 							}
 						},
-						"description": "Cloud inventory/identity export: ALB, EC2, IAM role, S3 — adds the cloud attack surface."
+						"description": "Cloud inventory/identity export: ALB, EC2, IAM role, S3 - adds the cloud attack surface."
 					}
 				},
 				{
@@ -538,7 +573,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"_comment\": \"Okta directory export (as an Okta/Entra admin-API sync would produce). The IdP is internet-facing (SSO portal). The federated_roles are AWS role ARNs that converge with the roles the IAM collector discovered (iam-sample.json) — so federating into them inherits their privesc. alice has NO MFA and federates into admin-role (AdministratorAccess): the modern kill chain internet -> Okta -> alice -> admin-role -> account-admin lights up, highly traversable because there's no MFA to phish past. bob has MFA and only a privesc-capable role, so his path is discounted.\",\n  \"provider\": \"okta\",\n  \"internet_login\": true,\n  \"users\": [\n    {\n      \"email\": \"alice@acme.com\",\n      \"mfa\": false,\n      \"admin\": true,\n      \"groups\": [\"cloud-admins\"],\n      \"federated_roles\": [\"arn:aws:iam::123456789012:role/admin-role\"]\n    },\n    {\n      \"email\": \"bob@acme.com\",\n      \"mfa\": true,\n      \"groups\": [\"developers\"],\n      \"federated_roles\": [\"arn:aws:iam::123456789012:role/public-deployer\"]\n    }\n  ]\n}\n",
+							"raw": "{\n  \"_comment\": \"Okta directory export (as an Okta/Entra admin-API sync would produce). The IdP is internet-facing (SSO portal). The federated_roles are AWS role ARNs that converge with the roles the IAM collector discovered (iam-sample.json) - so federating into them inherits their privesc. alice has NO MFA and federates into admin-role (AdministratorAccess): the modern kill chain internet -> Okta -> alice -> admin-role -> account-admin lights up, highly traversable because there's no MFA to phish past. bob has MFA and only a privesc-capable role, so his path is discounted.\",\n  \"provider\": \"okta\",\n  \"internet_login\": true,\n  \"users\": [\n    {\n      \"email\": \"alice@acme.com\",\n      \"mfa\": false,\n      \"admin\": true,\n      \"groups\": [\"cloud-admins\"],\n      \"federated_roles\": [\"arn:aws:iam::123456789012:role/admin-role\"]\n    },\n    {\n      \"email\": \"bob@acme.com\",\n      \"mfa\": true,\n      \"groups\": [\"developers\"],\n      \"federated_roles\": [\"arn:aws:iam::123456789012:role/public-deployer\"]\n    }\n  ]\n}\n",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -710,7 +745,7 @@
 								"variables": ""
 							}
 						},
-						"description": "Honest probabilities. Every path reports a confidence (high|medium|low) and every hop a weightBasis — kev|epss|runtime (observed evidence) vs cvss|severity|heuristic (estimate). It also exposes the independence assumption behind the score: score is the product of the hops (independent), scoreUpperBound is the weakest hop (the score if they share a common cause), and correlatedHops flags when ≥2 hops rest on the same basis — so the true exploitability lies in [score, scoreUpperBound] instead of a falsely-precise point."
+						"description": "Honest probabilities. Every path reports a confidence (high|medium|low) and every hop a weightBasis - kev|epss|runtime (observed evidence) vs cvss|severity|heuristic (estimate). It also exposes the independence assumption behind the score: score is the product of the hops (independent), scoreUpperBound is the weakest hop (the score if they share a common cause), and correlatedHops flags when ≥2 hops rest on the same basis - so the true exploitability lies in [score, scoreUpperBound] instead of a falsely-precise point."
 					}
 				},
 				{
@@ -1120,7 +1155,94 @@
 								"variables": ""
 							}
 						},
-						"description": "Lists every root query with its description — same metadata the GraphiQL Docs panel shows."
+						"description": "Lists every root query with its description - same metadata the GraphiQL Docs panel shows."
+					}
+				}
+			]
+		},
+		{
+			"name": "AI assistant (Claude or HuggingFace)",
+			"item": [
+				{
+					"name": "1. Executive summary",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{apiUrl}}/ai/summary",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"ai",
+								"summary"
+							]
+						},
+						"description": "Board-level brief of the current posture, grounded in the live attack paths. Provider is server-configured: Anthropic (Claude, ANTHROPIC_API_KEY) by default, or HuggingFace / any OpenAI-compatible endpoint (HF_TOKEN) when no Anthropic key is set. 503 when neither is configured (aiEnabled=false). Viewer role when auth is enabled. Audited as ai.summary."
+					}
+				},
+				{
+					"name": "2. Natural-language Q&A",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"question\": \"Which internet-exposed path reaches a crown jewel fastest, and what is the single best fix?\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{apiUrl}}/ai/query",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"ai",
+								"query"
+							]
+						},
+						"description": "Ask a question about your attack surface; answered from the tenant's real, capped attack-path context (the model summarizes your data, it doesn't invent assets). Audited as ai.query."
+					}
+				},
+				{
+					"name": "3. Explain a path",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"pathId\": \"<an id from attackPaths>\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{apiUrl}}/ai/explain",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"ai",
+								"explain"
+							]
+						},
+						"description": "Plain-English walk-through of one attack path and the most effective remediation. pathId = attackPaths { id }. Audited as ai.explain."
 					}
 				}
 			]
@@ -1143,7 +1265,7 @@
 								"ndjson"
 							]
 						},
-						"description": "One NDJSON record per asset on a critical path (on_critical_path, max_path_score, kev, runtime_confirmed, …) — the enrichment feed a SIEM (Splunk/Elastic/Sentinel) pulls to prioritize alerts. Tenant-scoped + auth-gated like GraphQL."
+						"description": "One NDJSON record per asset on a critical path (on_critical_path, max_path_score, kev, runtime_confirmed, …) - the enrichment feed a SIEM (Splunk/Elastic/Sentinel) pulls to prioritize alerts. Tenant-scoped + auth-gated like GraphQL."
 					}
 				},
 				{
@@ -1345,6 +1467,43 @@
 			]
 		},
 		{
+			"name": "Remediation as PR (dev workflow)",
+			"item": [
+				{
+					"name": "Open fix PR for a path",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"pathId\": \"<an id from attackPaths>\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{apiUrl}}/remediation/pr",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"remediation",
+								"pr"
+							]
+						},
+						"description": "Open a branch + commit the generated fix (K8s NetworkPolicy / Terraform) + raise a pull request for an attack path. pathId = attackPaths { id }. Needs GITHUB_TOKEN (dry-run when unset). Admin role when auth is enabled."
+					}
+				}
+			]
+		},
+		{
 			"name": "Red-team / BAS validation",
 			"description": "Ground the engine against reality: record whether paths are real (confirmed/refuted/partial) and what the engine missed, and read the precision/recall it implies. A BAS platform posts here; metrics also via GraphQL { validation { precision recall } }.",
 			"item": [
@@ -1376,7 +1535,7 @@
 								"validations"
 							]
 						},
-						"description": "Record a red-team/BAS verdict on a path: outcome ∈ confirmed | refuted | partial (references a path id from attackPaths) | missed (a real path the engine did NOT surface — needs route, not pathId). source required. Admin role when auth is on. Feeds the precision/recall metric."
+						"description": "Record a red-team/BAS verdict on a path: outcome ∈ confirmed | refuted | partial (references a path id from attackPaths) | missed (a real path the engine did NOT surface - needs route, not pathId). source required. Admin role when auth is on. Feeds the precision/recall metric."
 					}
 				},
 				{
@@ -1407,7 +1566,7 @@
 								"validations"
 							]
 						},
-						"description": "A real path the tester found that the engine did not surface — a false negative that lowers recall. No pathId; describe it in route."
+						"description": "A real path the tester found that the engine did not surface - a false negative that lowers recall. No pathId; describe it in route."
 					}
 				},
 				{
@@ -1424,7 +1583,7 @@
 								"validations"
 							]
 						},
-						"description": "All verdicts for the tenant plus the rolled-up metrics: precision = confirmed/(confirmed+refuted), recall = confirmed/(confirmed+missed) — over the tested subset, not a global claim."
+						"description": "All verdicts for the tenant plus the rolled-up metrics: precision = confirmed/(confirmed+refuted), recall = confirmed/(confirmed+missed) - over the tested subset, not a global claim."
 					}
 				}
 			]

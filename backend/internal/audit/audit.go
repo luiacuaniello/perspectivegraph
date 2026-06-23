@@ -205,7 +205,7 @@ func tail(path string, sealer cryptostore.Sealer) (int64, string, error) {
 }
 
 // Verify re-walks the chain in path and returns an error at the first record
-// whose hash or back-link doesn't match — i.e. evidence of tampering.
+// whose hash or back-link doesn't match - i.e. evidence of tampering.
 func Verify(path string, opts ...Option) (records int, err error) {
 	sealer := sealerFrom(opts)
 	f, err := os.Open(path)

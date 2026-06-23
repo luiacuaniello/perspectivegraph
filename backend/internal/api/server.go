@@ -86,8 +86,11 @@ func (a *API) Handler() (http.Handler, error) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
-	// Prometheus metrics — open and unthrottled so scraping never starves.
+	// Prometheus metrics - open and unthrottled so scraping never starves.
 	mux.Handle("GET /metrics", metrics.Handler())
+	// Public auth config - necessarily open: it tells an unauthenticated SPA how to
+	// authenticate (token vs SSO). Secret-free (only the IdP's public coordinates).
+	mux.HandleFunc("GET /auth/config", a.handleAuthConfig)
 
 	// secured wraps a data handler with: rate limit → auth (when enabled) →
 	// per-handler request counting. The limiter is outermost so floods are
@@ -114,11 +117,18 @@ func (a *API) Handler() (http.Handler, error) {
 	mux.Handle("POST /suppressions", secured("suppressions_put", http.HandlerFunc(a.putSuppression)))
 	mux.Handle("DELETE /suppressions/{pathID}", secured("suppressions_delete", http.HandlerFunc(a.deleteSuppression)))
 
-	// Remediation ticketing — open/list/close owned work for a path. GET needs
+	// Remediation ticketing - open/list/close owned work for a path. GET needs
 	// viewer; the writes additionally require admin (checked inside, when auth on).
 	mux.Handle("GET /tickets", secured("tickets_list", http.HandlerFunc(a.listTickets)))
 	mux.Handle("POST /tickets", secured("tickets_create", http.HandlerFunc(a.createTicket)))
 	mux.Handle("POST /tickets/{id}/close", secured("tickets_close", http.HandlerFunc(a.closeTicket)))
+	// Remediation-as-PR: open a pull request with a path's generated fix.
+	mux.Handle("POST /remediation/pr", secured("remediation_pr", http.HandlerFunc(a.openRemediationPR)))
+	// AI-native layer (self-gated on ANTHROPIC_API_KEY): NL query, exec summary,
+	// and plain-English path explanation.
+	mux.Handle("GET /ai/summary", secured("ai_summary", http.HandlerFunc(a.handleAISummary)))
+	mux.Handle("POST /ai/query", secured("ai_query", http.HandlerFunc(a.handleAIQuery)))
+	mux.Handle("POST /ai/explain", secured("ai_explain", http.HandlerFunc(a.handleAIExplain)))
 
 	// Red-team / BAS validation verdicts + precision/recall. GET needs viewer;
 	// writes additionally require admin (checked inside, when auth is on).
@@ -224,7 +234,7 @@ func selectionSetDepth(ss *ast.SelectionSet, fragments map[string]*ast.FragmentD
 			d = selectionSetDepth(s.SelectionSet, fragments, visiting)
 		case *ast.FragmentSpread:
 			name := s.Name.Value
-			if visiting[name] { // cyclic fragment — bail rather than recurse forever
+			if visiting[name] { // cyclic fragment - bail rather than recurse forever
 				return maxQueryDepth + 1
 			}
 			if fd, ok := fragments[name]; ok {
@@ -243,7 +253,7 @@ func selectionSetDepth(ss *ast.SelectionSet, fragments map[string]*ast.FragmentD
 // withCORS echoes Access-Control-Allow-Origin only for an allow-listed Origin
 // (or "*" when the operator opts into a wildcard). This tool is a map of how to
 // attack the org, so a permissive default would let any web page a logged-in
-// analyst visits probe the API — the allowlist closes that.
+// analyst visits probe the API - the allowlist closes that.
 func (a *API) withCORS(next http.Handler) http.Handler {
 	allowAll := false
 	allowed := make(map[string]bool, len(a.corsOrigins))

@@ -1,6 +1,6 @@
 // Package dataclass ingests data-classification findings from a real classifier
 // (AWS Macie, a DLP scan, or a tag-policy export) and marks the named asset as a
-// crown jewel — authoritative evidence that it holds sensitive data, far stronger
+// crown jewel - authoritative evidence that it holds sensitive data, far stronger
 // than guessing from the asset's name. The classification rides on the asset node
 // (matched by stable id to the cloud/k8s feeds), and the normalizer turns a
 // sensitive class (pii/phi/pci/…) into crown_jewel with a "classified:…" basis.

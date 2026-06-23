@@ -1,5 +1,5 @@
 // Package sso ingests identity-federation from an external IdP (Okta, Entra,
-// Google Workspace, …) — the modern breach's front door: phish or stuff an SSO
+// Google Workspace, …) - the modern breach's front door: phish or stuff an SSO
 // user and you inherit every cloud role they federate into. PerspectiveGraph
 // models the IdP as an internet-facing entry point, each user it authenticates,
 // and the federated cloud roles those users assume:
@@ -7,7 +7,7 @@
 //	IdentityProvider(internet) ──AUTHENTICATES──▶ User ──ASSUMES──▶ IAM_Role
 //
 // Because the federated role is keyed by its ARN, it converges with the role the
-// IAM collector already discovered — so an Okta user with no MFA who federates
+// IAM collector already discovered - so an Okta user with no MFA who federates
 // into a role that CAN_ESCALATE_TO account-admin lights up as one path:
 // internet → Okta → user → cloud admin.
 //

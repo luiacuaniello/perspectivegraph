@@ -118,7 +118,7 @@ func TestExpiryReactivatesPath(t *testing.T) {
 		t.Error("ActiveSet must include live")
 	}
 
-	// List shows both — lapsed decisions stay visible on the board.
+	// List shows both - lapsed decisions stay visible on the board.
 	if got := len(s.List("default")); got != 2 {
 		t.Errorf("List = %d, want 2 (incl. expired)", got)
 	}
@@ -146,7 +146,7 @@ func TestPersistenceRoundtrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Reopen from disk — the decision must survive a restart.
+	// Reopen from disk - the decision must survive a restart.
 	s2, err := New(path)
 	if err != nil {
 		t.Fatal(err)

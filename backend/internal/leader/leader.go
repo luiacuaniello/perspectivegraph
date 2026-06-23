@@ -1,7 +1,7 @@
 // Package leader provides single-leader election so that, when the backend runs
 // with more than one replica, exactly one of them performs at-most-once external
 // actions (drift webhooks, PR/MR comments). Every replica still computes attack
-// paths locally to serve its own API reads — only the *side effects* are gated,
+// paths locally to serve its own API reads - only the *side effects* are gated,
 // so adding replicas scales reads without duplicating outbound notifications.
 //
 // Election uses a PostgreSQL session-scoped advisory lock: the holder is the
@@ -19,7 +19,7 @@ import (
 	_ "github.com/lib/pq"
 )
 
-// AlwaysLeader is the leader unconditionally — the correct elector for a
+// AlwaysLeader is the leader unconditionally - the correct elector for a
 // single-process / in-memory deployment.
 type AlwaysLeader struct{}
 

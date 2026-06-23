@@ -87,6 +87,11 @@ services:
       # default in-process Dijkstra. Off by default (variable-length enumeration
       # is unbounded in the worst case; safe-rails: statement_timeout + LIMIT).
       ANALYZER_DB_PATHS: ${ANALYZER_DB_PATHS:-false}
+      # Scale knobs: per-seed pathfinding parallelism (0 = auto = CPUs; result is
+      # identical) and incremental snapshotting (patch a resident graph with the
+      # per-pass delta instead of re-reading it all - off by default).
+      ANALYZER_WORKERS: ${ANALYZER_WORKERS:-0}
+      ANALYZER_INCREMENTAL: ${ANALYZER_INCREMENTAL:-false}
       # Staleness pruning: nodes/edges not re-observed within GRAPH_TTL are
       # removed (leader-only) so departed assets can't produce phantom paths.
       # Empty/0 disables it (the default).
@@ -95,7 +100,7 @@ services:
       OPENSEARCH_URL: ${OPENSEARCH_URL:-}
       THREATINTEL: ${THREATINTEL:-off}
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      # Auth (optional) — pass through when set; open with a loud warning otherwise.
+      # Auth (optional) - pass through when set; open with a loud warning otherwise.
       INGEST_HMAC_SECRET: ${INGEST_HMAC_SECRET:-}
       API_TOKENS: ${API_TOKENS:-}
       # Triage/suppression persistence (optional). Empty → in-memory only. To
@@ -116,6 +121,47 @@ services:
       # disabled. The rootfs is read-only; /tmp is a tmpfs, or mount a volume for
       # durability. Verify the hash chain with: perspectivegraph verify-audit <path>
       AUDIT_LOG_PATH: ${AUDIT_LOG_PATH:-}
+      # At-rest encryption + export signing (security hardening). Empty → plaintext
+      # on disk / unsigned exports.
+      STORE_ENCRYPTION_KEY: ${STORE_ENCRYPTION_KEY:-}
+      EXPORT_SIGNING_KEY: ${EXPORT_SIGNING_KEY:-}
+      # Data hygiene: redact secret-looking values out of scanner output before the
+      # store (default on).
+      SCRUB_INGEST: ${SCRUB_INGEST:-true}
+      # OIDC login (SSO) - validation (jwks/iss/aud) + the SPA-facing coordinates
+      # the dashboard login gate uses for the Authorization-Code + PKCE flow.
+      OIDC_JWKS_URL: ${OIDC_JWKS_URL:-}
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_AUTHORIZE_URL: ${OIDC_AUTHORIZE_URL:-}
+      OIDC_TOKEN_URL: ${OIDC_TOKEN_URL:-}
+      OIDC_SCOPES: ${OIDC_SCOPES:-openid profile email}
+      # Agentless connectors (PULL ingestion). Empty CONNECTORS_ENABLED → none.
+      CONNECTORS_ENABLED: ${CONNECTORS_ENABLED:-}
+      CONNECTOR_INTERVAL: ${CONNECTOR_INTERVAL:-15m}
+      CONNECTOR_TIMEOUT: ${CONNECTOR_TIMEOUT:-2m}
+      CONNECTOR_TENANT: ${CONNECTOR_TENANT:-}
+      AWS_CONNECTOR_MODE: ${AWS_CONNECTOR_MODE:-fixtures}
+      AWS_FIXTURES_DIR: ${AWS_FIXTURES_DIR:-}
+      AWS_REGION: ${AWS_REGION:-}
+      AWS_ROLE_ARN: ${AWS_ROLE_ARN:-}
+      # Dev workflow (GitHub): PR comment + merge-gate status + remediation-as-PR.
+      # Empty token → dry-run (logged, not posted).
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_API_URL: ${GITHUB_API_URL:-https://api.github.com}
+      GITHUB_DRY_RUN: ${GITHUB_DRY_RUN:-false}
+      DASHBOARD_URL: ${DASHBOARD_URL:-}
+      # AI-native layer. Anthropic (Claude) is preferred; HuggingFace (HF_TOKEN,
+      # OpenAI-compatible) is the free fallback used when no Anthropic key is set.
+      # Empty for both → /ai/* disabled (self-gated).
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
+      AI_MAX_TOKENS: ${AI_MAX_TOKENS:-}
+      HF_TOKEN: ${HF_TOKEN:-}
+      HF_MODEL: ${HF_MODEL:-}
+      HF_BASE_URL: ${HF_BASE_URL:-}
     ports:
       - "127.0.0.1:8080:8080"   # GraphQL API / BFF
       - "127.0.0.1:8081:8081"   # ingestion webhooks (for `make seed`)
@@ -151,6 +197,28 @@ services:
     ports:
       - "127.0.0.1:9200:9200"
     profiles: ["search"]   # opt-in: `docker compose --profile search up`
+
+  # ── Optional local OIDC IdP for trying SSO login (Keycloak) ─────────
+  # Opt-in demo identity provider so you can exercise the dashboard's SSO login
+  # gate end-to-end on a laptop, no cloud IdP needed:
+  #   docker compose --profile app --profile sso up -d
+  # then set the backend OIDC_* env (see docs/GUIDA §5.x / the realm file) and open
+  # http://localhost:3000. Realm "demo", user demo/demo, client perspectivegraph.
+  # Dev image/flags (start-dev, in-memory) - for local testing only, not production.
+  keycloak:
+    <<: *hardening
+    image: quay.io/keycloak/keycloak:26.4
+    container_name: perspective-keycloak
+    command: ["start-dev", "--import-realm", "--http-port=8080"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KC_HEALTH_ENABLED: "true"
+    volumes:
+      - ./deploy/keycloak/realm-demo.json:/opt/keycloak/data/import/realm-demo.json:ro
+    ports:
+      - "127.0.0.1:8088:8080"   # IdP - browser-facing issuer http://localhost:8088
+    profiles: ["sso"]
 
 volumes:
   perspective-pgdata:

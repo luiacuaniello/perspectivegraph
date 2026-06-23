@@ -73,7 +73,7 @@ export default function PostureOverview({
             ? `internet → crown jewel · ${posture.suppressedPaths} suppressed`
             : "internet → crown jewel"
         }
-        tip="Active routes an attacker could walk from an internet-exposed asset to a crown jewel — excluding paths an analyst has triaged off the board (accept-risk / false-positive / mitigating-control / duplicate). Zero is the goal."
+        tip="Active routes an attacker could walk from an internet-exposed asset to a crown jewel - excluding paths an analyst has triaged off the board (accept-risk / false-positive / mitigating-control / duplicate). Zero is the goal."
       />
       {pct !== null && (
         <Card
@@ -82,7 +82,7 @@ export default function PostureOverview({
           accent={pct >= 50 ? "text-red-600" : pct > 0 ? "text-amber-600" : "text-emerald-600"}
           ring={pct >= 50 ? "shadow-[inset_0_1px_0_0_rgba(220,38,38,0.3)]" : ""}
           hint={`modeled ${Math.round(risk!.sensitivityLow * 100)}–${Math.round(risk!.sensitivityHigh * 100)}% · ~${risk!.expectedCompromised.toFixed(1)} jewels fall`}
-          tip="Probability at least one crown jewel is compromised (Monte Carlo over thousands of attacker attempts). The ‘modeled X–Y%’ range is a sensitivity band: the answer if the heuristic per-edge probabilities are off by ±30% — so treat it as a modeled estimate, not a measurement."
+          tip="Probability at least one crown jewel is compromised (Monte Carlo over thousands of attacker attempts). The ‘modeled X–Y%’ range is a sensitivity band: the answer if the heuristic per-edge probabilities are off by ±30% - so treat it as a modeled estimate, not a measurement."
         />
       )}
       <Card
@@ -91,7 +91,7 @@ export default function PostureOverview({
         accent={posture.runtimeConfirmed > 0 ? "text-red-600" : "text-slate-500"}
         ring={posture.runtimeConfirmed > 0 ? "shadow-[inset_0_1px_0_0_rgba(220,38,38,0.3)]" : ""}
         hint="actively exploited"
-        tip="Paths crossing an asset with a live runtime alert (Falco). These aren’t theoretical — something is exercising them right now. Triage first."
+        tip="Paths crossing an asset with a live runtime alert (Falco). These aren’t theoretical - something is exercising them right now. Triage first."
       />
       <Card
         label="KEV on paths"
@@ -99,7 +99,7 @@ export default function PostureOverview({
         accent={posture.kevOnPaths > 0 ? "text-red-600" : "text-slate-500"}
         ring={posture.kevOnPaths > 0 ? "shadow-[inset_0_1px_0_0_rgba(220,38,38,0.3)]" : ""}
         hint="exploited in the wild"
-        tip="CVEs on a path that are in CISA’s Known Exploited Vulnerabilities catalog — confirmed exploited in the wild, not just scored as risky."
+        tip="CVEs on a path that are in CISA’s Known Exploited Vulnerabilities catalog - confirmed exploited in the wild, not just scored as risky."
       />
       <Card
         label="Policy violations"
@@ -112,17 +112,17 @@ export default function PostureOverview({
       {history && (
         <Card
           label="MTTR"
-          value={history.mttrSeconds != null ? humanDuration(history.mttrSeconds) : "—"}
+          value={history.mttrSeconds != null ? humanDuration(history.mttrSeconds) : "-"}
           accent={history.mttrSeconds != null ? "text-slate-700" : "text-slate-400"}
           ring=""
           hint={history.resolvedPaths > 0 ? `over ${history.resolvedPaths} resolved` : "no resolutions yet"}
-          tip="Mean time-to-remediate: the average time a critical path stayed open before it stopped appearing (was fixed or its asset went away). Tracked over the analysis history — the accountability metric a point-in-time scan can't give you."
+          tip="Mean time-to-remediate: the average time a critical path stayed open before it stopped appearing (was fixed or its asset went away). Tracked over the analysis history - the accountability metric a point-in-time scan can't give you."
         />
       )}
       {validation && (
         <Card
           label="Validation"
-          value={vp != null ? `${vp}%` : "—"}
+          value={vp != null ? `${vp}%` : "-"}
           accent={vp == null ? "text-slate-400" : vp >= 70 ? "text-emerald-600" : vp >= 40 ? "text-amber-600" : "text-red-600"}
           ring=""
           hint={
@@ -130,7 +130,7 @@ export default function PostureOverview({
               ? `precision · ${validation.confirmed}/${validation.tested} real${validation.missed > 0 ? ` · ${validation.missed} missed` : ""}`
               : "no red-team/BAS verdicts yet"
           }
-          tip="Red-team/BAS precision over the TESTED subset = confirmed ÷ (confirmed + refuted): of the paths the engine surfaced and someone actually tested, how many were real. Not a global claim — evidence that the engine is grounded, not just modeled. Record verdicts on a path or POST to /validations."
+          tip="Red-team/BAS precision over the TESTED subset = confirmed ÷ (confirmed + refuted): of the paths the engine surfaced and someone actually tested, how many were real. Not a global claim - evidence that the engine is grounded, not just modeled. Record verdicts on a path or POST to /validations."
         />
       )}
       <Card
@@ -139,7 +139,7 @@ export default function PostureOverview({
         accent="text-accent"
         ring=""
         hint="graph nodes"
-        tip="Every asset, identity and finding correlated into the graph — VMs, containers, images, CVEs, IAM roles, buckets…"
+        tip="Every asset, identity and finding correlated into the graph - VMs, containers, images, CVEs, IAM roles, buckets…"
       />
       <Card
         label="Relationships"
@@ -156,7 +156,7 @@ export default function PostureOverview({
           <div className="mb-2 flex items-center justify-between">
             <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-slate-500">
               Exposure trend
-              <InfoTip text="Critical paths and account-compromise probability over the analysis history. Security is managed on trends, not snapshots — a rising line is a regression to chase, a falling one is progress." />
+              <InfoTip text="Critical paths and account-compromise probability over the analysis history. Security is managed on trends, not snapshots - a rising line is a regression to chase, a falling one is progress." />
             </span>
             <span className="text-[11px] text-slate-400">
               {trend.length} samples{history?.oldestOpenSince ? ` · oldest open ${new Date(history.oldestOpenSince).toLocaleDateString()}` : ""}

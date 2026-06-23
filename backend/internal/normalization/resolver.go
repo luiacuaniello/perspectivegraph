@@ -4,10 +4,10 @@
 //
 // Identity resolution here is two complementary things:
 //
-//   - Canonicalization — rewriting ids so the same real asset reported by
+//   - Canonicalization - rewriting ids so the same real asset reported by
 //     different tools converges (registry prefixes stripped from image refs,
 //     plus a learned alias table).
-//   - Relationship inference — synthesizing edges that no single tool reports
+//   - Relationship inference - synthesizing edges that no single tool reports
 //     but the graph needs, e.g. linking a runtime/cloud Container to the Image
 //     a scanner analyzed (Container --HOSTS--> Image) via its image reference.
 package normalization
@@ -33,7 +33,7 @@ type Normalizer struct {
 	scrub   bool
 }
 
-// New returns a Normalizer with secret scrubbing on by default — the safe posture
+// New returns a Normalizer with secret scrubbing on by default - the safe posture
 // for a tool that must not become a store of the credentials its scanners
 // captured. Disable it with WithScrub(false).
 func New(manager *graph.Manager) *Normalizer {
@@ -198,7 +198,7 @@ func inferImageHosts(ev ontology.Event) ontology.Event {
 		imgID := ontology.NewID(ontology.LabelImage, key)
 		if !hasNode(ev.Nodes, imgID) {
 			// Carry the join provenance so the analyst can see this image identity
-			// was *inferred* from a ref — and how confidently — not asserted.
+			// was *inferred* from a ref - and how confidently - not asserted.
 			ev.Nodes = append(ev.Nodes, ontology.Node{
 				ID:    imgID,
 				Label: ontology.LabelImage,
@@ -229,7 +229,7 @@ func inferImageHosts(ev ontology.Event) ontology.Event {
 }
 
 // crownJewelSignals are name fragments that strongly imply a data store holds
-// something worth stealing. Deliberately conservative — only data stores (which
+// something worth stealing. Deliberately conservative - only data stores (which
 // are exfiltration targets by nature) are inferred, so a guessed jewel is a rare,
 // auditable event, not noise.
 var crownJewelSignals = []string{
@@ -240,7 +240,7 @@ var crownJewelSignals = []string{
 // scrubSensitive redacts secret-looking values out of node and edge properties
 // before they reach the graph, so the attack map never persists a raw credential
 // a scanner happened to capture (see internal/scrub). Identity fields (id, name)
-// are deliberately left intact — they are how nodes dedup and join — so only
+// are deliberately left intact - they are how nodes dedup and join - so only
 // string property VALUES are inspected. A node that had a value redacted is
 // stamped PropSecretsScrubbed so the masking is auditable.
 func scrubSensitive(ev ontology.Event) ontology.Event {
@@ -276,7 +276,7 @@ func scrubProps(props map[string]any) bool {
 }
 
 // sensitiveClassifications are data-classification values that make an asset a
-// crown jewel on their own — authoritative evidence from a real classifier
+// crown jewel on their own - authoritative evidence from a real classifier
 // (Macie/DLP/tag policy), not a name guess.
 var sensitiveClassifications = map[string]bool{
 	"pii": true, "phi": true, "pci": true, "financial": true, "cardholder": true,
@@ -285,7 +285,7 @@ var sensitiveClassifications = map[string]bool{
 }
 
 // classifyCrownJewels marks any node carrying a sensitive `classification`
-// property as a crown jewel with basis "classified:<value>" — authoritative, so
+// property as a crown jewel with basis "classified:<value>" - authoritative, so
 // it runs before the name heuristic and an explicit owner tag still wins.
 func classifyCrownJewels(ev ontology.Event) ontology.Event {
 	for i := range ev.Nodes {

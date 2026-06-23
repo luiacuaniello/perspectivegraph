@@ -89,7 +89,7 @@ func TestScoreBandAndCorrelation(t *testing.T) {
 			t.Errorf("scoreUpperBound = %v, want 0.4 (weakest hop)", p.ScoreUpperBound)
 		}
 		if p.ScoreUpperBound < p.Score {
-			t.Errorf("upper bound %v < score %v — band inverted", p.ScoreUpperBound, p.Score)
+			t.Errorf("upper bound %v < score %v - band inverted", p.ScoreUpperBound, p.Score)
 		}
 		if !p.CorrelatedHops {
 			t.Errorf("expected correlatedHops=true for two heuristic hops")

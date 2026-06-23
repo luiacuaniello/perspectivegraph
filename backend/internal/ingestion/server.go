@@ -30,6 +30,7 @@ type Server struct {
 	hmac       *auth.HMACVerifier
 	audit      audit.Recorder
 	limiter    *ratelimit.Limiter
+	connStatus func() any // agentless connector health, for GET /connectors
 }
 
 func NewServer(pub Publisher, collectors ...Collector) *Server {
@@ -63,6 +64,14 @@ func (s *Server) WithAudit(rec audit.Recorder) *Server {
 	return s
 }
 
+// WithConnectorStatus exposes agentless-connector health at GET /connectors. The
+// provider returns the status snapshot (e.g. *connector.Scheduler.Status); a nil
+// provider serves an empty list. Returns the server for chaining.
+func (s *Server) WithConnectorStatus(fn func() any) *Server {
+	s.connStatus = fn
+	return s
+}
+
 // Handler builds the HTTP routes for the ingestion endpoint. The ingest routes
 // (the write path) are HMAC-protected when a verifier is configured; /healthz
 // stays open.
@@ -72,6 +81,9 @@ func (s *Server) Handler() http.Handler {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+	// Agentless connector health (open, like /healthz and /metrics): source,
+	// last run, last error, events last run. No secrets - operational state only.
+	mux.HandleFunc("GET /connectors", s.handleConnectors)
 
 	// Rate limit, then HMAC-verify (when configured), then handle. The limiter
 	// runs first so unauthenticated floods are dropped cheaply.
@@ -86,6 +98,17 @@ func (s *Server) Handler() http.Handler {
 	// Generic pre-normalized events (one Event or a JSON array of Events).
 	mux.Handle("POST /ingest/events", guard(http.HandlerFunc(s.handleEvents)))
 	return mux
+}
+
+func (s *Server) handleConnectors(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	var v any = []any{}
+	if s.connStatus != nil {
+		if st := s.connStatus(); st != nil {
+			v = st
+		}
+	}
+	_ = json.NewEncoder(w).Encode(v)
 }
 
 func (s *Server) handleTool(w http.ResponseWriter, r *http.Request) {

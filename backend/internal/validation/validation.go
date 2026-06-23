@@ -1,11 +1,11 @@
 // Package validation grounds the engine against reality. An attack-path model is
 // a hypothesis until something tries to walk it; this is where a red-team or BAS
-// platform (Caldera, AttackIQ, SafeBreach, Cymulate, …) — or a human — reports
+// platform (Caldera, AttackIQ, SafeBreach, Cymulate, …) - or a human - reports
 // the verdict: "I tested this path, it's real" / "false positive, not traversable"
 // / "partial", and crucially "you MISSED a real path I found".
 //
 // From those verdicts it computes the honest trust metric the tool otherwise
-// lacks — precision and recall over the *validated* subset:
+// lacks - precision and recall over the *validated* subset:
 //
 //	precision = confirmed / (confirmed + refuted)   // of surfaced+tested paths, how many were real
 //	recall    = confirmed / (confirmed + missed)     // of real paths, how many we surfaced
@@ -34,7 +34,7 @@ type Outcome string
 
 const (
 	Confirmed Outcome = "confirmed" // path tested and exploitable end-to-end (true positive)
-	Refuted   Outcome = "refuted"   // tested and NOT traversable — a false positive
+	Refuted   Outcome = "refuted"   // tested and NOT traversable - a false positive
 	Partial   Outcome = "partial"   // partially traversable / inconclusive
 	Missed    Outcome = "missed"    // a real path the tester found that the engine did NOT surface (false negative)
 )
@@ -51,7 +51,7 @@ type Record struct {
 	PathID   string    `json:"path_id,omitempty"`
 	Tenant   string    `json:"tenant"`
 	Outcome  Outcome   `json:"outcome"`
-	Source   string    `json:"source"`             // the BAS tool or tester — accountability
+	Source   string    `json:"source"`             // the BAS tool or tester - accountability
 	Evidence string    `json:"evidence,omitempty"` // notes / a link to the run
 	Route    string    `json:"route,omitempty"`    // human route, esp. for "missed"
 	TestedAt time.Time `json:"tested_at"`
@@ -126,7 +126,7 @@ func tenantKey(t string) string {
 // Put records a verdict. A confirmed/refuted/partial verdict references a real
 // path (PathID) and replaces any prior verdict for that path (latest test wins);
 // "missed" verdicts accumulate (each is a distinct false negative). Source is
-// always required — a verdict without provenance isn't evidence.
+// always required - a verdict without provenance isn't evidence.
 func (s *Store) Put(r Record) (Record, error) {
 	if s == nil {
 		return Record{}, errors.New("validation: store not configured")

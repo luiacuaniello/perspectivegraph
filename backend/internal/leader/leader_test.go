@@ -44,7 +44,7 @@ func TestNewPostgresKeyIsStablePerRole(t *testing.T) {
 
 func TestIsLeaderFailsClosedWhenUnreachable(t *testing.T) {
 	// A DB it can't reach must make IsLeader return false (never block forever,
-	// never panic) — better to skip an at-most-once action than to deadlock or
+	// never panic) - better to skip an at-most-once action than to deadlock or
 	// crash the analyzer pass.
 	p, err := NewPostgres("host=127.0.0.1 port=1 connect_timeout=1 sslmode=disable", "analyzer")
 	if err != nil {

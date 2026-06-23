@@ -1,10 +1,10 @@
 // Package ticket closes the action loop's last mile: a finding only matters once
-// someone owns fixing it. It turns an attack path into a tracked, owned ticket —
+// someone owns fixing it. It turns an attack path into a tracked, owned ticket -
 // recorded locally (the system of record for "who's on this and is it done") and
 // optionally dispatched to an external tracker (Jira/GitHub/SOAR) via webhook.
 //
 // It deliberately mirrors internal/suppress (file-backed, per-tenant, atomic
-// writes, nil-safe) plus internal/notify's webhook dispatch — one open ticket per
+// writes, nil-safe) plus internal/notify's webhook dispatch - one open ticket per
 // path at a time, so the dashboard can show "ticketed · owner" and close it.
 package ticket
 
@@ -42,7 +42,7 @@ type Ticket struct {
 	PathID      string     `json:"path_id"`
 	Title       string     `json:"title"`
 	Route       string     `json:"route,omitempty"` // human-readable path, for context
-	Owner       string     `json:"owner"`           // accountable human/team — required
+	Owner       string     `json:"owner"`           // accountable human/team - required
 	Status      Status     `json:"status"`
 	ExternalURL string     `json:"external_url,omitempty"` // set when an external tracker echoes one back
 	CreatedAt   time.Time  `json:"created_at"`
@@ -118,7 +118,7 @@ func tenantKey(t string) string {
 }
 
 // Create opens a ticket for a path. If an open ticket already exists for that
-// path it is returned unchanged (idempotent — one open ticket per path), so a
+// path it is returned unchanged (idempotent - one open ticket per path), so a
 // double-click can't fork the work. The new ticket is dispatched to the external
 // tracker when one is configured.
 func (s *Store) Create(ctx context.Context, t Ticket) (Ticket, error) {
@@ -199,7 +199,7 @@ func (s *Store) List(tenant string) []Ticket {
 	return out
 }
 
-// OpenForPath returns the open ticket for a path, if any — what the dashboard
+// OpenForPath returns the open ticket for a path, if any - what the dashboard
 // reads to show a "ticketed" badge.
 func (s *Store) OpenForPath(tenant, pathID string) (Ticket, bool) {
 	if s == nil {
@@ -225,7 +225,7 @@ func (s *Store) openForPath(tenant, pathID string) (Ticket, bool) {
 // dry-run. Best-effort: a tracker outage never fails the local create.
 func (s *Store) dispatch(ctx context.Context, t Ticket) {
 	if s.webhookURL == "" {
-		slog.Info("ticket created (dry-run — set TICKET_WEBHOOK_URL to dispatch)",
+		slog.Info("ticket created (dry-run - set TICKET_WEBHOOK_URL to dispatch)",
 			"id", t.ID, "path", t.PathID, "owner", t.Owner)
 		return
 	}

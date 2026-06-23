@@ -4,7 +4,7 @@ import { AlertTriangleIcon, CheckIcon, CrosshairIcon, FlameIcon, GemIcon, GlobeI
 
 // Legend decodes the dense badge vocabulary in one place, so a first-time reader
 // isn't left guessing what "KEV", "assumed", "heuristic join" or "unsigned" mean.
-// Collapsible — open it once, dismiss it, get on with the work.
+// Collapsible - open it once, dismiss it, get on with the work.
 export default function Legend() {
   const [open, setOpen] = useState(false);
 
@@ -20,38 +20,38 @@ export default function Legend() {
             <circle cx="10" cy="10" r="7.5" />
             <path d="M10 9v4M10 6.5h.01" strokeLinecap="round" />
           </svg>
-          Legend — what the badges mean
+          Legend - what the badges mean
         </span>
         <span className="text-muted">{open ? "−" : "+"}</span>
       </button>
       {open && (
         <div className="grid gap-x-6 gap-y-3 border-t border-edge px-4 py-3.5 text-[11px] text-muted sm:grid-cols-2 lg:grid-cols-3">
           <Row badge={<Badge tone="info" icon={<GlobeIcon className="h-3 w-3" />}>internet-exposed</Badge>}>
-            A valid attack <b>entry point</b> (seed) — reachable from the internet.
+            A valid attack <b>entry point</b> (seed) - reachable from the internet.
           </Row>
           <Row badge={<Badge tone="warn" icon={<GemIcon className="h-3 w-3" />}>crown jewel</Badge>}>
             A high-value <b>target</b>. <i>(inferred)</i> = guessed from a sensitive name, not tagged.
           </Row>
           <Row badge={<Badge tone="danger" icon={<ZapIcon className="h-3 w-3" />}>ACTIVELY EXPLOITED</Badge>}>
-            A node on the path has a <b>live Falco runtime alert</b> — exercised now, not theoretical.
+            A node on the path has a <b>live Falco runtime alert</b> - exercised now, not theoretical.
           </Row>
           <Row badge={<Badge tone="danger" icon={<FlameIcon className="h-3 w-3" />} className="font-bold uppercase">KEV</Badge>}>
-            CVE in CISA’s <b>Known Exploited Vulnerabilities</b> catalog — exploited in the wild.
+            CVE in CISA’s <b>Known Exploited Vulnerabilities</b> catalog - exploited in the wild.
           </Row>
           <Row badge={<span className="text-[10px] font-medium text-emerald-700">● high confidence</span>}>
             How much to <b>trust the score</b>: evidence-backed weights raise it, guesses lower it.
           </Row>
           <Row badge={<Badge tone="ok">KEV</Badge>}>
-            Hop weight is <b>evidence</b> (KEV / EPSS / runtime) — observed, not assumed.
+            Hop weight is <b>evidence</b> (KEV / EPSS / runtime) - observed, not assumed.
           </Row>
           <Row badge={<Badge tone="neutral">assumed</Badge>}>
             Hop weight is an <b>estimate</b> (severity/CVSS-derived or a topology default).
           </Row>
           <Row badge={<Badge tone="warn" dashed icon={<AlertTriangleIcon className="h-3 w-3" />}>heuristic join</Badge>}>
-            This hop was <b>inferred</b> by the resolver (e.g. container→image), not asserted — verify it.
+            This hop was <b>inferred</b> by the resolver (e.g. container→image), not asserted - verify it.
           </Row>
           <Row badge={<Badge tone="danger" icon={<AlertTriangleIcon className="h-3 w-3" />}>unsigned</Badge>}>
-            Supply-chain: image signature <b>not verified</b> (cosign) — a tampering vector.
+            Supply-chain: image signature <b>not verified</b> (cosign) - a tampering vector.
           </Row>
           <Row badge={<Badge tone="info" icon={<CheckIcon className="h-3 w-3" />}>validated real</Badge>}>
             A <b>red-team / BAS</b> verdict: the path was tested and confirmed exploitable (vs <i>refuted</i> = false positive).
@@ -64,7 +64,7 @@ export default function Legend() {
               </span>
             }
           >
-            The <b>MITRE ATT&amp;CK</b> technique (and tactic) each hop maps to — click it for the technique page.
+            The <b>MITRE ATT&amp;CK</b> technique (and tactic) each hop maps to - click it for the technique page.
           </Row>
         </div>
       )}

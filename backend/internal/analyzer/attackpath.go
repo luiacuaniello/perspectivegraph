@@ -11,7 +11,7 @@
 // the product is then a *lower* bound for "all hops succeed"; the comonotonic
 // upper bound is the weakest single hop, min p. We expose both (Score and
 // ScoreUpperBound) plus a CorrelatedHops flag rather than pretending the point
-// estimate is exact — see AttackPath.
+// estimate is exact - see AttackPath.
 package analyzer
 
 import (
@@ -20,7 +20,10 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"runtime"
 	"sort"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/graph"
@@ -35,12 +38,12 @@ type Step struct {
 	Probability float64           `json:"probability"`
 	// Identity-resolution provenance for *this hop*: set when the join was
 	// inferred by the normalizer (e.g. a container stitched to its image), so a
-	// reader can flag — and distrust — a heuristic correlation. Confidence < 1
+	// reader can flag - and distrust - a heuristic correlation. Confidence < 1
 	// means "verify this link"; it also already discounts Probability above.
 	ResolutionMethod     string  `json:"resolution_method,omitempty"`
 	ResolutionConfidence float64 `json:"resolution_confidence,omitempty"`
-	// WeightBasis records where this hop's probability came from — kev | epss |
-	// runtime (evidence) vs cvss | severity | heuristic (estimate) — and
+	// WeightBasis records where this hop's probability came from - kev | epss |
+	// runtime (evidence) vs cvss | severity | heuristic (estimate) - and
 	// WeightConfidence how much to trust it [0,1]. So the score can say which hops
 	// rest on observed exploitation and which are educated guesses.
 	WeightBasis      string  `json:"weight_basis,omitempty"`
@@ -54,16 +57,16 @@ type AttackPath struct {
 	Nodes []ontology.Node `json:"nodes"`
 	Steps []Step          `json:"steps"`
 	// RuntimeConfirmed is true when some node on the path carries a live Falco
-	// runtime alert — the path isn't just reachable, it's being exercised.
+	// runtime alert - the path isn't just reachable, it's being exercised.
 	RuntimeConfirmed bool `json:"runtime_confirmed"`
 	// Confidence is how much to trust this path's Score given how its edge weights
 	// were derived: the mean of the hops' WeightConfidence, in [0,1]. ConfidenceLabel
-	// is the qualitative band (high|medium|low) — an honest answer to "why 58%?"
+	// is the qualitative band (high|medium|low) - an honest answer to "why 58%?"
 	// that distinguishes an evidence-backed estimate from a pile of severity guesses.
 	Confidence      float64 `json:"confidence,omitempty"`
 	ConfidenceLabel string  `json:"confidence_label,omitempty"`
 	// ScoreUpperBound is the path score if its hops share a common cause instead of
-	// being independent: the weakest single hop's probability — the comonotonic
+	// being independent: the weakest single hop's probability - the comonotonic
 	// (Fréchet) upper bound for "all hops succeed". The headline Score multiplies the
 	// hops as if independent, which is a *lower* bound once they are positively
 	// correlated, so the true exploitability lies in [Score, ScoreUpperBound]. A wide
@@ -72,17 +75,67 @@ type AttackPath struct {
 	// CorrelatedHops is true when two or more hops rest on the same weight basis
 	// (several heuristic topology defaults, two runtime-confirmed hops, …): a
 	// concrete reason the hops may not be independent, so the band above is grounded
-	// rather than theoretical. It does not change Score — it tells the reader the
+	// rather than theoretical. It does not change Score - it tells the reader the
 	// product may understate the real risk.
 	CorrelatedHops bool `json:"correlated_hops,omitempty"`
+	// Priority is a composite triage score in [0,100] blending the signals an
+	// analyst actually weighs - exploitability (Score) and how much to trust it
+	// (Confidence), whether it's runtime-confirmed, whether a KEV weakness sits on
+	// the route, how sensitive the target is, and the entry's blast radius - so a
+	// small team can sort by ONE number and fix the top few instead of triaging
+	// every path. PriorityLabel is the band (P1|P2|P3); PriorityFactors are the
+	// human-readable reasons (for explainability, like the rest of the scoring).
+	Priority        float64  `json:"priority,omitempty"`
+	PriorityLabel   string   `json:"priority_label,omitempty"`
+	PriorityFactors []string `json:"priority_factors,omitempty"`
 }
 
 // Seed and target node of the path, for convenience.
 func (p AttackPath) Source() ontology.Node { return p.Nodes[0] }
 func (p AttackPath) Target() ontology.Node { return p.Nodes[len(p.Nodes)-1] }
 
+// pathWorkers configures how many goroutines fan out the per-seed shortest-path
+// searches in FindCriticalPaths. Each internet-exposed seed gets an independent
+// Dijkstra over the same immutable adjacency, so the work parallelizes cleanly
+// across cores - the dominant per-pass cost on a large graph with many entry
+// points. 0 (the default) means "auto" = GOMAXPROCS. Set once at startup from
+// ANALYZER_WORKERS via SetPathWorkers; atomic so a benchmark can vary it safely.
+var pathWorkers atomic.Int64
+
+// SetPathWorkers configures the per-seed pathfinding parallelism. n <= 0 selects
+// the automatic default (GOMAXPROCS). Safe to call concurrently.
+func SetPathWorkers(n int) {
+	if n < 0 {
+		n = 0
+	}
+	pathWorkers.Store(int64(n))
+}
+
+// resolvedWorkers caps the configured worker count to something useful for this
+// pass: never more than the number of seeds (extra goroutines would idle), never
+// less than 1, and "auto" resolves to GOMAXPROCS.
+func resolvedWorkers(seeds int) int {
+	w := int(pathWorkers.Load())
+	if w <= 0 {
+		w = runtime.GOMAXPROCS(0)
+	}
+	if w > seeds {
+		w = seeds
+	}
+	if w < 1 {
+		w = 1
+	}
+	return w
+}
+
 // FindCriticalPaths returns, for every (seed, crown-jewel) pair that is
 // reachable, the single highest-probability path, sorted by score descending.
+//
+// The per-seed Dijkstra searches are independent reads over a shared, immutable
+// adjacency, so they fan out across a bounded worker pool (see pathWorkers). The
+// result is assembled in seed order before the final sort, so the output is
+// byte-for-byte identical to a sequential run regardless of how many workers ran
+// - parallelism is a speedup, never a behavior change.
 func FindCriticalPaths(snap graph.Snapshot) []AttackPath {
 	nodes := snap.NodeByID()
 	adj := buildAdjacency(snap.Edges, nodes)
@@ -96,20 +149,39 @@ func FindCriticalPaths(snap graph.Snapshot) []AttackPath {
 			jewels = append(jewels, n.ID)
 		}
 	}
+	if len(seeds) == 0 || len(jewels) == 0 {
+		return nil
+	}
+
+	// One result bucket per seed, filled in place so the flattened order matches
+	// the original sequential nested loop (and thus the post-sort output) exactly.
+	perSeed := make([][]AttackPath, len(seeds))
+	if workers := resolvedWorkers(len(seeds)); workers <= 1 {
+		for i, seed := range seeds {
+			perSeed[i] = pathsFromSeed(seed, jewels, adj, nodes)
+		}
+	} else {
+		var wg sync.WaitGroup
+		work := make(chan int)
+		for w := 0; w < workers; w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for i := range work {
+					perSeed[i] = pathsFromSeed(seeds[i], jewels, adj, nodes)
+				}
+			}()
+		}
+		for i := range seeds {
+			work <- i
+		}
+		close(work)
+		wg.Wait()
+	}
 
 	var paths []AttackPath
-	for _, seed := range seeds {
-		dist, prev := dijkstra(seed, adj)
-		for _, jewel := range jewels {
-			if seed == jewel {
-				continue
-			}
-			d, ok := dist[jewel]
-			if !ok || math.IsInf(d, 1) {
-				continue // unreachable
-			}
-			paths = append(paths, reconstruct(seed, jewel, prev, adj, nodes))
-		}
+	for _, ps := range perSeed {
+		paths = append(paths, ps...)
 	}
 
 	// Runtime-confirmed paths first, then by score descending.
@@ -122,15 +194,34 @@ func FindCriticalPaths(snap graph.Snapshot) []AttackPath {
 	return paths
 }
 
+// pathsFromSeed runs one seed's Dijkstra and reconstructs the best route to every
+// reachable jewel. It owns its dist/prev maps and only reads the shared adjacency
+// and node index, so many of these run concurrently without coordination.
+func pathsFromSeed(seed string, jewels []string, adj map[string][]outEdge, nodes map[string]ontology.Node) []AttackPath {
+	dist, prev := dijkstra(seed, adj)
+	var out []AttackPath
+	for _, jewel := range jewels {
+		if seed == jewel {
+			continue
+		}
+		d, ok := dist[jewel]
+		if !ok || math.IsInf(d, 1) {
+			continue // unreachable
+		}
+		out = append(out, reconstruct(seed, jewel, prev, adj, nodes))
+	}
+	return out
+}
+
 // dbPathTimeout bounds a DB-side path query from the client side, on top of the
 // store's own statement_timeout, so a pathological variable-length enumeration
-// can never hang the analyzer — it deadlines and falls back to Dijkstra.
+// can never hang the analyzer - it deadlines and falls back to Dijkstra.
 const dbPathTimeout = 10 * time.Second
 
 // CriticalPathsVia returns ranked critical paths. By default it uses the
-// in-process Dijkstra over the snapshot — a polynomial, bounded algorithm that is
+// in-process Dijkstra over the snapshot - a polynomial, bounded algorithm that is
 // the right engine for the per-pass "all paths" computation. When useDB is set
-// and the store supports it (graph.PathStore — AGE, via a Cypher variable-length
+// and the store supports it (graph.PathStore - AGE, via a Cypher variable-length
 // match), it computes them in the database instead, but defensively: a tight
 // timeout means a runaway enumeration falls back to Dijkstra rather than hanging.
 func CriticalPathsVia(ctx context.Context, store graph.Store, snap graph.Snapshot, maxHops int, useDB bool) []AttackPath {
@@ -221,7 +312,7 @@ func attackPathFromRaw(rp graph.RawPath) (AttackPath, bool) {
 	}, true
 }
 
-// hopsCorrelated reports whether the path leans on a repeated weight basis — the
+// hopsCorrelated reports whether the path leans on a repeated weight basis - the
 // concrete, data-driven signal that its hops may share a common cause and so
 // violate the independence the product score assumes. Two hops resting on the
 // same basis (e.g. two heuristic topology defaults, or two runtime-confirmed
@@ -285,7 +376,7 @@ func weightBasisOf(e ontology.Edge, from, to ontology.Node) (string, float64) {
 // basisConfidence maps a weight's provenance to how much to trust it. Observed
 // exploitation (kev/runtime) tops the scale; data-driven prediction (epss) is
 // close; a CVSS-anchored guess is middling; a bare severity label or an assumed
-// topology default is low — the honest discount on invented probabilities.
+// topology default is low - the honest discount on invented probabilities.
 func basisConfidence(basis string) float64 {
 	switch basis {
 	case "kev":
@@ -356,7 +447,7 @@ func buildAdjacency(edges []ontology.Edge, nodes map[string]ontology.Node) map[s
 // resolutionOf extracts identity-resolution provenance from an edge's property
 // bag, tolerating the numeric types both graph stores hand back (memory: float64;
 // AGE agtype: float64/json.Number/int). Returns ("", 0) when the join wasn't
-// inferred — the common case for hard, tool-asserted edges.
+// inferred - the common case for hard, tool-asserted edges.
 func resolutionOf(props map[string]any) (method string, confidence float64) {
 	if props == nil {
 		return "", 0

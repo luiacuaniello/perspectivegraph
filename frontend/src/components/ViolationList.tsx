@@ -19,7 +19,7 @@ export default function ViolationList({ violations }: { violations: Violation[] 
     return (
       <div className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/[0.06] p-5 text-sm text-emerald-700">
         <CheckIcon className="h-4 w-4 shrink-0" />
-        No policy invariants violated — the environment matches its architectural rules.
+        No policy invariants violated - the environment matches its architectural rules.
       </div>
     );
   }
@@ -27,7 +27,7 @@ export default function ViolationList({ violations }: { violations: Violation[] 
   return (
     <div className="flex flex-col gap-3">
       <p className="text-xs text-muted">
-        Architectural rules the environment breaks — forbidden graph shapes (e.g. “the internet must never reach a crown
+        Architectural rules the environment breaks - forbidden graph shapes (e.g. “the internet must never reach a crown
         jewel”). Each lists the offending nodes.
       </p>
       {violations.map((v, i) => (

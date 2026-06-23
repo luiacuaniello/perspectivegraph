@@ -1,6 +1,6 @@
 // Package remediation turns an attack path into concrete "cut an edge"
 // artifacts. The insight from the analyzer is that breaking *any* single edge
-// of a path neutralizes it — so instead of demanding every finding be fixed,
+// of a path neutralizes it - so instead of demanding every finding be fixed,
 // PerspectiveGraph proposes the cheapest cut: isolate the exposed workload with a
 // Kubernetes NetworkPolicy, scope down an over-broad IAM role, or tighten a
 // data store's access, generated as ready-to-review code.
@@ -24,7 +24,7 @@ type Suggestion struct {
 	Rationale string `json:"rationale"` // which edge it cuts and why
 	// Cut is the graph edge this artifact severs, in structured form, so the API
 	// can *verify* the fix by simulating its removal (what-if) instead of trusting
-	// the generator's word — the closed loop, "we proved it cuts the path".
+	// the generator's word - the closed loop, "we proved it cuts the path".
 	Cut CutEdge `json:"cut"`
 }
 
@@ -36,7 +36,7 @@ type CutEdge struct {
 }
 
 // Rule matches one step of a path and builds the artifact that cuts it. New
-// remediations are added by appending to Registry — no switch to edit, and the
+// remediations are added by appending to Registry - no switch to edit, and the
 // API and the PR commenter automatically pick them up.
 type Rule struct {
 	Name  string
@@ -292,7 +292,7 @@ func networkPolicy(c ontology.Node) Suggestion {
 	if ns == "" {
 		ns = "default"
 	}
-	content := fmt.Sprintf(`# PerspectiveGraph auto-remediation — isolate %q to cut the ingress edge.
+	content := fmt.Sprintf(`# PerspectiveGraph auto-remediation - isolate %q to cut the ingress edge.
 # Review and scope the ingress rules to only the senders this workload needs.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -319,7 +319,7 @@ spec:
 
 func sgRevoke(lb, vm ontology.Node) Suggestion {
 	name := sanitize(vm.Name)
-	content := fmt.Sprintf(`# PerspectiveGraph auto-remediation — remove the public ingress fronting %q (via %q).
+	content := fmt.Sprintf(`# PerspectiveGraph auto-remediation - remove the public ingress fronting %q (via %q).
 # Replace the 0.0.0.0/0 rule on the relevant security group with your trusted CIDRs.
 resource "aws_security_group_rule" "perspective_restrict_%s" {
   type              = "ingress"
@@ -343,7 +343,7 @@ resource "aws_security_group_rule" "perspective_restrict_%s" {
 
 func iamScopeDown(role ontology.Node) Suggestion {
 	name := sanitize(role.Name)
-	content := fmt.Sprintf(`# PerspectiveGraph auto-remediation — scope down over-privileged role %q.
+	content := fmt.Sprintf(`# PerspectiveGraph auto-remediation - scope down over-privileged role %q.
 # Detach the broad managed policy and attach a least-privilege one:
 #   aws iam detach-role-policy --role-name %s --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
 resource "aws_iam_role_policy" "perspective_least_privilege_%s" {
@@ -371,7 +371,7 @@ resource "aws_iam_role_policy" "perspective_least_privilege_%s" {
 
 func dataStorePolicy(role, store ontology.Node) Suggestion {
 	name := sanitize(store.Name)
-	content := fmt.Sprintf(`# PerspectiveGraph auto-remediation — remove %q's access to %q.
+	content := fmt.Sprintf(`# PerspectiveGraph auto-remediation - remove %q's access to %q.
 # Tighten the resource policy / role permissions so this principal can no longer reach the data store.
 resource "aws_iam_role_policy" "perspective_revoke_%s_%s" {
   name = "revoke-%s-access"
@@ -397,7 +397,7 @@ resource "aws_iam_role_policy" "perspective_revoke_%s_%s" {
 }
 
 // privescDeny attaches a deny policy on the well-known IAM privilege-escalation
-// actions to the source principal — apply-ready: it needs only the principal's
+// actions to the source principal - apply-ready: it needs only the principal's
 // name (no placeholders). A public-trust role gets an extra note to fix its
 // trust policy, the other half of why it is reachable.
 func privescDeny(p ontology.Node) Suggestion {
@@ -414,7 +414,7 @@ func privescDeny(p ontology.Node) Suggestion {
 				"# Also restrict its AssumeRolePolicyDocument to the principals that truly need it.\n",
 			p.Name)
 	}
-	content := fmt.Sprintf(`# PerspectiveGraph auto-remediation — neutralize the privilege-escalation
+	content := fmt.Sprintf(`# PerspectiveGraph auto-remediation - neutralize the privilege-escalation
 # primitive on %s %q so it can no longer reach admin-equivalent access.%s
 resource "%s" "perspective_block_privesc_%s" {
   name = "%s-block-privesc"
@@ -449,7 +449,7 @@ resource "%s" "perspective_block_privesc_%s" {
 // typically an SG-to-SG ingress) between two assets.
 func networkSegment(from, to ontology.Node) Suggestion {
 	a, z := sanitize(from.Name), sanitize(to.Name)
-	content := fmt.Sprintf(`# PerspectiveGraph auto-remediation — cut lateral reachability %q -> %q.
+	content := fmt.Sprintf(`# PerspectiveGraph auto-remediation - cut lateral reachability %q -> %q.
 # A security-group rule lets %q reach %q. Remove the SG-to-SG ingress (or VPC
 # peering) that admits it; if some access is required, scope it to the exact
 # ports/protocols instead of the whole security group.

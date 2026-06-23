@@ -9,7 +9,7 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/validation"
 )
 
-// validationRequest is the POST /validations body — one red-team/BAS verdict.
+// validationRequest is the POST /validations body - one red-team/BAS verdict.
 type validationRequest struct {
 	PathID   string `json:"pathId"`
 	Outcome  string `json:"outcome"` // confirmed | refuted | partial | missed
@@ -18,7 +18,7 @@ type validationRequest struct {
 	Route    string `json:"route"`
 }
 
-// listValidations handles GET /validations — the verdicts board plus the rolled-up
+// listValidations handles GET /validations - the verdicts board plus the rolled-up
 // precision/recall over the validated subset. Viewer is enough.
 func (a *API) listValidations(w http.ResponseWriter, r *http.Request) {
 	tenant := tenantOf(r.Context())
@@ -29,7 +29,7 @@ func (a *API) listValidations(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// putValidation handles POST /validations — record a verdict (a BAS run posts here,
+// putValidation handles POST /validations - record a verdict (a BAS run posts here,
 // or a human records a manual test). Admin-only when auth is enabled.
 func (a *API) putValidation(w http.ResponseWriter, r *http.Request) {
 	if !a.adminWritable(r) {

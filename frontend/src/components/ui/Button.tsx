@@ -23,7 +23,7 @@ type CommonProps = {
   className?: string;
 };
 
-// Button is the one button vocabulary for the app — a filled primary, a bordered
+// Button is the one button vocabulary for the app - a filled primary, a bordered
 // secondary, a quiet ghost, and a danger. Pass `href` to render an anchor (for
 // downloads/links) with identical styling, so visual consistency never depends
 // on remembering a class string.
@@ -48,7 +48,7 @@ export default function Button({
   }) {
   const cls = `inline-flex items-center justify-center font-medium tracking-tight transition disabled:cursor-not-allowed disabled:opacity-50 ${SIZE[size]} ${VARIANT[variant]} ${className}`;
   if (href) {
-    // The anchor branch carries title (tooltip) explicitly — it is NOT in ...rest,
+    // The anchor branch carries title (tooltip) explicitly - it is NOT in ...rest,
     // which is only spread on the button, so a link Button keeps its tooltip.
     return (
       <a href={href} download={download} target={target} rel={rel} title={title} className={cls}>

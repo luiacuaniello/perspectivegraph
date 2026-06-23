@@ -2,14 +2,14 @@
 // persisted.
 //
 // PerspectiveGraph ingests the raw output of scanners (Trivy, Semgrep, Falco, …)
-// and cloud exports. That output can incidentally carry a live credential — a
+// and cloud exports. That output can incidentally carry a live credential - a
 // hardcoded AWS key in a Semgrep snippet, a token on a Falco command line, a
 // private key in a config asset. The graph is a map of how to attack the org, so
 // the one thing it must never become is a *store of the secrets themselves*: a
 // single read of the attack map would then hand an attacker working credentials.
 //
 // Redact masks high-precision secret patterns (and `secret=…` style assignments)
-// while leaving the surrounding finding intact — you still learn "an AWS key is
+// while leaving the surrounding finding intact - you still learn "an AWS key is
 // hardcoded in config.py:7", you just don't learn the key. Patterns are kept
 // deliberately specific so they never collide with the git SHAs, image digests,
 // and refs the graph legitimately stores for correlation.
@@ -35,7 +35,7 @@ func marker(kind string) string { return "***redacted:" + kind + "***" }
 
 // patterns are ordered most-specific first. Each is anchored on a structural
 // signature (a vendor prefix, a PEM header, a JWT shape, or an explicit
-// key/secret/token assignment) — never a bare "looks like base64/hex", which
+// key/secret/token assignment) - never a bare "looks like base64/hex", which
 // would shred commit SHAs and sha256 digests.
 var patterns = []pattern{
 	// AWS access key id (AKIA…) and temporary id (ASIA…).
@@ -52,7 +52,7 @@ var patterns = []pattern{
 	{kind: "private-key", re: regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`)},
 	// Generic `password|secret|api_key|access_key|token = VALUE` assignment: mask
 	// only the value, keep the key + separator so the finding still reads. No
-	// leading \b — the keyword is routinely embedded in a snake_case identifier
+	// leading \b - the keyword is routinely embedded in a snake_case identifier
 	// (aws_secret_access_key, db_password). The trailing separator+value structure
 	// is what gates a match, so prose like "my password is good" is left alone.
 	// Value must be 8+ non-space chars to avoid eating version tags and short flags.
@@ -65,7 +65,7 @@ var patterns = []pattern{
 
 // Redact masks every secret-looking substring in s. It returns the cleaned
 // string, the sorted, deduplicated kinds of secret that were found, and whether
-// anything was masked. It is a pure function — safe to call on untrusted input,
+// anything was masked. It is a pure function - safe to call on untrusted input,
 // and it never panics.
 func Redact(s string) (string, []string, bool) {
 	if s == "" {

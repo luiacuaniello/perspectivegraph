@@ -1,6 +1,6 @@
 // Package exportsign produces detached Ed25519 signatures over the tool's
 // exports (OSCAL assessment-results, SIEM NDJSON). The exports leave the trust
-// boundary — a GRC auditor or a SIEM ingests them — so a consumer needs to verify
+// boundary - a GRC auditor or a SIEM ingests them - so a consumer needs to verify
 // they really came from this engine and weren't altered in transit or at rest.
 // Asymmetric signing means the verifier holds only the public key, never a secret
 // it could forge with.
@@ -14,7 +14,7 @@ import (
 )
 
 // Signer signs export bodies. A nil *Signer is valid and means "signing
-// disabled" — Sign returns "" and Enabled reports false.
+// disabled" - Sign returns "" and Enabled reports false.
 type Signer struct {
 	priv ed25519.PrivateKey
 	pub  string // base64-encoded public key

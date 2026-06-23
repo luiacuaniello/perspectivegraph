@@ -53,7 +53,7 @@ func TestBuildsPrivescGraph(t *testing.T) {
 		t.Fatalf("account-admin should be a crown jewel: %+v", j)
 	}
 
-	// A role anyone can assume is internet-reachable — the seed of a full path.
+	// A role anyone can assume is internet-reachable - the seed of a full path.
 	if r, ok := byID[publicDeployer]; !ok || !r.Bool(ontology.PropInternetExposed) {
 		t.Errorf("public-deployer (trust *) should be internet_exposed: %+v", r)
 	}
