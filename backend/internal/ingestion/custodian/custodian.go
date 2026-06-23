@@ -24,7 +24,7 @@
 //   - admin role --HAS_PERMISSION--> crown-jewel data stores in the same
 //     export (AdministratorAccess grants everything in the account).
 //
-// Crown-jewel classification is data-driven via resource tags — see
+// Crown-jewel classification is data-driven via resource tags - see
 // ingestion.CrownJewelFromTags.
 package custodian
 

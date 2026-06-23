@@ -1,0 +1,37 @@
+{
+  "source": "pacu",
+  "findings": [
+    {
+      "target": "account-admin",
+      "from": "public-deployer",
+      "outcome": "confirmed",
+      "detected": false,
+      "evidence": "iam__privesc_scan: CreatePolicyVersion on public-deployer attaches AdministratorAccess -> account takeover"
+    },
+    {
+      "target": "account-admin",
+      "from": "okta",
+      "outcome": "confirmed",
+      "detected": true,
+      "evidence": "SSO federated role assumption reached admin; GuardDuty raised a finding (attempt was caught)"
+    },
+    {
+      "target": "payments-admin",
+      "from": "edge-alb",
+      "outcome": "confirmed",
+      "detected": false,
+      "evidence": "log4shell RCE on payments container -> instance role -> AdministratorAccess"
+    },
+    {
+      "target": "cluster-admin",
+      "from": "metrics-lb",
+      "outcome": "refuted",
+      "evidence": "false positive: metrics-lb security group does not permit egress to the control plane"
+    },
+    {
+      "route": "s3-public-bucket -> customer-exports (direct public ACL, not modeled)",
+      "outcome": "missed",
+      "evidence": "a real path a public S3 bucket ACL opened that the engine did not surface"
+    }
+  ]
+}

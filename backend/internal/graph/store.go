@@ -54,7 +54,7 @@ type Pruner interface {
 // LastSeen reads the unix-seconds last-observation stamp from a property bag,
 // tolerating the numeric types the two stores return (memory keeps the int64 it
 // was written with; AGE agtype round-trips numbers as float64). Reports false
-// when the stamp is absent — the caller treats that as "never prune".
+// when the stamp is absent - the caller treats that as "never prune".
 func LastSeen(props map[string]any) (int64, bool) {
 	if props == nil {
 		return 0, false
@@ -68,6 +68,26 @@ func LastSeen(props map[string]any) (int64, bool) {
 		return int64(v), true
 	}
 	return 0, false
+}
+
+// Delta is the set of graph elements observed at or after a watermark: idempotent
+// upserts a consumer can patch onto a cached snapshot. It carries no deletions -
+// the only source of removals is the TTL pruner, and the analyzer rebuilds a full
+// snapshot whenever it prunes (and periodically), so a delta only ever adds or
+// updates. Both stores stamp last_seen on every write (see ApplyEvent), which is
+// what makes the "since" filter possible.
+type Delta struct {
+	Nodes []ontology.Node
+	Edges []ontology.Edge
+}
+
+// DeltaStore is an OPTIONAL Store capability: return just the elements observed at
+// or after `since` (unix seconds), so a consumer holding a cached snapshot can
+// patch it instead of re-reading the whole graph each pass - the scale win on a
+// large, slowly-changing graph (it avoids the full DB round-trip + deserialization
+// every analyzer pass). Stores that don't implement it fall back to full Snapshot.
+type DeltaStore interface {
+	SnapshotSince(ctx context.Context, since int64) (Delta, error)
 }
 
 // PathStore is an OPTIONAL Store capability: compute internet-exposed →
@@ -117,7 +137,7 @@ func MergeProps(a, b map[string]any) map[string]any {
 // VersionedStore wraps a Store with a monotonically increasing write version,
 // letting consumers (the analyzer) skip work when nothing changed since their
 // last read. It counts successful writes made through this process; writers
-// outside the process are invisible to it — acceptable while normalization is
+// outside the process are invisible to it - acceptable while normalization is
 // the single writer.
 type VersionedStore struct {
 	Store
@@ -147,7 +167,7 @@ func (v *VersionedStore) Version() int64 { return v.version.Load() }
 
 // Prune delegates to the wrapped store's Pruner (when it has one) and bumps the
 // write version when anything was removed, so the analyzer's change-detection
-// recomputes and the dashboard refetches — a deletion is a graph change just like
+// recomputes and the dashboard refetches - a deletion is a graph change just like
 // a write, even though it doesn't flow through UpsertNode/UpsertEdge.
 func (v *VersionedStore) Prune(ctx context.Context, before time.Time) (PruneStats, error) {
 	p, ok := v.Store.(Pruner)
@@ -168,6 +188,22 @@ func AsPathStore(s Store) (PathStore, bool) {
 	for {
 		if pf, ok := s.(PathStore); ok {
 			return pf, true
+		}
+		vs, ok := s.(*VersionedStore)
+		if !ok {
+			return nil, false
+		}
+		s = vs.Store
+	}
+}
+
+// AsDeltaStore reports whether s (unwrapping a VersionedStore) can return
+// incremental deltas, returning the DeltaStore if so. Like the other optional
+// capabilities it isn't promoted through the wrapper, so callers go through this.
+func AsDeltaStore(s Store) (DeltaStore, bool) {
+	for {
+		if ds, ok := s.(DeltaStore); ok {
+			return ds, true
 		}
 		vs, ok := s.(*VersionedStore)
 		if !ok {

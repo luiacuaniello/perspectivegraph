@@ -3,7 +3,7 @@ package ingestion_test
 // Integration tests for the correlation pipeline, exercised end-to-end minus the
 // bus and database: real testdata files → collectors → normalization (identity
 // resolution) → in-memory graph → attack-path analyzer. This is the behaviour
-// `make seed` triggers against the running stack — including the resolver step
+// `make seed` triggers against the running stack - including the resolver step
 // that *infers* the Container→Image join from a container's image_ref (so this
 // also covers identity resolution, not just the collectors).
 
@@ -77,14 +77,14 @@ func TestThreeToolCorrelation(t *testing.T) {
 		byTarget[p.Target().Label] = p
 	}
 
-	// Path A — Trivy/Log4Shell → admin IAM role.
+	// Path A - Trivy/Log4Shell → admin IAM role.
 	rolePath, ok := byTarget[ontology.LabelIAMRole]
 	if !ok {
 		t.Fatal("missing path to IAM_Role")
 	}
 	assertScore(t, rolePath, 0.9*inferredHostsProb*0.95*0.9*0.8)
 
-	// Path B — Semgrep/command-injection → customers PII database.
+	// Path B - Semgrep/command-injection → customers PII database.
 	// LB →EXPOSES(.9)→ Container →HOSTS(inferred)→ Image →BUILT_FROM(.9)→ repo
 	//    →AFFECTS(.8 = ERROR×HIGH)→ Weakness →EXPLOITS(.7)→ customers-db
 	dbPath, ok := byTarget[ontology.LabelVirtualMachine]
@@ -107,7 +107,7 @@ func TestThreeToolCorrelation(t *testing.T) {
 }
 
 // Adding Falco runtime alerts on the payments container (which both paths
-// traverse) flips both paths to runtime-confirmed — the responder's signal that
+// traverse) flips both paths to runtime-confirmed - the responder's signal that
 // these aren't theoretical, they're being exercised right now.
 func TestRuntimeConfirmation(t *testing.T) {
 	ctx := context.Background()

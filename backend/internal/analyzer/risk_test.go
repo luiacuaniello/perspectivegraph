@@ -60,8 +60,9 @@ func TestSimulateRiskUnionExceedsBestPath(t *testing.T) {
 
 func TestSimulateRiskSensitivityBand(t *testing.T) {
 	sim := SimulateRisk(twoRouteSnap(), 20000, 1)
-	// The band must bracket the nominal estimate (scaling edge p down lowers it,
-	// up raises it) and be visibly wide, since the inputs are heuristic here.
+	// The credible band (per-edge Beta resampling) must bracket the nominal estimate
+	// and be visibly wide, since these inputs are heuristic/severity-derived (low
+	// basis confidence ⇒ loose posteriors ⇒ a wide band).
 	if !(sim.SensitivityLow < sim.AnyCompromiseProbability && sim.AnyCompromiseProbability < sim.SensitivityHigh) {
 		t.Errorf("nominal %.3f not bracketed by band [%.3f, %.3f]",
 			sim.AnyCompromiseProbability, sim.SensitivityLow, sim.SensitivityHigh)
@@ -69,6 +70,34 @@ func TestSimulateRiskSensitivityBand(t *testing.T) {
 	if sim.SensitivityHigh-sim.SensitivityLow < 0.2 {
 		t.Errorf("expected a wide sensitivity band for heuristic inputs, got [%.3f, %.3f]",
 			sim.SensitivityLow, sim.SensitivityHigh)
+	}
+}
+
+func TestMixtureCompromiseByProfile(t *testing.T) {
+	SetAttackerProfilePriors("") // built-in defaults (commodity/criminal/apt)
+	sim := SimulateRisk(twoRouteSnap(), 20000, 1)
+	if len(sim.ProfileCompromise) != 3 {
+		t.Fatalf("expected 3 profiles, got %d", len(sim.ProfileCompromise))
+	}
+	by := map[string]float64{}
+	for _, pc := range sim.ProfileCompromise {
+		by[pc.Profile] = pc.Probability
+	}
+	apt, crim, comm := by["apt"], by["criminal"], by["commodity"]
+	if !(apt > crim && crim > comm) {
+		t.Errorf("capability ordering broken: apt=%.3f criminal=%.3f commodity=%.3f", apt, crim, comm)
+	}
+	// The criminal (skill 0) has p(e|criminal)=p exactly, so its reachability reproduces
+	// the independent headline - the mixture is anchored on the baseline.
+	if math.Abs(crim-sim.AnyCompromiseProbability) > 0.03 {
+		t.Errorf("criminal R=%.3f should ≈ AnyCompromiseProbability %.3f", crim, sim.AnyCompromiseProbability)
+	}
+	want := 0.0
+	for _, pc := range sim.ProfileCompromise {
+		want += pc.Prior * pc.Probability
+	}
+	if math.Abs(sim.MixtureCompromiseProbability-want) > 1e-9 {
+		t.Errorf("mixture %.6f != Σ prior·R %.6f", sim.MixtureCompromiseProbability, want)
 	}
 }
 

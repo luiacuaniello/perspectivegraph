@@ -1,9 +1,9 @@
 // Package threatintel enriches CVE nodes with real-world exploitation signal so
 // edge weights reflect what attackers actually do, not just severity labels:
 //
-//   - CISA KEV (Known Exploited Vulnerabilities) — a binary "exploited in the
+//   - CISA KEV (Known Exploited Vulnerabilities) - a binary "exploited in the
 //     wild" flag. A KEV CVE on a reachable path is confirmed, not theoretical.
-//   - FIRST EPSS (Exploit Prediction Scoring System) — the probability a CVE
+//   - FIRST EPSS (Exploit Prediction Scoring System) - the probability a CVE
 //     will be exploited in the next 30 days, [0,1].
 //
 // It is optional (like the search index): with it disabled the Noop source is
@@ -38,6 +38,18 @@ type Intel struct {
 // EdgeProbability upgrades a severity-derived fallback with observed intel:
 // a KEV CVE is exploited in the wild, so it floors high; otherwise EPSS is the
 // better estimate when known; otherwise the severity fallback stands.
+//
+// CAVEAT (the input-provenance gap calibration is meant to surface): EPSS is a
+// *marginal* probability - P(any exploitation activity is observed in the wild for
+// this CVE within 30 days) - NOT the quantity the path score actually needs, which
+// is P(an attacker traverses THIS edge | they are on this path in THIS environment).
+// EPSS is a global base rate, usually small in absolute terms even for exploitable
+// CVEs, so taking it as p(e) tends to *understate* a present attacker's traversal.
+// We use it as-is on purpose: it is a calibration-bearing input, and the calibration
+// loop (validation.Calibration) is exactly what reveals and corrects the bias on real
+// verdicts (likely "underconfident on EPSS edges → recalibrate") rather than us
+// silently transforming it on a hunch. The hop also carries weight_basis="epss" so
+// the provenance - and this caveat - travel with the score.
 func (i Intel) EdgeProbability(fallback float64) float64 {
 	switch {
 	case i.KEV:

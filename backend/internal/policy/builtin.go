@@ -25,7 +25,7 @@ func Builtins() []Invariant {
 		},
 		{
 			ID:          "no-internet-to-unsigned-image",
-			Description: "No internet-exposed asset may reach an unsigned image — an unsigned build is a tampering vector into a reachable workload.",
+			Description: "No internet-exposed asset may reach an unsigned image - an unsigned build is a tampering vector into a reachable workload.",
 			Severity:    "HIGH",
 			Source:      internetExposed,
 			Target: func(n ontology.Node) bool {

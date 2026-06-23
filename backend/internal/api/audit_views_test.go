@@ -38,7 +38,7 @@ func testAPI(t *testing.T) (*API, *capRecorder) {
 	}
 	a := New(m, analyzer.NewService(m, time.Second, nil), nil)
 	cap := &capRecorder{}
-	a.audit = cap // the tamper-evident reads log (here: capturing) — white-box
+	a.audit = cap // the tamper-evident reads log (here: capturing) - white-box
 	return a, cap
 }
 
@@ -48,7 +48,7 @@ func viewerCtx() context.Context {
 }
 
 // The tool is a map of how to breach the org, so *reads* of the attack paths and
-// the exports must land in the audit log — not just writes.
+// the exports must land in the audit log - not just writes.
 func TestAttackPathsQueryIsAudited(t *testing.T) {
 	a, cap := testAPI(t)
 	schema, err := a.Schema()

@@ -1,11 +1,11 @@
 // Package validation grounds the engine against reality. An attack-path model is
 // a hypothesis until something tries to walk it; this is where a red-team or BAS
-// platform (Caldera, AttackIQ, SafeBreach, Cymulate, …) — or a human — reports
+// platform (Caldera, AttackIQ, SafeBreach, Cymulate, …) - or a human - reports
 // the verdict: "I tested this path, it's real" / "false positive, not traversable"
 // / "partial", and crucially "you MISSED a real path I found".
 //
 // From those verdicts it computes the honest trust metric the tool otherwise
-// lacks — precision and recall over the *validated* subset:
+// lacks - precision and recall over the *validated* subset:
 //
 //	precision = confirmed / (confirmed + refuted)   // of surfaced+tested paths, how many were real
 //	recall    = confirmed / (confirmed + missed)     // of real paths, how many we surfaced
@@ -34,7 +34,7 @@ type Outcome string
 
 const (
 	Confirmed Outcome = "confirmed" // path tested and exploitable end-to-end (true positive)
-	Refuted   Outcome = "refuted"   // tested and NOT traversable — a false positive
+	Refuted   Outcome = "refuted"   // tested and NOT traversable - a false positive
 	Partial   Outcome = "partial"   // partially traversable / inconclusive
 	Missed    Outcome = "missed"    // a real path the tester found that the engine did NOT surface (false negative)
 )
@@ -51,10 +51,30 @@ type Record struct {
 	PathID   string    `json:"path_id,omitempty"`
 	Tenant   string    `json:"tenant"`
 	Outcome  Outcome   `json:"outcome"`
-	Source   string    `json:"source"`             // the BAS tool or tester — accountability
+	Source   string    `json:"source"`             // the BAS tool or tester - accountability
 	Evidence string    `json:"evidence,omitempty"` // notes / a link to the run
 	Route    string    `json:"route,omitempty"`    // human route, esp. for "missed"
 	TestedAt time.Time `json:"tested_at"`
+	// PredictedScore is the path's exploit-probability score S(P) at the moment the
+	// verdict was recorded (captured server-side from the live analysis). It is what
+	// turns a pile of verdicts into a *calibration* dataset: pairing the model's
+	// predicted probability with the observed outcome lets us measure whether "0.8"
+	// really fires ~80% of the time (see Calibration). Zero ⇒ unknown (the path was
+	// no longer surfaced, or a pre-calibration record) and is excluded from the
+	// calibration math. Omitted for "missed" verdicts (no surfaced path to score).
+	PredictedScore float64 `json:"predicted_score,omitempty"`
+	// Hops and CorrelatedHops are path-structure features captured server-side at
+	// verdict time, so calibration can be *segmented* by them: if the model is
+	// mis-scored specifically on long or correlated-hop paths, the error is structural
+	// (the independence assumption / path length compounding) and points at a
+	// correlation-aware model (#6) rather than a flat rescale.
+	Hops           int  `json:"hops,omitempty"`
+	CorrelatedHops bool `json:"correlated_hops,omitempty"`
+	// Detected is the operator's report of whether this (confirmed) attempt was caught
+	// or blocked by a defense (EDR/WAF/SOC). nil = not reported. It is the evidence for
+	// the *detection axis* (#7): if reachable paths are routinely detected, the score
+	// over-predicts undetected impact and the model needs a P(reach ∧ ¬detect) term.
+	Detected *bool `json:"detected,omitempty"`
 }
 
 // Metrics is the rolled-up, evidence-based trust summary for a tenant.
@@ -126,7 +146,7 @@ func tenantKey(t string) string {
 // Put records a verdict. A confirmed/refuted/partial verdict references a real
 // path (PathID) and replaces any prior verdict for that path (latest test wins);
 // "missed" verdicts accumulate (each is a distinct false negative). Source is
-// always required — a verdict without provenance isn't evidence.
+// always required - a verdict without provenance isn't evidence.
 func (s *Store) Put(r Record) (Record, error) {
 	if s == nil {
 		return Record{}, errors.New("validation: store not configured")

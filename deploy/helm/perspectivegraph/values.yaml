@@ -9,6 +9,25 @@ backend:
   resources: {}
   logLevel: info
   analyzerInterval: 30s
+  # Scale knobs. analyzerWorkers bounds the per-seed pathfinding parallelism
+  # (0 = auto = CPUs; the result is identical, it only trades CPU for pass
+  # latency). analyzerIncremental keeps the graph resident and patches it with the
+  # per-pass delta instead of re-reading it all each pass - the fetch-cost win on a
+  # large AGE graph; off by default (trades memory for fetch cost).
+  analyzerWorkers: 0
+  analyzerIncremental: false
+  # Attacker-profile mixture: the path score is also marginalized over a latent
+  # attacker capability (commodity/criminal/apt) - Σ P(c)·∏ p(e|c) - for a per-profile
+  # breakdown. Retune the threat-model priors (names match the built-ins; renormalized).
+  # Empty keeps the defaults (commodity:0.5,criminal:0.35,apt:0.15).
+  attackerProfilePriors: ""
+  # In-pod TLS for the API + ingest servers (HTTPS >= 1.2 directly, no proxy
+  # needed). Off by default - usually TLS terminates at the ingress instead. When
+  # enabled, secretName must reference a kubernetes.io/tls Secret (tls.crt/tls.key);
+  # the readiness probe then uses HTTPS.
+  tls:
+    enabled: false
+    secretName: ""
   # Tiny utility image used by the dependency-wait initContainers (needs `nc`).
   # Pin to a digest in security-sensitive environments.
   waitImage: busybox:1.37
@@ -27,7 +46,7 @@ service:
   frontendPort: 80
 
 # In-cluster PostgreSQL + Apache AGE (graph core). To bring your own managed
-# Postgres set enabled=false and point externalHost/externalPort at it — the
+# Postgres set enabled=false and point externalHost/externalPort at it - the
 # instance must have the Apache AGE extension and the graph created (see
 # deploy/postgres/init-age.sql). auth.* is used for the external instance too.
 postgres:
@@ -36,6 +55,11 @@ postgres:
   externalPort: 5432
   image: apache/age:release_PG16_1.6.0@sha256:16aa423d20a31aed36a3313244bf7aa00731325862f20ed584510e381f2feaed
   graph: perspective
+  # libpq sslmode for the DB connection (it carries the attack map). Empty picks a
+  # safe default by context: "disable" for the bundled in-cluster Postgres (no TLS),
+  # "require" for a bring-your-own external DB. Set "verify-full" (and mount a CA via
+  # POSTGRES_DSN/sslrootcert) for cert verification on a managed instance.
+  sslMode: ""
   auth:
     user: perspective
     password: perspective
@@ -46,27 +70,78 @@ postgres:
     storageClass: ""
 
 # In-cluster NATS JetStream (event bus). To bring your own set enabled=false
-# and point externalUrl at it (e.g. nats://my-nats.internal:4222).
+# and point externalUrl at it (e.g. nats://my-nats.internal:4222, or tls://… with
+# tls below). Most clusters get mesh-transparent mTLS instead and leave tls off.
 nats:
   enabled: true
   externalUrl: ""
   image: nats:2.12.11-alpine@sha256:006a95e54643c0a2a33dfcee4654e9115f7540ebb8804822d3e2d82bf8515f61
   stream: PERSPECTIVE
   subject: perspective.events.*
+  # App-level TLS to a TLS-enabled NATS (typically external; use a tls:// URL).
+  # secretName references a Secret with ca.crt (+ tls.crt/tls.key for mutual TLS);
+  # it's mounted and the backend trusts the CA / presents the client cert.
+  tls:
+    enabled: false
+    secretName: ""
 
 # Optional OpenSearch full-text index. Leave url empty to disable.
 opensearch:
   url: ""
 
 # Action layer: PR/MR commenters. Tokens go into a Secret; empty → dry-run.
+# dashboardUrl is the public dashboard base the PR comment / merge-gate status
+# links back to (e.g. https://perspectivegraph.example.com). Empty → no link.
 github:
   token: ""
   apiUrl: https://api.github.com
   dryRun: false
+  dashboardUrl: ""
 gitlab:
   token: ""
   apiUrl: https://gitlab.com/api/v4
   dryRun: false
+
+# Agentless connectors (PULL ingestion). enabled is a list, e.g. ["aws"]; empty
+# ⇒ ingestion stays push-only. tenant tags pulled assets (multi-tenant installs).
+# The AWS connector defaults to bundled fixtures; mode "live" uses the AWS SDK
+# (region + an assumable read-only roleArn via the pod's ambient credentials).
+connectors:
+  enabled: []
+  interval: 15m
+  timeout: 2m
+  tenant: ""
+  aws:
+    mode: fixtures
+    fixturesDir: ""
+    region: ""
+    roleArn: ""
+
+# AI-native layer. apiKey (Anthropic/Claude) is the preferred backend and enables
+# /ai/* (NL query, exec summary, path explain). hf.* is the free, OpenAI-compatible
+# alternative (HuggingFace or any compatible endpoint), used only when apiKey is
+# empty. With neither, the endpoints stay disabled (self-gated). apiKey + hf.token
+# are secrets; the rest are optional overrides (sane defaults in-code).
+ai:
+  apiKey: ""
+  model: ""
+  baseUrl: ""
+  maxTokens: ""
+  hf:
+    token: ""
+    model: ""
+    baseUrl: ""
+
+# Data hygiene: redact secret-looking values out of scanner output before they
+# reach the store. On by default; set false only if a feed is already clean.
+scrubIngest: true
+
+# At-rest encryption of the file-backed governance stores + detached signatures
+# on graph exports. Both are secrets; empty ⇒ plaintext on disk / unsigned
+# exports. Generate with e.g. --set crypto.storeEncryptionKey="$(openssl rand -hex 32)".
+crypto:
+  storeEncryptionKey: ""
+  exportSigningKey: ""
 
 # Remediation ticketing: dispatch each new ticket to an external tracker
 # (Jira/GitHub/SOAR) over a webhook. Empty → local/dry-run (logged, tracked
@@ -75,7 +150,17 @@ ticket:
   webhookUrl: ""
 
 # ── Security & governance ───────────────────────────────────────────────────
-# A default install is UNAUTHENTICATED — acceptable only inside a trusted cluster
+# How the backend's credentials Secret is sourced. By default the chart creates it
+# from the values below. To manage it externally (External Secrets / Sealed
+# Secrets / Vault), set existingSecret to a Secret you provide carrying the same
+# keys (POSTGRES_PASSWORD, API_TOKENS, INGEST_HMAC_SECRET, GITHUB_TOKEN,
+# ANTHROPIC_API_KEY, HF_TOKEN, STORE_ENCRYPTION_KEY, EXPORT_SIGNING_KEY, …) - the
+# chart then stops creating its own and the backend reads yours instead.
+secrets:
+  create: true
+  existingSecret: ""
+
+# A default install is UNAUTHENTICATED - acceptable only inside a trusted cluster
 # for a demo. PerspectiveGraph is a map of how to attack the org, so for ANY
 # deployment reachable beyond a trusted boundary set auth.apiTokens (and ideally
 # ingest.hmacSecret + persistence for the audit log). These land in the Secret;
@@ -86,11 +171,20 @@ auth:
   # --set auth.apiTokens="$(openssl rand -hex 16):admin".
   apiTokens: ""
   # Optional OIDC/JWT verification alongside (or instead of) static tokens.
-  # Empty issuer ⇒ disabled.
+  # Empty issuer ⇒ disabled. clientId/authorizeUrl/tokenUrl/scopes are the
+  # SPA-facing coordinates the dashboard login gate reads from GET /auth/config to
+  # run the Authorization-Code + PKCE flow; leave empty to keep the bearer-token
+  # login. (issuer/audience/jwksUrl drive server-side token verification.)
   oidc:
     issuer: ""
     audience: ""
     jwksUrl: ""
+    clientId: ""
+    authorizeUrl: ""
+    tokenUrl: ""
+    scopes: "openid profile email"
+    # IdP end-session endpoint → "Sign out" performs an RP-initiated logout.
+    logoutUrl: ""
   # Per-client-IP rate limits (requests/sec). 0 ⇒ disabled.
   apiRateRps: 60
   ingestRateRps: 30
@@ -107,7 +201,7 @@ ingest:
 # posture-history / audit-log stores are file-backed and single-writer; without a
 # volume they are in-memory and reset on every pod restart (and the tamper-evident
 # audit log never survives). Enabling this mounts a ReadWriteOnce PVC on the
-# backend — which is why backend.replicas MUST stay 1 while it is on.
+# backend - which is why backend.replicas MUST stay 1 while it is on.
 persistence:
   enabled: false
   size: 1Gi
@@ -125,3 +219,12 @@ ingress:
   className: ""
   annotations: {}
   host: perspectivegraph.local
+  # TLS termination at the ingress (recommended way to serve HTTPS). Set
+  # tls.enabled and a secretName holding the cert - typically issued automatically
+  # by cert-manager: add its issuer to annotations, e.g.
+  #   annotations: { cert-manager.io/cluster-issuer: letsencrypt-prod }
+  # and cert-manager fills secretName for you. host defaults to ingress.host.
+  tls:
+    enabled: false
+    secretName: perspectivegraph-tls
+    host: ""

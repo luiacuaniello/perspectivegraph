@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability (do NOT open a public issue)
+    url: https://github.com/luiacuaniello/perspectivegraph/security/advisories/new
+    about: Report security problems privately via GitHub Security Advisories. See SECURITY.md.
+  - name: Question or idea
+    url: https://github.com/luiacuaniello/perspectivegraph/discussions
+    about: Ask questions, share ideas, or discuss usage in Discussions.

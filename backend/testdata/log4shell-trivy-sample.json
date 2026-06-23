@@ -1,0 +1,30 @@
+{
+  "ArtifactName": "vulhub/log4j:2.14.1",
+  "ArtifactType": "container_image",
+  "Results": [
+    {
+      "Target": "Java",
+      "Type": "jar",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-2021-44228",
+          "PkgName": "org.apache.logging.log4j:log4j-core",
+          "InstalledVersion": "2.14.1",
+          "FixedVersion": "2.15.0",
+          "Severity": "CRITICAL",
+          "Title": "log4j-core: remote code execution via JNDI (Log4Shell)",
+          "CVSS": { "nvd": { "V3Score": 10.0 } }
+        },
+        {
+          "VulnerabilityID": "CVE-2021-45046",
+          "PkgName": "org.apache.logging.log4j:log4j-core",
+          "InstalledVersion": "2.14.1",
+          "FixedVersion": "2.16.0",
+          "Severity": "CRITICAL",
+          "Title": "log4j-core: DoS / RCE follow-up",
+          "CVSS": { "nvd": { "V3Score": 9.0 } }
+        }
+      ]
+    }
+  ]
+}

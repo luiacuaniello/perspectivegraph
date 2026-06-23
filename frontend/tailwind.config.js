@@ -18,8 +18,9 @@ export default {
         panel: c("--c-panel"), // cards / panels
         "panel-2": c("--c-panel-2"), // raised / inset surface
         edge: c("--c-edge"), // hairline borders
-        accent: c("--c-accent"), // steel blue
+        accent: c("--c-accent"), // confident blue
         "accent-strong": c("--c-accent-strong"), // hover/active for accent
+        "accent-soft": c("--c-accent-soft"), // accent-tinted surface
         muted: c("--c-muted"), // secondary text
         // The slate ramp is remapped to themed vars so the existing text
         // hierarchy (text-slate-400…900) inverts cleanly in dark mode.
@@ -40,6 +41,9 @@ export default {
         card: "0 1px 2px 0 rgb(var(--c-shadow) / 0.05), 0 1px 3px 0 rgb(var(--c-shadow) / 0.08)",
         // A slightly lifted shadow for hover/selected panels and popovers.
         lift: "0 2px 4px -1px rgb(var(--c-shadow) / 0.1), 0 6px 16px -4px rgb(var(--c-shadow) / 0.16)",
+        // Neon accent glow for the primary CTA, active nav, and lit cards.
+        glow: "0 0 0 1px rgb(var(--c-accent) / 0.25), 0 4px 22px -3px rgb(var(--c-accent) / 0.5)",
+        "glow-lg": "0 0 0 1px rgb(var(--c-accent) / 0.4), 0 10px 40px -6px rgb(var(--c-accent) / 0.65)",
       },
     },
   },

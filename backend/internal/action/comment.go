@@ -132,9 +132,9 @@ func prTarget(p analyzer.AttackPath) (slug string, number int, ok bool) {
 
 func commentBody(p analyzer.AttackPath) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "## 🚨 PerspectiveGraph — reachable attack path detected\n\n")
+	fmt.Fprintf(&b, "## 🚨 PerspectiveGraph - reachable attack path detected\n\n")
 	if p.RuntimeConfirmed {
-		b.WriteString("> ⚡ **Actively exploited** — a runtime sensor (Falco) has fired on this path.\n\n")
+		b.WriteString("> ⚡ **Actively exploited** - a runtime sensor (Falco) has fired on this path.\n\n")
 	}
 	fmt.Fprintf(&b, "This change sits on a **verified attack path** "+
 		"(exploit likelihood **%.0f%%**) from an internet-exposed entry point "+
@@ -153,7 +153,7 @@ func commentBody(p analyzer.AttackPath) string {
 	}
 
 	fmt.Fprintf(&b, "<sub>Posted by PerspectiveGraph · path `%s`. Cut any one edge on the path "+
-		"to break it — you don't have to fix every finding.</sub>\n", p.ID)
+		"to break it - you don't have to fix every finding.</sub>\n", p.ID)
 	return b.String()
 }
 

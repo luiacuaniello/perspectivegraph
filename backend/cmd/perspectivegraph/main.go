@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -18,12 +19,15 @@ import (
 	"time"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/action"
+	"github.com/luiacuaniello/perspectivegraph/internal/ai"
 	"github.com/luiacuaniello/perspectivegraph/internal/analyzer"
 	"github.com/luiacuaniello/perspectivegraph/internal/api"
 	"github.com/luiacuaniello/perspectivegraph/internal/audit"
 	"github.com/luiacuaniello/perspectivegraph/internal/auth"
 	"github.com/luiacuaniello/perspectivegraph/internal/broker"
 	"github.com/luiacuaniello/perspectivegraph/internal/config"
+	"github.com/luiacuaniello/perspectivegraph/internal/connector"
+	awsconn "github.com/luiacuaniello/perspectivegraph/internal/connector/aws"
 	"github.com/luiacuaniello/perspectivegraph/internal/cryptostore"
 	"github.com/luiacuaniello/perspectivegraph/internal/exportsign"
 	"github.com/luiacuaniello/perspectivegraph/internal/graph"
@@ -72,6 +76,61 @@ func main() {
 		return
 	}
 
+	// Scale/load utility: generate a large synthetic attack surface and POST it to
+	// the ingest webhook, so the analyzer's scaling can be exercised end-to-end on a
+	// running stack. See runGenload for flags. Exits when done.
+	if len(os.Args) >= 2 && os.Args[1] == "genload" {
+		if err := runGenload(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "genload:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Calibration self-test: post synthetic verdicts drawn from a known reality (a
+	// scenario), so the calibration math + diagnostics can be exercised and tested in
+	// development without real vulnerable infra. See runGenverdicts. Exits when done.
+	if len(os.Args) >= 2 && os.Args[1] == "genverdicts" {
+		if err := runGenverdicts(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "genverdicts:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// BAS → /validations bridge: map a tool-agnostic attack report onto the engine's
+	// live attack paths and record the verdicts, so a real red-team/BAS run feeds the
+	// calibration loop with no custom integration. See runImportVerdicts. Exits done.
+	if len(os.Args) >= 2 && os.Args[1] == "importverdicts" {
+		if err := runImportVerdicts(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "importverdicts:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Zero-cost real ingest: Trivy-scan a genuinely vulnerable image and wire the
+	// minimal topology so the real CVE sits on an internet → crown-jewel path - the
+	// on-ramp to calibrating on real data. See runIngestReal. Exits when done.
+	if len(os.Args) >= 2 && os.Args[1] == "ingestreal" {
+		if err := runIngestReal(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "ingestreal:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// #6 decision tool: does the environment have AND-semantics (a compromise needing
+	// several prerequisites at once) or pure OR-reachability? Scans the live graph and
+	// counts the AND candidates on critical paths. See runAndProbe. Exits when done.
+	if len(os.Args) >= 2 && os.Args[1] == "andprobe" {
+		if err := runAndProbe(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "andprobe:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	// Container healthcheck: hit the API's /healthz and exit 0/1. Lets the
 	// distroless image (no shell, no curl) be probed with `perspectivegraph
 	// healthz` from a Docker HEALTHCHECK / compose healthcheck.
@@ -111,7 +170,11 @@ func run(ctx context.Context, cfg config.Config) error {
 	defer manager.Close()
 
 	// ── Event bus ───────────────────────────────────────────────────
-	bus, err := broker.Connect(ctx, cfg.NATSURL, cfg.NATSStream, cfg.NATSSubject)
+	bus, err := broker.Connect(ctx, cfg.NATSURL, cfg.NATSStream, cfg.NATSSubject, broker.TLSConfig{
+		CAFile:   cfg.NATSTLSCAFile,
+		CertFile: cfg.NATSTLSCertFile,
+		KeyFile:  cfg.NATSTLSKeyFile,
+	})
 	if err != nil {
 		return err
 	}
@@ -134,6 +197,11 @@ func run(ctx context.Context, cfg config.Config) error {
 			BaseURL: cfg.GitHubAPIURL,
 			DryRun:  cfg.GitHubDryRun,
 		}),
+		action.NewGitHubChecker(action.GitHubConfig{
+			Token:   cfg.GitHubToken,
+			BaseURL: cfg.GitHubAPIURL,
+			DryRun:  cfg.GitHubDryRun,
+		}, cfg.DashboardURL),
 		action.NewGitLabCommenter(action.GitLabConfig{
 			Token:   cfg.GitLabToken,
 			BaseURL: cfg.GitLabAPIURL,
@@ -189,8 +257,12 @@ func run(ctx context.Context, cfg config.Config) error {
 	if historyStore.Persistent() {
 		slog.Info("history store: file-backed", "path", cfg.HistoryPath)
 	} else {
-		slog.Warn("history store: in-memory only — path age / MTTR / trend reset on restart (set HISTORY_PATH to persist)")
+		slog.Warn("history store: in-memory only - path age / MTTR / trend reset on restart (set HISTORY_PATH to persist)")
 	}
+
+	// Threat-model priors for the attacker-profile mixture score (package-level, read
+	// lock-free by the per-path scoring). Empty config keeps the built-in defaults.
+	analyzer.SetAttackerProfilePriors(cfg.AttackerProfilePriors)
 
 	analyzerSvc := analyzer.NewService(manager, cfg.AnalyzerInterval, sinks).
 		WithPolicy(policy.NewEngine(policy.Builtins()...)).
@@ -198,10 +270,26 @@ func run(ctx context.Context, cfg config.Config) error {
 		WithLeader(elector).
 		WithMaxHops(cfg.AnalyzerMaxHops).
 		WithDBPaths(cfg.AnalyzerDBPaths).
+		WithWorkers(cfg.AnalyzerWorkers).
+		WithIncremental(cfg.AnalyzerIncremental).
 		WithTTL(cfg.GraphTTL).
 		WithHistory(historyStore)
 	if cfg.GraphTTL > 0 {
-		slog.Info("staleness pruning enabled — assets not re-observed within the TTL are removed (leader only)", "ttl", cfg.GraphTTL)
+		slog.Info("staleness pruning enabled - assets not re-observed within the TTL are removed (leader only)", "ttl", cfg.GraphTTL)
+	}
+	if cfg.AnalyzerIncremental {
+		slog.Info("incremental analysis enabled - patching a resident snapshot with per-pass deltas instead of re-reading the whole graph")
+	}
+	if cfg.AnalyzerWorkers > 0 {
+		slog.Info("analyzer pathfinding parallelism pinned", "workers", cfg.AnalyzerWorkers)
+	}
+
+	// ── Agentless connectors (optional; PULL from external systems) ──
+	// Leader-only, so replicas don't multiply API calls. Feeds the same bus as the
+	// push webhooks, so the whole downstream pipeline is reused.
+	connSched := buildConnectors(ctx, cfg, bus, elector)
+	if connSched.Enabled() {
+		slog.Info("agentless connectors enabled", "interval", cfg.ConnectorInterval)
 	}
 
 	// ── Audit (optional; tamper-evident hash-chained log) ────────────
@@ -218,7 +306,7 @@ func run(ctx context.Context, cfg config.Config) error {
 
 	// ── Abuse watchers: exfiltration of the attack map + auth brute force ──
 	// A 0 threshold disables. Alerts are logged (WARN) and written to the audit
-	// log — ship those to your SIEM for paging.
+	// log - ship those to your SIEM for paging.
 	const watchWindow, watchCooldown = 5 * time.Minute, 15 * time.Minute
 	exfilWatcher := secwatch.New(cfg.ExfilAlertThreshold, watchWindow, watchCooldown, func(key string, count int) {
 		slog.Warn("ALERT: possible attack-map exfiltration", "principal", key, "paths_in_window", count)
@@ -240,11 +328,11 @@ func run(ctx context.Context, cfg config.Config) error {
 	if hmac.Enabled() {
 		slog.Info("ingest auth: per-tenant HMAC signature required")
 	} else {
-		slog.Warn("ingest auth DISABLED — webhook endpoints are open (set INGEST_HMAC_SECRET)")
+		slog.Warn("ingest auth DISABLED - webhook endpoints are open (set INGEST_HMAC_SECRET)")
 	}
 	// Fail-closed: if OIDC is enabled, refuse to start without both iss and aud.
 	// A JWT verifier that skips issuer/audience accepts any RS256 token the IdP
-	// (or another relying party sharing it) ever minted — a silent auth weakness.
+	// (or another relying party sharing it) ever minted - a silent auth weakness.
 	if cfg.OIDCJWKSURL != "" && (cfg.OIDCIssuer == "" || cfg.OIDCAudience == "") {
 		return errors.New("OIDC enabled (OIDC_JWKS_URL set) but OIDC_ISSUER and/or OIDC_AUDIENCE is empty: " +
 			"refusing to start without iss/aud validation. Set both, or unset OIDC_JWKS_URL to use static API_TOKENS")
@@ -260,7 +348,7 @@ func run(ctx context.Context, cfg config.Config) error {
 	if authn.Enabled() {
 		slog.Info("API auth: bearer credential required (GraphiQL disabled)")
 	} else {
-		slog.Warn("API auth DISABLED — GraphQL endpoint is open (set API_TOKENS or OIDC_JWKS_URL)")
+		slog.Warn("API auth DISABLED - GraphQL endpoint is open (set API_TOKENS or OIDC_JWKS_URL)")
 	}
 
 	// Per-IP rate limiters (0 disables). burst = 2×rps + 1 absorbs short bursts
@@ -279,7 +367,7 @@ func run(ctx context.Context, cfg config.Config) error {
 	if suppressStore.Persistent() {
 		slog.Info("suppression store: file-backed", "path", cfg.SuppressionsPath)
 	} else {
-		slog.Warn("suppression store: in-memory only — triage decisions are lost on restart (set SUPPRESSIONS_PATH to persist)")
+		slog.Warn("suppression store: in-memory only - triage decisions are lost on restart (set SUPPRESSIONS_PATH to persist)")
 	}
 
 	// ── Remediation ticketing (optional file backing + webhook) ──────
@@ -290,7 +378,7 @@ func run(ctx context.Context, cfg config.Config) error {
 	if ticketStore.Dispatches() {
 		slog.Info("ticketing: dispatching new tickets to external tracker", "webhook", cfg.TicketWebhookURL)
 	} else {
-		slog.Warn("ticketing: dry-run — tickets are tracked locally only (set TICKET_WEBHOOK_URL to dispatch)")
+		slog.Warn("ticketing: dry-run - tickets are tracked locally only (set TICKET_WEBHOOK_URL to dispatch)")
 	}
 
 	// ── Red-team / BAS validation store (optional file backing) ──────
@@ -299,13 +387,30 @@ func run(ctx context.Context, cfg config.Config) error {
 		return fmt.Errorf("validation store: %w", err)
 	}
 	if !validationStore.Persistent() {
-		slog.Warn("validation store: in-memory only — red-team/BAS verdicts reset on restart (set VALIDATIONS_PATH to persist)")
+		slog.Warn("validation store: in-memory only - red-team/BAS verdicts (and the calibration dataset built from them) reset on restart; set VALIDATIONS_PATH to persist for a real calibration program")
 	}
+	// Sample the calibration trend each analyzer pass, so the dashboard can show the
+	// evidence accumulating over a calibration program (Brier/ECE/samples over time).
+	analyzerSvc.WithCalibrator(func(tenant string) (float64, float64, int) {
+		c := validationStore.Calibration(tenant)
+		return c.Brier, c.ECE, c.Samples
+	})
 
 	ingestSrv := ingestion.NewServer(bus,
 		trivy.New(), semgrep.New(), custodian.New(), falco.New(), build.New(), k8s.New(), cloudnet.New(), iam.New(), supplychain.New(), sso.New(), dataclass.New()).
-		WithHMAC(hmac).WithAudit(auditRec).WithRateLimit(ingestLimiter)
-	apiHandler, err := buildAPI(manager, analyzerSvc, indexer, authn, auditRec, apiLimiter, suppressStore, historyStore, ticketStore, validationStore, cfg.CORSAllowedOrigins, exportSigner, exfilWatcher, authGuard)
+		WithHMAC(hmac).WithAudit(auditRec).WithRateLimit(ingestLimiter).
+		WithConnectorStatus(func() any { return connSched.Status() })
+	prOpener := action.NewGitHubPROpener(action.GitHubConfig{Token: cfg.GitHubToken, BaseURL: cfg.GitHubAPIURL, DryRun: cfg.GitHubDryRun})
+	aiCfg := ai.Config{
+		APIKey: cfg.AnthropicAPIKey, Model: cfg.AnthropicModel, BaseURL: cfg.AnthropicBaseURL, MaxTokens: cfg.AIMaxTokens,
+		HFToken: cfg.HFToken, HFModel: cfg.HFModel, HFBaseURL: cfg.HFBaseURL,
+	}
+	aiClient := ai.New(aiCfg)
+	if aiClient.Enabled() {
+		provider, model := ai.Provider(aiCfg)
+		slog.Info("AI-native layer enabled", "provider", provider, "model", model)
+	}
+	apiHandler, err := buildAPI(manager, analyzerSvc, indexer, authn, auditRec, apiLimiter, suppressStore, historyStore, ticketStore, validationStore, cfg.CORSAllowedOrigins, exportSigner, exfilWatcher, authGuard, authInfoFromConfig(cfg, authn.Enabled()), prOpener, aiClient)
 	if err != nil {
 		return err
 	}
@@ -331,10 +436,22 @@ func run(ctx context.Context, cfg config.Config) error {
 		}
 	}()
 
+	// Agentless connector poll loop (no-op when none enabled).
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := connSched.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			slog.Error("connector scheduler stopped", "err", err)
+		}
+	}()
+
 	// HTTP servers. Explicit timeouts blunt slow-client / Slowloris resource
 	// exhaustion (Go's http.Server has none by default). ReadHeaderTimeout is the
 	// key Slowloris defense; ReadTimeout is generous enough for a 32 MiB scanner
 	// upload on ingest, WriteTimeout for a large SIEM/OSCAL export on the API.
+	// TLS >= 1.2 whenever a cert/key pair is configured (harmless on a plain-HTTP
+	// listener - TLSConfig is only consulted by ListenAndServeTLS).
+	tlsConf := &tls.Config{MinVersion: tls.VersionTLS12}
 	ingestHTTP := &http.Server{
 		Addr:              cfg.IngestAddr,
 		Handler:           ingestSrv.Handler(),
@@ -342,6 +459,7 @@ func run(ctx context.Context, cfg config.Config) error {
 		ReadTimeout:       60 * time.Second,
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
+		TLSConfig:         tlsConf,
 	}
 	apiHTTP := &http.Server{
 		Addr:              cfg.APIAddr,
@@ -350,12 +468,17 @@ func run(ctx context.Context, cfg config.Config) error {
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      120 * time.Second,
 		IdleTimeout:       120 * time.Second,
+		TLSConfig:         tlsConf,
 	}
-	serveHTTP(ctx, &wg, "ingestion", ingestHTTP)
-	serveHTTP(ctx, &wg, "api", apiHTTP)
+	serveHTTP(ctx, &wg, "ingestion", ingestHTTP, cfg.TLSCertFile, cfg.TLSKeyFile)
+	serveHTTP(ctx, &wg, "api", apiHTTP, cfg.TLSCertFile, cfg.TLSKeyFile)
 
+	scheme := "http"
+	if cfg.TLSCertFile != "" && cfg.TLSKeyFile != "" {
+		scheme = "https"
+	}
 	slog.Info("perspectivegraph running",
-		"api", cfg.APIAddr, "ingest", cfg.IngestAddr, "graph", backend)
+		"api", cfg.APIAddr, "ingest", cfg.IngestAddr, "graph", backend, "scheme", scheme)
 
 	<-ctx.Done()
 	slog.Info("signal received, draining…")
@@ -363,10 +486,41 @@ func run(ctx context.Context, cfg config.Config) error {
 	return nil
 }
 
+// buildConnectors assembles the enabled agentless connectors into a leader-gated
+// scheduler. Unknown names are skipped with a warning, and a connector that fails
+// to initialize is skipped (not fatal) so one misconfigured source can't block
+// boot. The scheduler is a no-op when nothing is enabled.
+func buildConnectors(ctx context.Context, cfg config.Config, pub connector.Publisher, elector connector.Leader) *connector.Scheduler {
+	var conns []connector.Connector
+	for _, name := range cfg.ConnectorsEnabled {
+		switch name {
+		case "aws":
+			c, err := awsconn.NewFromConfig(ctx, awsconn.Config{
+				Mode:        cfg.AWSConnectorMode,
+				FixturesDir: cfg.AWSFixturesDir,
+				Region:      cfg.AWSRegion,
+				RoleARN:     cfg.AWSRoleARN,
+			})
+			if err != nil {
+				slog.Error("aws connector disabled", "err", err)
+				continue
+			}
+			slog.Info("aws connector enabled", "mode", c.Mode())
+			conns = append(conns, c)
+		default:
+			slog.Warn("unknown connector, skipping", "name", name)
+		}
+	}
+	return connector.NewScheduler(pub, cfg.ConnectorInterval, conns...).
+		WithLeader(elector).
+		WithTenant(cfg.ConnectorTenant).
+		WithTimeout(cfg.ConnectorTimeout)
+}
+
 // storeFactory probes Apache AGE once and returns a per-tenant store factory.
 // Each tenant gets its own AGE graph (the default tenant keeps the configured
 // graph name so existing data is preserved). On probe failure it falls back to
-// in-memory stores for zero-dependency local dev — UNLESS GRAPH_STRICT is set,
+// in-memory stores for zero-dependency local dev - UNLESS GRAPH_STRICT is set,
 // in which case it returns an error and the process refuses to start rather than
 // silently dropping persistence (data that "works" in the demo but is lost on
 // restart is its own kind of incident).
@@ -392,7 +546,7 @@ func storeFactory(ctx context.Context, cfg config.Config) (graph.StoreFactory, s
 	if cfg.GraphStrict {
 		return nil, "", fmt.Errorf("GRAPH_STRICT is set but Apache AGE is unavailable: %w", err)
 	}
-	slog.Warn("Apache AGE UNAVAILABLE — falling back to IN-MEMORY stores (data is NOT persisted; set GRAPH_STRICT=true to fail instead)", "err", err)
+	slog.Warn("Apache AGE UNAVAILABLE - falling back to IN-MEMORY stores (data is NOT persisted; set GRAPH_STRICT=true to fail instead)", "err", err)
 	return func(context.Context, string) (graph.Store, error) {
 		return memory.New(), nil
 	}, "memory", nil
@@ -413,15 +567,56 @@ func hmacSecrets(cfg config.Config) map[string]string {
 	return secrets
 }
 
-func buildAPI(manager *graph.Manager, svc *analyzer.Service, idx search.Indexer, authn auth.Authenticator, rec audit.Recorder, limiter *ratelimit.Limiter, suppressStore *suppress.Store, historyStore *history.Store, ticketStore *ticket.Store, validationStore *validation.Store, corsOrigins []string, exportSigner *exportsign.Signer, exfilWatcher, authGuard *secwatch.Watcher) (http.Handler, error) {
-	return api.New(manager, svc, idx).WithAuth(authn, rec).WithRateLimit(limiter).WithSuppress(suppressStore).WithHistory(historyStore).WithTickets(ticketStore).WithValidation(validationStore).WithCORSOrigins(corsOrigins).WithExportSigner(exportSigner).WithAbuseWatchers(exfilWatcher, authGuard).Handler()
+// authInfoFromConfig builds the public auth config the dashboard's login gate
+// reads (GET /auth/config). It carries no secrets - only whether a credential is
+// required and the IdP's public coordinates for an SSO redirect.
+func authInfoFromConfig(cfg config.Config, authEnabled bool) api.AuthInfo {
+	info := api.AuthInfo{Required: authEnabled, Mode: "none"}
+	if !authEnabled {
+		return info
+	}
+	hasTokens := len(cfg.APITokens) > 0
+	hasOIDC := cfg.OIDCJWKSURL != ""
+	switch {
+	case hasOIDC && hasTokens:
+		info.Mode = "both"
+	case hasOIDC:
+		info.Mode = "oidc"
+	default:
+		info.Mode = "token"
+	}
+	if hasOIDC {
+		info.OIDC = &api.OIDCInfo{
+			Issuer:       cfg.OIDCIssuer,
+			Audience:     cfg.OIDCAudience,
+			ClientID:     cfg.OIDCClientID,
+			AuthorizeURL: cfg.OIDCAuthURL,
+			TokenURL:     cfg.OIDCTokenURL,
+			Scopes:       cfg.OIDCScopes,
+			LogoutURL:    cfg.OIDCLogoutURL,
+		}
+	}
+	return info
 }
 
-func serveHTTP(ctx context.Context, wg *sync.WaitGroup, name string, srv *http.Server) {
+func buildAPI(manager *graph.Manager, svc *analyzer.Service, idx search.Indexer, authn auth.Authenticator, rec audit.Recorder, limiter *ratelimit.Limiter, suppressStore *suppress.Store, historyStore *history.Store, ticketStore *ticket.Store, validationStore *validation.Store, corsOrigins []string, exportSigner *exportsign.Signer, exfilWatcher, authGuard *secwatch.Watcher, authInfo api.AuthInfo, prOpener action.PROpener, aiClient ai.Client) (http.Handler, error) {
+	return api.New(manager, svc, idx).WithAuth(authn, rec).WithRateLimit(limiter).WithSuppress(suppressStore).WithHistory(historyStore).WithTickets(ticketStore).WithValidation(validationStore).WithCORSOrigins(corsOrigins).WithExportSigner(exportSigner).WithAbuseWatchers(exfilWatcher, authGuard).WithAuthInfo(authInfo).WithRemediationPR(prOpener).WithAI(aiClient).Handler()
+}
+
+func serveHTTP(ctx context.Context, wg *sync.WaitGroup, name string, srv *http.Server, certFile, keyFile string) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		// HTTPS when a cert/key pair is configured, plain HTTP otherwise (TLS then
+		// terminates at a reverse proxy / ingress in front). ListenAndServeTLS uses
+		// srv.TLSConfig (MinVersion TLS 1.2, set by the caller).
+		var err error
+		if certFile != "" && keyFile != "" {
+			err = srv.ListenAndServeTLS(certFile, keyFile)
+		} else {
+			err = srv.ListenAndServe()
+		}
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Error("http server failed", "name", name, "err", err)
 		}
 	}()

@@ -1,7 +1,10 @@
+{{- if and .Values.secrets.create (not .Values.secrets.existingSecret) }}
+# Skipped when secrets.existingSecret is set: bring your own Secret (External
+# Secrets / Sealed Secrets / Vault) carrying these keys, and the backend reads it.
 apiVersion: v1
 kind: Secret
 metadata:
-  name: {{ include "perspectivegraph.fullname" . }}-secrets
+  name: {{ include "perspectivegraph.secretName" . }}
   labels:
     {{- include "perspectivegraph.labels" . | nindent 4 }}
 type: Opaque
@@ -13,7 +16,12 @@ stringData:
   INGEST_HMAC_SECRET: {{ .Values.ingest.hmacSecret | quote }}
   INGEST_HMAC_SECRETS: {{ .Values.ingest.hmacSecrets | quote }}
   TICKET_WEBHOOK_URL: {{ .Values.ticket.webhookUrl | quote }}
+  ANTHROPIC_API_KEY: {{ .Values.ai.apiKey | quote }}
+  HF_TOKEN: {{ .Values.ai.hf.token | quote }}
+  STORE_ENCRYPTION_KEY: {{ .Values.crypto.storeEncryptionKey | quote }}
+  EXPORT_SIGNING_KEY: {{ .Values.crypto.exportSigningKey | quote }}
 ---
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -25,6 +33,9 @@ data:
   POSTGRES_PORT: {{ include "perspectivegraph.postgresPort" . | quote }}
   POSTGRES_USER: {{ .Values.postgres.auth.user | quote }}
   POSTGRES_DB: {{ .Values.postgres.auth.database | quote }}
+  # Empty sslMode → disable for the bundled in-cluster Postgres, require for an
+  # external one (override with postgres.sslMode, e.g. verify-full).
+  POSTGRES_SSLMODE: {{ .Values.postgres.sslMode | default (ternary "disable" "require" .Values.postgres.enabled) | quote }}
   AGE_GRAPH_NAME: {{ .Values.postgres.graph | quote }}
   NATS_URL: {{ include "perspectivegraph.natsUrl" . | quote }}
   NATS_STREAM: {{ .Values.nats.stream | quote }}
@@ -32,6 +43,9 @@ data:
   API_ADDR: {{ printf ":%d" (int .Values.service.apiPort) | quote }}
   INGEST_ADDR: {{ printf ":%d" (int .Values.service.ingestPort) | quote }}
   ANALYZER_INTERVAL: {{ .Values.backend.analyzerInterval | quote }}
+  ANALYZER_WORKERS: {{ .Values.backend.analyzerWorkers | quote }}
+  ANALYZER_INCREMENTAL: {{ .Values.backend.analyzerIncremental | quote }}
+  ATTACKER_PROFILE_PRIORS: {{ .Values.backend.attackerProfilePriors | quote }}
   OPENSEARCH_URL: {{ .Values.opensearch.url | quote }}
   GITHUB_API_URL: {{ .Values.github.apiUrl | quote }}
   GITHUB_DRY_RUN: {{ .Values.github.dryRun | quote }}
@@ -44,6 +58,31 @@ data:
   OIDC_ISSUER: {{ .Values.auth.oidc.issuer | quote }}
   OIDC_AUDIENCE: {{ .Values.auth.oidc.audience | quote }}
   OIDC_JWKS_URL: {{ .Values.auth.oidc.jwksUrl | quote }}
+  OIDC_CLIENT_ID: {{ .Values.auth.oidc.clientId | quote }}
+  OIDC_AUTHORIZE_URL: {{ .Values.auth.oidc.authorizeUrl | quote }}
+  OIDC_TOKEN_URL: {{ .Values.auth.oidc.tokenUrl | quote }}
+  OIDC_SCOPES: {{ .Values.auth.oidc.scopes | quote }}
+  OIDC_LOGOUT_URL: {{ .Values.auth.oidc.logoutUrl | quote }}
+  # Dev workflow: dashboard link embedded in PR comments / merge-gate status.
+  DASHBOARD_URL: {{ .Values.github.dashboardUrl | quote }}
+  # Data hygiene: redact secrets out of scanner output before the store.
+  SCRUB_INGEST: {{ .Values.scrubIngest | quote }}
+  # Agentless connectors (PULL ingestion).
+  CONNECTORS_ENABLED: {{ join "," .Values.connectors.enabled | quote }}
+  CONNECTOR_INTERVAL: {{ .Values.connectors.interval | quote }}
+  CONNECTOR_TIMEOUT: {{ .Values.connectors.timeout | quote }}
+  CONNECTOR_TENANT: {{ .Values.connectors.tenant | quote }}
+  AWS_CONNECTOR_MODE: {{ .Values.connectors.aws.mode | quote }}
+  AWS_FIXTURES_DIR: {{ .Values.connectors.aws.fixturesDir | quote }}
+  AWS_REGION: {{ .Values.connectors.aws.region | quote }}
+  AWS_ROLE_ARN: {{ .Values.connectors.aws.roleArn | quote }}
+  # AI-native layer. The keys (Anthropic + HF token) are in the Secret; these are
+  # non-secret tuning for Anthropic (Claude) and the HuggingFace fallback.
+  ANTHROPIC_MODEL: {{ .Values.ai.model | quote }}
+  ANTHROPIC_BASE_URL: {{ .Values.ai.baseUrl | quote }}
+  AI_MAX_TOKENS: {{ .Values.ai.maxTokens | quote }}
+  HF_MODEL: {{ .Values.ai.hf.model | quote }}
+  HF_BASE_URL: {{ .Values.ai.hf.baseUrl | quote }}
 {{- if .Values.persistence.enabled }}
   # File-backed governance stores live on the mounted PVC so they survive restarts.
   SUPPRESSIONS_PATH: {{ printf "%s/suppressions.json" .Values.persistence.mountPath | quote }}

@@ -137,7 +137,7 @@ func assertPathfinderEquivalence(t *testing.T, store graph.Store) {
 	// Recall bound (documented divergence): the best path is 3 hops. With
 	// maxHops=2 the DB finder can only reach the weaker 2-hop route (0.18), while
 	// the unbounded Dijkstra still finds the 3-hop best (0.36). This is the
-	// trade the bound makes — make it explicit so it can't regress silently.
+	// trade the bound makes - make it explicit so it can't regress silently.
 	bounded := analyzer.CriticalPathsVia(ctx, store, snap, 2, true)
 	if got := score(bounded)["pf-lb→pf-j"]; got < 0.18-1e-9 || got > 0.18+1e-9 {
 		t.Errorf("with maxHops=2 the DB finder should be capped at the 2-hop route (0.18), got %.4f", got)
@@ -191,7 +191,7 @@ func runStoreContract(t *testing.T, s graph.Store) {
 		ID: imgID, Label: ontology.LabelImage, Name: "payments-api:1.0",
 		Properties: map[string]any{"repo_slug": "acme/payments-api", "pr_number": "42"},
 	}), "first upsert")
-	// A stub re-upsert (no name, no props — what inferImageHosts emits) must not erase anything.
+	// A stub re-upsert (no name, no props - what inferImageHosts emits) must not erase anything.
 	must(s.UpsertNode(ctx, ontology.Node{ID: imgID, Label: ontology.LabelImage}), "stub upsert")
 	// A later observation adds one property and overrides another.
 	must(s.UpsertNode(ctx, ontology.Node{
@@ -250,14 +250,14 @@ func runStoreContract(t *testing.T, s graph.Store) {
 
 	// Injection round-trip: an id/name carrying the old fixed dollar-quote tag,
 	// single quotes and backslashes (all attacker-influenceable values) must be
-	// stored verbatim — neither corrupting the query nor altering the graph.
+	// stored verbatim - neither corrupting the query nor altering the graph.
 	nastyID := `Image:inj-$perspective$')--`
 	nastyName := `a'); SELECT drop_graph('x'); --$perspective$ \x`
 	must(s.UpsertNode(ctx, ontology.Node{ID: nastyID, Label: ontology.LabelImage, Name: nastyName}), "injection upsert")
 	snap, err = s.Snapshot(ctx)
 	must(err, "snapshot after injection upsert")
 	if n, ok := snap.NodeByID()[nastyID]; !ok {
-		t.Errorf("injection-payload node missing — value was not stored verbatim")
+		t.Errorf("injection-payload node missing - value was not stored verbatim")
 	} else if n.Name != nastyName {
 		t.Errorf("injection payload mangled: name = %q, want %q", n.Name, nastyName)
 	}

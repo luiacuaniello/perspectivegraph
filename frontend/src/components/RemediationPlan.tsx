@@ -48,7 +48,7 @@ function FixRow({ fix, rank, cumulative }: { fix: Fix; rank: number; cumulative:
               ) : (
                 <span
                   className="inline-flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-700"
-                  title="Simulating this fix did not measurably reduce paths/risk — review before applying."
+                  title="Simulating this fix did not measurably reduce paths/risk - review before applying."
                 >
                   <AlertTriangleIcon className="h-3 w-3" /> unverified
                 </span>
@@ -103,7 +103,7 @@ export default function RemediationPlan({
     return (
       <div className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/[0.06] p-5 text-sm text-emerald-700">
         <CheckIcon className="h-4 w-4 shrink-0" />
-        No critical attack paths — nothing to remediate.
+        No critical attack paths - nothing to remediate.
       </div>
     );
   }
@@ -114,7 +114,7 @@ export default function RemediationPlan({
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Headline summary — the pitch */}
+      {/* Headline summary - the pitch */}
       <div className="rounded-xl border border-edge bg-panel shadow-card p-5">
         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-slate-500">
           <TargetIcon className="h-4 w-4 text-accent" />
@@ -135,7 +135,7 @@ export default function RemediationPlan({
         </div>
         {residual > 0 && (
           <p className="mt-2 text-[11px] text-amber-700/80">
-            {residual} path{residual === 1 ? " has" : "s have"} no automated remediation — review
+            {residual} path{residual === 1 ? " has" : "s have"} no automated remediation - review
             manually.
           </p>
         )}
@@ -157,7 +157,7 @@ export default function RemediationPlan({
       {plan.length === 0 && (
         <div className="flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] p-4 text-xs text-amber-700">
           <WrenchIcon className="h-4 w-4 shrink-0" />
-          No automated remediation matched these paths — they need manual review.
+          No automated remediation matched these paths - they need manual review.
         </div>
       )}
     </div>

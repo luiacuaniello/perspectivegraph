@@ -1,0 +1,71 @@
+# Demo OIDC IdP (Keycloak) for trying the SSO login on Kubernetes - local testing
+# only (start-dev, in-memory H2), not a production identity provider.
+#
+# The realm (realm "demo", user demo/demo, client "perspectivegraph") is imported
+# from a ConfigMap you create from the realm file BEFORE applying this:
+#
+#   kubectl -n perspectivegraph create configmap keycloak-realm \
+#     --from-file=realm-demo.json=deploy/keycloak/realm-demo.json
+#   kubectl -n perspectivegraph apply -f deploy/keycloak/k8s-keycloak-demo.yaml
+#
+# The backend reaches it in-cluster at http://keycloak:8080; the browser reaches it
+# via `kubectl -n perspectivegraph port-forward svc/keycloak 8088:8080`.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  labels:
+    app: keycloak
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: keycloak
+  template:
+    metadata:
+      labels:
+        app: keycloak
+    spec:
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:26.4
+          args: ["start-dev", "--import-realm", "--http-port=8080"]
+          env:
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              value: admin
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              value: admin
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+          ports:
+            - name: http
+              containerPort: 8080
+          volumeMounts:
+            - name: realm
+              mountPath: /opt/keycloak/data/import
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /realms/demo
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            failureThreshold: 30
+      volumes:
+        - name: realm
+          configMap:
+            name: keycloak-realm
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  labels:
+    app: keycloak
+spec:
+  selector:
+    app: keycloak
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

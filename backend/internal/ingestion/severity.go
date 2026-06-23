@@ -4,8 +4,14 @@ import "strings"
 
 // SeverityProbability is the single severity → exploit-probability scale every
 // collector maps onto. Tools normalize their native levels to
-// CRITICAL/HIGH/MEDIUM/LOW first (see each collector), then call this — so an
+// CRITICAL/HIGH/MEDIUM/LOW first (see each collector), then call this - so an
 // edge weight means the same thing no matter which scanner produced it.
+//
+// These anchors (0.9/0.7/0.4/0.2) are deliberate *heuristics*, not measured
+// probabilities - which is why such hops carry weight_basis="severity" (low
+// confidence) and feed the [score, scoreUpperBound] band. They are a reasonable
+// monotone prior; the calibration loop is what tells you whether they're scaled
+// right on real verdicts. Keep the ordering and the gaps; retune only with data.
 func SeverityProbability(severity string) float64 {
 	switch strings.ToUpper(severity) {
 	case "CRITICAL":
@@ -24,7 +30,7 @@ func SeverityProbability(severity string) float64 {
 // CrownJewelTagKeys / CrownJewelTagValues drive the data-driven crown-jewel
 // classification: a resource is a crown jewel when any of these tag keys has
 // one of these values (or the literal tag crown-jewel=true). Operators tag
-// their cloud resources; PerspectiveGraph picks the tags up — no hardcoded
+// their cloud resources; PerspectiveGraph picks the tags up - no hardcoded
 // resource names.
 var (
 	CrownJewelTagKeys   = []string{"classification", "data-classification", "data", "sensitivity"}

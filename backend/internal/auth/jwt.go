@@ -120,7 +120,7 @@ func splitN(s string, sep byte) []string {
 
 type jwksCache struct {
 	url    string
-	client *http.Client // dedicated client with a timeout — never http.DefaultClient
+	client *http.Client // dedicated client with a timeout - never http.DefaultClient
 
 	refreshMu sync.Mutex // serializes refreshes so a stale cache triggers one fetch, not a herd
 
@@ -136,6 +136,13 @@ func newJWKSCache(url string) *jwksCache {
 }
 
 const jwksTTL = time.Hour
+
+// jwksMinRefetch rate-limits the refetch-on-unknown-kid path: when a token's kid
+// isn't cached (the IdP rotated signing keys), we refetch the JWKS to pick up the
+// new key promptly instead of rejecting valid tokens until the hour-long TTL
+// lapses - but not more than once per this interval, so a flood of tokens bearing
+// bogus kids can't turn the auth path into a JWKS-fetch amplifier.
+const jwksMinRefetch = time.Minute
 
 // keyfunc returns a jwt.Keyfunc that resolves the signing key by "kid",
 // refetching the JWKS on a cache miss or when stale.
@@ -155,15 +162,19 @@ func (c *jwksCache) keyfunc(ctx context.Context) jwt.Keyfunc {
 	}
 }
 
-// refreshOnce serializes concurrent refreshes: the first waiter fetches, the
-// rest observe the now-fresh cache and return without a second network call.
+// refreshOnce serializes concurrent refreshes: the first waiter fetches, the rest
+// observe the now-fresh cache and return without a second network call. It is only
+// reached on a cache miss (unknown kid), so it refetches unless the JWKS was
+// already pulled within jwksMinRefetch - that picks up rotated keys within a
+// minute while still rate-limiting bogus-kid spam (the hour-long jwksTTL governs
+// proactive staleness of already-known keys, see get).
 func (c *jwksCache) refreshOnce(ctx context.Context) error {
 	c.refreshMu.Lock()
 	defer c.refreshMu.Unlock()
 	c.mu.RLock()
-	fresh := len(c.keys) > 0 && time.Since(c.fetched) <= jwksTTL
+	recent := len(c.keys) > 0 && time.Since(c.fetched) <= jwksMinRefetch
 	c.mu.RUnlock()
-	if fresh {
+	if recent {
 		return nil
 	}
 	return c.refresh(ctx)

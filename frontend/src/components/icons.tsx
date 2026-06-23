@@ -43,7 +43,7 @@ export const GemIcon = make(
 
 export const ZapIcon = make(<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />);
 
-// Flame — KEV (actively exploited in the wild).
+// Flame - KEV (actively exploited in the wild).
 export const FlameIcon = make(
   <path d="M8.5 14.5A2.5 2.5 0 0 0 11 17c1.4 0 2.5-1.1 2.5-2.5 0-1.4-1.5-2.5-2-4 0 0-3 1-3 4zM12 2s4 3.5 4 8a4 4 0 0 1-8 0c0-1.5.5-2.5 1-3.5C9.7 8 12 6 12 2z" />,
 );
@@ -74,7 +74,7 @@ export const ScissorsIcon = make(
   </>,
 );
 
-// Crosshair-in-brackets — used as the MITRE ATT&CK technique marker.
+// Crosshair-in-brackets - used as the MITRE ATT&CK technique marker.
 export const CrosshairIcon = make(
   <>
     <circle cx="12" cy="12" r="9" />
@@ -85,7 +85,7 @@ export const CrosshairIcon = make(
   </>,
 );
 
-// Crosshair — the choke-point / remediation-plan view.
+// Crosshair - the choke-point / remediation-plan view.
 export const TargetIcon = make(
   <>
     <circle cx="12" cy="12" r="9" />

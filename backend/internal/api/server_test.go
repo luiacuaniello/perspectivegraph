@@ -29,7 +29,7 @@ func TestQueryDepth(t *testing.T) {
 
 func TestQueryDepthCyclicFragmentDoesNotHang(t *testing.T) {
 	// A self-referential fragment is invalid GraphQL, but a malicious client can
-	// still send it — the guard must terminate, not recurse forever.
+	// still send it - the guard must terminate, not recurse forever.
 	q := `query { attackPaths { ...a } } fragment a on AttackPath { nodes { id } ...a }`
 	got, err := queryDepth(q)
 	if err != nil {

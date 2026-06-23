@@ -9,15 +9,25 @@
    values are exactly the previous theme, so the light UI is unchanged.
    ───────────────────────────────────────────────────────────────────────── */
 :root {
-  /* Surfaces & accent */
-  --c-ink: 238 241 246; /* #eef1f6 canvas */
+  /* Surfaces & accent (light: a clean, bright variant of the mission-control look) */
+  --c-ink: 238 242 248; /* #eef2f8 canvas */
   --c-panel: 255 255 255; /* #ffffff cards */
-  --c-panel-2: 247 249 252; /* #f7f9fc raised/inset */
-  --c-edge: 223 228 236; /* #dfe4ec hairline */
-  --c-accent: 69 109 163; /* #456da3 steel blue */
-  --c-accent-strong: 58 93 140; /* #3a5d8c */
+  --c-panel-2: 244 247 252; /* #f4f7fc raised/inset */
+  --c-edge: 221 227 237; /* #dde3ed hairline */
+  --c-accent: 13 110 210; /* #0d6ed2 electric blue */
+  --c-accent-strong: 9 88 178; /* #0958b2 */
+  --c-accent-soft: 231 241 252; /* #e7f1fc accent tint surface */
   --c-muted: 100 116 139; /* #64748b secondary text */
   --c-shadow: 31 41 55; /* shadow base */
+  /* Brand gradient (logo mark, primary CTA, glows) - sky-cyan to indigo */
+  --c-grad-from: 14 165 233; /* #0ea5e9 sky */
+  --c-grad-to: 79 70 229; /* #4f46e5 indigo */
+  --c-canvas-glow: 14 165 233; /* radial tint behind the app */
+  --canvas-glow-alpha: 0.06;
+  --c-grid: 15 23 42; /* tactical grid line tint */
+  --grid-alpha: 0.04;
+  --glass-alpha: 0.78;
+  --glass-blur: 14px;
 
   /* Slate ramp (Tailwind defaults) */
   --c-slate-50: 248 250 252;
@@ -40,15 +50,24 @@
 }
 
 .dark {
-  /* Surfaces & accent — deep, slightly blue-tinted slate */
-  --c-ink: 14 18 25; /* app canvas */
-  --c-panel: 23 28 38; /* cards */
-  --c-panel-2: 30 37 49; /* raised/inset */
-  --c-edge: 42 51 67; /* hairline */
-  --c-accent: 124 160 222; /* brighter steel blue for contrast on dark */
-  --c-accent-strong: 152 184 236;
-  --c-muted: 150 164 186; /* secondary text */
+  /* Mission-control: near-black canvas, electric cyan-blue accent, glass panels */
+  --c-ink: 7 10 17; /* #070a11 deep space canvas */
+  --c-panel: 15 20 31; /* #0f141f glass card base */
+  --c-panel-2: 21 28 42; /* #151c2a raised/inset */
+  --c-edge: 39 51 73; /* #273349 lit hairline */
+  --c-accent: 56 200 255; /* #38c8ff electric cyan-blue */
+  --c-accent-strong: 125 222 255; /* #7ddeff */
+  --c-accent-soft: 17 33 52; /* dark accent-tinted surface */
+  --c-muted: 144 160 184; /* secondary text */
   --c-shadow: 0 0 0;
+  --c-grad-from: 56 200 255; /* #38c8ff cyan */
+  --c-grad-to: 99 102 241; /* #6366f1 indigo */
+  --c-canvas-glow: 56 200 255;
+  --canvas-glow-alpha: 0.14;
+  --c-grid: 120 170 230; /* tactical grid line tint */
+  --grid-alpha: 0.05;
+  --glass-alpha: 0.62;
+  --glass-blur: 16px;
 
   /* Slate ramp inverted: 900 = lightest (headings), 400 = faint */
   --c-slate-50: 26 32 43;
@@ -102,15 +121,91 @@ body,
 }
 
 body {
-  background: rgb(var(--c-ink));
+  /* "Mission control": a tactical grid mesh + two electric glows over a deep
+     canvas. Subtle in light, dramatic in dark. */
+  background:
+    radial-gradient(58rem 46rem at 8% -10%, rgb(var(--c-canvas-glow) / var(--canvas-glow-alpha)), transparent 60%),
+    radial-gradient(48rem 40rem at 102% -4%, rgb(var(--c-grad-to) / calc(var(--canvas-glow-alpha) * 0.85)), transparent 55%),
+    radial-gradient(70rem 50rem at 50% 118%, rgb(var(--c-canvas-glow) / calc(var(--canvas-glow-alpha) * 0.55)), transparent 60%),
+    linear-gradient(rgb(var(--c-grid) / var(--grid-alpha)) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(var(--c-grid) / var(--grid-alpha)) 1px, transparent 1px),
+    rgb(var(--c-ink));
+  background-size: 100% 100%, 100% 100%, 100% 100%, 40px 40px, 40px 40px, 100% 100%;
+  background-attachment: fixed;
   color: rgb(var(--c-fg));
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  /* Smooth the canvas/text swap when toggling theme. */
   transition:
     background-color 0.2s ease,
     color 0.2s ease;
+}
+
+/* Brand gradient for the logo mark, primary CTA, and key accents. */
+.bg-brand-gradient {
+  background-image: linear-gradient(135deg, rgb(var(--c-grad-from)), rgb(var(--c-grad-to)));
+}
+.text-brand-gradient {
+  background-image: linear-gradient(120deg, rgb(var(--c-grad-from)), rgb(var(--c-grad-to)));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* ── Mission-control primitives ──────────────────────────────────────────── */
+
+/* Glass panel: translucent surface + backdrop blur + lit hairline. The base card
+   look for the whole app - swap `bg-panel border border-edge` for `glass`. */
+.glass {
+  background-color: rgb(var(--c-panel) / var(--glass-alpha));
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid rgb(var(--c-edge) / 0.9);
+}
+
+/* A gradient hairline that reads as a "lit edge" on hover/active cards. */
+.glow-ring {
+  box-shadow:
+    0 0 0 1px rgb(var(--c-accent) / 0.35),
+    0 0 24px -6px rgb(var(--c-accent) / 0.45);
+}
+
+/* Neon text glow for headline numbers / key accents. */
+.text-glow {
+  text-shadow: 0 0 18px rgb(var(--c-accent) / 0.45);
+}
+
+/* A thin accent rule that "lights up" a card's top edge. */
+.accent-topline {
+  position: relative;
+}
+.accent-topline::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, rgb(var(--c-accent) / 0.7), transparent);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.group:hover > .accent-topline::before,
+.accent-topline:hover::before {
+  opacity: 1;
+}
+
+/* Live status dot with a soft pulse. */
+@keyframes pg-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgb(var(--c-accent) / 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgb(var(--c-accent) / 0);
+  }
+}
+.pulse-dot {
+  animation: pg-pulse 2s ease-out infinite;
 }
 
 /* Headings: tighter tracking for a more polished, app-like feel. */

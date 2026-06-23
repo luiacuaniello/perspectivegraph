@@ -9,10 +9,10 @@ export default function EmptyState() {
         <span className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-2xl bg-accent/12 text-accent">
           <ShieldIcon className="h-6 w-6" />
         </span>
-        <h2 className="text-lg font-semibold text-slate-900">No data yet — let’s light it up</h2>
+        <h2 className="text-lg font-semibold text-slate-900">No data yet - let’s light it up</h2>
         <p className="mx-auto mt-2 max-w-md text-[13px] leading-relaxed text-slate-600">
           PerspectiveGraph correlates the output of the scanners you already run into{" "}
-          <span className="font-medium text-slate-800">reachable attack paths</span> — from{" "}
+          <span className="font-medium text-slate-800">reachable attack paths</span> - from{" "}
           <GlobeIcon className="inline h-3.5 w-3.5 text-accent align-[-2px]" /> internet exposure to{" "}
           <GemIcon className="inline h-3.5 w-3.5 text-amber-700 align-[-2px]" /> your crown jewels.
         </p>
@@ -28,7 +28,7 @@ export default function EmptyState() {
         </div>
 
         <p className="mt-4 text-[11px] text-slate-400">
-          Paths appear within one analysis cycle (~30s) — this page refreshes itself.
+          Paths appear within one analysis cycle (~30s) - this page refreshes itself.
         </p>
       </div>
     </div>

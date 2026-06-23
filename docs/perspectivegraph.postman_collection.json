@@ -1,7 +1,7 @@
 {
 	"info": {
 		"name": "PerspectiveGraph API",
-		"description": "All PerspectiveGraph endpoints: health checks, the scanner-webhook ingest API (:8081) and the GraphQL API (:8080).\n\nRun the **Ingest** folder top-to-bottom to reproduce the demo (`make seed`): six core sources + two discovery collectors (Kubernetes, cloud network) that correlate into six ranked attack paths. The analyzer recomputes paths on its interval (default 30s), so give it a moment before querying GraphQL.\n\nAdjust `apiUrl` / `ingestUrl` collection variables to point at another deployment.\n\nThreat intel: run the backend with THREATINTEL=on to enrich CVEs with CISA KEV (exploited in the wild) + FIRST EPSS (30-day exploitation probability); the GraphQL queries below expose node.kev / node.epss and posture.kevOnPaths.\n\nAuth: if the backend runs with INGEST_HMAC_SECRET / API_TOKENS set, fill the collection variables `ingestHmacSecret` and `apiToken` — a pre-request script then signs ingest requests (HMAC) and adds the bearer token to GraphQL requests automatically. Leave them empty for an open (dev) backend.\n\nMulti-tenant: set the `tenant` collection variable (and use that tenant's `ingestHmacSecret`/`apiToken`) to scope ingest + queries to one tenant; the pre-request script adds the X-Tenant header automatically.\n\nAction layer: drift alerts fire to ALERT_WEBHOOK_URL when a new path appears; per-path Falco/Sigma detections are on the GraphQL AttackPath; GET /export/ndjson is the SIEM enrichment feed.",
+		"description": "All PerspectiveGraph endpoints: health checks, the scanner-webhook ingest API (:8081) and the GraphQL API (:8080).\n\nRun the **Ingest** folder top-to-bottom to reproduce the demo (`make seed`): six core sources + two discovery collectors (Kubernetes, cloud network) that correlate into six ranked attack paths. The analyzer recomputes paths on its interval (default 30s), so give it a moment before querying GraphQL.\n\nAdjust `apiUrl` / `ingestUrl` collection variables to point at another deployment.\n\nThreat intel: run the backend with THREATINTEL=on to enrich CVEs with CISA KEV (exploited in the wild) + FIRST EPSS (30-day exploitation probability); the GraphQL queries below expose node.kev / node.epss and posture.kevOnPaths.\n\nAuth: if the backend runs with INGEST_HMAC_SECRET / API_TOKENS set, fill the collection variables `ingestHmacSecret` and `apiToken` - a pre-request script then signs ingest requests (HMAC) and adds the bearer token to GraphQL requests automatically. Leave them empty for an open (dev) backend.\n\nMulti-tenant: set the `tenant` collection variable (and use that tenant's `ingestHmacSecret`/`apiToken`) to scope ingest + queries to one tenant; the pre-request script adds the X-Tenant header automatically.\n\nAction layer: drift alerts fire to ALERT_WEBHOOK_URL when a new path appears; per-path Falco/Sigma detections are on the GraphQL AttackPath; GET /export/ndjson is the SIEM enrichment feed.",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"variable": [
@@ -136,14 +136,49 @@
 								"metrics"
 							]
 						},
-						"description": "Prometheus exposition: ingest/normalize/analyzer-pass/dead-letter counters + Go runtime. Always open, unthrottled."
+						"description": "Prometheus exposition: ingest/normalize/analyzer-pass/dead-letter counters + Go runtime. Scale metrics: perspectivegraph_analyzer_graph_{nodes,edges} (graph size), _analyzer_pathfind_seconds (parallel per-seed Dijkstra latency), _analyzer_snapshot_seconds + _analyzer_snapshots_total{mode=\"full|delta\"} (incremental snapshotting). Always open, unthrottled."
 					},
 					"response": []
+				},
+				{
+					"name": "Connector health (agentless pull status)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{ingestUrl}}/connectors",
+							"host": [
+								"{{ingestUrl}}"
+							],
+							"path": [
+								"connectors"
+							]
+						},
+						"description": "Status of the agentless PULL connectors (e.g. aws): last run, events emitted, errors. Empty when CONNECTORS_ENABLED is unset."
+					}
+				},
+				{
+					"name": "Auth config (SPA login bootstrap)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{apiUrl}}/auth/config",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"auth",
+								"config"
+							]
+						},
+						"description": "PUBLIC (no auth): tells the dashboard login gate whether auth is required and, for SSO, the OIDC coordinates (issuer/clientId/authorizeUrl/tokenUrl/scopes) to run the Authorization-Code + PKCE flow."
+					}
 				}
 			]
 		},
 		{
-			"name": "Ingest — scanner webhooks",
+			"name": "Ingest - scanner webhooks",
 			"description": "Same payloads and order as `make seed` (six sources). Re-posting is idempotent (deterministic node ids, upsert semantics).",
 			"item": [
 				{
@@ -335,7 +370,7 @@
 								}
 							}
 						},
-						"description": "Cloud inventory/identity export: ALB, EC2, IAM role, S3 — adds the cloud attack surface."
+						"description": "Cloud inventory/identity export: ALB, EC2, IAM role, S3 - adds the cloud attack surface."
 					}
 				},
 				{
@@ -431,7 +466,7 @@
 								}
 							}
 						},
-						"description": "Raw `kubectl get … -o json`. Auto-discovers exposure topology: Ingress→Service→Pod→ServiceAccount→Role (internet → cluster-admin), with no hand-stitched ids."
+						"description": "Raw `kubectl get … -o json`. Auto-discovers exposure topology: Ingress→Service→Pod→ServiceAccount→Role (internet → cluster-admin), with no hand-stitched ids. Binding subjects of kind Group/User are handled too: system:serviceaccounts:NS expands to that namespace's ServiceAccounts, system:authenticated to all of them, and system:unauthenticated/anonymous binds the role to an internet-exposed anonymous principal. Include namespaced `role` in your `kubectl get` (not just `clusterrole`) so namespaced escalation roles are seen. Container-escape (ESCAPES_TO cluster-admin, ATT&CK T1611) fires on privileged:true, hostPath/hostPID/hostNetwork/hostIPC, and a dangerous added capability (securityContext.capabilities.add: SYS_ADMIN/SYS_MODULE/SYS_PTRACE/SYS_RAWIO/SYS_BOOT/DAC_READ_SEARCH/DAC_OVERRIDE/BPF, or ALL)."
 					}
 				},
 				{
@@ -538,7 +573,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"_comment\": \"Okta directory export (as an Okta/Entra admin-API sync would produce). The IdP is internet-facing (SSO portal). The federated_roles are AWS role ARNs that converge with the roles the IAM collector discovered (iam-sample.json) — so federating into them inherits their privesc. alice has NO MFA and federates into admin-role (AdministratorAccess): the modern kill chain internet -> Okta -> alice -> admin-role -> account-admin lights up, highly traversable because there's no MFA to phish past. bob has MFA and only a privesc-capable role, so his path is discounted.\",\n  \"provider\": \"okta\",\n  \"internet_login\": true,\n  \"users\": [\n    {\n      \"email\": \"alice@acme.com\",\n      \"mfa\": false,\n      \"admin\": true,\n      \"groups\": [\"cloud-admins\"],\n      \"federated_roles\": [\"arn:aws:iam::123456789012:role/admin-role\"]\n    },\n    {\n      \"email\": \"bob@acme.com\",\n      \"mfa\": true,\n      \"groups\": [\"developers\"],\n      \"federated_roles\": [\"arn:aws:iam::123456789012:role/public-deployer\"]\n    }\n  ]\n}\n",
+							"raw": "{\n  \"_comment\": \"Okta directory export (as an Okta/Entra admin-API sync would produce). The IdP is internet-facing (SSO portal). The federated_roles are AWS role ARNs that converge with the roles the IAM collector discovered (iam-sample.json) - so federating into them inherits their privesc. alice has NO MFA and federates into admin-role (AdministratorAccess): the modern kill chain internet -> Okta -> alice -> admin-role -> account-admin lights up, highly traversable because there's no MFA to phish past. bob has MFA and only a privesc-capable role, so his path is discounted.\",\n  \"provider\": \"okta\",\n  \"internet_login\": true,\n  \"users\": [\n    {\n      \"email\": \"alice@acme.com\",\n      \"mfa\": false,\n      \"admin\": true,\n      \"groups\": [\"cloud-admins\"],\n      \"federated_roles\": [\"arn:aws:iam::123456789012:role/admin-role\"]\n    },\n    {\n      \"email\": \"bob@acme.com\",\n      \"mfa\": true,\n      \"groups\": [\"developers\"],\n      \"federated_roles\": [\"arn:aws:iam::123456789012:role/public-deployer\"]\n    }\n  ]\n}\n",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -706,11 +741,11 @@
 						"body": {
 							"mode": "graphql",
 							"graphql": {
-								"query": "{ attackPaths { id score scoreUpperBound correlatedHops confidence confidenceLabel steps { edgeType probability weightBasis weightConfidence } } }",
+								"query": "{ attackPaths { id score scoreUpperBound correlatedHops scoreCiLow scoreCiHigh mixtureScore profileScores { profile prior score } confidence confidenceLabel steps { edgeType probability weightBasis weightConfidence } } }",
 								"variables": ""
 							}
 						},
-						"description": "Honest probabilities. Every path reports a confidence (high|medium|low) and every hop a weightBasis — kev|epss|runtime (observed evidence) vs cvss|severity|heuristic (estimate). It also exposes the independence assumption behind the score: score is the product of the hops (independent), scoreUpperBound is the weakest hop (the score if they share a common cause), and correlatedHops flags when ≥2 hops rest on the same basis — so the true exploitability lies in [score, scoreUpperBound] instead of a falsely-precise point."
+						"description": "Honest probabilities. Every path reports a confidence (high|medium|low) and every hop a weightBasis - kev|epss|runtime (observed evidence) vs cvss|severity|heuristic (estimate). It also exposes three views of uncertainty: (1) the independence assumption - score is the product of the hops (independent), scoreUpperBound is the weakest hop (the score if they share a common cause), correlatedHops flags when >=2 hops rest on the same basis, so the true exploitability lies in [score, scoreUpperBound]; (2) epistemic uncertainty - scoreCiLow/scoreCiHigh are the 90% Bayesian credible interval (each edge a Beta posterior whose width reflects how much evidence backs it), so a wide CI means the score rests on soft inputs; (3) attacker-profile mixture - mixtureScore = sum over profiles P(c)*prod p(e|c) and profileScores breaks it down per profile (commodity/criminal/apt), the '72% vs an APT, 18% vs commodity' read that fixes the independence assumption at the root by conditioning on attacker capability. None of these change the point score; tune the priors with ATTACKER_PROFILE_PRIORS."
 					}
 				},
 				{
@@ -852,7 +887,7 @@
 						"body": {
 							"mode": "graphql",
 							"graphql": {
-								"query": "{ riskSimulation(iterations: 5000) { iterations anyCompromiseProbability anyCiLow anyCiHigh sensitivityLow sensitivityHigh expectedCompromised crownJewels { name label compromiseProbability ciLow ciHigh } } }",
+								"query": "{ riskSimulation(iterations: 5000) { iterations anyCompromiseProbability anyCiLow anyCiHigh sensitivityLow sensitivityHigh expectedCompromised mixtureCompromiseProbability profileCompromise { profile prior probability } crownJewels { name label compromiseProbability ciLow ciHigh } } }",
 								"variables": ""
 							}
 						},
@@ -1120,7 +1155,94 @@
 								"variables": ""
 							}
 						},
-						"description": "Lists every root query with its description — same metadata the GraphiQL Docs panel shows."
+						"description": "Lists every root query with its description - same metadata the GraphiQL Docs panel shows."
+					}
+				}
+			]
+		},
+		{
+			"name": "AI assistant (Claude or HuggingFace)",
+			"item": [
+				{
+					"name": "1. Executive summary",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{apiUrl}}/ai/summary",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"ai",
+								"summary"
+							]
+						},
+						"description": "Board-level brief of the current posture, grounded in the live attack paths. Provider is server-configured: Anthropic (Claude, ANTHROPIC_API_KEY) by default, or HuggingFace / any OpenAI-compatible endpoint (HF_TOKEN) when no Anthropic key is set. 503 when neither is configured (aiEnabled=false). Viewer role when auth is enabled. Audited as ai.summary."
+					}
+				},
+				{
+					"name": "2. Natural-language Q&A",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"question\": \"Which internet-exposed path reaches a crown jewel fastest, and what is the single best fix?\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{apiUrl}}/ai/query",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"ai",
+								"query"
+							]
+						},
+						"description": "Ask a question about your attack surface; answered from the tenant's real, capped attack-path context (the model summarizes your data, it doesn't invent assets). Audited as ai.query."
+					}
+				},
+				{
+					"name": "3. Explain a path",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"pathId\": \"<an id from attackPaths>\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{apiUrl}}/ai/explain",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"ai",
+								"explain"
+							]
+						},
+						"description": "Plain-English walk-through of one attack path and the most effective remediation. pathId = attackPaths { id }. Audited as ai.explain."
 					}
 				}
 			]
@@ -1143,7 +1265,7 @@
 								"ndjson"
 							]
 						},
-						"description": "One NDJSON record per asset on a critical path (on_critical_path, max_path_score, kev, runtime_confirmed, …) — the enrichment feed a SIEM (Splunk/Elastic/Sentinel) pulls to prioritize alerts. Tenant-scoped + auth-gated like GraphQL."
+						"description": "One NDJSON record per asset on a critical path (on_critical_path, max_path_score, kev, runtime_confirmed, …) - the enrichment feed a SIEM (Splunk/Elastic/Sentinel) pulls to prioritize alerts. Tenant-scoped + auth-gated like GraphQL."
 					}
 				},
 				{
@@ -1345,8 +1467,45 @@
 			]
 		},
 		{
+			"name": "Remediation as PR (dev workflow)",
+			"item": [
+				{
+					"name": "Open fix PR for a path",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"pathId\": \"<an id from attackPaths>\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{apiUrl}}/remediation/pr",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"remediation",
+								"pr"
+							]
+						},
+						"description": "Open a branch + commit the generated fix (K8s NetworkPolicy / Terraform) + raise a pull request for an attack path. pathId = attackPaths { id }. Needs GITHUB_TOKEN (dry-run when unset). Admin role when auth is enabled."
+					}
+				}
+			]
+		},
+		{
 			"name": "Red-team / BAS validation",
-			"description": "Ground the engine against reality: record whether paths are real (confirmed/refuted/partial) and what the engine missed, and read the precision/recall it implies. A BAS platform posts here; metrics also via GraphQL { validation { precision recall } }.",
+			"description": "Ground the engine against reality: record whether paths are real (confirmed/refuted/partial) and what the engine missed, and read the precision/recall it implies. Every scored verdict also feeds probability CALIBRATION (Brier/ECE + reliability diagram - does a path scored 0.8 confirm ~80% of the time?), the demo->production gate for trusting the scores as probabilities. A BAS platform posts here; metrics also via GraphQL { validation { precision recall } calibration { brier ece verdict } }.",
 			"item": [
 				{
 					"name": "1. Record a verdict (confirmed)",
@@ -1360,7 +1519,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"pathId\": \"{{suppressPathId}}\",\n  \"outcome\": \"confirmed\",\n  \"source\": \"caldera\",\n  \"evidence\": \"atomic test T1190 reached the crown jewel\"\n}",
+							"raw": "{\n  \"pathId\": \"{{suppressPathId}}\",\n  \"outcome\": \"confirmed\",\n  \"source\": \"caldera\",\n  \"evidence\": \"atomic test T1190 reached the crown jewel\",\n  \"detected\": false\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -1376,7 +1535,7 @@
 								"validations"
 							]
 						},
-						"description": "Record a red-team/BAS verdict on a path: outcome ∈ confirmed | refuted | partial (references a path id from attackPaths) | missed (a real path the engine did NOT surface — needs route, not pathId). source required. Admin role when auth is on. Feeds the precision/recall metric."
+						"description": "Record a red-team/BAS verdict on a path: outcome ∈ confirmed | refuted | partial (references a path id from attackPaths) | missed (a real path the engine did NOT surface - needs route, not pathId). source required. Admin role when auth is on. The server captures the path's predicted score and structure at verdict time, so this feeds precision/recall AND the calibration diagnostics. Optional `detected` (true/false) on a confirmed verdict reports whether the attempt was caught/blocked - the evidence for the detection axis (#7). For OFFLINE/synthetic verdicts whose path isn't live (e.g. the `genverdicts` self-test), you may also supply `predictedScore`/`hops`/`correlatedHops` as a fallback; for a live path the server-captured values always win."
 					}
 				},
 				{
@@ -1407,7 +1566,7 @@
 								"validations"
 							]
 						},
-						"description": "A real path the tester found that the engine did not surface — a false negative that lowers recall. No pathId; describe it in route."
+						"description": "A real path the tester found that the engine did not surface - a false negative that lowers recall. No pathId; describe it in route."
 					}
 				},
 				{
@@ -1424,7 +1583,36 @@
 								"validations"
 							]
 						},
-						"description": "All verdicts for the tenant plus the rolled-up metrics: precision = confirmed/(confirmed+refuted), recall = confirmed/(confirmed+missed) — over the tested subset, not a global claim."
+						"description": "All verdicts for the tenant plus the rolled-up metrics: precision = confirmed/(confirmed+refuted), recall = confirmed/(confirmed+missed) - over the tested subset, not a global claim. The response also carries `calibration` (Brier/ECE, reliability bins, verdict): each verdict was captured with the path's predicted score, so the log doubles as a calibration dataset."
+					}
+				},
+				{
+					"name": "4. Calibration report (GraphQL)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "{\n  calibration {\n    samples\n    brier\n    logLoss\n    ece\n    meanPredicted\n    observedRate\n    recommendedScale\n    brierRecalibrated\n    verdict\n    diagnosis\n    persistent\n    hasData\n    bins { low high count meanPredicted observedRate }\n    recalibrationMap { score calibrated }\n    segments { name samples brier ece meanPredicted observedRate verdict }\n    detection { tested detected detectionRate highScoreTested highScoreDetectionRate }\n  }\n  calibrationTrend { at brier ece samples }\n}",
+								"variables": ""
+							}
+						},
+						"url": {
+							"raw": "{{apiUrl}}/graphql",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"description": "Does the score mean anything, and if not, what should you build? Pairs each tested path's predicted score with its observed outcome and grades the forecast: Brier/ECE (lower is better), a reliability diagram, an honest verdict, and an advisory rescale. The DIAGNOSTICS then localize any error: brierRecalibrated (the floor an isotonic rescale reaches) + recalibrationMap (raw -> calibrated, applied out-of-band, never a silent rewrite); segments (calibration split by path structure - correlated/long path error is structural -> #6); detection (catch rate on reachable high-score paths -> #7); all folded into one diagnosis (recalibrate-first | structural (#6) | detection-axis (#7) | low-resolution). Run requests 1-3 first to accumulate verdicts. This is the instrument that decides #6/#7 on real data instead of building blind."
 					}
 				}
 			]

@@ -34,6 +34,18 @@ data:
         proxy_pass http://{{ include "perspectivegraph.backendHost" . }}:{{ .Values.service.apiPort }}/validations;
         proxy_set_header Host $host;
       }
+      location /auth/config {
+        proxy_pass http://{{ include "perspectivegraph.backendHost" . }}:{{ .Values.service.apiPort }}/auth/config;
+        proxy_set_header Host $host;
+      }
+      location /ai/ {
+        proxy_pass http://{{ include "perspectivegraph.backendHost" . }}:{{ .Values.service.apiPort }}/ai/;
+        proxy_set_header Host $host;
+      }
+      location /remediation/ {
+        proxy_pass http://{{ include "perspectivegraph.backendHost" . }}:{{ .Values.service.apiPort }}/remediation/;
+        proxy_set_header Host $host;
+      }
       location / {
         try_files $uri $uri/ /index.html;
       }

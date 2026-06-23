@@ -215,7 +215,7 @@ func Build(tenant string, paths []analyzer.AttackPath, now time.Time) Document {
 		}
 		res.Findings = append(res.Findings, Finding{
 			UUID:                detUUID("finding", tenant, cid),
-			Title:               fmt.Sprintf("%s (%s) not satisfied — undermined by %d attack path(s)", strings.ToUpper(cid), controlTitles[cid], len(idxs)),
+			Title:               fmt.Sprintf("%s (%s) not satisfied - undermined by %d attack path(s)", strings.ToUpper(cid), controlTitles[cid], len(idxs)),
 			Description:         fmt.Sprintf("Control %s is undermined by attack paths: %s.", strings.ToUpper(cid), strings.Join(routes, ", ")),
 			Target:              Target{Type: "objective-id", TargetID: cid + "_obj", Status: Status{State: "not-satisfied"}},
 			RelatedObservations: relObs,
@@ -226,7 +226,7 @@ func Build(tenant string, paths []analyzer.AttackPath, now time.Time) Document {
 	return Document{AssessmentResults: AssessmentResults{
 		UUID: detUUID("ar", tenant),
 		Metadata: Metadata{
-			Title:        fmt.Sprintf("PerspectiveGraph attack-path assessment — tenant %q", tenant),
+			Title:        fmt.Sprintf("PerspectiveGraph attack-path assessment - tenant %q", tenant),
 			LastModified: ts,
 			Version:      "1.0",
 			OSCALVersion: "1.1.2",

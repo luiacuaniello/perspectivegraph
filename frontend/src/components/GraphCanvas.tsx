@@ -5,7 +5,7 @@ import { useTheme, type Theme } from "../theme";
 
 // Category of an ontology label: drives both fill color and node shape, so the
 // canvas reads like an architecture diagram (shapes survive where color alone
-// would not — projectors, color-blindness, print).
+// would not - projectors, color-blindness, print).
 type Category = "infra" | "data" | "code" | "identity" | "finding";
 
 function category(label: string): Category {
@@ -132,7 +132,7 @@ function buildStyle(p: GraphPalette): StylesheetJson {
       },
     },
     {
-      // Actively exploited at runtime (Falco) — a warm "live" ring. The seed /
+      // Actively exploited at runtime (Falco) - a warm "live" ring. The seed /
       // jewel / KEV rings below take precedence for nodes that are also those.
       selector: "node.runtime",
       style: { "border-color": "#e0683a", "border-width": 3 },
@@ -148,7 +148,7 @@ function buildStyle(p: GraphPalette): StylesheetJson {
       style: { "border-color": "#caa53a", "border-width": 3.5 },
     },
     {
-      // KEV — exploited in the wild: a warm amber ring even when not on the
+      // KEV - exploited in the wild: a warm amber ring even when not on the
       // selected path, so it stands out at a glance.
       selector: "node.kev",
       style: { "border-color": "#e0a03a", "border-width": 3 },
@@ -211,7 +211,7 @@ export default function GraphCanvas({ nodes, edges, highlightNodes, highlightEdg
   const themeRef = useRef(theme);
   themeRef.current = theme;
 
-  // (Re)build the graph only when the topology actually changes — the dashboard
+  // (Re)build the graph only when the topology actually changes - the dashboard
   // polls every few seconds with fresh arrays, and rebuilding would reset the
   // user's pan/zoom and re-run the layout.
   useEffect(() => {
@@ -275,8 +275,8 @@ export default function GraphCanvas({ nodes, edges, highlightNodes, highlightEdg
     setCyVersion((v) => v + 1);
   }, [nodes, edges, onSelectNode]);
 
-  // Destroy the instance only on unmount (and reset the cache so a remount —
-  // including React StrictMode's dev double-mount — rebuilds from scratch).
+  // Destroy the instance only on unmount (and reset the cache so a remount -
+  // including React StrictMode's dev double-mount - rebuilds from scratch).
   useEffect(
     () => () => {
       cyRef.current?.destroy();
@@ -286,7 +286,7 @@ export default function GraphCanvas({ nodes, edges, highlightNodes, highlightEdg
     [],
   );
 
-  // Re-skin the existing instance when the theme toggles — no rebuild/relayout,
+  // Re-skin the existing instance when the theme toggles - no rebuild/relayout,
   // so the user's pan/zoom and the current highlight survive the swap.
   useEffect(() => {
     const cy = cyRef.current;
@@ -325,7 +325,7 @@ export default function GraphCanvas({ nodes, edges, highlightNodes, highlightEdg
     fitSigRef.current = sig;
   }, [highlightNodes, highlightEdges, cyVersion]);
 
-  // Zoom/fit controls — a graph without an obvious "reset view" traps users who
+  // Zoom/fit controls - a graph without an obvious "reset view" traps users who
   // pan/scroll off-canvas. Animated so the change is legible.
   const zoomBy = (factor: number) => {
     const cy = cyRef.current;

@@ -56,14 +56,14 @@ type enrichment struct {
 }
 
 // exportNDJSON streams one enrichment record per asset on a critical path, as
-// newline-delimited JSON — the format Splunk HEC / Elastic / Sentinel ingest.
+// newline-delimited JSON - the format Splunk HEC / Elastic / Sentinel ingest.
 // Scoped to the caller's tenant; auth-gated like the GraphQL endpoint.
 func (a *API) exportNDJSON(w http.ResponseWriter, r *http.Request) {
 	tenant := tenantOf(r.Context())
 	paths := a.scopedLatest(r.Context())
 	records := buildEnrichment(tenant, paths)
 
-	// Exporting streams the whole attack map out of the tool — audit who did it.
+	// Exporting streams the whole attack map out of the tool - audit who did it.
 	a.auditView(r.Context(), "export.ndjson", map[string]any{"assets": len(records), "paths": len(paths)})
 
 	// Buffer so the body can be signed (the signature header must precede it).
@@ -81,7 +81,7 @@ func (a *API) exportNDJSON(w http.ResponseWriter, r *http.Request) {
 }
 
 // exportOSCAL returns the tenant's attack-path posture as a NIST OSCAL 1.1.2
-// assessment-results document — the artifact GRC tooling and auditors consume.
+// assessment-results document - the artifact GRC tooling and auditors consume.
 // Same tenant scoping + auth as the GraphQL endpoint.
 func (a *API) exportOSCAL(w http.ResponseWriter, r *http.Request) {
 	tenant := tenantOf(r.Context())

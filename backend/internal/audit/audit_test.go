@@ -90,7 +90,7 @@ func TestHashChainVerifiesAndDetectsTampering(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := Verify(path); err == nil {
-		t.Fatal("tampered log passed verification — chain is not tamper-evident")
+		t.Fatal("tampered log passed verification - chain is not tamper-evident")
 	}
 }
 

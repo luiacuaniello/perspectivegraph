@@ -1,4 +1,4 @@
-// Package cloudnet discovers cloud network reachability — who can reach whom —
+// Package cloudnet discovers cloud network reachability - who can reach whom -
 // from security groups, instances and VPC peerings, and emits it as ontology
 // relationships. It answers the lateral-movement question scanners can't:
 //

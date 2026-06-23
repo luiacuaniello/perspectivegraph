@@ -1,7 +1,7 @@
 // Package detection turns an attack path into detection-as-code: Falco and
 // Sigma rules that catch an attacker *exploiting* the path. Remediation cuts the
 // path; detection watches it. PerspectiveGraph already ingests Falco at runtime,
-// so this closes the offense→defense loop — the path says exactly which workload
+// so this closes the offense→defense loop - the path says exactly which workload
 // to instrument.
 package detection
 
@@ -50,7 +50,7 @@ func falcoRule(w, target ontology.Node, cveNote, pathID string) Detection {
 	if ns != "" {
 		cond = fmt.Sprintf(`spawned_process and k8s.ns.name = %q and container.name = %q`, ns, name)
 	}
-	content := fmt.Sprintf(`# PerspectiveGraph detection-as-code — watch the exposed workload %q on a
+	content := fmt.Sprintf(`# PerspectiveGraph detection-as-code - watch the exposed workload %q on a
 # reachable attack path to %q%s. Catches a shell/exec, the classic
 # post-exploitation step. Tune the process list to the workload's baseline.
 - rule: PerspectiveGraph attack-path activity in %s
@@ -77,7 +77,7 @@ func falcoRule(w, target ontology.Node, cveNote, pathID string) Detection {
 
 func sigmaRule(w, target ontology.Node, cveNote, pathID string) Detection {
 	name := w.Name
-	content := fmt.Sprintf(`# PerspectiveGraph detection-as-code — host/EDR companion to the Falco rule.
+	content := fmt.Sprintf(`# PerspectiveGraph detection-as-code - host/EDR companion to the Falco rule.
 title: Suspicious process in attack-path workload %s
 id: perspectivegraph-%s
 status: experimental

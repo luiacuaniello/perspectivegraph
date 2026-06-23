@@ -22,7 +22,7 @@ type suppressRequest struct {
 }
 
 // adminWritable reports whether the caller may perform an admin write (suppress,
-// ticket, …). Writes are admin-only, but only when auth is enabled — in open/dev
+// ticket, …). Writes are admin-only, but only when auth is enabled - in open/dev
 // mode there is no RBAC, matching how the rest of the API behaves unauthenticated.
 func (a *API) adminWritable(r *http.Request) bool {
 	if !a.authEnabled() {
@@ -31,7 +31,7 @@ func (a *API) adminWritable(r *http.Request) bool {
 	return auth.PrincipalFromContext(r.Context()).Role >= auth.RoleAdmin
 }
 
-// listSuppressions handles GET /suppressions — the triage board for the tenant
+// listSuppressions handles GET /suppressions - the triage board for the tenant
 // (includes expired entries so lapsed decisions stay visible). Viewer is enough.
 func (a *API) listSuppressions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -40,7 +40,7 @@ func (a *API) listSuppressions(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// putSuppression handles POST /suppressions — record or replace a triage decision
+// putSuppression handles POST /suppressions - record or replace a triage decision
 // for one attack path. Admin-only.
 func (a *API) putSuppression(w http.ResponseWriter, r *http.Request) {
 	if !a.adminWritable(r) {
@@ -93,7 +93,7 @@ func (a *API) putSuppression(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, stored)
 }
 
-// deleteSuppression handles DELETE /suppressions/{pathID} — un-suppress a path,
+// deleteSuppression handles DELETE /suppressions/{pathID} - un-suppress a path,
 // returning it to the active board. Admin-only.
 func (a *API) deleteSuppression(w http.ResponseWriter, r *http.Request) {
 	if !a.adminWritable(r) {

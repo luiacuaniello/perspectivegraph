@@ -1,5 +1,5 @@
 // Package k8s discovers network-exposure and identity topology from a
-// Kubernetes cluster dump and emits it as ontology relationships — the edges no
+// Kubernetes cluster dump and emits it as ontology relationships - the edges no
 // scanner produces but every attack path needs:
 //
 //	Ingress ──ROUTES_TO──▶ Service ──EXPOSES──▶ Pod(Container)
@@ -7,7 +7,7 @@
 //	Pod ──HOSTS──▶ Image   (inferred from the image ref by the normalizer)
 //
 // Input is the JSON of `kubectl get ingress,service,pod,serviceaccount,
-// clusterrole,clusterrolebinding,rolebinding -A -o json` — a List whose items
+// clusterrole,clusterrolebinding,rolebinding -A -o json` - a List whose items
 // the collector walks by kind. This turns a real cluster into discoverable
 // attack surface without hand-stitched ids.
 package k8s
@@ -114,7 +114,7 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 		g.upsert(ontology.Node{ID: id, Label: ontology.LabelContainer, Name: p.Metadata.Name, Properties: props})
 		podsByNS[ns] = append(podsByNS[ns], podRef{id: id, labels: p.Metadata.Labels})
 
-		// A host-breaking pod can escape its container to the node — and from the
+		// A host-breaking pod can escape its container to the node - and from the
 		// node, the cluster (ATT&CK T1611). Model it as a direct route to cluster-admin.
 		if escape != "" {
 			g.edge(ontology.EdgeEscapesTo, id, clusterAdmin(g), 0.95)
@@ -177,12 +177,19 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 		}
 	}
 
-	// ServiceAccounts as identity nodes.
+	// ServiceAccounts as identity nodes. Index them by namespace so a Group
+	// subject (system:serviceaccounts[:<ns>]) can be expanded to the real SAs it
+	// covers - and thus to the pods that mount them.
+	saByNS := map[string][]string{}
+	var allSAs []string
 	for _, sa := range sas {
 		ns := nsOf(sa.Metadata)
-		g.upsert(ontology.Node{ID: ontology.NewID(ontology.LabelServiceAccount, ns+"/"+sa.Metadata.Name),
+		saID := ontology.NewID(ontology.LabelServiceAccount, ns+"/"+sa.Metadata.Name)
+		g.upsert(ontology.Node{ID: saID,
 			Label: ontology.LabelServiceAccount, Name: ns + "/" + sa.Metadata.Name,
 			Properties: map[string]any{"k8s_ns": ns}})
+		saByNS[ns] = append(saByNS[ns], saID)
+		allSAs = append(allSAs, saID)
 	}
 
 	// Bindings: a ServiceAccount assumes a Role; admin roles are crown jewels.
@@ -204,11 +211,22 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 			g.edge(ontology.EdgeCanEscalateTo, roleID, clusterAdmin(g), 0.9)
 		}
 		for _, subj := range b.Subjects {
-			if !strings.EqualFold(subj.Kind, "ServiceAccount") {
-				continue
+			switch strings.ToLower(subj.Kind) {
+			case "serviceaccount":
+				saID := g.stub(ontology.LabelServiceAccount, nsOrDefault(subj.Namespace)+"/"+subj.Name)
+				g.edge(ontology.EdgeAssumes, saID, roleID, 0.8)
+			case "group":
+				// Binding a group to a powerful role is a common, dangerous misconfig
+				// the ServiceAccount-only view used to miss entirely.
+				bindGroup(g, subj.Name, roleID, saByNS, allSAs)
+			case "user":
+				// A named user (e.g. an OIDC identity) has no cluster-visible workload
+				// to pin it to a pod, but record the grant so the privesc stays visible.
+				uid := ontology.NewID(ontology.LabelUser, "user/"+subj.Name)
+				g.upsert(ontology.Node{ID: uid, Label: ontology.LabelUser, Name: "user:" + subj.Name,
+					Properties: map[string]any{"k8s_user": subj.Name}})
+				g.edge(ontology.EdgeAssumes, uid, roleID, 0.8)
 			}
-			saID := g.stub(ontology.LabelServiceAccount, nsOrDefault(subj.Namespace)+"/"+subj.Name)
-			g.edge(ontology.EdgeAssumes, saID, roleID, 0.8)
 		}
 	}
 
@@ -238,9 +256,39 @@ type podSpec struct {
 		Name            string `json:"name"`
 		Image           string `json:"image"`
 		SecurityContext struct {
-			Privileged *bool `json:"privileged"`
+			Privileged   *bool `json:"privileged"`
+			Capabilities struct {
+				Add []string `json:"add"`
+			} `json:"capabilities"`
 		} `json:"securityContext"`
 	} `json:"containers"`
+}
+
+// dangerousCaps are Linux capabilities that, added to a container, let it break
+// the host boundary even without privileged:true - so a `capabilities.add` that
+// includes one is effectively an escape (CISA/NSA hardening guidance treats
+// SYS_ADMIN as privileged-equivalent). Keyed without the CAP_ prefix, uppercase.
+var dangerousCaps = map[string]bool{
+	"SYS_ADMIN":       true, // mount, cgroups, the classic release_agent escape (~= privileged)
+	"SYS_MODULE":      true, // load a kernel module -> arbitrary code on the host
+	"SYS_PTRACE":      true, // trace/inject into processes (host procs with hostPID)
+	"SYS_RAWIO":       true, // raw device I/O -> read/write host disk & memory
+	"SYS_BOOT":        true, // reboot / kexec the node
+	"DAC_READ_SEARCH": true, // read any host file (open_by_handle_at, the "shocker" escape)
+	"DAC_OVERRIDE":    true, // bypass file permission checks
+	"BPF":             true, // load eBPF programs into the host kernel
+}
+
+// dangerousCap returns the first host-boundary-breaking capability in an added
+// set (or "ALL"), normalized without the CAP_ prefix; "" when the set is benign.
+func dangerousCap(added []string) string {
+	for _, c := range added {
+		n := strings.TrimPrefix(strings.ToUpper(c), "CAP_")
+		if n == "ALL" || dangerousCaps[n] {
+			return n
+		}
+	}
+	return ""
 }
 
 // escapeReason reports the first host-boundary-breaking setting on a pod that
@@ -250,6 +298,9 @@ func escapeReason(spec podSpec) string {
 	for _, c := range spec.Containers {
 		if c.SecurityContext.Privileged != nil && *c.SecurityContext.Privileged {
 			return "privileged container"
+		}
+		if dc := dangerousCap(c.SecurityContext.Capabilities.Add); dc != "" {
+			return "added capability " + dc
 		}
 	}
 	switch {
@@ -359,7 +410,7 @@ func decode(r io.Reader) ([]item, error) {
 }
 
 // selectorMatches reports whether labels is a superset of selector (and the
-// selector is non-empty — an empty selector matches nothing, like K8s).
+// selector is non-empty - an empty selector matches nothing, like K8s).
 func selectorMatches(selector, labels map[string]string) bool {
 	if len(selector) == 0 {
 		return false
@@ -388,7 +439,7 @@ func isAdminName(name string) bool {
 }
 
 // escalateReason reports the first RBAC privilege-escalation primitive a (non
-// wildcard-admin) role grants — the verb/resource combos that let a workload
+// wildcard-admin) role grants - the verb/resource combos that let a workload
 // bootstrap itself to cluster-admin. Returns "" when the role is benign.
 func escalateReason(it item) string {
 	for _, r := range it.Rules {
@@ -421,8 +472,41 @@ func anyOf(have []string, want ...string) bool {
 	return false
 }
 
+// bindGroup wires an RBAC Group subject to a role. Kubernetes' built-in
+// serviceaccount groups (system:serviceaccounts and system:serviceaccounts:<ns>)
+// expand to real workload identities - and thus to concrete pod attack paths -
+// so every covered ServiceAccount gets the grant. system:authenticated widens it
+// to every token holder (modeled as every SA, the pod-reachable subset);
+// system:unauthenticated / system:anonymous means no credentials at all, so the
+// role becomes reachable straight from the internet. A named (e.g. OIDC) group
+// has no cluster-visible membership, so it is recorded as a standalone principal
+// so the grant is at least visible in the graph.
+func bindGroup(g *builder, group, roleID string, saByNS map[string][]string, allSAs []string) {
+	switch {
+	case group == "system:serviceaccounts", group == "system:authenticated":
+		for _, saID := range allSAs {
+			g.edge(ontology.EdgeAssumes, saID, roleID, 0.8)
+		}
+	case strings.HasPrefix(group, "system:serviceaccounts:"):
+		ns := strings.TrimPrefix(group, "system:serviceaccounts:")
+		for _, saID := range saByNS[ns] {
+			g.edge(ontology.EdgeAssumes, saID, roleID, 0.8)
+		}
+	case group == "system:unauthenticated", group == "system:anonymous":
+		anon := ontology.NewID(ontology.LabelUser, "group/"+group)
+		g.upsert(ontology.Node{ID: anon, Label: ontology.LabelUser, Name: group,
+			Properties: map[string]any{ontology.PropInternetExposed: true, "k8s_group": group}})
+		g.edge(ontology.EdgeAssumes, anon, roleID, 0.9)
+	default:
+		grp := ontology.NewID(ontology.LabelUser, "group/"+group)
+		g.upsert(ontology.Node{ID: grp, Label: ontology.LabelUser, Name: "group:" + group,
+			Properties: map[string]any{"k8s_group": group}})
+		g.edge(ontology.EdgeAssumes, grp, roleID, 0.8)
+	}
+}
+
 // clusterAdmin ensures the synthetic K8s cluster-admin crown jewel exists (full
-// cluster control), the target every escalation primitive reaches — the K8s
+// cluster control), the target every escalation primitive reaches - the K8s
 // analogue of the IAM collector's account-admin.
 func clusterAdmin(g *builder) string {
 	id := ontology.NewID(ontology.LabelIAMRole, "perspectivegraph:cluster-admin")

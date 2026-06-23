@@ -36,3 +36,14 @@ nats://{{ include "perspectivegraph.natsHost" . }}:4222
 {{- end -}}
 {{- end -}}
 {{- define "perspectivegraph.backendHost" -}}{{ include "perspectivegraph.fullname" . }}-backend{{- end -}}
+
+{{/* Name of the Secret the backend reads credentials from: an operator-supplied
+     existing Secret (e.g. managed by External Secrets / Sealed Secrets / Vault)
+     when secrets.existingSecret is set, otherwise the one this chart creates. */}}
+{{- define "perspectivegraph.secretName" -}}
+{{- if .Values.secrets.existingSecret -}}
+{{- .Values.secrets.existingSecret -}}
+{{- else -}}
+{{- include "perspectivegraph.fullname" . }}-secrets
+{{- end -}}
+{{- end -}}

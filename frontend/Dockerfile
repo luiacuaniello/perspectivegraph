@@ -9,17 +9,21 @@ WORKDIR /app
 COPY package*.json ./
 # `npm install` (not `npm ci`) on purpose: the lockfile pins platform-specific
 # native deps (rolldown/esbuild bindings), and a lock generated on macOS lacks
-# the Linux variants — which would make `npm ci` here fail and silently ship a
+# the Linux variants - which would make `npm ci` here fail and silently ship a
 # stale image. `install` resolves correctly regardless of where the lock was made.
 RUN npm install --no-audit --no-fund
 COPY . .
 RUN npm run build
 
-FROM nginx:1.31.1-alpine@sha256:8b1e78743a03dbb2c95171cc58639fef29abc8816598e27fb910ed2e621e589a
+FROM nginx:1.31.2-alpine@sha256:1a8724a52d432501548a8d8681bb1554c2d09778f8b9ed0882fc3442549980b7
 # Base is pinned by digest for reproducibility; apk upgrade patches any OS-package
 # CVEs disclosed since that digest was built (e.g. openssl/libxml2), so the image
 # stays current without waiting on a base rebuild. Keeps the Trivy CI gate green.
-RUN apk upgrade --no-cache
+# We also drop curl + its dependency chain (libcurl/nghttp2/c-ares/…): this is a
+# static-file server (nginx serves the built SPA) and the healthcheck uses wget,
+# so curl is unused weight - and removing it clears CVEs in curl that alpine has
+# no fixed version for yet, shrinking the attack surface instead of carrying them.
+RUN apk upgrade --no-cache && apk del curl
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80

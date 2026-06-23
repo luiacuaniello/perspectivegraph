@@ -43,7 +43,7 @@ export function setTheme(theme: Theme) {
   try {
     localStorage.setItem(STORAGE_KEY, theme);
   } catch {
-    /* private mode / disabled storage — still apply for this session */
+    /* private mode / disabled storage - still apply for this session */
   }
   apply(theme);
   window.dispatchEvent(new CustomEvent<Theme>(EVENT, { detail: theme }));

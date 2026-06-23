@@ -1,6 +1,6 @@
 // Package history gives PerspectiveGraph a memory: it turns the analyzer's
 // point-in-time passes into a time series, so the questions security management
-// actually asks have answers — "how long has this path been open?", "what's our
+// actually asks have answers - "how long has this path been open?", "what's our
 // MTTR?", "is our exposure trending down?", "did that path we fixed come back?".
 //
 // It records two things per tenant, fed once per (changed) analyzer pass:
@@ -63,6 +63,16 @@ type PosturePoint struct {
 	RiskPct       float64   `json:"risk_pct"` // P(any crown jewel compromised) × 100
 }
 
+// CalibrationSample is one point of the calibration trend - the headline calibration
+// numbers over time, so an operator can watch the evidence accumulate (and see when a
+// calibration program is actually improving the scores).
+type CalibrationSample struct {
+	At      time.Time `json:"at"`
+	Brier   float64   `json:"brier"`
+	ECE     float64   `json:"ece"`
+	Samples int       `json:"samples"`
+}
+
 // Stats is the rolled-up temporal summary for a tenant.
 type Stats struct {
 	OpenPaths       int
@@ -73,8 +83,9 @@ type Stats struct {
 }
 
 type tenantHistory struct {
-	paths   map[string]*PathRecord
-	posture []PosturePoint
+	paths       map[string]*PathRecord
+	posture     []PosturePoint
+	calibration []CalibrationSample
 }
 
 // Store is an in-memory, optionally file-backed temporal store, isolated per
@@ -189,7 +200,7 @@ func (s *Store) ObservePass(tenant string, open []Observation, riskPct float64) 
 }
 
 // SampleTrend records a posture point only (no path lifecycle), so the exposure
-// trend stays continuous on analyzer passes that change-detection skipped — a
+// trend stays continuous on analyzer passes that change-detection skipped - a
 // steady "12 paths for the last hour" line is itself information. Coalesced to one
 // point per window; it only flushes to disk when it actually appends a new point.
 func (s *Store) SampleTrend(tenant string, criticalPaths int, riskPct float64) {
@@ -224,6 +235,35 @@ func (s *Store) appendPosture(th *tenantHistory, pt PosturePoint) bool {
 	return true
 }
 
+// SampleCalibration records a point of the calibration trend (Brier/ECE/sample-count),
+// coalesced to one per window like the posture trend, so an operator can watch the
+// evidence accumulate over a calibration program without flooding the series.
+func (s *Store) SampleCalibration(tenant string, brier, ece float64, samples int) {
+	if s == nil {
+		return
+	}
+	now := s.now().UTC()
+	s.mu.Lock()
+	th := s.tenant(tenant)
+	pt := CalibrationSample{At: now, Brier: brier, ECE: ece, Samples: samples}
+	appended := false
+	if n := len(th.calibration); n > 0 && pt.At.Sub(th.calibration[n-1].At) < s.sampleEvery {
+		th.calibration[n-1].Brier = pt.Brier // coalesce within the window
+		th.calibration[n-1].ECE = pt.ECE
+		th.calibration[n-1].Samples = pt.Samples
+	} else {
+		th.calibration = append(th.calibration, pt)
+		if len(th.calibration) > s.maxPoints {
+			th.calibration = th.calibration[len(th.calibration)-s.maxPoints:]
+		}
+		appended = true
+	}
+	s.mu.Unlock()
+	if appended {
+		_ = s.persist()
+	}
+}
+
 // Get returns the lifecycle record for a path, if tracked.
 func (s *Store) Get(tenant, id string) (PathRecord, bool) {
 	if s == nil {
@@ -256,6 +296,27 @@ func (s *Store) Trend(tenant string, limit int) []PosturePoint {
 		pts = pts[len(pts)-limit:]
 	}
 	out := make([]PosturePoint, len(pts))
+	copy(out, pts)
+	return out
+}
+
+// CalibrationTrend returns the most recent calibration samples (oldest first), capped
+// to limit (0 = all retained).
+func (s *Store) CalibrationTrend(tenant string, limit int) []CalibrationSample {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	th := s.byTenant[tenant]
+	if th == nil {
+		return nil
+	}
+	pts := th.calibration
+	if limit > 0 && limit < len(pts) {
+		pts = pts[len(pts)-limit:]
+	}
+	out := make([]CalibrationSample, len(pts))
 	copy(out, pts)
 	return out
 }
@@ -301,9 +362,15 @@ type postureRow struct {
 	PosturePoint
 }
 
+type calibrationRow struct {
+	Tenant string `json:"tenant"`
+	CalibrationSample
+}
+
 type fileShape struct {
-	Paths   []PathRecord `json:"paths"`
-	Posture []postureRow `json:"posture"`
+	Paths       []PathRecord     `json:"paths"`
+	Posture     []postureRow     `json:"posture"`
+	Calibration []calibrationRow `json:"calibration,omitempty"`
 }
 
 func (s *Store) load() error {
@@ -331,6 +398,10 @@ func (s *Store) load() error {
 		th := s.tenant(row.Tenant)
 		th.posture = append(th.posture, row.PosturePoint)
 	}
+	for _, row := range f.Calibration {
+		th := s.tenant(row.Tenant)
+		th.calibration = append(th.calibration, row.CalibrationSample)
+	}
 	return nil
 }
 
@@ -347,6 +418,9 @@ func (s *Store) persist() error {
 		for _, pt := range th.posture {
 			f.Posture = append(f.Posture, postureRow{Tenant: tenant, PosturePoint: pt})
 		}
+		for _, pt := range th.calibration {
+			f.Calibration = append(f.Calibration, calibrationRow{Tenant: tenant, CalibrationSample: pt})
+		}
 	}
 	s.mu.RUnlock()
 
@@ -361,6 +435,12 @@ func (s *Store) persist() error {
 			return f.Posture[i].Tenant < f.Posture[j].Tenant
 		}
 		return f.Posture[i].At.Before(f.Posture[j].At)
+	})
+	sort.Slice(f.Calibration, func(i, j int) bool {
+		if f.Calibration[i].Tenant != f.Calibration[j].Tenant {
+			return f.Calibration[i].Tenant < f.Calibration[j].Tenant
+		}
+		return f.Calibration[i].At.Before(f.Calibration[j].At)
 	})
 
 	b, err := json.MarshalIndent(f, "", "  ")

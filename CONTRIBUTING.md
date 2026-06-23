@@ -58,7 +58,7 @@ make test            # Go tests (CGO disabled for static, portable binaries)
 > The backend builds with `CGO_ENABLED=0` (see the Makefile) for static binaries
 > and Go's pure-Go resolver. Keep new dependencies pure-Go so this holds.
 
-### Checks CI runs — run them locally before a PR
+### Checks CI runs - run them locally before a PR
 
 ```bash
 # Backend (go1.25): build, vet, tests, dependency vulns, and SAST
@@ -83,7 +83,7 @@ worked examples. To add, say, a Checkov (IaC) collector:
 2. Implement the `ingestion.Collector` interface: `Source() string` and
    `Parse(io.Reader, ingestion.Options) ([]ontology.Event, error)`. Use
    `Options.Repository`/`RepoSlug` when the tool's output doesn't self-identify the asset.
-3. Map the tool's findings onto the **ontology** (`pkg/ontology`) — reuse
+3. Map the tool's findings onto the **ontology** (`pkg/ontology`) - reuse
    existing node labels and edge types; propose new ones in a PR if needed
    (e.g. Semgrep added `Weakness`). Keep edges oriented in the direction of
    attack progression. If the hop is an adversary action, add its MITRE ATT&CK
@@ -104,7 +104,7 @@ different tools correlate onto the same asset.
   finding inline with `// #nosec Gxxx -- why it's safe`, never a blanket exclude.
   Tests (and a fuzz test for parsers) for new logic. New deps must be pure-Go.
 - **Frontend:** must pass `tsc`, `build`, and `vitest`. Use the inline SVG icon
-  set (`components/icons.tsx`) — **no emoji in the UI**; colors come from the
+  set (`components/icons.tsx`) - **no emoji in the UI**; colors come from the
   CSS-variable design tokens (so light/dark both work), not hardcoded hex.
 - **Docs + Postman:** every user-facing feature updates the relevant `.md`
   (`README.md`, `ARCHITECTURE.md`, `docs/GUIDA.md` / `docs/ONBOARDING.md`,
@@ -112,8 +112,16 @@ different tools correlate onto the same asset.
   (`docs/perspectivegraph.postman_collection.json`).
 - **Security:** this tool is a map of how to attack the org, so don't weaken its
   own controls (ingest HMAC, API auth/RBAC, audit log, at-rest encryption,
-  export signing). Never commit secrets — the gitleaks gate enforces it. Found a
-  vulnerability? Report it privately — see [SECURITY.md](SECURITY.md), not a public
+  export signing). Never commit secrets - the gitleaks gate enforces it. Found a
+  vulnerability? Report it privately - see [SECURITY.md](SECURITY.md), not a public
   issue or PR.
-- One fact per commit message line; explain the *why*.
+- **Commits & releases:** [Conventional Commits](https://www.conventionalcommits.org)
+  (`feat:`, `fix:`, `docs:`, `chore:`, …) - they drive the automated CHANGELOG and
+  versioning (release-please). One fact per message line; explain the *why*.
+  Enable the bundled git hooks once so a bad commit message or a stray secret is
+  caught before it leaves your machine:
+
+  ```bash
+  git config core.hooksPath .githooks   # commit-msg (conventional) + pre-push (gitleaks)
+  ```
 ```

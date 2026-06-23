@@ -1,7 +1,7 @@
 # Security Policy
 
-PerspectiveGraph is a DevSecOps tool whose own data — a graph of *how to attack the
-org* and a record of who has viewed it — is sensitive. We take the security of the
+PerspectiveGraph is a DevSecOps tool whose own data - a graph of *how to attack the
+org* and a record of who has viewed it - is sensitive. We take the security of the
 tool itself seriously and welcome coordinated disclosure of vulnerabilities.
 
 ## Supported versions
@@ -18,7 +18,7 @@ yet. Always run the latest tagged release (or `main`) to receive fixes.
 ## Reporting a vulnerability
 
 **Please do not open a public issue, pull request, or discussion for a security
-problem** — that discloses it before a fix exists.
+problem** - that discloses it before a fix exists.
 
 Report privately via one of:
 
@@ -26,7 +26,7 @@ Report privately via one of:
    **Security → Report a vulnerability** (GitHub Security Advisories). This keeps the
    report private to the maintainers until a fix is published.
 2. If private reporting is unavailable, open a **minimal** public issue that says only
-   *"security report — please provide a private contact"* (no details), and a
+   *"security report - please provide a private contact"* (no details), and a
    maintainer will reach out.
 
 Please include, where you can:
@@ -52,7 +52,7 @@ Please give us a reasonable window to ship a fix before any public disclosure.
 
 ## Scope
 
-**In scope** — vulnerabilities in PerspectiveGraph itself, for example:
+**In scope** - vulnerabilities in PerspectiveGraph itself, for example:
 
 - authentication/authorization bypass (bearer tokens, OIDC/JWT, per-application
   RBAC), ingest HMAC verification, or the auth-lockout logic;
@@ -67,13 +67,13 @@ Please give us a reasonable window to ship a fix before any public disclosure.
 **Out of scope:**
 
 - vulnerabilities in the *scanners and sources* whose output you ingest (report
-  those to their projects) — though a parsing bug in **our** collector is in scope;
+  those to their projects) - though a parsing bug in **our** collector is in scope;
 - vulnerabilities in third-party dependencies with no demonstrated impact here
   (we track these with `govulncheck` + Trivy in CI);
 - findings that require an already-compromised host, a misconfiguration the docs
   explicitly warn against, or physical access;
 - missing hardening that is configurable and documented (see below) rather than a
-  flaw — e.g. running with auth disabled in an untrusted network.
+  flaw - e.g. running with auth disabled in an untrusted network.
 
 ## Running PerspectiveGraph safely
 
@@ -82,15 +82,15 @@ beyond a trusted boundary**. The controls below are built in and documented in t
 [README "Application hardening" section](./README.md#application-hardening) and in
 [`.env.example`](./.env.example):
 
-- **`API_TOKENS` / OIDC** — bearer auth with role + per-application RBAC (tokens
+- **`API_TOKENS` / OIDC** - bearer auth with role + per-application RBAC (tokens
   support expiry and `sha256$`-hashed-at-rest storage).
-- **`INGEST_HMAC_SECRET`** — signed ingestion so scanner data can't be forged.
-- **`STORE_ENCRYPTION_KEY`** — AES-256-GCM at-rest encryption of the governance
+- **`INGEST_HMAC_SECRET`** - signed ingestion so scanner data can't be forged.
+- **`STORE_ENCRYPTION_KEY`** - AES-256-GCM at-rest encryption of the governance
   stores and the audit log.
-- **`EXPORT_SIGNING_KEY`** — Ed25519-signed OSCAL/SIEM exports a consumer can verify.
-- **`AUDIT_LOG_PATH`** — tamper-evident, hash-chained audit log of reads and writes
+- **`EXPORT_SIGNING_KEY`** - Ed25519-signed OSCAL/SIEM exports a consumer can verify.
+- **`AUDIT_LOG_PATH`** - tamper-evident, hash-chained audit log of reads and writes
   (verify with `perspectivegraph verify-audit <file>`).
-- **`AUTH_LOCKOUT_THRESHOLD` / `EXFIL_ALERT_THRESHOLD`** — brute-force lockout and
+- **`AUTH_LOCKOUT_THRESHOLD` / `EXFIL_ALERT_THRESHOLD`** - brute-force lockout and
   exfiltration alerting.
 
 A default install is unauthenticated by design for a trusted-cluster demo; the

@@ -1,4 +1,4 @@
-// DashboardSkeleton is the first-paint placeholder — a calm shimmer that mirrors
+// DashboardSkeleton is the first-paint placeholder - a calm shimmer that mirrors
 // the overview's shape (stat cards + panels), so the initial load reads as
 // "loading this screen" rather than a blank flash or a bare "Loading…".
 export default function DashboardSkeleton() {

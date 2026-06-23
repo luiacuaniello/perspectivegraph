@@ -11,6 +11,15 @@ spec:
   {{- with .Values.ingress.className }}
   ingressClassName: {{ . }}
   {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  # TLS termination at the ingress. Provide a cert in `secretName` (e.g. issued by
+  # cert-manager via an annotation in ingress.annotations), or set ingress.tls.host
+  # to override the host the cert covers.
+  tls:
+    - hosts:
+        - {{ .Values.ingress.tls.host | default .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName | quote }}
+  {{- end }}
   rules:
     - host: {{ .Values.ingress.host | quote }}
       http:

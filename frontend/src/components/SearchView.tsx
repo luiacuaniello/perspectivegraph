@@ -84,7 +84,7 @@ export default function SearchView({ enabled = true }: { enabled?: boolean }) {
           autoFocus
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search assets & findings — try “log4j”, “PII”, “secret”, a CVE id…"
+          placeholder="Search assets & findings - try “log4j”, “PII”, “secret”, a CVE id…"
           className="w-full rounded-xl border border-edge bg-panel shadow-card py-3 pl-10 pr-4 text-sm text-slate-800 placeholder:text-slate-400 outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/15"
         />
         {busy && (

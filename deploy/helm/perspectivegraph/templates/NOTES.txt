@@ -29,11 +29,11 @@ Feed a scanner report (example, with PR context for the commenter):
 
 {{- if not .Values.github.token }}
 
-NOTE: no github.token set — the PR commenter runs in dry-run (logs only).
+NOTE: no github.token set - the PR commenter runs in dry-run (logs only).
 {{- end }}
 {{- if not .Values.auth.apiTokens }}
 
-⚠  SECURITY: auth.apiTokens is empty — the API and ingestion are UNAUTHENTICATED.
+⚠  SECURITY: auth.apiTokens is empty - the API and ingestion are UNAUTHENTICATED.
    PerspectiveGraph is a map of how to attack the org: anyone who can reach the
    Service/Ingress can read every attack path and write suppressions/tickets.
    Before exposing this beyond a trusted cluster, set a token, e.g.
@@ -42,7 +42,7 @@ NOTE: no github.token set — the PR commenter runs in dry-run (logs only).
 {{- end }}
 {{- if not .Values.persistence.enabled }}
 
-NOTE: persistence.enabled=false — suppressions, tickets, red-team validations,
+NOTE: persistence.enabled=false - suppressions, tickets, red-team validations,
    posture/MTTR history and the tamper-evident audit log are IN-MEMORY and reset
    on pod restart. Set persistence.enabled=true (a ReadWriteOnce PVC) for durable
    governance; keep backend.replicas=1 while it is on.

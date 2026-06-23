@@ -2,7 +2,7 @@
 // image was built from. It is the collector that emits the
 // Image --BUILT_FROM--> Repository edge, the link that makes SAST findings
 // (Semgrep, attached to the Repository) reachable from runtime workloads
-// (which HOST the Image) — without it, code findings float disconnected.
+// (which HOST the Image) - without it, code findings float disconnected.
 //
 // A CI step posts it right after pushing the image:
 //

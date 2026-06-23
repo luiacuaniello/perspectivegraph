@@ -8,6 +8,7 @@ import RemediationPlan from "./components/RemediationPlan";
 import ViolationList from "./components/ViolationList";
 import GraphCanvas from "./components/GraphCanvas";
 import SearchView from "./components/SearchView";
+import AssistantView from "./components/AssistantView";
 import IntroBanner, { useIntroDismissed } from "./components/IntroBanner";
 import EmptyState from "./components/EmptyState";
 import Legend from "./components/Legend";
@@ -15,10 +16,11 @@ import Button from "./components/ui/Button";
 import DashboardSkeleton from "./components/DashboardSkeleton";
 import ThemeToggle from "./components/ThemeToggle";
 import { InfoIcon } from "./components/icons";
+import { hasRuntimeToken, signOut } from "./api/client";
 
 const POLL_MS = 5000;
 
-const VIEWS: View[] = ["overview", "paths", "plan", "graph", "violations", "search"];
+const VIEWS: View[] = ["overview", "paths", "plan", "graph", "violations", "search", "assistant"];
 
 // Deep-linkable views: #paths, #graph, … open the app on that section.
 function viewFromHash(): View {
@@ -29,7 +31,7 @@ function viewFromHash(): View {
 const VIEW_META: Record<View, { title: string; subtitle: string }> = {
   overview: {
     title: "Security posture",
-    subtitle: "Reachable attack paths across code, cloud & runtime — not another flat CVE list.",
+    subtitle: "Reachable attack paths across code, cloud & runtime - not another flat CVE list.",
   },
   paths: {
     title: "Attack paths",
@@ -37,7 +39,7 @@ const VIEW_META: Record<View, { title: string; subtitle: string }> = {
   },
   plan: {
     title: "Remediation plan",
-    subtitle: "The fewest fixes that eliminate the most critical-path risk — choke points first.",
+    subtitle: "The fewest fixes that eliminate the most critical-path risk - choke points first.",
   },
   graph: {
     title: "Environment graph",
@@ -50,6 +52,10 @@ const VIEW_META: Record<View, { title: string; subtitle: string }> = {
   search: {
     title: "Search",
     subtitle: "Full-text search across every indexed asset and finding (OpenSearch).",
+  },
+  assistant: {
+    title: "AI assistant",
+    subtitle: "Ask about your attack surface and brief the board - grounded in the live graph (Claude).",
   },
 };
 
@@ -174,6 +180,8 @@ export default function App() {
         pruned={pruned}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
+        aiEnabled={data?.aiEnabled ?? false}
+        showPlayground={!hasRuntimeToken()}
       />
       {/* Mobile drawer backdrop */}
       {sidebarOpen && (
@@ -185,7 +193,7 @@ export default function App() {
       )}
 
       <main className="flex min-w-0 flex-1 flex-col">
-        <header className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2 px-4 pb-4 pt-6 sm:px-8">
+        <header className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2 border-b border-edge/70 px-4 pb-4 pt-6 sm:px-8">
           <div className="flex items-center gap-2.5">
             <button
               onClick={() => setSidebarOpen(true)}
@@ -197,12 +205,23 @@ export default function App() {
               </svg>
             </button>
             <div>
-              <h1 className="text-xl font-semibold tracking-tight text-slate-900">{meta.title}</h1>
-              <p className="mt-0.5 text-[13px] text-slate-500">{meta.subtitle}</p>
+              <h1 className="text-[22px] font-bold leading-tight tracking-tight text-slate-900">{meta.title}</h1>
+              <p className="mt-0.5 text-[13px] text-muted">{meta.subtitle}</p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <ThemeToggle />
+            {hasRuntimeToken() && (
+              <Button
+                variant="secondary"
+                size="md"
+                onClick={() => {
+                  void signOut();
+                }}
+              >
+                Sign out
+              </Button>
+            )}
             {view === "overview" && intro.dismissed && (
               <Button variant="secondary" size="md" onClick={intro.reopen} icon={<InfoIcon className="h-4 w-4" />}>
                 How to read this
@@ -275,7 +294,7 @@ export default function App() {
             {view === "overview" && (
               <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto pr-1">
                 {!intro.dismissed && <IntroBanner onDismiss={intro.dismiss} />}
-                <PostureOverview posture={data.posture} risk={data.riskSimulation} history={history ?? undefined} validation={data.validation} />
+                <PostureOverview posture={data.posture} risk={data.riskSimulation} history={history ?? undefined} validation={data.validation} calibration={data.calibration} calibrationTrend={data.calibrationTrend} />
 
                 {data.invariantViolations.length > 0 && (
                   <button
@@ -287,7 +306,7 @@ export default function App() {
                       {data.invariantViolations.length === 1 ? "" : "s"} violated</span>
                       <span className="text-amber-700/70">
                         {" "}
-                        — {[...new Set(data.invariantViolations.map((v) => v.invariantId))].join(", ")}
+                        - {[...new Set(data.invariantViolations.map((v) => v.invariantId))].join(", ")}
                       </span>
                     </span>
                     <span className="text-xs text-amber-700/80">review →</span>
@@ -368,6 +387,7 @@ export default function App() {
                       path={selected}
                       onShowInGraph={() => setView("graph")}
                       onTriaged={reload}
+                      aiEnabled={data.aiEnabled}
                     />
                   ) : (
                     <div className="rounded-xl border border-edge bg-panel shadow-card p-6 text-sm text-slate-500">
@@ -426,6 +446,7 @@ export default function App() {
             )}
 
             {view === "search" && <SearchView enabled={data.searchEnabled} />}
+            {view === "assistant" && <AssistantView />}
           </div>
         )}
       </main>

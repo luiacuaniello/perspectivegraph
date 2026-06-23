@@ -1,4 +1,4 @@
-// Package notify pushes drift alerts — "a new attack path appeared" — to a
+// Package notify pushes drift alerts - "a new attack path appeared" - to a
 // chat/SOAR webhook, turning the analyzer's passes into something a team sees in
 // its daily workflow. It is optional: with no webhook configured the Noop
 // notifier is used and drift is only logged.

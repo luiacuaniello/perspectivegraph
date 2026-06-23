@@ -1,6 +1,6 @@
 # gitleaks configuration.
 # Extends the built-in ruleset and allowlists the FAKE example secrets that live
-# in test fixtures — they exist only to exercise the secret-scrubber and are not
+# in test fixtures - they exist only to exercise the secret-scrubber and are not
 # real credentials. Everything else is scanned normally.
 [extend]
 useDefault = true

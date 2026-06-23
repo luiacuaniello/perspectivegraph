@@ -1,6 +1,6 @@
 import { ShieldIcon, TargetIcon, XIcon } from "./icons";
 
-export type View = "overview" | "paths" | "plan" | "graph" | "violations" | "search";
+export type View = "overview" | "paths" | "plan" | "graph" | "violations" | "search" | "assistant";
 
 interface Item {
   view: View;
@@ -22,9 +22,14 @@ interface Props {
   // Mobile drawer state (ignored on desktop, where the sidebar is always shown).
   open?: boolean;
   onClose?: () => void;
+  // Show the AI assistant entry only when the backend has ANTHROPIC_API_KEY set.
+  aiEnabled?: boolean;
+  // Show the GraphQL playground link only when the API is open: GraphiQL can't
+  // carry a bearer token, so on an auth-secured API it would just 401.
+  showPlayground?: boolean;
 }
 
-// "analyzed 12s ago" — a coarse relative time so a tester can see the data is
+// "analyzed 12s ago" - a coarse relative time so a tester can see the data is
 // fresh (and how stale it is if the analyzer stalls).
 function ago(iso?: string | null): string | null {
   if (!iso) return null;
@@ -79,6 +84,12 @@ const icons = {
       <path d="M13.5 13.5 L17 17" />
     </svg>
   ),
+  assistant: (
+    <svg viewBox="0 0 20 20" className="h-4 w-4" {...stroke}>
+      <path d="M9 2.5 L10.2 6 L13.5 7.2 L10.2 8.4 L9 12 L7.8 8.4 L4.5 7.2 L7.8 6 Z" />
+      <path d="M14.5 11.5 L15.2 13.3 L17 14 L15.2 14.7 L14.5 16.5 L13.8 14.7 L12 14 L13.8 13.3 Z" />
+    </svg>
+  ),
 };
 
 export default function Sidebar({
@@ -91,6 +102,8 @@ export default function Sidebar({
   pruned,
   open = false,
   onClose,
+  aiEnabled = false,
+  showPlayground = true,
 }: Props) {
   const items: Item[] = [
     { view: "overview", label: "Overview", icon: icons.overview },
@@ -99,21 +112,22 @@ export default function Sidebar({
     { view: "graph", label: "Graph", icon: icons.graph },
     { view: "violations", label: "Violations", icon: icons.violations, badge: violationCount, badgeTone: "warn" },
     { view: "search", label: "Search", icon: icons.search },
+    ...(aiEnabled ? [{ view: "assistant" as const, label: "AI assistant", icon: icons.assistant }] : []),
   ];
 
   return (
     <aside
-      className={`fixed inset-y-0 left-0 z-40 flex w-56 shrink-0 flex-col border-r border-edge bg-panel shadow-xl transition-transform duration-200 lg:static lg:z-auto lg:bg-panel/60 lg:shadow-none lg:transition-none ${
+      className={`fixed inset-y-0 left-0 z-40 flex w-56 shrink-0 flex-col border-r border-edge bg-panel shadow-xl transition-transform duration-200 lg:static lg:z-auto lg:bg-panel/55 lg:backdrop-blur-md lg:shadow-none lg:transition-none ${
         open ? "translate-x-0" : "-translate-x-full"
       } lg:translate-x-0`}
     >
       <div className="flex items-center gap-2.5 px-5 pb-5 pt-6">
-        <span className="grid h-9 w-9 place-items-center rounded-xl bg-accent/15 text-accent">
+        <span className="grid h-9 w-9 place-items-center rounded-xl bg-brand-gradient text-white shadow-glow ring-1 ring-white/10">
           <ShieldIcon className="h-5 w-5" />
         </span>
         <div className="leading-tight">
           <div className="text-[15px] font-bold tracking-tight text-slate-900">PerspectiveGraph</div>
-          <div className="text-[10px] uppercase tracking-widest text-slate-500">Context Engine</div>
+          <div className="text-[10px] font-semibold uppercase tracking-widest text-accent/90">Attack-path engine</div>
         </div>
         <button
           onClick={onClose}
@@ -136,7 +150,7 @@ export default function Sidebar({
               }}
               className={`group flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium transition ${
                 active
-                  ? "bg-accent/10 text-slate-800 shadow-[inset_2px_0_0_0_theme(colors.accent)]"
+                  ? "bg-accent-soft text-accent shadow-[inset_3px_0_0_0_theme(colors.accent),0_0_20px_-6px_theme(colors.accent)]"
                   : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"
               }`}
             >
@@ -161,14 +175,18 @@ export default function Sidebar({
       </nav>
 
       <div className="mt-auto px-5 pb-5">
-        <a
-          href="http://localhost:8080/graphql"
-          target="_blank"
-          rel="noreferrer"
-          className="text-[11px] text-slate-500 underline-offset-2 hover:text-slate-600 hover:underline"
-        >
-          GraphQL playground ↗
-        </a>
+        {showPlayground && (
+          // Relative path: served through the dashboard's own origin (nginx proxies
+          // /graphql to the backend), so it works on any host - not just localhost.
+          <a
+            href="/graphql"
+            target="_blank"
+            rel="noreferrer"
+            className="text-[11px] text-slate-500 underline-offset-2 hover:text-slate-600 hover:underline"
+          >
+            GraphQL playground ↗
+          </a>
+        )}
         <div className="mt-3 flex items-center gap-2 text-[11px] text-slate-500">
           <span className={`relative flex h-2 w-2 ${live ? "" : "opacity-80"}`}>
             {live && (

@@ -1,0 +1,40 @@
+# Helm overlay to try the SSO login on a LOCAL Kubernetes (Docker Desktop / kind /
+# minikube) against the bundled demo Keycloak (deploy/keycloak/k8s-keycloak-demo.yaml).
+# Not production: it uses locally-built images and a demo IdP. Usage:
+#
+#   helm install perspectivegraph deploy/helm/perspectivegraph \
+#     -n perspectivegraph -f deploy/helm/perspectivegraph/values-sso-demo.yaml
+#
+# The split URLs are intentional: the BACKEND reaches Keycloak in-cluster
+# (keycloak:8080), the BROWSER reaches it via port-forward (localhost:8088) - so the
+# token's issuer (localhost:8088) and the JWKS fetch host (keycloak:8080) differ, and
+# that's correct (they're independent settings).
+
+# Locally-built images loaded into the cluster (see the recipe); never pull.
+backend:
+  image:
+    repository: perspectivegraph-backend
+    tag: local
+    pullPolicy: Never
+frontend:
+  image:
+    repository: perspectivegraph-dashboard
+    tag: local
+    pullPolicy: Never
+
+# Reach the dashboard via `kubectl port-forward` instead of an ingress.
+ingress:
+  enabled: false
+
+auth:
+  oidc:
+    # Server-side token validation (in-cluster).
+    jwksUrl: "http://keycloak:8080/realms/demo/protocol/openid-connect/certs"
+    issuer: "http://localhost:8088/realms/demo"
+    audience: "perspectivegraph"
+    # SPA-facing coordinates (browser, via the Keycloak port-forward).
+    clientId: "perspectivegraph"
+    authorizeUrl: "http://localhost:8088/realms/demo/protocol/openid-connect/auth"
+    tokenUrl: "http://localhost:8088/realms/demo/protocol/openid-connect/token"
+    logoutUrl: "http://localhost:8088/realms/demo/protocol/openid-connect/logout"
+    scopes: "openid profile email"

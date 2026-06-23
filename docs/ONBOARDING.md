@@ -1,6 +1,6 @@
-# Onboarding runbook — feeding PerspectiveGraph from a real environment
+# Onboarding runbook - feeding PerspectiveGraph from a real environment
 
-PerspectiveGraph does **not** scan your infrastructure — it *correlates* the
+PerspectiveGraph does **not** scan your infrastructure - it *correlates* the
 output of the scanners you already run. There are no agents and nothing pulls:
 your CI/cron runs the tools and **POSTs** their reports to the ingest webhook.
 This runbook is the minimum a tester needs to light up a real attack path.
@@ -23,11 +23,11 @@ export SLUG=acme/payments-api               # forge "owner/repo" (for PR comment
   and `THREATINTEL=on` are optional. With `make up-full`, `INGEST_URL` is
   `http://localhost:8081` and `API_URL` is `http://localhost:8080`.
 - Network: the tester's CI/cron can reach `INGEST_URL`. ⚠️ **The ingest and API
-  endpoints have no authentication in this MVP** — keep them on an isolated
+  endpoints have no authentication in this MVP** - keep them on an isolated
   network or behind an authenticating reverse proxy. Single-tenant.
 - You can run **Trivy, Semgrep, Cloud Custodian, Falco** against the target, and
   add one **CI step** for build provenance.
-- You can **tag** your sensitive data stores (this is what makes them targets —
+- You can **tag** your sensitive data stores (this is what makes them targets -
   see §3).
 
 Health check first:
@@ -40,7 +40,7 @@ curl -s $API_URL/healthz      # → ok
 ### Authentication
 
 If the backend runs with auth enabled (it should, outside a laptop), every
-request must be signed/authorized — otherwise you get `401`.
+request must be signed/authorized - otherwise you get `401`.
 
 - **Ingest** (`INGEST_HMAC_SECRET` set): sign the request **body** with HMAC-SHA256
   and send `X-PerspectiveGraph-Signature: sha256=<hex>`. A reusable helper:
@@ -62,7 +62,7 @@ request must be signed/authorized — otherwise you get `401`.
   fully isolated in its own graph.
 
 - **Audit-of-views** (`AUDIT_LOG_PATH` set): the tool is a map of how to breach
-  the org, so set this in production — it tamper-evidently records who *viewed*
+  the org, so set this in production - it tamper-evidently records who *viewed*
   the attack paths/graph (with the path ids seen) and who *exported* the map, not
   just who changed it. Check integrity with `perspectivegraph verify-audit <path>`.
 
@@ -97,7 +97,7 @@ hand-stitched ids.
 
 ### Trivy (dependency / image CVEs)
 
-The report's `ArtifactName` becomes the Image node — pass the **full image ref**
+The report's `ArtifactName` becomes the Image node - pass the **full image ref**
 you actually deploy. `slug`/`pr`/`sha` attach PR context so the action layer can
 comment on the right pull request.
 
@@ -127,7 +127,7 @@ curl -sS -X POST "$INGEST_URL/ingest/build" -H 'Content-Type: application/json' 
 
 Emit this from CI after signing/attesting the image. It stamps the image with
 its **trust signals** and **bill of materials**, assembled straight from the
-tools you already run — no bespoke format:
+tools you already run - no bespoke format:
 
 ```bash
 IMG="registry.example.com/payments-api:1.4.2"
@@ -147,10 +147,10 @@ curl -sS -X POST "$INGEST_URL/ingest/supplychain" -H 'Content-Type: application/
 `sbom` accepts the raw CycloneDX document above **or** a plain
 `[{"name","version","type","purl"}]` list. Each component becomes a
 `Library`/`Package` the image `DEPENDS_ON`. Set `signed:false` for an image whose
-signature you couldn't verify — if it's reachable from the internet, the
+signature you couldn't verify - if it's reachable from the internet, the
 `no-internet-to-unsigned-image` invariant fires (Violations view), and the kill
 chain marks it **⚠ unsigned**. Omit `signed` entirely for "not assessed" (no
-violation — unknown is not the same as unsigned).
+violation - unknown is not the same as unsigned).
 
 ### Semgrep (SAST weaknesses + secrets)
 
@@ -168,7 +168,7 @@ curl -sS -X POST "$INGEST_URL/ingest/semgrep?repo=payments-api&slug=$SLUG&pr=42&
 
 The collector consumes a **bundle** that groups Custodian's per-policy
 `resources.json` outputs by resource type. Assemble it like this (real AWS field
-shapes — EC2 `PublicIpAddress`/`IamInstanceProfile`/`Tags`, ALB `Scheme`, IAM
+shapes - EC2 `PublicIpAddress`/`IamInstanceProfile`/`Tags`, ALB `Scheme`, IAM
 `AttachedManagedPolicies`, S3 ACL grants, RDS `PubliclyAccessible`):
 
 ```bash
@@ -217,13 +217,13 @@ curl -sS -X POST "$INGEST_URL/ingest/falco" -H 'Content-Type: application/json' 
 
 ### Kubernetes topology (auto-discovered exposure)
 
-Post a raw cluster dump and PerspectiveGraph discovers the exposure topology —
+Post a raw cluster dump and PerspectiveGraph discovers the exposure topology -
 `Ingress ──ROUTES_TO──▶ Service ──EXPOSES──▶ Pod ──ASSUMES──▶ ServiceAccount
-──ASSUMES──▶ Role` — with no hand-stitched ids. Pods carry their image ref, so
+──ASSUMES──▶ Role` - with no hand-stitched ids. Pods carry their image ref, so
 they stitch to the scanned image automatically.
 
 ```bash
-kubectl get ingress,service,pod,serviceaccount,clusterrole,clusterrolebinding,rolebinding \
+kubectl get ingress,service,pod,serviceaccount,role,clusterrole,rolebinding,clusterrolebinding \
   -A -o json > cluster.json
 curl -sS -X POST "$INGEST_URL/ingest/k8s" -H 'Content-Type: application/json' --data-binary @cluster.json
 ```
@@ -244,12 +244,12 @@ curl -sS -X POST "$INGEST_URL/ingest/cloudnet" -H 'Content-Type: application/jso
 Post the account's IAM reality and PerspectiveGraph builds the "BloodHound for
 cloud" view: it flattens each principal's **effective** allowed actions (managed
 + inline + group policies, resolving the default policy version) and matches them
-against known escalation primitives — `iam:PassRole` paired with a compute action
+against known escalation primitives - `iam:PassRole` paired with a compute action
 (`lambda:CreateFunction`, `ec2:RunInstances`, …), `iam:AttachUserPolicy`,
 `iam:PutRolePolicy`, `iam:CreatePolicyVersion`, `iam:UpdateAssumeRolePolicy`, and
 more. Each match draws a `CAN_ESCALATE_TO` edge to a synthetic **account-admin**
 crown jewel. A role whose trust policy admits `"Principal":"*"` is marked
-`internet_exposed` (publicly assumable) — the seed of a full internet→admin path.
+`internet_exposed` (publicly assumable) - the seed of a full internet→admin path.
 
 ```bash
 # One call dumps every user, role, group and policy in the account.
@@ -260,15 +260,15 @@ curl -sS -X POST "$INGEST_URL/ingest/iam" -H 'Content-Type: application/json' --
 > **Read-only & honest about scope.** The collector needs only the read-only
 > `iam:GetAccountAuthorizationDetails` permission. It intentionally ignores
 > Resource scoping, Condition keys and explicit Deny, so it **over-reports rather
-> than misses** an escalation — treat its findings as "worth confirming", the
+> than misses** an escalation - treat its findings as "worth confirming", the
 > same trade PMapper makes. See `backend/testdata/iam-sample.json` for the shape.
 
-### SSO / IdP federation (Okta → cloud — the modern front door)
+### SSO / IdP federation (Okta → cloud - the modern front door)
 
 Phishing/credential-stuffing an SSO user inherits every cloud role they federate
 into. Post a directory export (Okta/Entra admin API) and PerspectiveGraph models
 `IdentityProvider(internet) → User → ASSUMES → IAM_Role`. Set `federated_roles`
-to the **role ARNs** each user can assume — they converge with the roles the IAM
+to the **role ARNs** each user can assume - they converge with the roles the IAM
 collector discovered, so a no-MFA user federating into an admin/escalation role
 completes the chain *internet → Okta → user → cloud admin*.
 
@@ -283,7 +283,7 @@ curl -sS -X POST "$INGEST_URL/ingest/sso" -H 'Content-Type: application/json' -d
 ```
 
 `mfa:false` weights the IdP→user hop as easily phishable; `internet_login`
-(default true) makes the IdP a seed. Build the payload from your IdP's API —
+(default true) makes the IdP a seed. Build the payload from your IdP's API -
 e.g. Okta `/api/v1/users` + the AWS-federation app's role mappings.
 
 ---
@@ -329,7 +329,7 @@ Practical rules:
 
 - Use the **same image ref** in Trivy, build provenance and Falco. Registry
   prefixes are stripped automatically (`registry/…/payments-api:1.4.2` ≡
-  `payments-api:1.4.2`), and Docker Hub `library/` is normalized — but anything
+  `payments-api:1.4.2`), and Docker Hub `library/` is normalized - but anything
   more exotic must match exactly.
 - Keep Semgrep `repo` == build provenance `repository`.
 - Prefer setting markers through the native source (Custodian tags) so you don't
@@ -337,11 +337,11 @@ Practical rules:
 
 ---
 
-## 5. Network topology — now auto-discovered
+## 5. Network topology - now auto-discovered
 
 Earlier this needed hand-stitched `/ingest/events`. It no longer does: the
 **`/ingest/k8s`**, **`/ingest/cloudnet`** and **`/ingest/iam`** collectors (§2)
-extract exposure, reachability and privilege escalation for you —
+extract exposure, reachability and privilege escalation for you -
 Ingress→Service→Pod, Pod→ServiceAccount→Role, internet-facing security groups,
 SG-to-SG reachability, VPC peering, and `CAN_ESCALATE_TO` edges to account-admin.
 Feed the raw `kubectl get -o json`, AWS `describe-*` and
@@ -413,13 +413,24 @@ Each path also reports the **provenance** of its score so it isn't false
 precision: `confidence` + `confidenceLabel` (high/medium/low) summarize how its
 hops were weighted, and each `steps { weightBasis }` is `kev`/`epss`/`runtime`
 (observed evidence) or `cvss`/`severity`/`heuristic` (an estimate). Turn on
-`THREATINTEL=on` to upgrade CVE hops from severity guesses to KEV/EPSS evidence —
-which raises the confidence of paths that rest on really-exploited CVEs.
+`THREATINTEL=on` to upgrade CVE hops from severity guesses to KEV/EPSS evidence -
+which raises the confidence of paths that rest on really-exploited CVEs. (Caveat:
+EPSS is a *marginal* exploitation rate, not a per-edge traversal probability - fed
+as-is on purpose so calibration corrects the bias; see README "Honest probabilities".)
+
+The bare product `∏p` is only the baseline; each path also exposes **three honest
+uncertainty views**: the correlation band `[score, scoreUpperBound]` (the
+independence assumption), a 90% Bayesian credible interval `[scoreCiLow, scoreCiHigh]`
+(how well we know the inputs), and an **attacker-profile mixture** `profileScores`
+(`Σ P(c)·∏ p(e|c)` over commodity/criminal/apt, retunable via
+`ATTACKER_PROFILE_PRIORS`). The headline `riskSimulation` carries a Wilson CI plus a
+Beta-resampled credible band. Point estimates are unchanged; what's added is how much
+to trust them.
 
 ### Close the loop: verify a fix, then own it
 
 A remediation you can't trust is a scaffold. Each generated fix records the edge
-it cuts, so the API *verifies* it by simulating the removal — the plan shows
+it cuts, so the API *verifies* it by simulating the removal - the plan shows
 `verification { verified pathsEliminated riskReductionPct }`, i.e. "this provably
 removes N paths and drops risk by X%", not just "here's a YAML". Then turn a path
 into an **owned, tracked ticket** so it actually gets done:
@@ -436,12 +447,12 @@ curl -s -X POST "$API_URL/tickets/tk-abc123/close"      # mark it done
 ### Validate against reality (red-team / BAS)
 
 A modeled path is a hypothesis. Feed the verdict back so the engine earns trust
-with evidence — wire your BAS platform (Caldera, AttackIQ, SafeBreach…) or a
+with evidence - wire your BAS platform (Caldera, AttackIQ, SafeBreach…) or a
 human to post the result of testing a path:
 
 ```bash
 # outcome ∈ confirmed | refuted | partial (reference a path id), or missed
-# (a real path the engine didn't surface — describe it in route). source required.
+# (a real path the engine didn't surface - describe it in route). source required.
 curl -s -X POST "$API_URL/validations" -H 'Content-Type: application/json' -d '{
   "pathId":"ap-1a2b-3c4d","outcome":"confirmed","source":"caldera","evidence":"atomic T1190"}' | jq
 curl -s "$API_URL/validations" | jq .metrics    # precision / recall over the tested subset
@@ -449,11 +460,22 @@ curl -s "$API_URL/validations" | jq .metrics    # precision / recall over the te
 
 Each tested path then shows a **✓ validated real / ✗ refuted** badge, and the
 overview a **Validation** precision card. It's evidence on what was *actually*
-tested — not a global precision/recall claim. Set `VALIDATIONS_PATH` to persist.
+tested - not a global precision/recall claim. Set `VALIDATIONS_PATH` to persist
+(the calibration report flags an `in-memory` dataset otherwise).
+
+Those verdicts also feed **probability calibration** (`{ calibration { … } }`): each
+captures the path's predicted score, so the report grades it (Brier/ECE + a reliability
+diagram), cross-validates a recalibration map, segments by path structure, tracks a
+detection axis, and folds it all into one **diagnosis** -
+`recalibrate-first | structural (#6) | detection-axis (#7) | low-resolution` - the
+answer to "and therefore what should we build?". You don't need real infra to exercise
+it: `make calibration-selftest SCENARIO=…` draws verdicts from a known reality and the
+gate must name the cause (also a deterministic CI test). A "Brier over time" trend on
+the Overview lets you watch the evidence accumulate.
 
 ### Triage a path you've decided about
 
-Not every path is a fire to fight — some you accept, some are false positives,
+Not every path is a fire to fight - some you accept, some are false positives,
 some a control outside the graph already covers. Record that decision so the
 board reflects reality (and so the next analyst sees *who* decided and *why*):
 
@@ -470,30 +492,30 @@ curl -s -X DELETE "$API_URL/suppressions/ap-1a2b-3c4d"   # un-suppress
 
 `pathId` is the `attackPaths { id }` value (stable for a seed→crown-jewel pair).
 Suppressed paths drop out of the overview's **active** count and the
-`riskSimulation` doesn't change — suppression is a *view* decision, not a graph
+`riskSimulation` doesn't change - suppression is a *view* decision, not a graph
 edit. Set `SUPPRESSIONS_PATH` so decisions survive a restart (otherwise they are
 in-memory only). In the dashboard, use **⊘ suppress / triage** on any path and
 the **Show suppressed** toggle on the list.
 
 > Tip: when a kill chain shows a **"⚠ heuristic join · N%"** badge, the link was
-> *inferred* (e.g. container→image by tag/name, not digest) — verify it before
+> *inferred* (e.g. container→image by tag/name, not digest) - verify it before
 > acting, or mark the path **false-positive** if the correlation is wrong.
 
 ---
 
-## 7. Troubleshooting — "I see no attack paths"
+## 7. Troubleshooting - "I see no attack paths"
 
 Work down this list; it is almost always one of these:
 
-1. **No seed** — nothing is `internet_exposed`. Check §3; mark an entry point.
-2. **No target** — nothing is `crown_jewel`. Tag a sensitive store (§3).
-3. **Seed and target exist but aren't connected** — the topology edge between
+1. **No seed** - nothing is `internet_exposed`. Check §3; mark an entry point.
+2. **No target** - nothing is `crown_jewel`. Tag a sensitive store (§3).
+3. **Seed and target exist but aren't connected** - the topology edge between
    them is missing (the §5 gap). Add the `EXPOSES`/`ROUTES_TO` edge.
-4. **Ids don't match across sources** — the image ref or repo name differs. Use
+4. **Ids don't match across sources** - the image ref or repo name differs. Use
    `pgid` to compare; align Trivy/build/Falco image refs and Semgrep `repo`.
-5. **Ingest returns 5xx** — check the backend logs; a malformed payload is
+5. **Ingest returns 5xx** - check the backend logs; a malformed payload is
    rejected per-source, an unknown collector name 404s.
-6. **Data is in but stale** — give it one `ANALYZER_INTERVAL`; the analyzer only
+6. **Data is in but stale** - give it one `ANALYZER_INTERVAL`; the analyzer only
    recomputes when the graph changed.
 
 ---
@@ -515,13 +537,13 @@ own cadence:
 - **Runtime (continuous):** point falcosidekick's HTTP output at
   `/ingest/falco`.
 
-Start narrow — one app with a known internet entry point and a known sensitive
-store — confirm a path end-to-end, *then* widen the scanners' scope.
+Start narrow - one app with a known internet entry point and a known sensitive
+store - confirm a path end-to-end, *then* widen the scanners' scope.
 
 **Deploying it on Kubernetes.** The Helm chart in `deploy/helm/perspectivegraph`
 brings up backend + dashboard + Postgres+AGE + NATS in one command (or point it at
 managed Postgres/NATS with `postgres.enabled=false`/`nats.enabled=false`). The
-default install is *unauthenticated with in-memory governance* — fine for a demo
+default install is *unauthenticated with in-memory governance* - fine for a demo
 inside a trusted cluster, but for anything reachable beyond it, turn the controls
 on: `--set auth.apiTokens="$(openssl rand -hex 16):admin"` (bearer auth),
 `--set ingest.hmacSecret=…` (signed ingestion), and `--set persistence.enabled=true`
@@ -541,7 +563,7 @@ comfortably longer than your slowest feed's interval, so one briefly-missed scan
 doesn't evict a still-present asset. Watch it via `status { prunedNodes
 prunedEdges lastPrunedAt }`, the dashboard footer (*“pruned N stale”*), or
 `perspectivegraph_graph_pruned_{nodes,edges}_total`. The graph is **derived**
-state — rebuildable by re-ingesting the feeds — so a lost AGE database is a
+state - rebuildable by re-ingesting the feeds - so a lost AGE database is a
 re-seed, not data loss; back Postgres up (`pg_dump`) for history.
 
 ### Manage on trends, not snapshots
@@ -556,7 +578,7 @@ curl -s -X POST "$API_URL/graphql" -H 'Content-Type: application/json' -d '{
 ```
 
 Each path also exposes `openForSeconds` (the dashboard's *“open 5d”* badge) and
-`reopens` (*“⟳ reopened N×”* — a path that came back after being fixed, i.e. a
+`reopens` (*“⟳ reopened N×”* - a path that came back after being fixed, i.e. a
 deploy reintroduced it). **MTTR** is the mean *resolved − first_seen* over paths
-that closed — the accountability number for management reporting. The overview
+that closed - the accountability number for management reporting. The overview
 plots the trend as a sparkline: chase a rising line, show a board a falling one.

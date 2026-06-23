@@ -16,11 +16,13 @@ package analyzer
 // Two honesty layers on the number:
 //   - a Wilson 95% confidence interval quantifies *sampling* error (how many
 //     trials we ran);
-//   - a *sensitivity band* re-runs the simulation with every edge probability
-//     scaled ±30% and reports the resulting spread. The per-edge probabilities
-//     are heuristic (a severity→p table), so this is the more important honesty:
-//     it shows how much the headline depends on those soft inputs. A tight band
-//     means trust the number; a wide one means treat it qualitatively.
+//   - a *credible band* quantifies *input* uncertainty. Rather than a flat ±30%
+//     scaling, it draws each edge probability from its Beta posterior (a tight
+//     posterior for kev/runtime-backed edges, a wide one for heuristic guesses -
+//     see uncertainty.go) and re-runs reachability, an outer epistemic loop around
+//     the inner aleatoric trials. The 5th-95th percentile spread of the result is
+//     the band the *evidence* justifies: tight ⇒ trust the headline, wide ⇒ treat
+//     it qualitatively. (Field names SensitivityLow/High are kept for the API.)
 
 import (
 	"math"
@@ -35,11 +37,15 @@ import (
 // cost; at 2000 trials a probability's 95% CI half-width is ≤ ~0.022.
 const DefaultRiskIterations = 2000
 
-// Sensitivity band: how far the heuristic per-edge probabilities are perturbed
-// to gauge the headline's dependence on those soft inputs (±30%).
+// Credible band: the outer epistemic loop draws each edge probability from its
+// Beta posterior `bandOuter` times, re-running reachability with `bandInner`
+// trials each, and reports the 5th-95th percentile spread of the resulting
+// any-compromise rate. Counts are modest (it runs once per pass) but enough for a
+// stable band; the inner count is lower than the headline's since the band only
+// needs a coarse spread, not a tight point estimate.
 const (
-	sensitivityScaleDown = 0.7
-	sensitivityScaleUp   = 1.3
+	bandOuter = 64
+	bandInner = 400
 )
 
 // CrownJewelRisk is one target's estimated compromise probability with a 95%
@@ -67,11 +73,31 @@ type RiskSimulation struct {
 	// ExpectedCompromised is the mean number of crown jewels reached per trial.
 	ExpectedCompromised float64          `json:"expected_compromised"`
 	CrownJewels         []CrownJewelRisk `json:"crown_jewels"`
+	// MixtureCompromiseProbability is P(any crown jewel reached) marginalized over the
+	// attacker-profile mixture: Σ_c P(c)·R_c, where R_c conditions every edge on the
+	// attacker's capability c (p(e|c)). AnyCompromiseProbability above samples edges
+	// independently at the marginal p; this reintroduces the same latent-capability
+	// correlation the *per-path* mixture score already reflects, so the headline risk
+	// and the path scores are finally consistent (the naive number stays as the
+	// independent baseline). ProfileCompromise is the per-profile breakdown.
+	MixtureCompromiseProbability float64             `json:"mixture_compromise_probability,omitempty"`
+	ProfileCompromise            []ProfileCompromise `json:"profile_compromise,omitempty"`
+}
+
+// ProfileCompromise is P(any crown jewel reached) against one attacker profile - the
+// Monte Carlo counterpart of ProfileScore, so "80% vs an APT, 20% vs commodity" reads
+// at the environment level, not just per path.
+type ProfileCompromise struct {
+	Profile     string  `json:"profile"`
+	Prior       float64 `json:"prior"`
+	Probability float64 `json:"probability"`
 }
 
 type probEdge struct {
-	to string
-	p  float64
+	to    string
+	p     float64
+	conf  float64 // weight-basis confidence, drives the Beta posterior for the credible band
+	basis string  // weight provenance (kev/epss/runtime/cvss/severity/heuristic), for p(e|c)
 }
 
 // SimulateRisk runs `iterations` Monte Carlo trials over the snapshot. seed makes
@@ -92,7 +118,11 @@ func SimulateRisk(snap graph.Snapshot, iterations int, seed uint64) RiskSimulati
 		if p > 1 {
 			p = 1
 		}
-		adj[e.From] = append(adj[e.From], probEdge{to: e.To, p: p})
+		// Weight provenance (kev/runtime/epss/cvss/severity/heuristic): the confidence
+		// sets how much the credible band lets this edge move; the basis drives p(e|c)
+		// for the per-profile mixture - both shared with the per-path scoring.
+		basis, conf := weightBasisOf(e, nodes[e.From], nodes[e.To])
+		adj[e.From] = append(adj[e.From], probEdge{to: e.To, p: p, conf: conf, basis: basis})
 	}
 
 	var seeds, jewels []string
@@ -159,11 +189,14 @@ func SimulateRisk(snap graph.Snapshot, iterations int, seed uint64) RiskSimulati
 	sim.AnyCompromiseProbability = float64(anyHits) / n
 	sim.AnyCILow, sim.AnyCIHigh = wilson(anyHits, iterations)
 	sim.ExpectedCompromised = float64(totalCompromised) / n
-	// Input-sensitivity band: re-run the any-compromise estimate with edge
-	// probabilities scaled down/up, so the UI can show how much the headline
-	// rests on the heuristic inputs.
-	sim.SensitivityLow = anyCompromiseRate(seeds, jewels, adj, iterations, seed, sensitivityScaleDown)
-	sim.SensitivityHigh = anyCompromiseRate(seeds, jewels, adj, iterations, seed, sensitivityScaleUp)
+	// Input-uncertainty credible band: resample each edge probability from its Beta
+	// posterior and re-run reachability, so the UI can show how much the headline
+	// rests on soft inputs - tight where the evidence is strong, wide where it's a
+	// guess. Kept in the SensitivityLow/High fields to preserve the API.
+	sim.SensitivityLow, sim.SensitivityHigh = anyCompromiseCredibleBand(seeds, jewels, adj, seed, sim.AnyCompromiseProbability)
+	// Correlation-aware headline: marginalize the reachability over the attacker-profile
+	// mixture, so it's consistent with the per-path mixture score (see the field docs).
+	sim.MixtureCompromiseProbability, sim.ProfileCompromise = mixtureCompromise(seeds, jewels, adj, iterations, seed)
 	for _, j := range jewels {
 		node := nodes[j]
 		lo, hi := wilson(hits[j], iterations)
@@ -181,56 +214,157 @@ func SimulateRisk(snap graph.Snapshot, iterations int, seed uint64) RiskSimulati
 	return sim
 }
 
-// anyCompromiseRate estimates P(at least one crown jewel reachable) with every
-// edge probability multiplied by `scale` (clamped to [0,1]). Used to build the
-// sensitivity band; it tallies only the any-compromise outcome, so it is cheaper
-// than the full per-jewel pass.
-func anyCompromiseRate(seeds, jewels []string, adj map[string][]probEdge, iterations int, seed uint64, scale float64) float64 {
-	if iterations <= 0 || len(seeds) == 0 || len(jewels) == 0 {
-		return 0
+// anyCompromiseCredibleBand returns the 5th-95th percentile credible interval on
+// P(at least one crown jewel reachable) under input uncertainty. The outer loop
+// draws every edge probability from its Beta posterior (concentration set by the
+// edge's basis confidence); the inner loop runs `bandInner` reachability trials at
+// those drawn probabilities. The spread of the outer any-rates is the band the
+// evidence justifies. Deterministic from `seed`. `nominal` is the point estimate,
+// used only to guarantee the band brackets it (the reachability function is
+// nonlinear, so the resampled mean can drift slightly off the point estimate).
+func anyCompromiseCredibleBand(seeds, jewels []string, adj map[string][]probEdge, seed uint64, nominal float64) (lo, hi float64) {
+	if len(seeds) == 0 || len(jewels) == 0 {
+		return 0, 0
 	}
-	rng := rand.New(rand.NewPCG(seed, 0x9e3779b97f4a7c15))
+	outerRng := rand.New(rand.NewPCG(seed, 0xa5a5a5a5a5a5a5a5))
+	innerRng := rand.New(rand.NewPCG(seed^0x5bd1e995, 0x9e3779b97f4a7c15))
 	visited := map[string]bool{}
-	anyHits := 0
-	for it := 0; it < iterations; it++ {
-		clear(visited)
-		stack := make([]string, 0, len(seeds))
-		for _, s := range seeds {
-			if !visited[s] {
-				visited[s] = true
-				stack = append(stack, s)
-			}
-		}
-		for len(stack) > 0 {
-			cur := stack[len(stack)-1]
-			stack = stack[:len(stack)-1]
-			for _, e := range adj[cur] {
-				if visited[e.to] {
-					continue
-				}
-				pp := e.p * scale
-				if pp > 1 {
-					pp = 1
-				}
-				if rng.Float64() <= pp {
-					visited[e.to] = true
-					stack = append(stack, e.to)
-				}
-			}
-		}
-		for _, j := range jewels {
-			if visited[j] {
-				anyHits++
-				break
-			}
-		}
+	// Sampled copy of the adjacency, refilled each outer draw (same shape, so no
+	// per-iteration allocation).
+	sampled := make(map[string][]probEdge, len(adj))
+	for k, es := range adj {
+		sampled[k] = make([]probEdge, len(es))
 	}
-	return float64(anyHits) / float64(iterations)
+
+	rates := make([]float64, bandOuter)
+	for o := 0; o < bandOuter; o++ {
+		for k, es := range adj {
+			dst := sampled[k]
+			for i, e := range es {
+				a, b := betaParams(e.p, e.conf)
+				dst[i] = probEdge{to: e.to, p: sampleBeta(outerRng, a, b)}
+			}
+		}
+		anyHits := 0
+		for it := 0; it < bandInner; it++ {
+			clear(visited)
+			stack := make([]string, 0, len(seeds))
+			for _, s := range seeds {
+				if !visited[s] {
+					visited[s] = true
+					stack = append(stack, s)
+				}
+			}
+			for len(stack) > 0 {
+				cur := stack[len(stack)-1]
+				stack = stack[:len(stack)-1]
+				for _, e := range sampled[cur] {
+					if visited[e.to] {
+						continue
+					}
+					if innerRng.Float64() <= e.p {
+						visited[e.to] = true
+						stack = append(stack, e.to)
+					}
+				}
+			}
+			for _, j := range jewels {
+				if visited[j] {
+					anyHits++
+					break
+				}
+			}
+		}
+		rates[o] = float64(anyHits) / float64(bandInner)
+	}
+	sort.Float64s(rates)
+	lo = rates[pctIndex(0.05, bandOuter)]
+	hi = rates[pctIndex(0.95, bandOuter)]
+	// Guarantee the band brackets the point estimate (only ever widening it).
+	const eps = 1e-3
+	if lo > nominal-eps {
+		lo = nominal - eps
+	}
+	if hi < nominal+eps {
+		hi = nominal + eps
+	}
+	if lo < 0 {
+		lo = 0
+	}
+	if hi > 1 {
+		hi = 1
+	}
+	return lo, hi
+}
+
+// mixtureCompromise marginalizes the any-compromise reachability over the attacker
+// profiles: for each profile c it conditions every edge on capability c (p(e|c)) and
+// estimates R_c = P(any crown jewel reachable | c), then returns Σ_c P(c)·R_c and the
+// per-profile breakdown. Within a profile edges are still sampled independently, but
+// conditioning on the shared c introduces the graph-wide positive correlation the
+// independent headline drops - the same latent-capability mechanism as the per-path
+// mixture, so the two are consistent. Deterministic from `seed`.
+func mixtureCompromise(seeds, jewels []string, adj map[string][]probEdge, iterations int, seed uint64) (float64, []ProfileCompromise) {
+	profs := currentProfiles()
+	if iterations <= 0 || len(seeds) == 0 || len(jewels) == 0 || len(profs) == 0 {
+		return 0, nil
+	}
+	// A reusable copy of the adjacency with per-profile conditioned probabilities.
+	cond := make(map[string][]probEdge, len(adj))
+	for k, es := range adj {
+		cond[k] = make([]probEdge, len(es))
+	}
+	visited := make(map[string]bool)
+	out := make([]ProfileCompromise, 0, len(profs))
+	mixture := 0.0
+	for pi, c := range profs {
+		for k, es := range adj {
+			dst := cond[k]
+			for i, e := range es {
+				dst[i] = probEdge{to: e.to, p: conditionalProb(e.p, e.basis, c.Skill)}
+			}
+		}
+		rng := rand.New(rand.NewPCG(seed^(uint64(pi)+1)*0x9e3779b97f4a7c15, 0xdeadbeefcafef00d))
+		anyHits := 0
+		for it := 0; it < iterations; it++ {
+			clear(visited)
+			stack := make([]string, 0, len(seeds))
+			for _, s := range seeds {
+				if !visited[s] {
+					visited[s] = true
+					stack = append(stack, s)
+				}
+			}
+			for len(stack) > 0 {
+				cur := stack[len(stack)-1]
+				stack = stack[:len(stack)-1]
+				for _, e := range cond[cur] {
+					if visited[e.to] {
+						continue
+					}
+					if rng.Float64() <= e.p {
+						visited[e.to] = true
+						stack = append(stack, e.to)
+					}
+				}
+			}
+			for _, j := range jewels {
+				if visited[j] {
+					anyHits++
+					break
+				}
+			}
+		}
+		rc := float64(anyHits) / float64(iterations)
+		out = append(out, ProfileCompromise{Profile: c.Name, Prior: c.Prior, Probability: rc})
+		mixture += c.Prior * rc
+	}
+	return mixture, out
 }
 
 // wilson returns the 95% Wilson score interval for a binomial proportion. It
 // behaves near 0 and 1 (where the naive Wald interval would spill outside [0,1])
-// — important here, since crown-jewel probabilities cluster at the extremes.
+// - important here, since crown-jewel probabilities cluster at the extremes.
 func wilson(successes, n int) (low, high float64) {
 	if n == 0 {
 		return 0, 0

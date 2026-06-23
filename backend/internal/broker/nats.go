@@ -25,7 +25,7 @@ const dlqSubject = "perspectivegraph.dlq"
 
 // maxDeliver caps redeliveries of a failing event. Edge upserts fail (and Nak)
 // until their endpoint nodes arrive, which normally resolves within a couple
-// of passes — an event still failing after this many attempts is poison and is
+// of passes - an event still failing after this many attempts is poison and is
 // terminated instead of looping forever.
 const maxDeliver = 8
 
@@ -48,8 +48,25 @@ type Broker struct {
 // subject is treated as a base ("perspective.events"); legacy values with a
 // trailing ".*" or ".>" wildcard are accepted too. The stream always binds
 // base.> so every published source token matches.
-func Connect(ctx context.Context, url, stream, subject string) (*Broker, error) {
-	nc, err := nats.Connect(url, nats.Name("perspectivegraph"))
+// TLSConfig points at PEM files for NATS transport security (all empty → no
+// app-level TLS: plain nats://, or a tls:// URL that trusts the system store, or a
+// service mesh that wraps the traffic). CAFile trusts a private CA for server-auth;
+// CertFile + KeyFile add a client certificate for mutual TLS.
+type TLSConfig struct {
+	CAFile   string
+	CertFile string
+	KeyFile  string
+}
+
+func Connect(ctx context.Context, url, stream, subject string, tlsConf TLSConfig) (*Broker, error) {
+	opts := []nats.Option{nats.Name("perspectivegraph")}
+	if tlsConf.CAFile != "" {
+		opts = append(opts, nats.RootCAs(tlsConf.CAFile))
+	}
+	if tlsConf.CertFile != "" && tlsConf.KeyFile != "" {
+		opts = append(opts, nats.ClientCert(tlsConf.CertFile, tlsConf.KeyFile))
+	}
+	nc, err := nats.Connect(url, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("nats connect: %w", err)
 	}
@@ -116,7 +133,7 @@ func (b *Broker) Consume(ctx context.Context, durable string, handler func(conte
 		if err := json.Unmarshal(msg.Data(), &ev); err != nil {
 			slog.Error("drop malformed event", "err", err)
 			b.deadLetter(ctx, msg.Data())
-			_ = msg.Term() // poison message — do not redeliver
+			_ = msg.Term() // poison message - do not redeliver
 			return
 		}
 		if err := handler(ctx, ev); err != nil {
@@ -125,7 +142,7 @@ func (b *Broker) Consume(ctx context.Context, durable string, handler func(conte
 				attempt = meta.NumDelivered
 			}
 			if attempt >= maxDeliver {
-				slog.Error("handler failed, giving up after max deliveries — dead-lettering",
+				slog.Error("handler failed, giving up after max deliveries - dead-lettering",
 					"source", ev.Source, "attempts", attempt, "err", err)
 				b.deadLetter(ctx, msg.Data())
 				_ = msg.Term()

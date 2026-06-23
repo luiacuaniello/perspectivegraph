@@ -62,7 +62,7 @@ func TestLiveScoresMergesKEVandEPSS(t *testing.T) {
 	}
 
 	// Second call serves from cache without re-hitting the server (closed check
-	// is implicit: TTL is hours, so no new request is needed — just verify it
+	// is implicit: TTL is hours, so no new request is needed - just verify it
 	// still returns the data).
 	again := src.Scores(context.Background(), []string{"CVE-2021-44228"})
 	if !again["CVE-2021-44228"].KEV {

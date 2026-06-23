@@ -1,5 +1,5 @@
 {{- if and .Values.persistence.enabled (gt (int .Values.backend.replicas) 1) -}}
-{{- fail "persistence.enabled stores governance state (suppressions/tickets/validations/history/audit) on a single-writer ReadWriteOnce volume; set backend.replicas to 1 while it is on — multiple replicas would split-brain the stores and cannot co-mount an RWO PVC." -}}
+{{- fail "persistence.enabled stores governance state (suppressions/tickets/validations/history/audit) on a single-writer ReadWriteOnce volume; set backend.replicas to 1 while it is on - multiple replicas would split-brain the stores and cannot co-mount an RWO PVC." -}}
 {{- end -}}
 apiVersion: apps/v1
 kind: Deployment
@@ -65,56 +65,119 @@ spec:
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "perspectivegraph.fullname" . }}-secrets
+                  name: {{ include "perspectivegraph.secretName" . }}
                   key: POSTGRES_PASSWORD
             - name: GITHUB_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "perspectivegraph.fullname" . }}-secrets
+                  name: {{ include "perspectivegraph.secretName" . }}
                   key: GITHUB_TOKEN
             - name: GITLAB_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "perspectivegraph.fullname" . }}-secrets
+                  name: {{ include "perspectivegraph.secretName" . }}
                   key: GITLAB_TOKEN
             - name: API_TOKENS
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "perspectivegraph.fullname" . }}-secrets
+                  name: {{ include "perspectivegraph.secretName" . }}
                   key: API_TOKENS
             - name: INGEST_HMAC_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "perspectivegraph.fullname" . }}-secrets
+                  name: {{ include "perspectivegraph.secretName" . }}
                   key: INGEST_HMAC_SECRET
             - name: INGEST_HMAC_SECRETS
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "perspectivegraph.fullname" . }}-secrets
+                  name: {{ include "perspectivegraph.secretName" . }}
                   key: INGEST_HMAC_SECRETS
             - name: TICKET_WEBHOOK_URL
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "perspectivegraph.fullname" . }}-secrets
+                  name: {{ include "perspectivegraph.secretName" . }}
                   key: TICKET_WEBHOOK_URL
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "perspectivegraph.secretName" . }}
+                  key: ANTHROPIC_API_KEY
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "perspectivegraph.secretName" . }}
+                  key: HF_TOKEN
+            - name: STORE_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "perspectivegraph.secretName" . }}
+                  key: STORE_ENCRYPTION_KEY
+            - name: EXPORT_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "perspectivegraph.secretName" . }}
+                  key: EXPORT_SIGNING_KEY
+            {{- if .Values.backend.tls.enabled }}
+            # In-pod TLS: the cert/key are mounted from backend.tls.secretName below.
+            - name: TLS_CERT_FILE
+              value: /etc/perspectivegraph/tls/tls.crt
+            - name: TLS_KEY_FILE
+              value: /etc/perspectivegraph/tls/tls.key
+            {{- end }}
+            {{- if .Values.nats.tls.enabled }}
+            # NATS TLS: CA (server-auth) + client cert (mutual TLS) from nats.tls.secretName.
+            - name: NATS_TLS_CA
+              value: /etc/perspectivegraph/nats-tls/ca.crt
+            - name: NATS_TLS_CERT
+              value: /etc/perspectivegraph/nats-tls/tls.crt
+            - name: NATS_TLS_KEY
+              value: /etc/perspectivegraph/nats-tls/tls.key
+            {{- end }}
           readinessProbe:
             httpGet:
               path: /healthz
               port: api
+              {{- if .Values.backend.tls.enabled }}
+              scheme: HTTPS
+              {{- end }}
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:
             {{- toYaml .Values.backend.resources | nindent 12 }}
-          {{- if .Values.persistence.enabled }}
+          {{- if or .Values.persistence.enabled .Values.backend.tls.enabled .Values.nats.tls.enabled }}
           volumeMounts:
+            {{- if .Values.persistence.enabled }}
             - name: data
               mountPath: {{ .Values.persistence.mountPath }}
+            {{- end }}
+            {{- if .Values.backend.tls.enabled }}
+            - name: tls
+              mountPath: /etc/perspectivegraph/tls
+              readOnly: true
+            {{- end }}
+            {{- if .Values.nats.tls.enabled }}
+            - name: nats-tls
+              mountPath: /etc/perspectivegraph/nats-tls
+              readOnly: true
+            {{- end }}
           {{- end }}
-      {{- if .Values.persistence.enabled }}
+      {{- if or .Values.persistence.enabled .Values.backend.tls.enabled .Values.nats.tls.enabled }}
       volumes:
+        {{- if .Values.persistence.enabled }}
         - name: data
           persistentVolumeClaim:
             claimName: {{ include "perspectivegraph.fullname" . }}-data
+        {{- end }}
+        {{- if .Values.backend.tls.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ .Values.backend.tls.secretName | quote }}
+        {{- end }}
+        {{- if .Values.nats.tls.enabled }}
+        - name: nats-tls
+          secret:
+            secretName: {{ .Values.nats.tls.secretName | quote }}
+        {{- end }}
       {{- end }}
 ---
 apiVersion: v1

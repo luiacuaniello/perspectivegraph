@@ -1,6 +1,6 @@
 // A tiny "ⓘ" affordance with a hover/focus tooltip. Used to explain domain jargon
 // (KEV, EPSS, Monte Carlo, choke point…) in plain language without cluttering the
-// UI — so a first-time user can self-serve the meaning of every number on screen.
+// UI - so a first-time user can self-serve the meaning of every number on screen.
 interface Props {
   text: string;
   className?: string;
