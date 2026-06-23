@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/graphql-go/graphql"
+	"github.com/luiacuaniello/perspectivegraph/internal/action"
+	"github.com/luiacuaniello/perspectivegraph/internal/ai"
 	"github.com/luiacuaniello/perspectivegraph/internal/analyzer"
 	"github.com/luiacuaniello/perspectivegraph/internal/attck"
 	"github.com/luiacuaniello/perspectivegraph/internal/audit"
@@ -48,6 +50,9 @@ type API struct {
 	exportSigner *exportsign.Signer
 	exfil        *secwatch.Watcher // exfiltration detector (attack-map bulk reads)
 	authGuard    *secwatch.Watcher // auth brute-force lockout
+	authInfo     AuthInfo          // public auth config for the SPA login gate
+	prOpener     action.PROpener   // opens remediation pull requests (nil → disabled)
+	ai           ai.Client         // AI-native layer (nil/Nop → disabled)
 }
 
 func New(manager *graph.Manager, svc *analyzer.Service, idx search.Indexer) *API {
@@ -379,6 +384,9 @@ func (a *API) Schema() (graphql.Schema, error) {
 			"confidenceLabel":  &graphql.Field{Type: graphql.String, Description: "Qualitative band for the score's trustworthiness: high|medium|low — an honest answer to \"why this %?\" instead of false precision.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.ConfidenceLabel })},
 			"scoreUpperBound":  &graphql.Field{Type: graphql.Float, Description: "The path score if its hops share a common cause rather than being independent: the weakest hop's probability (the comonotonic upper bound). The headline score multiplies hops as if independent — a lower bound under positive correlation — so the true exploitability lies in [score, scoreUpperBound]. A wide gap means the independence assumption matters.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.ScoreUpperBound })},
 			"correlatedHops":   &graphql.Field{Type: graphql.Boolean, Description: "True when two or more hops rest on the same weight basis — a concrete reason the hops may not be independent, so the score/scoreUpperBound band is grounded rather than theoretical. Does not change the score.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.CorrelatedHops })},
+			"priority":         &graphql.Field{Type: graphql.Float, Description: "Composite triage priority [0,100] blending exploitability (score) and trust (confidence) with corroboration (runtime-confirmed, KEV on path), target sensitivity (classified > tagged > inferred jewel), and entry blast radius. Paths are returned priority-first, so attackPaths(limit:N) is the actionable Top-N.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.Priority })},
+			"priorityLabel":    &graphql.Field{Type: graphql.String, Description: "Priority band: P1 (≥70) | P2 (≥40) | P3 — the \"fix these first\" bucket.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.PriorityLabel })},
+			"priorityFactors":  &graphql.Field{Type: graphql.NewList(graphql.String), Description: "Human-readable reasons behind the priority (e.g. \"runtime-confirmed (active)\", \"KEV on path\", \"classified PII target\", \"entry shared by N paths\") — explainable triage, not a black-box rank.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.PriorityFactors })},
 			"nodes":            &graphql.Field{Type: graphql.NewList(nodeType), Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.Nodes })},
 			"steps":            &graphql.Field{Type: graphql.NewList(stepType), Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.Steps })},
 			"suppressed": &graphql.Field{
@@ -638,7 +646,7 @@ func (a *API) Schema() (graphql.Schema, error) {
 		Fields: graphql.Fields{
 			"attackPaths": &graphql.Field{
 				Type:        graphql.NewList(pathType),
-				Description: "Critical attack paths from the latest analysis pass, ranked (runtime-confirmed first, then score). Optionally scoped to one application and capped.",
+				Description: "Critical attack paths from the latest analysis pass, ranked by composite triage priority (P1 first), so limit:N is the actionable Top-N. Optionally scoped to one application and capped.",
 				Args: graphql.FieldConfigArgument{
 					"app":   &graphql.ArgumentConfig{Type: graphql.String, Description: "Only paths touching this application (repo_slug or app tag)."},
 					"limit": &graphql.ArgumentConfig{Type: graphql.Int, DefaultValue: 0},
@@ -826,6 +834,13 @@ func (a *API) Schema() (graphql.Schema, error) {
 				Description: "Whether full-text search (OpenSearch) is configured. The UI uses this to tell “feature off” apart from “no matches”.",
 				Resolve: func(graphql.ResolveParams) (any, error) {
 					return a.search.Enabled(), nil
+				},
+			},
+			"aiEnabled": &graphql.Field{
+				Type:        graphql.Boolean,
+				Description: "Whether the AI-native layer (ANTHROPIC_API_KEY) is configured. The UI uses this to show/hide the AI assistant, summary, and explain features.",
+				Resolve: func(graphql.ResolveParams) (any, error) {
+					return a.aiEnabled(), nil
 				},
 			},
 			"riskSimulation": &graphql.Field{

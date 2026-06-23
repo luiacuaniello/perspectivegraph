@@ -8,6 +8,7 @@ import RemediationPlan from "./components/RemediationPlan";
 import ViolationList from "./components/ViolationList";
 import GraphCanvas from "./components/GraphCanvas";
 import SearchView from "./components/SearchView";
+import AssistantView from "./components/AssistantView";
 import IntroBanner, { useIntroDismissed } from "./components/IntroBanner";
 import EmptyState from "./components/EmptyState";
 import Legend from "./components/Legend";
@@ -15,10 +16,11 @@ import Button from "./components/ui/Button";
 import DashboardSkeleton from "./components/DashboardSkeleton";
 import ThemeToggle from "./components/ThemeToggle";
 import { InfoIcon } from "./components/icons";
+import { hasRuntimeToken, clearAuthToken } from "./api/client";
 
 const POLL_MS = 5000;
 
-const VIEWS: View[] = ["overview", "paths", "plan", "graph", "violations", "search"];
+const VIEWS: View[] = ["overview", "paths", "plan", "graph", "violations", "search", "assistant"];
 
 // Deep-linkable views: #paths, #graph, … open the app on that section.
 function viewFromHash(): View {
@@ -50,6 +52,10 @@ const VIEW_META: Record<View, { title: string; subtitle: string }> = {
   search: {
     title: "Search",
     subtitle: "Full-text search across every indexed asset and finding (OpenSearch).",
+  },
+  assistant: {
+    title: "AI assistant",
+    subtitle: "Ask about your attack surface and brief the board — grounded in the live graph (Claude).",
   },
 };
 
@@ -174,6 +180,7 @@ export default function App() {
         pruned={pruned}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
+        aiEnabled={data?.aiEnabled ?? false}
       />
       {/* Mobile drawer backdrop */}
       {sidebarOpen && (
@@ -203,6 +210,18 @@ export default function App() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <ThemeToggle />
+            {hasRuntimeToken() && (
+              <Button
+                variant="secondary"
+                size="md"
+                onClick={() => {
+                  clearAuthToken();
+                  window.location.reload();
+                }}
+              >
+                Sign out
+              </Button>
+            )}
             {view === "overview" && intro.dismissed && (
               <Button variant="secondary" size="md" onClick={intro.reopen} icon={<InfoIcon className="h-4 w-4" />}>
                 How to read this
@@ -368,6 +387,7 @@ export default function App() {
                       path={selected}
                       onShowInGraph={() => setView("graph")}
                       onTriaged={reload}
+                      aiEnabled={data.aiEnabled}
                     />
                   ) : (
                     <div className="rounded-xl border border-edge bg-panel shadow-card p-6 text-sm text-slate-500">
@@ -426,6 +446,7 @@ export default function App() {
             )}
 
             {view === "search" && <SearchView enabled={data.searchEnabled} />}
+            {view === "assistant" && <AssistantView />}
           </div>
         )}
       </main>

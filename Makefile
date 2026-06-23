@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help up up-full up-search down logs run-backend build-backend test tidy run-frontend install-frontend seed seed-discovery clean
+.PHONY: help up up-full up-search down logs run-backend build-backend test bench tidy run-frontend install-frontend seed seed-discovery seed-load clean
 
 # CGO is disabled so the Go binaries link statically (Go's pure-Go DNS resolver
 # instead of the system one). This also sidesteps a macOS system-linker bug on
@@ -45,6 +45,10 @@ run-backend:
 ## test: run Go tests
 test:
 	cd backend && $(GO) test ./...
+
+## bench: run the analyzer scaling benchmarks (pathfinding cost + parallel speedup)
+bench:
+	cd backend && $(GO) test ./internal/analyzer -run '^$$' -bench 'BenchmarkFindCriticalPaths|BenchmarkPathfindWorkers' -benchmem
 
 ## install-frontend: install dashboard dependencies
 install-frontend:
@@ -130,6 +134,10 @@ seed-validation:
 	curl -sS -X POST http://localhost:8080/validations -H 'Content-Type: application/json' \
 	  -d '{"outcome":"missed","source":"red-team","route":"Okta → SaaS → data export (engine missed it)"}' | jq -c '{outcome,source}'; \
 	echo "  done — Overview ‘Validation’ card shows precision; open the top paths to see the verdict badges"
+
+## seed-load: generate a large synthetic graph and POST it to ingest (scale demo)
+seed-load:
+	cd backend && $(GO) run ./cmd/perspectivegraph genload --seeds 32 --jewels 16 --layers 8 --width 500 --fanout 4
 
 ## clean: remove build artifacts
 clean:

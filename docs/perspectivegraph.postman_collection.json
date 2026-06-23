@@ -136,9 +136,44 @@
 								"metrics"
 							]
 						},
-						"description": "Prometheus exposition: ingest/normalize/analyzer-pass/dead-letter counters + Go runtime. Always open, unthrottled."
+						"description": "Prometheus exposition: ingest/normalize/analyzer-pass/dead-letter counters + Go runtime. Scale metrics: perspectivegraph_analyzer_graph_{nodes,edges} (graph size), _analyzer_pathfind_seconds (parallel per-seed Dijkstra latency), _analyzer_snapshot_seconds + _analyzer_snapshots_total{mode=\"full|delta\"} (incremental snapshotting). Always open, unthrottled."
 					},
 					"response": []
+				},
+				{
+					"name": "Connector health (agentless pull status)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{ingestUrl}}/connectors",
+							"host": [
+								"{{ingestUrl}}"
+							],
+							"path": [
+								"connectors"
+							]
+						},
+						"description": "Status of the agentless PULL connectors (e.g. aws): last run, events emitted, errors. Empty when CONNECTORS_ENABLED is unset."
+					}
+				},
+				{
+					"name": "Auth config (SPA login bootstrap)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{apiUrl}}/auth/config",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"auth",
+								"config"
+							]
+						},
+						"description": "PUBLIC (no auth): tells the dashboard login gate whether auth is required and, for SSO, the OIDC coordinates (issuer/clientId/authorizeUrl/tokenUrl/scopes) to run the Authorization-Code + PKCE flow."
+					}
 				}
 			]
 		},
@@ -1126,6 +1161,93 @@
 			]
 		},
 		{
+			"name": "AI assistant (Claude or HuggingFace)",
+			"item": [
+				{
+					"name": "1. Executive summary",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{apiUrl}}/ai/summary",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"ai",
+								"summary"
+							]
+						},
+						"description": "Board-level brief of the current posture, grounded in the live attack paths. Provider is server-configured: Anthropic (Claude, ANTHROPIC_API_KEY) by default, or HuggingFace / any OpenAI-compatible endpoint (HF_TOKEN) when no Anthropic key is set. 503 when neither is configured (aiEnabled=false). Viewer role when auth is enabled. Audited as ai.summary."
+					}
+				},
+				{
+					"name": "2. Natural-language Q&A",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"question\": \"Which internet-exposed path reaches a crown jewel fastest, and what is the single best fix?\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{apiUrl}}/ai/query",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"ai",
+								"query"
+							]
+						},
+						"description": "Ask a question about your attack surface; answered from the tenant's real, capped attack-path context (the model summarizes your data, it doesn't invent assets). Audited as ai.query."
+					}
+				},
+				{
+					"name": "3. Explain a path",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"pathId\": \"<an id from attackPaths>\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{apiUrl}}/ai/explain",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"ai",
+								"explain"
+							]
+						},
+						"description": "Plain-English walk-through of one attack path and the most effective remediation. pathId = attackPaths { id }. Audited as ai.explain."
+					}
+				}
+			]
+		},
+		{
 			"name": "Exports",
 			"item": [
 				{
@@ -1340,6 +1462,43 @@
 							]
 						},
 						"description": "Mark the remediation done. Set the ticketId variable from the create response first. Admin role when auth is enabled."
+					}
+				}
+			]
+		},
+		{
+			"name": "Remediation as PR (dev workflow)",
+			"item": [
+				{
+					"name": "Open fix PR for a path",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"pathId\": \"<an id from attackPaths>\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{apiUrl}}/remediation/pr",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"remediation",
+								"pr"
+							]
+						},
+						"description": "Open a branch + commit the generated fix (K8s NetworkPolicy / Terraform) + raise a pull request for an attack path. pathId = attackPaths { id }. Needs GITHUB_TOKEN (dry-run when unset). Admin role when auth is enabled."
 					}
 				}
 			]

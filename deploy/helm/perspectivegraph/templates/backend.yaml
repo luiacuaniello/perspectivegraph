@@ -97,6 +97,26 @@ spec:
                 secretKeyRef:
                   name: {{ include "perspectivegraph.fullname" . }}-secrets
                   key: TICKET_WEBHOOK_URL
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "perspectivegraph.fullname" . }}-secrets
+                  key: ANTHROPIC_API_KEY
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "perspectivegraph.fullname" . }}-secrets
+                  key: HF_TOKEN
+            - name: STORE_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "perspectivegraph.fullname" . }}-secrets
+                  key: STORE_ENCRYPTION_KEY
+            - name: EXPORT_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "perspectivegraph.fullname" . }}-secrets
+                  key: EXPORT_SIGNING_KEY
           readinessProbe:
             httpGet:
               path: /healthz

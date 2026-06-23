@@ -64,6 +64,22 @@ type tenantState struct {
 	lastPrunedAt time.Time // when it last actually removed something
 	prunedNodes  int       // lifetime stale nodes removed
 	prunedEdges  int       // lifetime stale edges removed
+
+	// Incremental-snapshot cache (only used when WithIncremental is on and the
+	// store supports deltas). The analyzer goroutine is the single writer, like
+	// the other non-locked fields above.
+	cacheNodes      map[string]ontology.Node // resident graph, patched by deltas
+	cacheEdges      map[edgeID]ontology.Edge
+	cacheValid      bool  // a full snapshot has seeded the cache
+	snapWatermark   int64 // unix seconds; next delta fetches last_seen >= this
+	passesSinceFull int   // forces a periodic full re-read (drift safety net)
+}
+
+// edgeID keys an edge in the incremental cache by its identity (type + endpoints),
+// matching the stores' upsert key so a delta overwrites the right entry.
+type edgeID struct {
+	typ      ontology.EdgeType
+	from, to string
 }
 
 // Service re-computes attack paths per tenant on an interval and caches the
@@ -77,6 +93,9 @@ type Service struct {
 	leader   Leader
 	maxHops  int
 	dbPaths  bool // compute critical paths in the DB (opt-in) instead of in-process Dijkstra
+
+	workers     int  // per-seed pathfinding parallelism (0 = auto = GOMAXPROCS)
+	incremental bool // patch a cached snapshot from deltas instead of re-reading the whole graph each pass
 
 	ttl        time.Duration // staleness TTL; 0 disables pruning
 	pruneEvery time.Duration // how often to run the (leader-only) pruner
@@ -146,6 +165,32 @@ func (s *Service) WithHistory(h *history.Store) *Service {
 // operator knows are bounded. Returns the service for chaining.
 func (s *Service) WithDBPaths(on bool) *Service {
 	s.dbPaths = on
+	return s
+}
+
+// WithWorkers sets how many goroutines fan out the per-seed shortest-path searches
+// each pass. n <= 0 keeps the automatic default (GOMAXPROCS). The per-seed Dijkstra
+// runs are independent reads over an immutable adjacency, so this scales the
+// dominant per-pass cost on a large graph with many entry points without changing
+// the result. Returns the service for chaining.
+func (s *Service) WithWorkers(n int) *Service {
+	s.workers = n
+	SetPathWorkers(n)
+	return s
+}
+
+// WithIncremental opts into incremental snapshotting: instead of re-reading the
+// whole graph every pass, the analyzer keeps a resident snapshot and patches it
+// with just the elements observed since the last pass (a store delta). It still
+// recomputes all paths — attack paths can change non-locally — but avoids the full
+// fetch + deserialization, the dominant cost on a large AGE graph. A full re-read
+// still happens on the first pass, whenever the pruner removed something (deltas
+// carry no deletions), periodically as a drift safety net, and if a delta fetch
+// errors. Off by default (it keeps the graph resident, trading memory for fetch
+// cost) and a no-op for stores without delta support. Returns the service for
+// chaining.
+func (s *Service) WithIncremental(on bool) *Service {
+	s.incremental = on
 	return s
 }
 
@@ -303,15 +348,23 @@ func (s *Service) runTenant(ctx context.Context, tenant string) {
 	}
 
 	start := time.Now()
-	snap, err := store.Snapshot(ctx)
+	snap, err := s.acquireSnapshot(ctx, tenant, store, st, pruned > 0)
 	if err != nil {
 		slog.Error("analyzer: snapshot failed", "tenant", tenant, "err", err)
 		return
 	}
+	metrics.AnalyzerGraphNodes.WithLabelValues(tenant).Set(float64(len(snap.Nodes)))
+	metrics.AnalyzerGraphEdges.WithLabelValues(tenant).Set(float64(len(snap.Edges)))
 	// Critical paths via the in-process Dijkstra (default) or, when opted in, the
 	// DB-side Cypher finder. The snapshot is needed regardless for the policy
 	// invariants and the Monte Carlo risk model below.
+	pfStart := time.Now()
 	paths := CriticalPathsVia(ctx, store, snap, s.maxHops, s.dbPaths)
+	metrics.AnalyzerPathfindSeconds.Observe(time.Since(pfStart).Seconds())
+	// Triage: assign each path a composite priority and lead with the highest, so
+	// the dashboard's default view (and attackPaths(limit:N)) is the actionable
+	// Top-N, not a wall of every reachable route.
+	Prioritize(paths)
 
 	var violations []policy.Violation
 	if s.policy != nil {
@@ -378,6 +431,89 @@ func (s *Service) runTenant(ctx context.Context, tenant string) {
 	if isLeader && s.sink != nil && len(paths) > 0 {
 		s.sink.OnCriticalPaths(ctx, paths)
 	}
+}
+
+// fullSnapshotEvery bounds how many consecutive incremental passes run before a
+// full re-read rebuilds the cache from scratch — a self-healing safety net so any
+// drift between the resident cache and the store (a missed delta, a clock skew on
+// the last_seen watermark) can't persist beyond this many passes.
+const fullSnapshotEvery = 20
+
+// acquireSnapshot returns the graph the pass will reason over, either by reading
+// the whole graph (the default) or, when incremental mode is on and the store
+// supports deltas, by patching the resident cache with just the elements observed
+// since the last pass. It falls back to a full read whenever correctness needs it:
+// the first pass, right after a prune (deltas carry no deletions), on the periodic
+// rebuild, on any delta error, or for a store without delta support.
+func (s *Service) acquireSnapshot(ctx context.Context, tenant string, store graph.Store, st *tenantState, pruned bool) (graph.Snapshot, error) {
+	start := time.Now()
+	// Capture the watermark BEFORE the read so the next delta re-fetches anything
+	// written during this read too (idempotent upserts make the overlap harmless) —
+	// no write can slip through the gap between the read and the watermark.
+	watermark := start.Unix()
+
+	ds, canDelta := graph.AsDeltaStore(store)
+	full := !s.incremental || !canDelta || !st.cacheValid || pruned || st.passesSinceFull >= fullSnapshotEvery
+
+	if !full {
+		d, err := ds.SnapshotSince(ctx, st.snapWatermark)
+		if err != nil {
+			slog.Warn("analyzer: delta snapshot failed, falling back to full read", "tenant", tenant, "err", err)
+			full = true
+		} else {
+			for _, n := range d.Nodes {
+				st.cacheNodes[n.ID] = n
+			}
+			for _, e := range d.Edges {
+				st.cacheEdges[edgeID{e.Type, e.From, e.To}] = e
+			}
+			st.snapWatermark = watermark
+			st.passesSinceFull++
+			metrics.AnalyzerSnapshots.WithLabelValues("delta").Inc()
+			metrics.AnalyzerSnapshotSeconds.Observe(time.Since(start).Seconds())
+			return materializeSnapshot(st), nil
+		}
+	}
+
+	snap, err := store.Snapshot(ctx)
+	if err != nil {
+		return graph.Snapshot{}, err
+	}
+	// Only keep the graph resident (and thus reusable as a delta base) when
+	// incremental mode is on — otherwise a full read every pass is the contract and
+	// holding the cache would just waste memory.
+	if s.incremental {
+		st.cacheNodes = make(map[string]ontology.Node, len(snap.Nodes))
+		for _, n := range snap.Nodes {
+			st.cacheNodes[n.ID] = n
+		}
+		st.cacheEdges = make(map[edgeID]ontology.Edge, len(snap.Edges))
+		for _, e := range snap.Edges {
+			st.cacheEdges[edgeID{e.Type, e.From, e.To}] = e
+		}
+		st.cacheValid = true
+		st.snapWatermark = watermark
+		st.passesSinceFull = 0
+	}
+	metrics.AnalyzerSnapshots.WithLabelValues("full").Inc()
+	metrics.AnalyzerSnapshotSeconds.Observe(time.Since(start).Seconds())
+	return snap, nil
+}
+
+// materializeSnapshot flattens the resident cache maps into the slice-shaped
+// Snapshot the finder/policy/risk layers consume.
+func materializeSnapshot(st *tenantState) graph.Snapshot {
+	snap := graph.Snapshot{
+		Nodes: make([]ontology.Node, 0, len(st.cacheNodes)),
+		Edges: make([]ontology.Edge, 0, len(st.cacheEdges)),
+	}
+	for _, n := range st.cacheNodes {
+		snap.Nodes = append(snap.Nodes, n)
+	}
+	for _, e := range st.cacheEdges {
+		snap.Edges = append(snap.Edges, e)
+	}
+	return snap
 }
 
 // maybePrune removes stale graph elements for a tenant when a TTL is configured,

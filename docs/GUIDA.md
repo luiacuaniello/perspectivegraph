@@ -280,6 +280,26 @@ che neutralizzano più rischio** (`coveragePct`), ciascuno con l'artefatto pront
 e l'eventuale residuo da rivedere a mano. È la risposta a *"se ho tempo per due
 fix, quali due?"*.
 
+#### 5.3.1 Nel flusso dev: PR-check (gate) e remediation-as-PR
+
+Un finding cambia qualcosa solo se arriva a chi può sistemarlo, dove già lavora.
+Con un solo `GITHUB_TOKEN` (dry-run finché non lo imposti) PerspectiveGraph si
+innesta nella PR:
+
+- **Commento PR** sul cambiamento che sta su un path critico (kill chain + fix);
+- **Gate di merge**: uno *status* GitHub `perspectivegraph/attack-paths` che
+  diventa **rosso** quando il cambiamento apre un path internet→gioiello, e
+  **verde** quando non lo apre più. Rendendolo uno *status check obbligatorio*
+  nella branch protection, **blocca il merge** — shift-left, non un commento da
+  scrollare;
+- **Remediation-as-PR**: `POST /remediation/pr` (o il bottone **"Open fix PR"** sul
+  dettaglio del path) crea un branch, committa il fix generato (NetworkPolicy /
+  Terraform / policy IAM) e apre una **pull request** da revisionare e mergiare —
+  non più copia-incolla.
+
+Tutto è instradato dal contesto-PR che l'analizzatore già porta sui nodi
+(`repo_slug` / `pr_number` / `commit_sha`). Su GitHub Enterprise: `GITHUB_API_URL`.
+
 ### 5.4 Environment graph
 
 Il grafo completo (Cytoscape), leggibile come un diagramma d'architettura.
@@ -307,6 +327,45 @@ deve mai esistere un percorso così", utili come guardrail per gli architetti.
 
 Ricerca full-text su asset e finding indicizzati. **Richiede OpenSearch** attivo
 (profilo `search` + `OPENSEARCH_URL`); senza, restituisce vuoto.
+
+### 5.7 AI assistant (Claude o HuggingFace)
+
+Con una chiave AI impostata, la dashboard mostra una voce **"AI assistant"**
+e tre funzioni (di default alimentate da Claude, `claude-opus-4-8`):
+
+- **Q&A in linguaggio naturale** sul grafo (es. *"quale path internet-exposed
+  raggiunge i dati PII più in fretta?"*);
+- **Executive summary** della postura, pronto per il board;
+- **"Explain (AI)"** sul dettaglio di un path: spiegazione in chiaro di come un
+  attaccante lo percorre e qual è il fix più efficace.
+
+Ogni risposta è **ancorata** ai tuoi attack path reali (il modello riceve un
+contesto compatto e limitato — riassume i tuoi dati, non li inventa). Il trasporto
+è una chiamata **hand-rolled** (nessun SDK, zero dipendenze).
+
+**Due provider, scelti dalla credenziale impostata:**
+
+```bash
+# 1) Anthropic (Claude) — preferito
+ANTHROPIC_API_KEY=sk-ant-...       # abilita /ai/* e l'assistente nella dashboard
+# (opzionali) ANTHROPIC_MODEL, ANTHROPIC_BASE_URL, AI_MAX_TOKENS
+
+# 2) HuggingFace — gratuito, usato SOLO se ANTHROPIC_API_KEY è vuota.
+#    HF_TOKEN è un access token (gratuito) di huggingface.co; usa lo schema
+#    OpenAI-compatible, quindi HF_BASE_URL può puntare anche a Together/Groq/Ollama.
+HF_TOKEN=hf_...
+# (opzionali) HF_MODEL (default meta-llama/Llama-3.1-8B-Instruct), HF_BASE_URL
+
+curl -s http://localhost:8080/ai/summary
+curl -s -X POST http://localhost:8080/ai/query   -d '{"question":"cosa è più a rischio?"}'
+curl -s -X POST http://localhost:8080/ai/explain -d '{"pathId":"<un id da attackPaths>"}'
+```
+
+> **Trust boundary.** Il grafo è la mappa di come attaccare l'org: inviarne una
+> vista compatta a un modello esterno è una scelta deliberata. La feature è
+> **spenta** finché non imposti la chiave, e **ogni chiamata AI è auditata**
+> (`ai.query`/`ai.summary`/`ai.explain`) nello stesso log a prova di manomissione
+> delle altre letture.
 
 ---
 
@@ -369,6 +428,45 @@ si deduplicano e i percorsi si "cuciono" da soli.
 > Dopo l'ingest, attendi un ciclo dell'analizzatore (`ANALYZER_INTERVAL`, default
 > **30 s**) e ricarica la dashboard.
 
+### 6.1 Connettori agentless (PULL, senza upload)
+
+Le sorgenti sopra arrivano in **push**: qualcuno deve fare POST di un report. I
+**connettori** ribaltano la cosa: raggiungono *loro* un sistema esterno a
+intervalli e ne tirano lo stato — nessun agente da installare, nessuno che si
+deve ricordare di caricare un file. È il modello *"colleghi un ruolo in sola
+lettura e vedi i tuoi attack path in minuti"*.
+
+Un connettore pubblica sullo **stesso bus** dei webhook, quindi riusa l'intera
+pipeline (risoluzione identità, grafo, analizzatore): cambia solo l'acquisizione.
+Il primo connettore, **`aws`**, non aggiunge nemmeno parsing — tira lo stato di
+rete EC2 (`describe-*`) e i dettagli IAM e li passa ai collector `cloudnet`/`iam`
+esistenti. L'acquisizione è dietro un *transport* sostituibile: **`fixtures`**
+(JSON locale, prova tutta la pull **senza credenziali**) e **`aws-sdk-go-v2`** per
+AWS reale (sola lettura, `AssumeRole` cross-account opzionale).
+
+```bash
+# Demo senza account AWS: tira dai sample locali, ogni 15m (leader-only)
+CONNECTORS_ENABLED=aws
+AWS_CONNECTOR_MODE=fixtures
+AWS_FIXTURES_DIR=./backend/testdata
+# Salute per-connettore (ultima run, ultimo errore, eventi): porta di ingest
+curl -s http://localhost:8081/connectors | jq
+
+# Live (sola lettura): assume un ruolo cross-account e tira EC2 + IAM
+CONNECTORS_ENABLED=aws
+AWS_CONNECTOR_MODE=sdk
+AWS_REGION=us-east-1
+AWS_ROLE_ARN=arn:aws:iam::<account>:role/perspectivegraph-readonly
+# permessi minimi sul ruolo: ec2:Describe*, iam:GetAccountAuthorizationDetails
+# (≈ policy gestite SecurityAudit / ViewOnlyAccess). Catena credenziali standard
+# (env / profilo / IRSA / instance role) se non imposti AWS_ROLE_ARN.
+```
+
+Connettori **leader-only** (le repliche non moltiplicano le chiamate API),
+cadenza `CONNECTOR_INTERVAL`, osservabili via `GET /connectors` e metriche
+`perspectivegraph_connector_*`. Vuoti di default (`CONNECTORS_ENABLED=`):
+l'ingestione resta push-only finché non li accendi.
+
 ---
 
 ## 7. Funzionalità avanzate (via API GraphQL ed export)
@@ -409,6 +507,10 @@ http://localhost:8080/graphql (playground attivo quando l'auth è disattivata).
 # probabilità reale sta in [score, scoreUpperBound] (= l'hop più debole).
 { attackPaths { id score scoreUpperBound correlatedHops confidence confidenceLabel
     steps { edgeType probability weightBasis weightConfidence } } }
+
+# Triage: i "5 da fixare oggi" — i path tornano già ordinati per priorità (P1 first)
+{ attackPaths(limit: 5) { priority priorityLabel priorityFactors score runtimeConfirmed
+    nodes { name } } }
 
 # Azione a ciclo chiuso: remediation VERIFICATA (what-if) + ticket con owner
 { remediationPlan { title coveragePct
@@ -533,6 +635,16 @@ tamper-evident, **multi-tenancy**.
   correlati) e il flag `correlatedHops` (≥2 hop sullo stesso `weightBasis`): la
   probabilità reale sta in **`[score, scoreUpperBound]`** e la UI mostra *"↑ fino a
   X% se correlati"* invece di spacciare il punto come esatto.
+- **Priorità di triage (cosa fixare prima)** — lo score dice *quanto è facile*, non
+  *quanto deve importarti*. Ogni path porta una **priorità composita** 0–100
+  (banda **P1/P2/P3**) che fonde: sfruttabilità + confidenza, conferma **runtime**
+  (Falco), presenza di una **KEV** sul percorso, **sensibilità del bersaglio**
+  (gioiello classificato > taggato > inferito) e **blast radius** dell'entry. I path
+  tornano **ordinati per priorità**, quindi `attackPaths(limit:5)` *è* la lista "da
+  fixare oggi", e ogni priorità è **spiegabile** (porta i `priorityFactors`: es.
+  "runtime-confirmed (active)", "KEV on path", "classified PII target"). Effetto: un
+  path **runtime-confirmed verso PII al 36%** supera uno **non corroborato al 90%**.
+  Chip P1/P2/P3 + pill dei fattori nella UI; pesi e soglie documentati e regolabili.
 - **Igiene dei dati: niente segreti nel grafo** — l'output degli scanner può
   contenere una **credenziale viva** (una chiave AWS hardcoded in uno snippet
   Semgrep, un token su una command line Falco). Il grafo è una mappa di *come
@@ -776,6 +888,81 @@ imposti `OIDC_JWKS_URL` ma lasci vuoti `OIDC_ISSUER` o `OIDC_AUDIENCE`, il backe
 **si rifiuta di avviarsi** — un verificatore senza `iss`/`aud` accetterebbe qualsiasi
 JWT RS256 mai emesso da quell'IdP.
 
+#### 9.5.1 Login runtime nella dashboard (token o "Sign in with SSO")
+
+La dashboard **non** ha più bisogno di un token compilato a build-time. Legge un
+endpoint **pubblico** `GET /auth/config` (modalità auth + coordinate pubbliche
+dell'IdP, **senza segreti**) e mostra il gate di login giusto — così *un solo
+build* serve un backend aperto, a-token o SSO, senza ricompilare:
+
+```bash
+curl -s http://localhost:8080/auth/config
+# aperto:   {"authRequired":false,"mode":"none"}
+# protetto: {"authRequired":true,"mode":"both","oidc":{"clientId":"…","authorizeUrl":"…"}}
+```
+
+Per accendere il pulsante **"Sign in with SSO"** aggiungi le coordinate SPA dell'IdP
+(non sono segrete — servono solo ad avviare il flusso):
+
+```bash
+OIDC_CLIENT_ID=pg-dashboard
+OIDC_AUTHORIZE_URL=https://login.acme.com/authorize
+OIDC_TOKEN_URL=https://login.acme.com/oauth/token   # abilita il PKCE completo
+OIDC_SCOPES="openid profile email"                  # default
+```
+
+Con `OIDC_TOKEN_URL` impostata la dashboard esegue il flusso **OIDC Authorization
+Code + PKCE** completo (sfida S256, verifica dello `state` anti-CSRF, scambio
+code→token — **nessun client secret nel browser**); senza, ripiega su un ritorno
+implicito `#access_token`. La credenziale vive **solo nella tab** (`sessionStorage`,
+muore con la scheda) e viaggia come Bearer — mai scritta su disco o nel bundle.
+La validazione resta su JWKS/`iss`/`aud`. *(Il tuo IdP deve permettere il CORS
+dall'origine della dashboard sul token endpoint.)*
+
+> **Isolamento multi-tenant — provato.** Questo strumento è la mappa di come
+> attaccare ogni cliente, quindi non deve mai "sanguinare" tra tenant: ogni tenant
+> ha il **suo** grafo AGE e indice di ricerca, e **ogni** lettura API passa per
+> `snapshot(tenant del principal)`. Un principal del tenant A non può vedere il
+> grafo o gli attack path del tenant B — garanzia fissata da un test end-to-end
+> (`internal/api/tenant_isolation_test.go`).
+
+#### 9.5.2 Provare l'SSO in locale (Keycloak demo, nessun IdP cloud)
+
+Per esercitare il login SSO end-to-end su un portatile c'è un IdP demo già pronto:
+un **Keycloak** opt-in nel compose (profilo `sso`) con un realm importato
+(`deploy/keycloak/realm-demo.json`: realm `demo`, utente **demo/demo**, client
+public PKCE `perspectivegraph`).
+
+```bash
+# 1) Avvia stack + IdP demo (Keycloak su http://localhost:8088)
+docker compose --profile app --profile sso up -d --build
+
+# 2) Punta il backend al Keycloak demo: aggiungi al tuo .env e ricrea il backend.
+#    NB: il JWKS lo fetcha il BACKEND (host interno di rete keycloak:8080), mentre
+#    issuer/authorize/token sono raggiunti dal BROWSER (http://localhost:8088) —
+#    OIDC_JWKS_URL e OIDC_ISSUER sono volutamente host diversi, ed è corretto.
+cat >> .env <<'EOF'
+OIDC_JWKS_URL=http://keycloak:8080/realms/demo/protocol/openid-connect/certs
+OIDC_ISSUER=http://localhost:8088/realms/demo
+OIDC_AUDIENCE=perspectivegraph
+OIDC_CLIENT_ID=perspectivegraph
+OIDC_AUTHORIZE_URL=http://localhost:8088/realms/demo/protocol/openid-connect/auth
+OIDC_TOKEN_URL=http://localhost:8088/realms/demo/protocol/openid-connect/token
+OIDC_SCOPES=openid profile email
+EOF
+docker compose --profile app up -d backend
+
+# 3) Apri http://localhost:3000 → "Sign in with SSO" → login demo / demo.
+```
+
+Cosa verifica: `GET /auth/config` ora risponde `mode:oidc` con le coordinate
+dell'IdP; la dashboard fa il flusso **Authorization Code + PKCE** verso Keycloak;
+il token torna e il backend lo valida su JWKS/`iss`/`aud` (il realm include un
+audience-mapper `perspectivegraph` e un claim `role=admin`, così l'utente demo ha
+accesso completo). Smonti l'IdP con `docker compose --profile sso down`. *(Setup
+solo-locale: Keycloak gira in `start-dev` in-memory — non è una config di
+produzione.)*
+
 ### 9.6 Scorciatoia: tutto questo via Postman (senza scrivere firme a mano)
 
 Se preferisci una GUI, la collection
@@ -802,6 +989,8 @@ Imposta queste variabili nel file `.env` (copia da [`.env.example`](../.env.exam
 | `AUDIT_LOG_PATH` | Audit log a catena di hash (verificabile con `perspectivegraph verify-audit <file>`). Registra anche le **letture** della mappa d'attacco: `view.attack_paths` (con gli id dei path visti), `view.graph`, `export.oscal`/`export.ndjson` — "chi ha visto, o esfiltrato, quali attack path". |
 | `SUPPRESSIONS_PATH` | Rende persistenti le decisioni di triage/soppressione (altrimenti restano solo in memoria e si perdono al riavvio). |
 | `GRAPH_TTL` | Pruning di staleness: rimuove nodi/archi non più osservati entro la finestra (es. `168h` = 7 giorni), così gli asset spariti dai feed non generano *path fantasma*. Off di default. |
+| `ANALYZER_WORKERS` | Parallelismo del pathfinding per-seed (Dijkstra indipendenti su un'adiacenza immutabile). `0` = auto = numero di CPU. Il risultato è identico a qualsiasi numero di worker, quindi è solo uno *speedup* su grafi con molti punti d'ingresso (~2.9× a 8 worker su un grafo da 10k nodi/64 seed; vedi `make bench`). |
+| `ANALYZER_INCREMENTAL` | Snapshot incrementale: tiene il grafo residente e lo *patcha* con il solo delta del pass (elementi cambiati dall'ultimo pass, filtrati sullo stesso `last_seen` del pruner) invece di rileggerlo tutto — il risparmio di fetch su un grafo AGE grande. Off di default (scambia memoria per costo di fetch, no-op per store senza delta). Ricalcolo pieno auto-correttivo al primo pass, dopo un prune e periodicamente. |
 | `HISTORY_PATH` | Rende persistente lo storico temporale (età dei path, MTTR, trend). Vuoto → solo in memoria (l'"aperto da N giorni" e i trend ripartono al riavvio). |
 | `TICKETS_PATH` / `TICKET_WEBHOOK_URL` | Ticket di remediation: persistenza della board locale + invio opzionale a un tracker esterno (Jira/GitHub/SOAR). Vuoti → in memoria, dry-run (loggato e tracciato in locale). |
 | `VALIDATIONS_PATH` | Rende persistenti i verdetti red-team/BAS (precision/recall). Vuoto → solo in memoria. |
@@ -835,6 +1024,31 @@ renderizzare con `backend.replicas > 1`**, e `NOTES` stampa un ⚠ quando auth o
 persistenza sono spenti (nessuna esposizione insicura silenziosa). Vedi anche la
 sezione "Container & compose hardening" del [README](../README.md).
 
+Ogni capacità opzionale è cablata **sia in `docker-compose.yml`** (passthrough
+`${VAR:-}`, spenti di default) **sia nel chart**, così una feature attivata nel
+codice è davvero raggiungibile nello stack in esecuzione:
+
+- **Connettori agentless** — `--set connectors.enabled='{aws}'` fa il PULL della
+  posture cloud a intervalli (`connectors.interval`); il connettore AWS gira su
+  fixtures finché `connectors.aws.mode=live` (poi `connectors.aws.region` + un
+  `connectors.aws.roleArn` read-only assumibile).
+- **Login SSO** — `auth.oidc.clientId` / `authorizeUrl` / `tokenUrl` / `scopes`
+  sono le coordinate lato-SPA che il login gate della dashboard legge da
+  `GET /auth/config` per il flusso Authorization-Code + PKCE (la tripletta
+  `issuer`/`audience`/`jwksUrl` fa la verifica server-side del token).
+- **Dev workflow** — `github.token` trasforma commento PR / merge-gate e
+  remediation-as-PR da dry-run a operativi; `github.dashboardUrl` è il link a cui
+  puntano quei commenti.
+- **Layer AI (Claude o HuggingFace)** — `ai.apiKey` (Anthropic) abilita `/ai/*`
+  (query NL, executive summary, spiega-percorso); `ai.hf.token` è l'alternativa
+  gratuita OpenAI-compatible, usata se `ai.apiKey` è vuota (`ai.hf.model`/`ai.hf.baseUrl`
+  la regolano). Entrambe le chiavi nel Secret; `ai.model`/`baseUrl`/`maxTokens`
+  override opzionali. Con nessuna delle due, self-gated spento.
+- **Hardening** — `scrubIngest` (attivo di default) redige i valori che sembrano
+  segreti dall'output degli scanner prima dello store; `crypto.storeEncryptionKey`
+  cifra at-rest gli store di governance e `crypto.exportSigningKey` firma gli export
+  (entrambe finiscono nel Secret).
+
 **Freschezza, backup e DR.** Imposta `GRAPH_TTL` (es. `168h`) in produzione: i
 nodi/archi non più osservati entro la finestra vengono rimossi (solo dal leader),
 così un pod cancellato o un security group rimosso non lasciano un percorso
@@ -844,6 +1058,17 @@ prunedEdges lastPrunedAt }` e le metriche Prometheus espongono i totali. Il graf
 è **stato derivato**: è ricostruibile ri-ingerendo i feed, quindi un DB AGE perso
 è un *re-seed*, non una perdita di dati — fai comunque il backup di Postgres
 (`pg_dump`) per lo storico.
+
+**Scalare l'analizzatore.** Il costo per-pass resta piatto al crescere del grafo su
+tre livelli: (1) la *change-detection* (sempre attiva) salta del tutto un pass se
+nulla è cambiato; (2) il *pathfinding parallelo* (attivo di default, `ANALYZER_WORKERS`)
+distribuisce un Dijkstra per ogni seed sui core, con risultato identico al
+sequenziale; (3) lo *snapshot incrementale* (`ANALYZER_INCREMENTAL=true`, opt-in)
+patcha un grafo residente col solo delta invece di rileggerlo tutto. Visibilità su
+`/metrics`: dimensione del grafo, modalità snapshot (`full|delta`) e latenza del
+pathfinding. Per un test di carico end-to-end: `make seed-load` (o
+`perspectivegraph genload --seeds 64 --width 1000 …`) genera una superficie d'attacco
+sintetica grande e la invia all'ingest. Benchmark: `make bench`.
 
 ---
 

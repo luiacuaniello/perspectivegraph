@@ -1,11 +1,13 @@
 import { useState } from "react";
 import {
+  aiExplain,
   closeTicket,
   createSuppression,
   createTicket,
   createValidation,
   deleteSuppression,
   humanDuration,
+  openRemediationPR,
   runWhatIf,
   type AttackPath,
   type Node,
@@ -35,6 +37,8 @@ interface Props {
   onShowInGraph?: () => void;
   // Called after a successful suppress / un-suppress so the dashboard can refetch.
   onTriaged?: () => void;
+  // Show the "Explain (AI)" control only when the backend has Claude configured.
+  aiEnabled?: boolean;
 }
 
 const REASONS: { value: SuppressionReason; label: string; hint: string }[] = [
@@ -256,6 +260,81 @@ function TicketControl({ path, onChanged }: { path: AttackPath; onChanged?: () =
   );
 }
 
+// AiExplainControl asks Claude to explain this path in plain English. Renders the
+// button plus a full-width answer block that wraps onto its own line.
+function AiExplainControl({ path }: { path: AttackPath }) {
+  const [busy, setBusy] = useState(false);
+  const [text, setText] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const explain = () => {
+    setBusy(true);
+    setErr(null);
+    aiExplain(path.id)
+      .then(setText)
+      .catch((e) => setErr(String(e.message ?? e)))
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <>
+      <Button variant="secondary" onClick={explain} disabled={busy} title="Explain this path in plain English with Claude">
+        {busy ? "Explaining…" : text ? "Re-explain (AI)" : "Explain (AI)"}
+      </Button>
+      {err && <span className="text-[12px] text-red-600">{err}</span>}
+      {text && (
+        <p className="basis-full whitespace-pre-wrap rounded-lg border border-edge bg-ink px-3 py-2 text-[13px] leading-relaxed text-slate-700">
+          {text}
+        </p>
+      )}
+    </>
+  );
+}
+
+// RemediationPRControl opens a pull request with this path's generated fix
+// (branch + commit + PR). The backend needs a GitHub token; admin role when auth
+// is on. Closes the loop: the fix arrives as a PR to review, not a copy-paste.
+function RemediationPRControl({ path }: { path: AttackPath }) {
+  const [busy, setBusy] = useState(false);
+  const [url, setUrl] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  if (url) {
+    return (
+      <a
+        href={url}
+        target="_blank"
+        rel="noreferrer"
+        className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-700 underline"
+      >
+        Fix PR opened ↗
+      </a>
+    );
+  }
+  const open = () => {
+    setBusy(true);
+    setErr(null);
+    openRemediationPR(path.id)
+      .then((r) => setUrl(r.url))
+      .catch((e) => setErr(String(e.message ?? e)))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <Button
+        variant="secondary"
+        onClick={open}
+        disabled={busy}
+        icon={<ScissorsIcon className="h-3.5 w-3.5" />}
+        title="Open a pull request with the generated fix for this path (needs a GitHub token on the backend)"
+      >
+        {busy ? "Opening PR…" : "Open fix PR"}
+      </Button>
+      {err && <span className="text-[11px] text-red-600">{err}</span>}
+    </span>
+  );
+}
+
 // VALIDATION_META maps a red-team/BAS verdict to a chip tone + label.
 const VALIDATION_META: Record<ValidationOutcome, { tone: Tone; label: string }> = {
   confirmed: { tone: "info", label: "validated real" },
@@ -463,6 +542,12 @@ const CONFIDENCE_TONE: Record<string, string> = {
   low: "border-amber-500/40 bg-amber-500/10 text-amber-700",
 };
 
+const PRIORITY_TONE: Record<string, string> = {
+  P1: "bg-red-600 text-white",
+  P2: "bg-amber-500/20 text-amber-700",
+  P3: "bg-slate-500/15 text-slate-600",
+};
+
 // BASIS_META maps a hop's weight provenance to a short label and whether it is
 // observed evidence (green) or an estimate/assumption (grey).
 const BASIS_META: Record<string, { label: string; evidence: boolean }> = {
@@ -491,7 +576,7 @@ function BasisChip({ basis }: { basis: string }) {
   );
 }
 
-export default function AttackPathDetail({ path, onShowInGraph, onTriaged }: Props) {
+export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEnabled }: Props) {
   const entry = path.nodes[0];
   const target = path.nodes[path.nodes.length - 1];
 
@@ -532,6 +617,21 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged }: Pro
             <div className="mt-1 text-xs text-muted">
               {path.steps.length} hops · {path.nodes.map((n) => n.label).join(" → ")}
             </div>
+            {path.priorityLabel && (
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                <span
+                  className={`rounded-md px-1.5 py-0.5 text-[11px] font-bold tabular-nums ${PRIORITY_TONE[path.priorityLabel] ?? PRIORITY_TONE.P3}`}
+                  title="Composite triage priority [0,100]: blends exploitability + trust with runtime/KEV corroboration, target sensitivity, and entry blast radius — the 'fix first' signal."
+                >
+                  {path.priorityLabel} · priority {path.priority?.toFixed(0)}
+                </span>
+                {path.priorityFactors?.map((f) => (
+                  <span key={f} className="rounded-md bg-slate-500/10 px-1.5 py-0.5 text-[10px] text-slate-600">
+                    {f}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
           <div className="flex shrink-0 flex-col items-end gap-1">
             <div className="rounded-lg bg-red-500/15 px-3 py-1 text-xl font-bold tabular-nums text-red-700">
@@ -600,6 +700,8 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged }: Pro
           )}
           <span className="mx-auto" />
           <ValidationControl path={path} onChanged={onTriaged} />
+          <RemediationPRControl path={path} />
+          {aiEnabled && <AiExplainControl path={path} />}
           <TriageControl path={path} onTriaged={onTriaged} />
           <TicketControl path={path} onChanged={onTriaged} />
         </div>

@@ -264,7 +264,17 @@ func RequireRole(authn Authenticator, min Role, rec audit.Recorder, guard *secwa
 		p, ok := authn.Authenticate(r)
 		if !ok || p.Role < min {
 			rec.Record("auth.deny", "unknown", "", "", map[string]any{"path": r.URL.Path, "remote": ip})
-			guard.Observe(ip, 1) // count the failure; may trip the lockout + alert
+			// Only a *rejected credential* counts toward the brute-force lockout —
+			// i.e. a bearer token was presented and authentication failed (!ok). An
+			// anonymous request (no Authorization header) isn't credential guessing,
+			// and a valid token with an insufficient role (ok but p.Role < min) is an
+			// authorization miss, not a brute-force attempt. Counting either would let
+			// a login-gated SPA polling before sign-in — or any unauthenticated
+			// client — trip the lockout on itself; raw request volume is already
+			// bounded by the per-IP rate limiter.
+			if !ok && bearer(r) != "" {
+				guard.Observe(ip, 1) // may trip the lockout + alert
+			}
 			unauthorized(w, "invalid or insufficient credentials")
 			return
 		}

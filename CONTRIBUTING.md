@@ -115,5 +115,13 @@ different tools correlate onto the same asset.
   export signing). Never commit secrets — the gitleaks gate enforces it. Found a
   vulnerability? Report it privately — see [SECURITY.md](SECURITY.md), not a public
   issue or PR.
-- One fact per commit message line; explain the *why*.
+- **Commits & releases:** [Conventional Commits](https://www.conventionalcommits.org)
+  (`feat:`, `fix:`, `docs:`, `chore:`, …) — they drive the automated CHANGELOG and
+  versioning (release-please). One fact per message line; explain the *why*.
+  Enable the bundled git hooks once so a bad commit message or a stray secret is
+  caught before it leaves your machine:
+
+  ```bash
+  git config core.hooksPath .githooks   # commit-msg (conventional) + pre-push (gitleaks)
+  ```
 ```

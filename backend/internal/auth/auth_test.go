@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -50,6 +51,45 @@ func TestRequireRoleLockout(t *testing.T) {
 	// A different IP is unaffected.
 	if c := call("admin-tok", "10.0.0.42:4444"); c != http.StatusOK {
 		t.Fatalf("different IP = %d, want 200", c)
+	}
+}
+
+// TestLockoutIgnoresAnonymousAndInsufficientRole pins that the brute-force lockout
+// only counts *rejected credentials*: a flood of anonymous requests (no token) or
+// of valid-token-but-insufficient-role requests must NOT lock the IP out — so a
+// login-gated dashboard polling before sign-in can't trip the lockout on itself.
+func TestLockoutIgnoresAnonymousAndInsufficientRole(t *testing.T) {
+	ts := NewTokenStore("viewer-tok:viewer,admin-tok:admin")
+	guard := secwatch.New(2, time.Minute, time.Minute, func(string, int) {})
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	h := RequireRole(ts, RoleAdmin, audit.Nop{}, guard, next) // endpoint needs admin
+
+	call := func(token, remote string) int {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/graphql", nil)
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		req.RemoteAddr = remote
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	// Anonymous (no credential) flood, well over the threshold — must stay 401, never 429.
+	for i := 0; i < 5; i++ {
+		if c := call("", "10.1.0.1:1000"); c != http.StatusUnauthorized {
+			t.Fatalf("anon #%d = %d, want 401 (never counted/locked)", i, c)
+		}
+	}
+	// Valid token but insufficient role (viewer < admin) flood — also must not count.
+	for i := 0; i < 5; i++ {
+		if c := call("viewer-tok", "10.1.0.1:2000"); c != http.StatusUnauthorized {
+			t.Fatalf("insufficient-role #%d = %d, want 401 (never counted/locked)", i, c)
+		}
+	}
+	// The IP is NOT locked: a sufficient credential still gets through.
+	if c := call("admin-tok", "10.1.0.1:3000"); c != http.StatusOK {
+		t.Fatalf("IP must not be locked by anon/insufficient floods, got %d, want 200", c)
 	}
 }
 
@@ -238,6 +278,74 @@ func TestJWTAuthenticator(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+expired)
 	if _, ok := authn.Authenticate(req); ok {
 		t.Error("expired JWT must be rejected")
+	}
+}
+
+// TestJWKSRefetchOnKeyRotation pins the rotation behavior: an unknown kid (the
+// IdP rotated signing keys) triggers a JWKS refetch so freshly-signed tokens keep
+// working — but not within jwksMinRefetch of the last fetch, so a flood of bogus
+// kids can't amplify into a JWKS-fetch storm.
+func TestJWKSRefetchOnKeyRotation(t *testing.T) {
+	type keyset struct {
+		key *rsa.PrivateKey
+		kid string
+	}
+	keyA, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyB, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cur atomic.Pointer[keyset]
+	cur.Store(&keyset{keyA, "key-a"})
+
+	jwks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		ks := cur.Load()
+		n := base64.RawURLEncoding.EncodeToString(ks.key.PublicKey.N.Bytes())
+		e := base64.RawURLEncoding.EncodeToString(big.NewInt(int64(ks.key.PublicKey.E)).Bytes())
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"keys": []map[string]string{{"kty": "RSA", "kid": ks.kid, "n": n, "e": e}},
+		})
+	}))
+	defer jwks.Close()
+
+	authn := NewJWTAuthenticator(JWTConfig{JWKSURL: jwks.URL, Issuer: "https://idp.example", Audience: "perspectivegraph"})
+	mint := func(key *rsa.PrivateKey, kid string) string {
+		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+			"iss": "https://idp.example", "aud": "perspectivegraph", "sub": "alice",
+			"role": "viewer", "exp": time.Now().Add(time.Hour).Unix(),
+		})
+		tok.Header["kid"] = kid
+		s, err := tok.SignedString(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	authOK := func(raw string) bool {
+		req := httptest.NewRequest(http.MethodPost, "/graphql", nil)
+		req.Header.Set("Authorization", "Bearer "+raw)
+		_, ok := authn.Authenticate(req)
+		return ok
+	}
+
+	// Key A authenticates and populates the cache.
+	if !authOK(mint(keyA, "key-a")) {
+		t.Fatal("token signed with the current key must authenticate")
+	}
+	// IdP rotates to key B. Within the rate-limit window the new kid isn't refetched.
+	cur.Store(&keyset{keyB, "key-b"})
+	if authOK(mint(keyB, "key-b")) {
+		t.Error("within jwksMinRefetch, an unknown kid must NOT trigger a refetch (anti-spam)")
+	}
+	// After the window lapses, the unknown kid triggers a refetch and the rotated key works.
+	authn.keys.mu.Lock()
+	authn.keys.fetched = time.Now().Add(-2 * jwksMinRefetch)
+	authn.keys.mu.Unlock()
+	if !authOK(mint(keyB, "key-b")) {
+		t.Error("after jwksMinRefetch, a rotated signing key must be picked up via refetch")
 	}
 }
 

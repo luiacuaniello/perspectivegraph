@@ -1,5 +1,10 @@
 # PerspectiveGraph
 
+[![CI](https://github.com/luiacuaniello/perspectivegraph/actions/workflows/ci.yml/badge.svg)](https://github.com/luiacuaniello/perspectivegraph/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/luiacuaniello/perspectivegraph?sort=semver)](https://github.com/luiacuaniello/perspectivegraph/releases)
+[![Go](https://img.shields.io/github/go-mod/go-version/luiacuaniello/perspectivegraph?filename=backend%2Fgo.mod)](backend/go.mod)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+
 > **The Open DevSecOps Context Engine** — turn disconnected security scanner output into a queryable graph of *real, reachable* attack paths.
 
 PerspectiveGraph is an open-source (Apache 2.0) correlation engine. It is **not** another vulnerability
@@ -92,6 +97,10 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full design.
 - **Sensors:** Trivy, Semgrep, Cloud Custodian, Falco, CI build-provenance (`/ingest/build`), supply-chain cosign/SLSA/SBOM (`/ingest/supplychain`)
 - **Discovery:** Kubernetes (`/ingest/k8s`, incl. **container-escape** detection → ATT&CK T1611), cloud-network (`/ingest/cloudnet`), IAM privilege-escalation graph (`/ingest/iam`), and SSO/IdP federation (`/ingest/sso`)
 - **Data classification:** Macie/DLP findings (`/ingest/dataclass`) mark assets as crown jewels with an authoritative `classified:<source>:<kind>` basis
+- **Agentless connectors:** scheduled, leader-only **PULL** sources that reach out to a cloud account instead of waiting for an upload (`CONNECTORS_ENABLED`, health at `GET /connectors`). First connector: **AWS** (`aws`)
+- **Multi-tenant + SSO:** per-tenant isolated graphs (proven by test), bearer/OIDC auth with per-tenant/per-app/role RBAC, and a runtime login gate (`GET /auth/config` → token or "Sign in with SSO")
+- **Dev workflow:** GitHub PR comment + a **PR merge-gate status** (red when the change opens an internet→crown-jewel path), and **remediation-as-PR** (`POST /remediation/pr` opens a branch+commit+PR with the fix)
+- **AI-native (Claude *or* HuggingFace):** natural-language Q&A over the graph, a board-level executive summary, and plain-English path explanations — grounded in the live attack paths (`ANTHROPIC_API_KEY`, or a free `HF_TOKEN`)
 - **ATT&CK:** each kill-chain hop mapped to a MITRE ATT&CK technique + tactic
 
 ## Quick start
@@ -143,11 +152,45 @@ The **Falco** alert on the payments container flips the paths through it to
 flags forbidden shapes (e.g. *internet → crown jewel*), and each path carries
 generated **remediation** (a K8s NetworkPolicy or Terraform that cuts one edge).
 
+### Agentless connectors: pull, don't wait for an upload
+
+A scanner report only helps once someone uploads it. **Connectors** invert that:
+they reach *out* to a system on a schedule and pull its current state — no agent
+to deploy, no one to remember to `curl`. The goal is the one that won the cloud
+security market: *connect a read-only role and see your real attack paths in
+minutes.*
+
+Crucially a connector publishes onto the **same bus** as the webhooks, so it
+reuses the entire pipeline unchanged — identity resolution, the graph, the
+analyzer. The first connector, **`aws`**, doesn't even add new parsing: it pulls
+the EC2 `describe-*` network state and IAM authorization details and feeds them
+straight into the existing `cloudnet`/`iam` collectors. The acquisition sits
+behind a swappable transport — **`fixtures`** (local JSON, so the whole pull
+pipeline is provable with zero credentials) and **`aws-sdk-go-v2`** for live AWS
+(read-only, optional cross-account `AssumeRole`).
+
+```bash
+# Demo (no AWS account): pull from local describe-* JSON
+CONNECTORS_ENABLED=aws AWS_CONNECTOR_MODE=fixtures AWS_FIXTURES_DIR=./backend/testdata
+curl -s localhost:8081/connectors | jq   # per-connector health: last run, last error, events
+
+# Live (read-only): assume a cross-account role and pull EC2 + IAM
+CONNECTORS_ENABLED=aws AWS_CONNECTOR_MODE=sdk AWS_REGION=us-east-1 \
+  AWS_ROLE_ARN=arn:aws:iam::<account>:role/perspectivegraph-readonly
+# grant only: ec2:Describe*, iam:GetAccountAuthorizationDetails (≈ SecurityAudit)
+```
+
+Connectors are **leader-only** (replicas don't multiply API calls), interval-driven
+(`CONNECTOR_INTERVAL`), and observable via `GET /connectors` plus
+`perspectivegraph_connector_*` Prometheus metrics. SDK mode uses the standard AWS
+credential chain (env / shared profile / IRSA / instance role).
+
 ### Topology discovery (no hand-stitched IDs)
 
 `make seed-discovery` posts a raw Kubernetes dump (`kubectl get … -o json`), a
 cloud-network export (AWS `describe-*`) and an IAM authorization dump
-(`aws iam get-account-authorization-details`). PerspectiveGraph **auto-discovers**
+(`aws iam get-account-authorization-details`) — the same shapes the `aws`
+connector pulls live. PerspectiveGraph **auto-discovers**
 the exposure/reachability topology no scanner produces:
 
 - **Kubernetes** → `Ingress → Service → Pod → ServiceAccount → Role`, surfacing
@@ -252,6 +295,57 @@ the full ontology, including the newer edge types: an **IAM privilege-escalation
 path (`CAN_ESCALATE_TO`) yields a deny-the-primitive policy, and a **cloud
 lateral-movement** edge (`CONNECTS_TO`) yields a security-group segmentation rule.
 
+### Meet developers in the pull request
+
+A finding only changes behavior if it reaches the person who can fix it, where
+they already work. So PerspectiveGraph plugs into the PR:
+
+- **A PR comment** on the change that sits on a critical path (the kill chain +
+  the one-edge fixes).
+- **A merge-gate status** — a GitHub commit status `perspectivegraph/attack-paths`
+  that goes **red** when the change opens an internet→crown-jewel path and **green**
+  once it no longer does. Make it a *required* status check in branch protection
+  and it **blocks the merge** — shift-left, not a comment you can scroll past.
+- **Remediation-as-PR** — `POST /remediation/pr` (or the **Open fix PR** button on
+  a path) branches off the default branch, commits the generated fix
+  (NetworkPolicy / Terraform / IAM policy), and opens a pull request. The fix
+  arrives as something you *review and merge*, not copy-paste.
+
+One `GITHUB_TOKEN` drives all three (dry-run — logged, not posted — until it's set;
+GitHub Enterprise via `GITHUB_API_URL`). The same path context the analyzer already
+carries (`repo_slug` / `pr_number` / `commit_sha`) is what routes each action to the
+right PR and commit.
+
+### Ask your attack surface (AI-native — Claude or HuggingFace)
+
+Set `ANTHROPIC_API_KEY` and the dashboard grows an **AI assistant** powered by
+Claude (`claude-opus-4-8`):
+
+- **Natural-language Q&A** — *"which internet-exposed path reaches customer PII
+  fastest?"* — answered from the live graph.
+- **Executive summary** — a board-ready brief of the current posture: the headline
+  risk, what's actively exploited, the top fix.
+- **Explain (AI)** — a plain-English walk-through of any single path and the one
+  most effective fix, on the path detail.
+
+Every answer is **grounded** in the tenant's actual attack paths — the model is
+handed a compact, capped context, so it summarizes your data rather than inventing
+assets. The transport is a **hand-rolled** call to Anthropic's `/v1/messages` (no
+SDK, no new dependencies — the engine stays pure-Go and auditable).
+
+**Prefer a free model?** If you don't set `ANTHROPIC_API_KEY` but set `HF_TOKEN`
+(a free [HuggingFace](https://huggingface.co/settings/tokens) access token), the
+same features run against HuggingFace's OpenAI-compatible Inference router instead.
+Pick the chat model with `HF_MODEL` (default `meta-llama/Llama-3.1-8B-Instruct`),
+and point `HF_BASE_URL` at any OpenAI-compatible endpoint (Together, Groq, a local
+Ollama, …) to use those. Anthropic takes precedence when both are set; everything
+else (grounding, audit, the dashboard UI) is identical.
+
+Because the graph *is* the org's attack map, sending a compacted view of it to an
+external model is a deliberate opt-in: the feature is off until you set the key,
+and **every AI call is audited** (`ai.query` / `ai.summary` / `ai.explain`) into
+the same tamper-evident log as the rest of the read path.
+
 ### Honest probabilities: provenance, not false precision
 
 A CISO who asks "why 58%?" deserves better than "we multiplied some estimates".
@@ -284,6 +378,26 @@ the same weight basis. The real exploitability lives in **`[score, scoreUpperBou
 and the UI shows *"↑ up to X% if correlated"* instead of pretending the point
 estimate is exact.
 
+### Triage priority: what to fix first, not 500 findings
+
+A 2-person security team can't act on every reachable path. The raw exploit score
+answers *how easy*; it doesn't answer *how much should I care*. So each path also
+gets a composite **triage priority** (0–100, banded **P1 / P2 / P3**) that blends
+the signals an analyst actually weighs:
+
+- exploitability (`score`) and how much to trust it (`confidence`),
+- **runtime-confirmed** (a live Falco alert — it's not theoretical, it's happening),
+- a **KEV** weakness anywhere on the route (known-exploited in the wild),
+- **target sensitivity** (a classified-PII jewel outranks a name-heuristic guess),
+- **blast radius** (an internet entry that opens many paths is higher leverage).
+
+Paths come back **priority-first**, so `attackPaths(limit:5)` *is* the "fix these
+today" list, and every priority is **explainable** — it carries the factors
+(`"runtime-confirmed (active)"`, `"KEV on path"`, `"classified PII target"`,
+`"entry shared by 4 paths"`) rather than a black-box rank. The effect is the
+honest re-ranking you want: a **runtime-confirmed path to PII at 36%** outranks an
+**uncorroborated 90%** one. (Weights and bands are documented and tunable.)
+
 ### Data hygiene: a map of the attack surface, never a vault of secrets
 
 PerspectiveGraph ingests raw scanner output, which can incidentally carry a **live
@@ -299,6 +413,36 @@ Identifiers the graph joins on (ids, names, commit SHAs, image digests, refs) ar
 deliberately left untouched. On by default (`SCRUB_INGEST`); retention of the
 scrubbed findings is governed by `GRAPH_TTL` — the graph is derived and
 re-seedable, so nothing sensitive needs to live there long-term.
+
+### Multi-tenant isolation & SSO login
+
+This tool is, literally, a map of how to attack each customer — so the one thing
+it must never do is leak across tenants. Every tenant gets its **own** AGE graph
+and search index, and **every** API read funnels through `snapshot(tenantOf(ctx))`,
+so a principal scoped to tenant A can never see tenant B's graph or attack paths.
+That's the load-bearing security claim, so it's **proven by an end-to-end test**
+(two tenants stay disjoint, the default tenant sees neither, id normalization
+doesn't break the boundary), with per-tenant + per-app + role (viewer/operator/
+admin) RBAC on top.
+
+Login is **runtime, not baked in**. The dashboard reads a public `GET /auth/config`
+(auth mode + the IdP's public coordinates — no secrets) and renders the right gate,
+so a *single* build serves an open, token-secured, or SSO-secured backend with no
+rebuild:
+
+```bash
+curl -s localhost:8080/auth/config
+# open:  {"authRequired":false,"mode":"none"}
+# secured: {"authRequired":true,"mode":"both","oidc":{"clientId":"…","authorizeUrl":"…"}}
+```
+
+A user pastes a token or clicks **Sign in with SSO**, which runs the full **OIDC
+Authorization-Code + PKCE** flow (S256 challenge, `state` CSRF check, code→token
+exchange at `OIDC_TOKEN_URL` — no client secret in the browser; the RFC 7636
+derivation is unit-tested). The credential lives only in the tab's `sessionStorage`
+and rides as a Bearer — never written to disk or the bundle. Token validation
+stays on the JWKS / issuer / audience the backend already enforces (fail-closed:
+it refuses to start with a JWKS URL but no `iss`/`aud`).
 
 ### Validated against reality (precision & recall)
 
@@ -662,6 +806,31 @@ helm install perspective deploy/helm/perspectivegraph \
   back to the in-memory graph when Postgres is slow. (External Postgres/NATS are
   assumed reachable and aren't gated.)
 
+Every optional capability is wired through both `docker-compose.yml` (as
+`${VAR:-}` passthroughs, off by default) and the chart, so a feature you enable in
+code is actually reachable in the running stack:
+
+- **Agentless connectors** — `--set connectors.enabled='{aws}'` pulls cloud posture
+  on a schedule (`connectors.interval`); the AWS connector runs from bundled
+  fixtures unless `connectors.aws.mode=live` (then `connectors.aws.region` + an
+  assumable read-only `connectors.aws.roleArn`).
+- **SSO login** — `auth.oidc.clientId` / `authorizeUrl` / `tokenUrl` / `scopes` are
+  the SPA-facing coordinates the dashboard login gate reads from `GET /auth/config`
+  to run the Authorization-Code + PKCE flow (the `issuer`/`audience`/`jwksUrl` trio
+  above does the server-side token verification).
+- **Dev workflow** — `github.token` turns the PR comment / merge-gate status and
+  remediation-as-PR from dry-run into live; `github.dashboardUrl` is the link those
+  comments point back to.
+- **AI-native layer (Claude or HuggingFace)** — `ai.apiKey` (Anthropic) enables
+  `/ai/*` (NL query, exec summary, path explain); empty keeps it self-gated off.
+  `ai.hf.token` is the free OpenAI-compatible alternative, used when `ai.apiKey` is
+  empty (`ai.hf.model`/`ai.hf.baseUrl` tune it). Both keys land in the Secret;
+  `ai.model`/`baseUrl`/`maxTokens` are optional overrides.
+- **Hardening** — `scrubIngest` (on by default) redacts secret-looking values out
+  of scanner output before the store; `crypto.storeEncryptionKey` encrypts the
+  file-backed governance stores at rest and `crypto.exportSigningKey` signs graph
+  exports (both land in the Secret).
+
 ## Operating it: freshness, backup & DR
 
 A correlation engine that only *adds* drifts toward fiction: a pod is deleted, a
@@ -693,6 +862,34 @@ forever. Two things keep the graph honest over time.
   For HA, run Postgres as a managed/replicated service (the chart can point at an
   external one) — the backend is stateless and horizontally scalable, and
   leader election already ensures only one replica fires side-effects.
+
+### Scaling the analyzer
+
+The per-pass cost stays flat as the graph grows, with three layers you can tune:
+
+- **Change-detection (always on).** A pass is skipped entirely when nothing was
+  written since the last one — a steady graph costs almost nothing.
+- **Parallel pathfinding (on by default).** Each internet-exposed entry point gets
+  an independent shortest-path search, fanned out across `ANALYZER_WORKERS`
+  goroutines (default = number of CPUs). The result is identical regardless of
+  worker count, so it's a pure speedup — ~2.9× at 8 workers on a 10k-node /
+  64-seed benchmark (`make bench`).
+- **Incremental snapshotting (opt-in, `ANALYZER_INCREMENTAL=true`).** Instead of
+  re-reading the whole graph each pass, the analyzer keeps it resident and patches
+  it with just what changed since the last pass (filtered on the same `last_seen`
+  the pruner uses, so only the changed slice leaves Postgres). It still recomputes
+  all paths, but skips the dominant fetch cost on a large AGE graph; a full re-read
+  self-heals the cache on the first pass, after a prune, and periodically. It trades
+  memory for fetch cost, so it's off by default.
+
+  ```bash
+  ANALYZER_WORKERS=8 ANALYZER_INCREMENTAL=true make run-backend
+  ```
+
+  Scale visibility on `/metrics`: graph size (`perspectivegraph_analyzer_graph_{nodes,edges}`),
+  snapshot mode (`..._snapshots_total{mode="full|delta"}`), and pathfinding latency
+  (`..._pathfind_seconds`). To load-test end-to-end, post a large synthetic attack
+  surface with `make seed-load` (or `perspectivegraph genload --seeds 64 --width 1000 …`).
 
 > **On Apache AGE (an honest caveat).** AGE is a younger, less battle-tested
 > extension than core Postgres. PerspectiveGraph de-risks leaning on it: node and

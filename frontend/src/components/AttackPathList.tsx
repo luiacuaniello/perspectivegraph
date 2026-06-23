@@ -13,6 +13,12 @@ function scoreTone(score: number): string {
   return "bg-slate-500/15 text-slate-600";
 }
 
+function priorityTone(label?: string | null): string {
+  if (label === "P1") return "bg-red-600 text-white";
+  if (label === "P2") return "bg-amber-500/20 text-amber-700";
+  return "bg-slate-500/15 text-slate-600";
+}
+
 export default function AttackPathList({ paths, selectedId, onSelect }: Props) {
   if (paths.length === 0) {
     return (
@@ -58,6 +64,19 @@ export default function AttackPathList({ paths, selectedId, onSelect }: Props) {
                   {entry?.name} <span className="text-slate-500">→</span> {target?.name}
                 </span>
               </span>
+              {p.priorityLabel && (
+                <span
+                  className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${priorityTone(p.priorityLabel)}`}
+                  title={
+                    `Triage priority ${p.priority?.toFixed(0)}/100` +
+                    (p.priorityFactors && p.priorityFactors.length
+                      ? ` — ${p.priorityFactors.join(" · ")}`
+                      : "")
+                  }
+                >
+                  {p.priorityLabel}
+                </span>
+              )}
               {p.suppressed && (
                 <span
                   className="shrink-0 rounded-md bg-slate-500/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-500"

@@ -70,6 +70,26 @@ func LastSeen(props map[string]any) (int64, bool) {
 	return 0, false
 }
 
+// Delta is the set of graph elements observed at or after a watermark: idempotent
+// upserts a consumer can patch onto a cached snapshot. It carries no deletions —
+// the only source of removals is the TTL pruner, and the analyzer rebuilds a full
+// snapshot whenever it prunes (and periodically), so a delta only ever adds or
+// updates. Both stores stamp last_seen on every write (see ApplyEvent), which is
+// what makes the "since" filter possible.
+type Delta struct {
+	Nodes []ontology.Node
+	Edges []ontology.Edge
+}
+
+// DeltaStore is an OPTIONAL Store capability: return just the elements observed at
+// or after `since` (unix seconds), so a consumer holding a cached snapshot can
+// patch it instead of re-reading the whole graph each pass — the scale win on a
+// large, slowly-changing graph (it avoids the full DB round-trip + deserialization
+// every analyzer pass). Stores that don't implement it fall back to full Snapshot.
+type DeltaStore interface {
+	SnapshotSince(ctx context.Context, since int64) (Delta, error)
+}
+
 // PathStore is an OPTIONAL Store capability: compute internet-exposed →
 // crown-jewel routes inside the database (e.g. AGE's Cypher variable-length
 // match over native node properties) instead of pulling the whole graph and
@@ -168,6 +188,22 @@ func AsPathStore(s Store) (PathStore, bool) {
 	for {
 		if pf, ok := s.(PathStore); ok {
 			return pf, true
+		}
+		vs, ok := s.(*VersionedStore)
+		if !ok {
+			return nil, false
+		}
+		s = vs.Store
+	}
+}
+
+// AsDeltaStore reports whether s (unwrapping a VersionedStore) can return
+// incremental deltas, returning the DeltaStore if so. Like the other optional
+// capabilities it isn't promoted through the wrapper, so callers go through this.
+func AsDeltaStore(s Store) (DeltaStore, bool) {
+	for {
+		if ds, ok := s.(DeltaStore); ok {
+			return ds, true
 		}
 		vs, ok := s.(*VersionedStore)
 		if !ok {

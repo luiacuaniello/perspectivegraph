@@ -1,0 +1,26 @@
+#!/bin/sh
+# Last-line secret scan before code leaves the machine (defense in depth — CI
+# also runs gitleaks). Enable with:  git config core.hooksPath .githooks
+# Bypass for a one-off with:  git push --no-verify
+#
+# Uses gitleaks if installed, else a dockerized fallback, else warns and lets the
+# push through (CI is the backstop) so a missing tool never blocks you hard.
+set -e
+
+if command -v gitleaks >/dev/null 2>&1; then
+  echo "→ gitleaks: scanning working tree for secrets…"
+  gitleaks detect --no-banner --redact --source . || {
+    echo "✗ gitleaks found potential secrets — push aborted (bypass: git push --no-verify)" >&2
+    exit 1
+  }
+elif command -v docker >/dev/null 2>&1; then
+  echo "→ gitleaks (docker): scanning working tree for secrets…"
+  docker run --rm -v "$(pwd):/repo" zricethezav/gitleaks:latest \
+    detect --no-banner --redact --source /repo || {
+    echo "✗ gitleaks found potential secrets — push aborted (bypass: git push --no-verify)" >&2
+    exit 1
+  }
+else
+  echo "⚠ gitleaks not installed — skipping local secret scan (CI still scans)." >&2
+fi
+exit 0

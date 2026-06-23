@@ -42,9 +42,13 @@ type ghComment struct {
 func (g *githubPoster) forge() string { return "github" }
 func (g *githubPoster) enabled() bool { return !g.cfg.DryRun && g.cfg.Token != "" }
 
-func (g *githubPoster) headers() map[string]string {
+func (g *githubPoster) headers() map[string]string { return githubHeaders(g.cfg.Token) }
+
+// githubHeaders are the auth + versioning headers for the GitHub REST API, shared
+// by the PR commenter, the status checker, and the remediation PR opener.
+func githubHeaders(token string) map[string]string {
 	return map[string]string{
-		"Authorization":        "Bearer " + g.cfg.Token,
+		"Authorization":        "Bearer " + token,
 		"Accept":               "application/vnd.github+json",
 		"X-GitHub-Api-Version": "2022-11-28",
 	}

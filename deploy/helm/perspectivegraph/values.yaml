@@ -9,6 +9,13 @@ backend:
   resources: {}
   logLevel: info
   analyzerInterval: 30s
+  # Scale knobs. analyzerWorkers bounds the per-seed pathfinding parallelism
+  # (0 = auto = CPUs; the result is identical, it only trades CPU for pass
+  # latency). analyzerIncremental keeps the graph resident and patches it with the
+  # per-pass delta instead of re-reading it all each pass — the fetch-cost win on a
+  # large AGE graph; off by default (trades memory for fetch cost).
+  analyzerWorkers: 0
+  analyzerIncremental: false
   # Tiny utility image used by the dependency-wait initContainers (needs `nc`).
   # Pin to a digest in security-sensitive environments.
   waitImage: busybox:1.37
@@ -59,14 +66,58 @@ opensearch:
   url: ""
 
 # Action layer: PR/MR commenters. Tokens go into a Secret; empty → dry-run.
+# dashboardUrl is the public dashboard base the PR comment / merge-gate status
+# links back to (e.g. https://perspectivegraph.example.com). Empty → no link.
 github:
   token: ""
   apiUrl: https://api.github.com
   dryRun: false
+  dashboardUrl: ""
 gitlab:
   token: ""
   apiUrl: https://gitlab.com/api/v4
   dryRun: false
+
+# Agentless connectors (PULL ingestion). enabled is a list, e.g. ["aws"]; empty
+# ⇒ ingestion stays push-only. tenant tags pulled assets (multi-tenant installs).
+# The AWS connector defaults to bundled fixtures; mode "live" uses the AWS SDK
+# (region + an assumable read-only roleArn via the pod's ambient credentials).
+connectors:
+  enabled: []
+  interval: 15m
+  timeout: 2m
+  tenant: ""
+  aws:
+    mode: fixtures
+    fixturesDir: ""
+    region: ""
+    roleArn: ""
+
+# AI-native layer. apiKey (Anthropic/Claude) is the preferred backend and enables
+# /ai/* (NL query, exec summary, path explain). hf.* is the free, OpenAI-compatible
+# alternative (HuggingFace or any compatible endpoint), used only when apiKey is
+# empty. With neither, the endpoints stay disabled (self-gated). apiKey + hf.token
+# are secrets; the rest are optional overrides (sane defaults in-code).
+ai:
+  apiKey: ""
+  model: ""
+  baseUrl: ""
+  maxTokens: ""
+  hf:
+    token: ""
+    model: ""
+    baseUrl: ""
+
+# Data hygiene: redact secret-looking values out of scanner output before they
+# reach the store. On by default; set false only if a feed is already clean.
+scrubIngest: true
+
+# At-rest encryption of the file-backed governance stores + detached signatures
+# on graph exports. Both are secrets; empty ⇒ plaintext on disk / unsigned
+# exports. Generate with e.g. --set crypto.storeEncryptionKey="$(openssl rand -hex 32)".
+crypto:
+  storeEncryptionKey: ""
+  exportSigningKey: ""
 
 # Remediation ticketing: dispatch each new ticket to an external tracker
 # (Jira/GitHub/SOAR) over a webhook. Empty → local/dry-run (logged, tracked
@@ -86,11 +137,18 @@ auth:
   # --set auth.apiTokens="$(openssl rand -hex 16):admin".
   apiTokens: ""
   # Optional OIDC/JWT verification alongside (or instead of) static tokens.
-  # Empty issuer ⇒ disabled.
+  # Empty issuer ⇒ disabled. clientId/authorizeUrl/tokenUrl/scopes are the
+  # SPA-facing coordinates the dashboard login gate reads from GET /auth/config to
+  # run the Authorization-Code + PKCE flow; leave empty to keep the bearer-token
+  # login. (issuer/audience/jwksUrl drive server-side token verification.)
   oidc:
     issuer: ""
     audience: ""
     jwksUrl: ""
+    clientId: ""
+    authorizeUrl: ""
+    tokenUrl: ""
+    scopes: "openid profile email"
   # Per-client-IP rate limits (requests/sec). 0 ⇒ disabled.
   apiRateRps: 60
   ingestRateRps: 30

@@ -18,12 +18,15 @@ import (
 	"time"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/action"
+	"github.com/luiacuaniello/perspectivegraph/internal/ai"
 	"github.com/luiacuaniello/perspectivegraph/internal/analyzer"
 	"github.com/luiacuaniello/perspectivegraph/internal/api"
 	"github.com/luiacuaniello/perspectivegraph/internal/audit"
 	"github.com/luiacuaniello/perspectivegraph/internal/auth"
 	"github.com/luiacuaniello/perspectivegraph/internal/broker"
 	"github.com/luiacuaniello/perspectivegraph/internal/config"
+	"github.com/luiacuaniello/perspectivegraph/internal/connector"
+	awsconn "github.com/luiacuaniello/perspectivegraph/internal/connector/aws"
 	"github.com/luiacuaniello/perspectivegraph/internal/cryptostore"
 	"github.com/luiacuaniello/perspectivegraph/internal/exportsign"
 	"github.com/luiacuaniello/perspectivegraph/internal/graph"
@@ -69,6 +72,17 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("audit chain OK: %d records verified\n", n)
+		return
+	}
+
+	// Scale/load utility: generate a large synthetic attack surface and POST it to
+	// the ingest webhook, so the analyzer's scaling can be exercised end-to-end on a
+	// running stack. See runGenload for flags. Exits when done.
+	if len(os.Args) >= 2 && os.Args[1] == "genload" {
+		if err := runGenload(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "genload:", err)
+			os.Exit(1)
+		}
 		return
 	}
 
@@ -134,6 +148,11 @@ func run(ctx context.Context, cfg config.Config) error {
 			BaseURL: cfg.GitHubAPIURL,
 			DryRun:  cfg.GitHubDryRun,
 		}),
+		action.NewGitHubChecker(action.GitHubConfig{
+			Token:   cfg.GitHubToken,
+			BaseURL: cfg.GitHubAPIURL,
+			DryRun:  cfg.GitHubDryRun,
+		}, cfg.DashboardURL),
 		action.NewGitLabCommenter(action.GitLabConfig{
 			Token:   cfg.GitLabToken,
 			BaseURL: cfg.GitLabAPIURL,
@@ -198,10 +217,26 @@ func run(ctx context.Context, cfg config.Config) error {
 		WithLeader(elector).
 		WithMaxHops(cfg.AnalyzerMaxHops).
 		WithDBPaths(cfg.AnalyzerDBPaths).
+		WithWorkers(cfg.AnalyzerWorkers).
+		WithIncremental(cfg.AnalyzerIncremental).
 		WithTTL(cfg.GraphTTL).
 		WithHistory(historyStore)
 	if cfg.GraphTTL > 0 {
 		slog.Info("staleness pruning enabled — assets not re-observed within the TTL are removed (leader only)", "ttl", cfg.GraphTTL)
+	}
+	if cfg.AnalyzerIncremental {
+		slog.Info("incremental analysis enabled — patching a resident snapshot with per-pass deltas instead of re-reading the whole graph")
+	}
+	if cfg.AnalyzerWorkers > 0 {
+		slog.Info("analyzer pathfinding parallelism pinned", "workers", cfg.AnalyzerWorkers)
+	}
+
+	// ── Agentless connectors (optional; PULL from external systems) ──
+	// Leader-only, so replicas don't multiply API calls. Feeds the same bus as the
+	// push webhooks, so the whole downstream pipeline is reused.
+	connSched := buildConnectors(ctx, cfg, bus, elector)
+	if connSched.Enabled() {
+		slog.Info("agentless connectors enabled", "interval", cfg.ConnectorInterval)
 	}
 
 	// ── Audit (optional; tamper-evident hash-chained log) ────────────
@@ -304,8 +339,19 @@ func run(ctx context.Context, cfg config.Config) error {
 
 	ingestSrv := ingestion.NewServer(bus,
 		trivy.New(), semgrep.New(), custodian.New(), falco.New(), build.New(), k8s.New(), cloudnet.New(), iam.New(), supplychain.New(), sso.New(), dataclass.New()).
-		WithHMAC(hmac).WithAudit(auditRec).WithRateLimit(ingestLimiter)
-	apiHandler, err := buildAPI(manager, analyzerSvc, indexer, authn, auditRec, apiLimiter, suppressStore, historyStore, ticketStore, validationStore, cfg.CORSAllowedOrigins, exportSigner, exfilWatcher, authGuard)
+		WithHMAC(hmac).WithAudit(auditRec).WithRateLimit(ingestLimiter).
+		WithConnectorStatus(func() any { return connSched.Status() })
+	prOpener := action.NewGitHubPROpener(action.GitHubConfig{Token: cfg.GitHubToken, BaseURL: cfg.GitHubAPIURL, DryRun: cfg.GitHubDryRun})
+	aiCfg := ai.Config{
+		APIKey: cfg.AnthropicAPIKey, Model: cfg.AnthropicModel, BaseURL: cfg.AnthropicBaseURL, MaxTokens: cfg.AIMaxTokens,
+		HFToken: cfg.HFToken, HFModel: cfg.HFModel, HFBaseURL: cfg.HFBaseURL,
+	}
+	aiClient := ai.New(aiCfg)
+	if aiClient.Enabled() {
+		provider, model := ai.Provider(aiCfg)
+		slog.Info("AI-native layer enabled", "provider", provider, "model", model)
+	}
+	apiHandler, err := buildAPI(manager, analyzerSvc, indexer, authn, auditRec, apiLimiter, suppressStore, historyStore, ticketStore, validationStore, cfg.CORSAllowedOrigins, exportSigner, exfilWatcher, authGuard, authInfoFromConfig(cfg, authn.Enabled()), prOpener, aiClient)
 	if err != nil {
 		return err
 	}
@@ -328,6 +374,15 @@ func run(ctx context.Context, cfg config.Config) error {
 		defer wg.Done()
 		if err := analyzerSvc.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			slog.Error("analyzer stopped", "err", err)
+		}
+	}()
+
+	// Agentless connector poll loop (no-op when none enabled).
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := connSched.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			slog.Error("connector scheduler stopped", "err", err)
 		}
 	}()
 
@@ -361,6 +416,37 @@ func run(ctx context.Context, cfg config.Config) error {
 	slog.Info("signal received, draining…")
 	wg.Wait()
 	return nil
+}
+
+// buildConnectors assembles the enabled agentless connectors into a leader-gated
+// scheduler. Unknown names are skipped with a warning, and a connector that fails
+// to initialize is skipped (not fatal) so one misconfigured source can't block
+// boot. The scheduler is a no-op when nothing is enabled.
+func buildConnectors(ctx context.Context, cfg config.Config, pub connector.Publisher, elector connector.Leader) *connector.Scheduler {
+	var conns []connector.Connector
+	for _, name := range cfg.ConnectorsEnabled {
+		switch name {
+		case "aws":
+			c, err := awsconn.NewFromConfig(ctx, awsconn.Config{
+				Mode:        cfg.AWSConnectorMode,
+				FixturesDir: cfg.AWSFixturesDir,
+				Region:      cfg.AWSRegion,
+				RoleARN:     cfg.AWSRoleARN,
+			})
+			if err != nil {
+				slog.Error("aws connector disabled", "err", err)
+				continue
+			}
+			slog.Info("aws connector enabled", "mode", c.Mode())
+			conns = append(conns, c)
+		default:
+			slog.Warn("unknown connector, skipping", "name", name)
+		}
+	}
+	return connector.NewScheduler(pub, cfg.ConnectorInterval, conns...).
+		WithLeader(elector).
+		WithTenant(cfg.ConnectorTenant).
+		WithTimeout(cfg.ConnectorTimeout)
 }
 
 // storeFactory probes Apache AGE once and returns a per-tenant store factory.
@@ -413,8 +499,39 @@ func hmacSecrets(cfg config.Config) map[string]string {
 	return secrets
 }
 
-func buildAPI(manager *graph.Manager, svc *analyzer.Service, idx search.Indexer, authn auth.Authenticator, rec audit.Recorder, limiter *ratelimit.Limiter, suppressStore *suppress.Store, historyStore *history.Store, ticketStore *ticket.Store, validationStore *validation.Store, corsOrigins []string, exportSigner *exportsign.Signer, exfilWatcher, authGuard *secwatch.Watcher) (http.Handler, error) {
-	return api.New(manager, svc, idx).WithAuth(authn, rec).WithRateLimit(limiter).WithSuppress(suppressStore).WithHistory(historyStore).WithTickets(ticketStore).WithValidation(validationStore).WithCORSOrigins(corsOrigins).WithExportSigner(exportSigner).WithAbuseWatchers(exfilWatcher, authGuard).Handler()
+// authInfoFromConfig builds the public auth config the dashboard's login gate
+// reads (GET /auth/config). It carries no secrets — only whether a credential is
+// required and the IdP's public coordinates for an SSO redirect.
+func authInfoFromConfig(cfg config.Config, authEnabled bool) api.AuthInfo {
+	info := api.AuthInfo{Required: authEnabled, Mode: "none"}
+	if !authEnabled {
+		return info
+	}
+	hasTokens := len(cfg.APITokens) > 0
+	hasOIDC := cfg.OIDCJWKSURL != ""
+	switch {
+	case hasOIDC && hasTokens:
+		info.Mode = "both"
+	case hasOIDC:
+		info.Mode = "oidc"
+	default:
+		info.Mode = "token"
+	}
+	if hasOIDC {
+		info.OIDC = &api.OIDCInfo{
+			Issuer:       cfg.OIDCIssuer,
+			Audience:     cfg.OIDCAudience,
+			ClientID:     cfg.OIDCClientID,
+			AuthorizeURL: cfg.OIDCAuthURL,
+			TokenURL:     cfg.OIDCTokenURL,
+			Scopes:       cfg.OIDCScopes,
+		}
+	}
+	return info
+}
+
+func buildAPI(manager *graph.Manager, svc *analyzer.Service, idx search.Indexer, authn auth.Authenticator, rec audit.Recorder, limiter *ratelimit.Limiter, suppressStore *suppress.Store, historyStore *history.Store, ticketStore *ticket.Store, validationStore *validation.Store, corsOrigins []string, exportSigner *exportsign.Signer, exfilWatcher, authGuard *secwatch.Watcher, authInfo api.AuthInfo, prOpener action.PROpener, aiClient ai.Client) (http.Handler, error) {
+	return api.New(manager, svc, idx).WithAuth(authn, rec).WithRateLimit(limiter).WithSuppress(suppressStore).WithHistory(historyStore).WithTickets(ticketStore).WithValidation(validationStore).WithCORSOrigins(corsOrigins).WithExportSigner(exportSigner).WithAbuseWatchers(exfilWatcher, authGuard).WithAuthInfo(authInfo).WithRemediationPR(prOpener).WithAI(aiClient).Handler()
 }
 
 func serveHTTP(ctx context.Context, wg *sync.WaitGroup, name string, srv *http.Server) {

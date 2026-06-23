@@ -149,6 +149,11 @@ export interface AttackPath {
   // `correlatedHops` flags when two hops rest on the same basis (band is real).
   scoreUpperBound?: number | null;
   correlatedHops?: boolean | null;
+  // Composite triage priority [0,100] (P1/P2/P3) with explainable factors —
+  // paths arrive priority-first, so the list leads with what to fix today.
+  priority?: number | null;
+  priorityLabel?: string | null;
+  priorityFactors?: string[] | null;
   nodes: Node[];
   steps: Step[];
   remediations: Remediation[];
@@ -247,6 +252,7 @@ export interface Dashboard {
   posture: Posture;
   riskSimulation: RiskSimulation;
   searchEnabled: boolean;
+  aiEnabled: boolean;
   applications: string[];
   attackPaths: AttackPath[];
   remediationPlan: Fix[];
@@ -285,6 +291,7 @@ const dashboardQuery = (app?: string) => {
       crownJewels { id name label compromiseProbability ciLow ciHigh }
     }
     searchEnabled
+    aiEnabled
     applications
     attackPaths${scope} {
       id
@@ -294,6 +301,9 @@ const dashboardQuery = (app?: string) => {
       confidenceLabel
       scoreUpperBound
       correlatedHops
+      priority
+      priorityLabel
+      priorityFactors
       suppressed
       suppression { reason owner note createdAt expiresAt }
       firstSeen openForSeconds reopens
@@ -323,13 +333,73 @@ const dashboardQuery = (app?: string) => {
 `;
 };
 
-// When the API is secured (API_TOKENS set on the backend), build the dashboard
-// with VITE_API_TOKEN=<viewer token> so it can authenticate. Unset in dev.
-const API_TOKEN = import.meta.env.VITE_API_TOKEN as string | undefined;
+// Auth credential. A runtime token set via the login gate (stored in
+// sessionStorage, so it dies with the tab) takes precedence over the build-time
+// VITE_API_TOKEN — so the dashboard is deployed once and users sign in at
+// runtime instead of baking a token into the bundle.
+const TOKEN_KEY = "pg-token";
+const BUILD_TOKEN = import.meta.env.VITE_API_TOKEN as string | undefined;
+
+export function authToken(): string | undefined {
+  try {
+    const t = sessionStorage.getItem(TOKEN_KEY);
+    if (t) return t;
+  } catch {
+    /* sessionStorage unavailable — fall back to the build-time token */
+  }
+  return BUILD_TOKEN;
+}
+
+export function setAuthToken(token: string): void {
+  try {
+    sessionStorage.setItem(TOKEN_KEY, token);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function clearAuthToken(): void {
+  try {
+    sessionStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+// hasRuntimeToken reports whether the user signed in at runtime (vs an open API
+// or a build-time token), so the UI can show a "sign out" control only then.
+export function hasRuntimeToken(): boolean {
+  try {
+    return !!sessionStorage.getItem(TOKEN_KEY);
+  } catch {
+    return false;
+  }
+}
+
+// AuthConfig is the public /auth/config payload that drives the login gate.
+export interface AuthConfig {
+  authRequired: boolean;
+  mode: "none" | "token" | "oidc" | "both";
+  oidc?: {
+    issuer?: string;
+    audience?: string;
+    clientId?: string;
+    authorizeUrl?: string;
+    tokenUrl?: string;
+    scopes?: string;
+  } | null;
+}
+
+export async function fetchAuthConfig(): Promise<AuthConfig> {
+  const res = await fetch("/auth/config", { headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`auth config: ${res.status}`);
+  return res.json();
+}
 
 async function gql<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (API_TOKEN) headers.Authorization = `Bearer ${API_TOKEN}`;
+  const token = authToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(ENDPOINT, {
     method: "POST",
     headers,
@@ -427,7 +497,8 @@ export interface SuppressionInput {
 
 async function rest<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json", ...(init?.headers as Record<string, string>) };
-  if (API_TOKEN) headers.Authorization = `Bearer ${API_TOKEN}`;
+  const token = authToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(path, { ...init, headers });
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
@@ -466,6 +537,27 @@ export interface TicketInput {
 
 export const createTicket = (input: TicketInput) =>
   rest<Ticket>("/tickets", { method: "POST", body: JSON.stringify(input) });
+
+// openRemediationPR opens a pull request with this path's generated fix (branch +
+// commit + PR). Requires GITHUB_TOKEN on the backend; admin role when auth is on.
+export const openRemediationPR = (pathId: string) =>
+  rest<{ url: string; files: number }>("/remediation/pr", {
+    method: "POST",
+    body: JSON.stringify({ pathId }),
+  });
+
+// AI-native layer (Claude). All require ANTHROPIC_API_KEY on the backend (else 503).
+export const aiSummary = () => rest<{ answer: string }>("/ai/summary").then((r) => r.answer);
+
+export const aiQuery = (question: string) =>
+  rest<{ answer: string }>("/ai/query", { method: "POST", body: JSON.stringify({ question }) }).then(
+    (r) => r.answer,
+  );
+
+export const aiExplain = (pathId: string) =>
+  rest<{ answer: string }>("/ai/explain", { method: "POST", body: JSON.stringify({ pathId }) }).then(
+    (r) => r.answer,
+  );
 
 export const closeTicket = (id: string) =>
   rest<Ticket>(`/tickets/${encodeURIComponent(id)}/close`, { method: "POST" });

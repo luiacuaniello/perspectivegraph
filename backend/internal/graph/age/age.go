@@ -257,6 +257,70 @@ func (s *Store) Snapshot(ctx context.Context) (graph.Snapshot, error) {
 	return snap, err
 }
 
+// SnapshotSince returns the nodes and edges whose last_seen stamp is at or after
+// `since` (unix seconds) — the incremental delta the analyzer patches onto its
+// cached snapshot instead of pulling the whole graph each pass. The filter runs
+// natively (the same last_seen the pruner uses), so only the changed slice leaves
+// Postgres. Elements without a last_seen are excluded (`null >= since` is false in
+// Cypher) — they predate stamping and are already in the consumer's full snapshot.
+func (s *Store) SnapshotSince(ctx context.Context, since int64) (graph.Delta, error) {
+	var d graph.Delta
+	nodeQ, err := s.cypherSQL(
+		fmt.Sprintf(`MATCH (n) WHERE n.last_seen >= %d RETURN n.id, label(n), n.name, properties(n)`, since),
+		`id agtype, label agtype, name agtype, props agtype`)
+	if err != nil {
+		return d, err
+	}
+	edgeQ, err := s.cypherSQL(
+		fmt.Sprintf(`MATCH (a)-[e]->(b) WHERE e.last_seen >= %d RETURN type(e), a.id, b.id, properties(e)`, since),
+		`etype agtype, src agtype, dst agtype, props agtype`)
+	if err != nil {
+		return d, err
+	}
+	err = s.withAGE(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, nodeQ)
+		if err != nil {
+			return fmt.Errorf("query nodes: %w", err)
+		}
+		for rows.Next() {
+			var id, label, name, props string
+			if err := rows.Scan(&id, &label, &name, &props); err != nil {
+				rows.Close()
+				return err
+			}
+			d.Nodes = append(d.Nodes, ontology.Node{
+				ID:         agString(id),
+				Label:      ontology.Label(agString(label)),
+				Name:       agString(name),
+				Properties: nativeProps(props),
+			})
+		}
+		rows.Close()
+
+		erows, err := tx.QueryContext(ctx, edgeQ)
+		if err != nil {
+			return fmt.Errorf("query edges: %w", err)
+		}
+		defer erows.Close()
+		for erows.Next() {
+			var etype, src, dst, props string
+			if err := erows.Scan(&etype, &src, &dst, &props); err != nil {
+				return err
+			}
+			p, rest := edgeProps(props)
+			d.Edges = append(d.Edges, ontology.Edge{
+				Type:               ontology.EdgeType(agString(etype)),
+				From:               agString(src),
+				To:                 agString(dst),
+				ExploitProbability: p,
+				Properties:         rest,
+			})
+		}
+		return erows.Err()
+	})
+	return d, err
+}
+
 func (s *Store) Close() error { return s.db.Close() }
 
 // ── DB-side path finding (the reason AGE exists) ────────────────────

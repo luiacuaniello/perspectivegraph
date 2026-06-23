@@ -20,7 +20,10 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"runtime"
 	"sort"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/graph"
@@ -75,14 +78,64 @@ type AttackPath struct {
 	// rather than theoretical. It does not change Score — it tells the reader the
 	// product may understate the real risk.
 	CorrelatedHops bool `json:"correlated_hops,omitempty"`
+	// Priority is a composite triage score in [0,100] blending the signals an
+	// analyst actually weighs — exploitability (Score) and how much to trust it
+	// (Confidence), whether it's runtime-confirmed, whether a KEV weakness sits on
+	// the route, how sensitive the target is, and the entry's blast radius — so a
+	// small team can sort by ONE number and fix the top few instead of triaging
+	// every path. PriorityLabel is the band (P1|P2|P3); PriorityFactors are the
+	// human-readable reasons (for explainability, like the rest of the scoring).
+	Priority        float64  `json:"priority,omitempty"`
+	PriorityLabel   string   `json:"priority_label,omitempty"`
+	PriorityFactors []string `json:"priority_factors,omitempty"`
 }
 
 // Seed and target node of the path, for convenience.
 func (p AttackPath) Source() ontology.Node { return p.Nodes[0] }
 func (p AttackPath) Target() ontology.Node { return p.Nodes[len(p.Nodes)-1] }
 
+// pathWorkers configures how many goroutines fan out the per-seed shortest-path
+// searches in FindCriticalPaths. Each internet-exposed seed gets an independent
+// Dijkstra over the same immutable adjacency, so the work parallelizes cleanly
+// across cores — the dominant per-pass cost on a large graph with many entry
+// points. 0 (the default) means "auto" = GOMAXPROCS. Set once at startup from
+// ANALYZER_WORKERS via SetPathWorkers; atomic so a benchmark can vary it safely.
+var pathWorkers atomic.Int64
+
+// SetPathWorkers configures the per-seed pathfinding parallelism. n <= 0 selects
+// the automatic default (GOMAXPROCS). Safe to call concurrently.
+func SetPathWorkers(n int) {
+	if n < 0 {
+		n = 0
+	}
+	pathWorkers.Store(int64(n))
+}
+
+// resolvedWorkers caps the configured worker count to something useful for this
+// pass: never more than the number of seeds (extra goroutines would idle), never
+// less than 1, and "auto" resolves to GOMAXPROCS.
+func resolvedWorkers(seeds int) int {
+	w := int(pathWorkers.Load())
+	if w <= 0 {
+		w = runtime.GOMAXPROCS(0)
+	}
+	if w > seeds {
+		w = seeds
+	}
+	if w < 1 {
+		w = 1
+	}
+	return w
+}
+
 // FindCriticalPaths returns, for every (seed, crown-jewel) pair that is
 // reachable, the single highest-probability path, sorted by score descending.
+//
+// The per-seed Dijkstra searches are independent reads over a shared, immutable
+// adjacency, so they fan out across a bounded worker pool (see pathWorkers). The
+// result is assembled in seed order before the final sort, so the output is
+// byte-for-byte identical to a sequential run regardless of how many workers ran
+// — parallelism is a speedup, never a behavior change.
 func FindCriticalPaths(snap graph.Snapshot) []AttackPath {
 	nodes := snap.NodeByID()
 	adj := buildAdjacency(snap.Edges, nodes)
@@ -96,20 +149,39 @@ func FindCriticalPaths(snap graph.Snapshot) []AttackPath {
 			jewels = append(jewels, n.ID)
 		}
 	}
+	if len(seeds) == 0 || len(jewels) == 0 {
+		return nil
+	}
+
+	// One result bucket per seed, filled in place so the flattened order matches
+	// the original sequential nested loop (and thus the post-sort output) exactly.
+	perSeed := make([][]AttackPath, len(seeds))
+	if workers := resolvedWorkers(len(seeds)); workers <= 1 {
+		for i, seed := range seeds {
+			perSeed[i] = pathsFromSeed(seed, jewels, adj, nodes)
+		}
+	} else {
+		var wg sync.WaitGroup
+		work := make(chan int)
+		for w := 0; w < workers; w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for i := range work {
+					perSeed[i] = pathsFromSeed(seeds[i], jewels, adj, nodes)
+				}
+			}()
+		}
+		for i := range seeds {
+			work <- i
+		}
+		close(work)
+		wg.Wait()
+	}
 
 	var paths []AttackPath
-	for _, seed := range seeds {
-		dist, prev := dijkstra(seed, adj)
-		for _, jewel := range jewels {
-			if seed == jewel {
-				continue
-			}
-			d, ok := dist[jewel]
-			if !ok || math.IsInf(d, 1) {
-				continue // unreachable
-			}
-			paths = append(paths, reconstruct(seed, jewel, prev, adj, nodes))
-		}
+	for _, ps := range perSeed {
+		paths = append(paths, ps...)
 	}
 
 	// Runtime-confirmed paths first, then by score descending.
@@ -120,6 +192,25 @@ func FindCriticalPaths(snap graph.Snapshot) []AttackPath {
 		return paths[i].Score > paths[j].Score
 	})
 	return paths
+}
+
+// pathsFromSeed runs one seed's Dijkstra and reconstructs the best route to every
+// reachable jewel. It owns its dist/prev maps and only reads the shared adjacency
+// and node index, so many of these run concurrently without coordination.
+func pathsFromSeed(seed string, jewels []string, adj map[string][]outEdge, nodes map[string]ontology.Node) []AttackPath {
+	dist, prev := dijkstra(seed, adj)
+	var out []AttackPath
+	for _, jewel := range jewels {
+		if seed == jewel {
+			continue
+		}
+		d, ok := dist[jewel]
+		if !ok || math.IsInf(d, 1) {
+			continue // unreachable
+		}
+		out = append(out, reconstruct(seed, jewel, prev, adj, nodes))
+	}
+	return out
 }
 
 // dbPathTimeout bounds a DB-side path query from the client side, on top of the

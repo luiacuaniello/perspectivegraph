@@ -88,6 +88,9 @@ func (a *API) Handler() (http.Handler, error) {
 	})
 	// Prometheus metrics — open and unthrottled so scraping never starves.
 	mux.Handle("GET /metrics", metrics.Handler())
+	// Public auth config — necessarily open: it tells an unauthenticated SPA how to
+	// authenticate (token vs SSO). Secret-free (only the IdP's public coordinates).
+	mux.HandleFunc("GET /auth/config", a.handleAuthConfig)
 
 	// secured wraps a data handler with: rate limit → auth (when enabled) →
 	// per-handler request counting. The limiter is outermost so floods are
@@ -119,6 +122,13 @@ func (a *API) Handler() (http.Handler, error) {
 	mux.Handle("GET /tickets", secured("tickets_list", http.HandlerFunc(a.listTickets)))
 	mux.Handle("POST /tickets", secured("tickets_create", http.HandlerFunc(a.createTicket)))
 	mux.Handle("POST /tickets/{id}/close", secured("tickets_close", http.HandlerFunc(a.closeTicket)))
+	// Remediation-as-PR: open a pull request with a path's generated fix.
+	mux.Handle("POST /remediation/pr", secured("remediation_pr", http.HandlerFunc(a.openRemediationPR)))
+	// AI-native layer (self-gated on ANTHROPIC_API_KEY): NL query, exec summary,
+	// and plain-English path explanation.
+	mux.Handle("GET /ai/summary", secured("ai_summary", http.HandlerFunc(a.handleAISummary)))
+	mux.Handle("POST /ai/query", secured("ai_query", http.HandlerFunc(a.handleAIQuery)))
+	mux.Handle("POST /ai/explain", secured("ai_explain", http.HandlerFunc(a.handleAIExplain)))
 
 	// Red-team / BAS validation verdicts + precision/recall. GET needs viewer;
 	// writes additionally require admin (checked inside, when auth is on).
