@@ -18,7 +18,7 @@ export default function EmptyState() {
         </p>
 
         <div className="mt-5 rounded-xl bg-ink px-4 py-3 text-left">
-          <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-slate-500">
+          <div className="mb-1 text-[11px] font-medium text-muted">
             Feed the sample data
           </div>
           <code className="block font-mono text-[13px] text-teal-700">make seed</code>

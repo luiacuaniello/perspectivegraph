@@ -41,9 +41,10 @@ export default {
         card: "0 1px 2px 0 rgb(var(--c-shadow) / 0.05), 0 1px 3px 0 rgb(var(--c-shadow) / 0.08)",
         // A slightly lifted shadow for hover/selected panels and popovers.
         lift: "0 2px 4px -1px rgb(var(--c-shadow) / 0.1), 0 6px 16px -4px rgb(var(--c-shadow) / 0.16)",
-        // Neon accent glow for the primary CTA, active nav, and lit cards.
-        glow: "0 0 0 1px rgb(var(--c-accent) / 0.25), 0 4px 22px -3px rgb(var(--c-accent) / 0.5)",
-        "glow-lg": "0 0 0 1px rgb(var(--c-accent) / 0.4), 0 10px 40px -6px rgb(var(--c-accent) / 0.65)",
+        // Flat accent ring for the primary CTA, active nav, and selected cards.
+        // A single hairline of accent, no neon blur.
+        glow: "0 0 0 1px rgb(var(--c-accent) / 0.35)",
+        "glow-lg": "0 0 0 1px rgb(var(--c-accent) / 0.5)",
       },
     },
   },

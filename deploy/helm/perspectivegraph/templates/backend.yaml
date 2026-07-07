@@ -20,6 +20,12 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: backend
     spec:
+      {{- with .Values.podSecurityContext }}
+      # fsGroup makes the persistence PVC writable by the nonroot backend (else the
+      # first governance-state write fails); runAsNonRoot pins the distroless guarantee.
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- if or .Values.postgres.enabled .Values.nats.enabled }}
       # Wait for the bundled infra to accept TCP before the backend starts, so it
       # connects to Apache AGE on the first try instead of crash-looping on NATS or
@@ -53,6 +59,10 @@ spec:
         - name: perspectivegraph
           image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
           imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          {{- with .Values.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           ports:
             - name: api
               containerPort: {{ .Values.service.apiPort }}
@@ -144,8 +154,10 @@ spec:
             periodSeconds: 10
           resources:
             {{- toYaml .Values.backend.resources | nindent 12 }}
-          {{- if or .Values.persistence.enabled .Values.backend.tls.enabled .Values.nats.tls.enabled }}
           volumeMounts:
+            # Writable scratch for the read-only rootfs (mirrors compose tmpfs:/tmp).
+            - name: tmp
+              mountPath: /tmp
             {{- if .Values.persistence.enabled }}
             - name: data
               mountPath: {{ .Values.persistence.mountPath }}
@@ -160,9 +172,9 @@ spec:
               mountPath: /etc/perspectivegraph/nats-tls
               readOnly: true
             {{- end }}
-          {{- end }}
-      {{- if or .Values.persistence.enabled .Values.backend.tls.enabled .Values.nats.tls.enabled }}
       volumes:
+        - name: tmp
+          emptyDir: {}
         {{- if .Values.persistence.enabled }}
         - name: data
           persistentVolumeClaim:
@@ -178,7 +190,6 @@ spec:
           secret:
             secretName: {{ .Values.nats.tls.secretName | quote }}
         {{- end }}
-      {{- end }}
 ---
 apiVersion: v1
 kind: Service

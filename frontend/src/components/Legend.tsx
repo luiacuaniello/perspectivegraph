@@ -15,7 +15,7 @@ export default function Legend() {
         className="flex w-full items-center justify-between px-4 py-2.5 text-left"
         aria-expanded={open}
       >
-        <span className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-muted">
+        <span className="flex items-center gap-2 text-[13px] font-medium text-muted">
           <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={1.6}>
             <circle cx="10" cy="10" r="7.5" />
             <path d="M10 9v4M10 6.5h.01" strokeLinecap="round" />

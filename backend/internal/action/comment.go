@@ -2,7 +2,7 @@ package action
 
 import (
 	"context"
-	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -170,8 +170,11 @@ func toInt(v any) int {
 	}
 }
 
+// hashString is a non-cryptographic content fingerprint used only to skip
+// re-posting an unchanged PR comment (in-memory equality). SHA-256 (over SHA-1)
+// keeps SAST/due-diligence scanners quiet, at no functional cost.
 func hashString(s string) string {
-	sum := sha1.Sum([]byte(s))
+	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])
 }
 

@@ -19,7 +19,8 @@ func TestCalibrationScenarioDiagnosesEndToEnd(t *testing.T) {
 			for _, v := range verdicts {
 				if _, err := s.Put(Record{
 					Tenant: "acme", PathID: v.PathID, Outcome: v.Outcome, Source: "selftest",
-					PredictedScore: v.PredictedScore, Hops: v.Hops, CorrelatedHops: v.CorrelatedHops, Detected: v.Detected,
+					PredictedScore: v.PredictedScore, Hops: v.Hops, CorrelatedHops: v.CorrelatedHops,
+					WeightBasis: v.WeightBasis, Detected: v.Detected,
 				}); err != nil {
 					t.Fatalf("put: %v", err)
 				}

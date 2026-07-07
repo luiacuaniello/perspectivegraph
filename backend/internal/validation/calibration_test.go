@@ -1,7 +1,9 @@
 package validation
 
 import (
+	"errors"
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -133,4 +135,137 @@ func TestCalibrationExcludesUnscoredAndMissed(t *testing.T) {
 
 func pathID(prefix string, i int) string {
 	return prefix + string(rune('0'+i))
+}
+
+// The two calibration tracks must grade the right prediction against the right
+// event and never cross-contaminate: path-scoped verdicts grade S(P), target-scoped
+// verdicts grade the per-target compromise probability.
+func TestCalibrationScopeSplit(t *testing.T) {
+	s := newStore(t)
+	// 3 path-scoped verdicts, each with S(P)=0.9.
+	for i, o := range []Outcome{Confirmed, Confirmed, Refuted} {
+		if _, err := s.Put(Record{Tenant: "acme", PathID: pathID("p", i), Outcome: o,
+			Source: "test", Scope: ScopePath, PredictedScore: 0.9}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 2 target-scoped verdicts: S(P)=0.9 but compromise=0.4. The target track must
+	// grade 0.4, NOT the 0.9 path score.
+	for i, o := range []Outcome{Confirmed, Refuted} {
+		if _, err := s.Put(Record{Tenant: "acme", PathID: pathID("t", i), Outcome: o,
+			Source: "test", Scope: ScopeTarget, PredictedScore: 0.9, PredictedCompromise: 0.4}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cal := s.Calibration("acme")
+
+	if cal.Samples != 3 {
+		t.Errorf("path track samples = %d, want 3 (only path-scoped)", cal.Samples)
+	}
+	if math.Abs(cal.MeanPredicted-0.9) > 1e-9 {
+		t.Errorf("path track meanPredicted = %v, want 0.9 (S(P))", cal.MeanPredicted)
+	}
+	if cal.Target == nil {
+		t.Fatal("target-scoped verdicts present but cal.Target is nil")
+	}
+	if cal.Target.Samples != 2 {
+		t.Errorf("target track samples = %d, want 2 (only target-scoped)", cal.Target.Samples)
+	}
+	if math.Abs(cal.Target.MeanPredicted-0.4) > 1e-9 {
+		t.Errorf("target track meanPredicted = %v, want 0.4 (compromise, not the 0.9 S(P))", cal.Target.MeanPredicted)
+	}
+	if cal.Target.Target != nil {
+		t.Error("the nested target track must not itself carry a target")
+	}
+}
+
+// A target-scoped verdict with no captured compromise (offline / target not live)
+// is excluded from the target track and must never leak into the path track.
+func TestCalibrationTargetScopeExcludedWithoutCompromise(t *testing.T) {
+	s := newStore(t)
+	if _, err := s.Put(Record{Tenant: "acme", PathID: "t1", Outcome: Confirmed,
+		Source: "test", Scope: ScopeTarget, PredictedScore: 0.9}); err != nil {
+		t.Fatal(err)
+	}
+	cal := s.Calibration("acme")
+	if cal.HasData {
+		t.Error("path track HasData = true; a target-scoped verdict must not feed the path track")
+	}
+	if cal.Target != nil {
+		t.Error("target track present, but the verdict carried no compromise prediction to grade")
+	}
+}
+
+// The P1 payoff: when the miscalibration is structured by evidence basis - here the
+// SAME score 0.6 runs hot for epss (observed ~0.2) and cold for heuristic (~0.8) - a
+// global monotone map sees only the score and pools both to ~0.5, but a per-basis
+// Platt correction fixes each provenance class separately and beats it materially.
+func TestPerBasisRecalibrationBeatsGlobal(t *testing.T) {
+	s := newStore(t)
+	put := func(i int, basis string, y Outcome) {
+		id := basis + string(rune('a'+i))
+		if _, err := s.Put(Record{Tenant: "acme", PathID: id, Outcome: y,
+			Source: "test", PredictedScore: 0.6, WeightBasis: basis}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// epss: 12 refuted + 3 confirmed → observed 0.2 (score 0.6 runs hot).
+	for i := 0; i < 12; i++ {
+		put(i, "epss", Refuted)
+	}
+	for i := 12; i < 15; i++ {
+		put(i, "epss", Confirmed)
+	}
+	// heuristic: 3 refuted + 12 confirmed → observed 0.8 (score 0.6 runs cold).
+	for i := 0; i < 3; i++ {
+		put(i, "heuristic", Refuted)
+	}
+	for i := 3; i < 15; i++ {
+		put(i, "heuristic", Confirmed)
+	}
+
+	cal := s.Calibration("acme")
+	if cal.Samples != 30 {
+		t.Fatalf("samples = %d, want 30", cal.Samples)
+	}
+	if cal.BrierRecalibratedByBasis <= 0 {
+		t.Fatal("per-basis recalibration was not computed")
+	}
+	if cal.BrierRecalibratedByBasis >= cal.BrierRecalibrated-basisImprovementThreshold {
+		t.Errorf("per-basis Brier %.3f should beat the global %.3f by > %.2f (bias is provenance-structured)",
+			cal.BrierRecalibratedByBasis, cal.BrierRecalibrated, basisImprovementThreshold)
+	}
+	if !strings.Contains(cal.Diagnosis, "per-basis") {
+		t.Errorf("diagnosis = %q, want the per-basis recalibration recommendation", cal.Diagnosis)
+	}
+	if len(cal.BasisSegments) != 2 {
+		t.Errorf("basis segments = %d, want 2 (epss, heuristic)", len(cal.BasisSegments))
+	}
+	// The published per-basis curves must move off the identity (a≈0,b≈1) in opposite
+	// directions: epss pulled down, heuristic pulled up.
+	var epss, heur *BasisRecalibration
+	for i := range cal.RecalibrationByBasis {
+		switch cal.RecalibrationByBasis[i].Basis {
+		case "epss":
+			epss = &cal.RecalibrationByBasis[i]
+		case "heuristic":
+			heur = &cal.RecalibrationByBasis[i]
+		}
+	}
+	if epss == nil || heur == nil {
+		t.Fatal("missing per-basis recalibration for epss/heuristic")
+	}
+	epssCal := sigmoidP(epss.Intercept + epss.Slope*logitP(0.6))
+	heurCal := sigmoidP(heur.Intercept + heur.Slope*logitP(0.6))
+	if !(epssCal < 0.5 && heurCal > 0.5) {
+		t.Errorf("per-basis correction at 0.6: epss→%.2f (want <0.5), heuristic→%.2f (want >0.5)", epssCal, heurCal)
+	}
+}
+
+func TestPutRejectsInvalidScope(t *testing.T) {
+	s := newStore(t)
+	_, err := s.Put(Record{Tenant: "acme", PathID: "p1", Outcome: Confirmed, Source: "test", Scope: "bogus"})
+	if !errors.Is(err, ErrInvalidScope) {
+		t.Errorf("Put with bogus scope: err = %v, want ErrInvalidScope", err)
+	}
 }

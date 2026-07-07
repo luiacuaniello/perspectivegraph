@@ -44,6 +44,34 @@ var validOutcomes = map[Outcome]bool{Confirmed: true, Refuted: true, Partial: tr
 // ValidOutcome reports whether o is one of the allowed verdicts.
 func ValidOutcome(o Outcome) bool { return validOutcomes[o] }
 
+// Scope declares what a verdict validated, which fixes the quantity the calibration
+// grades it against. A path-scoped verdict tested one specific surfaced path
+// end-to-end, so it grades that path's score S(P). A target-scoped verdict tested
+// whether a crown jewel was reached AT ALL, by any route - the event a BAS "I popped
+// the jewel" run actually reports - so it grades the per-target compromise
+// probability, not S(P). Grading S(P) against an any-route outcome conflates two
+// different events and biases the report; the scope keeps each track honest.
+type Scope string
+
+const (
+	ScopePath   Scope = "path"   // validated one specific surfaced path (grades S(P))
+	ScopeTarget Scope = "target" // validated that a crown jewel was reached at all (grades compromise probability)
+)
+
+var validScopes = map[Scope]bool{ScopePath: true, ScopeTarget: true}
+
+// ValidScope reports whether s is empty (⇒ path) or one of the allowed scopes.
+func ValidScope(s Scope) bool { return s == "" || validScopes[s] }
+
+// scopeOrDefault treats an unset scope as path - the historical default, so existing
+// verdicts (recorded before scope existed) keep grading S(P).
+func scopeOrDefault(s Scope) Scope {
+	if s == "" {
+		return ScopePath
+	}
+	return s
+}
+
 // Record is one validation verdict about a path. For "missed", PathID may be
 // empty (the engine never surfaced it) and Route describes what was found.
 type Record struct {
@@ -63,6 +91,15 @@ type Record struct {
 	// no longer surfaced, or a pre-calibration record) and is excluded from the
 	// calibration math. Omitted for "missed" verdicts (no surfaced path to score).
 	PredictedScore float64 `json:"predicted_score,omitempty"`
+	// Scope declares what this verdict validated (path vs target) and so which
+	// prediction the calibration grades it against. Empty ⇒ path (historical default).
+	Scope Scope `json:"scope,omitempty"`
+	// PredictedCompromise is the model's predicted probability that this verdict's
+	// crown-jewel target is reached AT ALL (by any route) - the per-target Monte Carlo
+	// compromise probability, captured server-side at verdict time. It is what a
+	// target-scoped verdict is graded against, distinct from the per-path PredictedScore.
+	// Zero ⇒ unknown/not-captured and is excluded from the target-calibration math.
+	PredictedCompromise float64 `json:"predicted_compromise,omitempty"`
 	// Hops and CorrelatedHops are path-structure features captured server-side at
 	// verdict time, so calibration can be *segmented* by them: if the model is
 	// mis-scored specifically on long or correlated-hop paths, the error is structural
@@ -70,6 +107,11 @@ type Record struct {
 	// correlation-aware model (#6) rather than a flat rescale.
 	Hops           int  `json:"hops,omitempty"`
 	CorrelatedHops bool `json:"correlated_hops,omitempty"`
+	// WeightBasis is the path's weakest-evidence hop basis (kev|epss|cvss|severity|
+	// heuristic|runtime), captured server-side at verdict time so calibration can be
+	// recalibrated *per basis* - a bias structured by evidence provenance that a single
+	// global monotone rescale cannot fix (P1).
+	WeightBasis string `json:"weight_basis,omitempty"`
 	// Detected is the operator's report of whether this (confirmed) attempt was caught
 	// or blocked by a defense (EDR/WAF/SOC). nil = not reported. It is the evidence for
 	// the *detection axis* (#7): if reachable paths are routinely detected, the score
@@ -91,6 +133,7 @@ type Metrics struct {
 
 var (
 	ErrInvalidOutcome = errors.New("validation: invalid outcome")
+	ErrInvalidScope   = errors.New("validation: invalid scope (want path|target)")
 	ErrMissingSource  = errors.New("validation: source required (who/what tested it)")
 	ErrMissingPathID  = errors.New("validation: path id required (except for outcome=missed)")
 	ErrNotFound       = errors.New("validation: not found")
@@ -154,6 +197,9 @@ func (s *Store) Put(r Record) (Record, error) {
 	if !ValidOutcome(r.Outcome) {
 		return Record{}, fmt.Errorf("%w: %q", ErrInvalidOutcome, r.Outcome)
 	}
+	if !ValidScope(r.Scope) {
+		return Record{}, fmt.Errorf("%w: %q", ErrInvalidScope, r.Scope)
+	}
 	if r.Source == "" {
 		return Record{}, ErrMissingSource
 	}
@@ -171,10 +217,13 @@ func (s *Store) Put(r Record) (Record, error) {
 	s.mu.Lock()
 	list := s.byTenant[r.Tenant]
 	if r.Outcome != Missed {
-		// One current verdict per surfaced path: drop the prior one.
+		// One current verdict per (surfaced path, scope): a path may legitimately carry
+		// both a path-scoped verdict (this exact path works) and a target-scoped one (the
+		// jewel was reached at all) - they validate different events - so the replacement
+		// key includes the scope; only a same-scope re-test supersedes.
 		filtered := list[:0:0]
 		for _, x := range list {
-			if x.Outcome == Missed || x.PathID != r.PathID {
+			if x.Outcome == Missed || x.PathID != r.PathID || scopeOrDefault(x.Scope) != scopeOrDefault(r.Scope) {
 				filtered = append(filtered, x)
 			}
 		}

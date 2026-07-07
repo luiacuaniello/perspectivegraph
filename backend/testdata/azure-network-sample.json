@@ -1,0 +1,24 @@
+{
+  "_comment": "Normalized Azure network state (the shape the Azure connector's fixtures transport consumes: `az network nsg list` / `az vm list -o json` with the VM->NIC->NSG association resolved). A web VM sits behind an NSG that admits the Internet service tag (mapped to 0.0.0.0/0 -> internet-exposed), peered toward a PII database VM tagged as a crown jewel.",
+  "networkSecurityGroups": [
+    {
+      "name": "web-nsg",
+      "securityRules": [
+        { "name": "allow-https-inbound", "direction": "Inbound", "access": "Allow", "protocol": "Tcp", "destinationPortRange": "443", "sourceAddressPrefix": "Internet" }
+      ]
+    },
+    {
+      "name": "db-nsg",
+      "securityRules": [
+        { "name": "allow-web-subnet", "direction": "Inbound", "access": "Allow", "protocol": "Tcp", "destinationPortRange": "5432", "sourceAddressPrefix": "10.0.1.0/24" }
+      ]
+    }
+  ],
+  "virtualMachines": [
+    { "name": "web-vm", "networkSecurityGroups": ["web-nsg"], "tags": { "app": "web", "env": "prod" } },
+    { "name": "payments-db-vm", "networkSecurityGroups": ["db-nsg"], "tags": { "data-classification": "pii", "crown-jewel": "true" } }
+  ],
+  "vnetPeerings": [
+    { "vnet": "web-vnet", "remoteVnet": "data-vnet" }
+  ]
+}

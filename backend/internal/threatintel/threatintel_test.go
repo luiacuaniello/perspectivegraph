@@ -27,6 +27,34 @@ func TestEdgeProbability(t *testing.T) {
 	}
 }
 
+func TestTraversalFromEPSS(t *testing.T) {
+	defer SetTraversalGamma(1.0) // restore the identity for the other tests
+
+	SetTraversalGamma(1.0) // default: EPSS used as-is
+	if got := TraversalFromEPSS(0.43); got != 0.43 {
+		t.Errorf("identity: TraversalFromEPSS(0.43) = %v, want 0.43", got)
+	}
+
+	SetTraversalGamma(0.5) // opt-in lift
+	lifted := TraversalFromEPSS(0.04)
+	if !(lifted > 0.04 && lifted <= 1) {
+		t.Errorf("lift: TraversalFromEPSS(0.04) = %v, want in (0.04, 1]", lifted)
+	}
+	if TraversalFromEPSS(0.5) <= TraversalFromEPSS(0.1) {
+		t.Error("lift must be monotone increasing in EPSS")
+	}
+	if TraversalFromEPSS(0) != 0 || TraversalFromEPSS(1) != 1 {
+		t.Error("lift must fix the endpoints 0 and 1")
+	}
+	if got := (Intel{EPSS: 0.04}).EdgeProbability(0.7); got != lifted {
+		t.Errorf("EdgeProbability should apply the traversal map: got %v, want %v", got, lifted)
+	}
+	// KEV is observed exploitation, not a prediction to lift.
+	if got := (Intel{KEV: true, EPSS: 0.2}).EdgeProbability(0.7); got != 0.95 {
+		t.Errorf("KEV branch must not be lifted: got %v, want 0.95", got)
+	}
+}
+
 func TestLiveScoresMergesKEVandEPSS(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {

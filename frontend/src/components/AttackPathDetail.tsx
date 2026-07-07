@@ -536,11 +536,6 @@ function ArtifactCard({ r, tone = "emerald" }: { r: Artifact; tone?: "emerald" |
   );
 }
 
-const CONFIDENCE_TONE: Record<string, string> = {
-  high: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700",
-  medium: "border-slate-300 bg-slate-500/10 text-slate-600",
-  low: "border-amber-500/40 bg-amber-500/10 text-amber-700",
-};
 
 const PRIORITY_TONE: Record<string, string> = {
   P1: "bg-red-600 text-white",
@@ -608,15 +603,13 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
       <header className="flex flex-col gap-3.5 rounded-xl border border-edge bg-panel shadow-card p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <div className="text-[10px] font-semibold uppercase tracking-widest text-muted">Attack path</div>
+            <div className="text-[10px] font-semibold text-muted">Attack path</div>
             <h2 className="mt-1 flex flex-wrap items-baseline gap-x-2 text-lg font-semibold text-slate-900">
               <span>{entry?.name}</span>
               <span className="text-muted">→</span>
               <span>{target?.name}</span>
             </h2>
-            <div className="mt-1 text-xs text-muted">
-              {path.steps.length} hops · {path.nodes.map((n) => n.label).join(" → ")}
-            </div>
+            <div className="mt-1 text-xs text-muted">{path.steps.length} hops</div>
             {path.priorityLabel && (
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 <span
@@ -633,67 +626,52 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
               </div>
             )}
           </div>
-          <div className="flex shrink-0 flex-col items-end gap-1">
-            <div className="rounded-lg bg-red-500/15 px-3 py-1 text-xl font-bold tabular-nums text-red-700">
-              {(path.score * 100).toFixed(0)}%
+          <div className="flex shrink-0 flex-col items-end gap-1.5 text-right">
+            <div>
+              <div className="text-3xl font-semibold leading-none tabular-nums text-red-600">
+                {(path.score * 100).toFixed(0)}%
+              </div>
+              <div className="mt-1 flex items-center justify-end gap-1 text-[10px] text-muted">
+                exploit score
+                <InfoTip text="How likely an attacker can walk this whole route - the product of each hop's probability (p). Higher = easier to exploit." />
+              </div>
             </div>
-            <span className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted">
-              exploit score
-              <InfoTip text="How likely an attacker can walk this whole route - the product of each hop’s probability (p). Higher = easier to exploit." />
-            </span>
-            {path.scoreCiLow != null &&
-              path.scoreCiHigh != null &&
-              path.scoreCiHigh - path.scoreCiLow > 0.02 && (
-                <span
-                  className="flex items-center gap-1 text-[10px] tabular-nums text-muted"
-                  title="90% Bayesian credible interval on the score. Each hop's probability is a Beta posterior whose width reflects how much evidence backs it (tight for KEV/runtime, wide for a heuristic guess), propagated through the product. A wide band means the score rests on soft inputs; a narrow one means it's evidence-backed. This is how well we know the inputs - distinct from the 'if correlated' band, which is about the independence assumption."
-                >
+            <div className="flex flex-col items-end gap-0.5 text-[10px] tabular-nums text-muted">
+              {path.scoreCiLow != null && path.scoreCiHigh != null && path.scoreCiHigh - path.scoreCiLow > 0.02 ? (
+                <span title="90% credible interval from per-edge evidence (epistemic): tight = trust the number, wide = a rough estimate. Distinct from the correlation ceiling below.">
                   90% CI {(path.scoreCiLow * 100).toFixed(0)}-{(path.scoreCiHigh * 100).toFixed(0)}%
-                  <InfoTip text="Credible interval from per-edge evidence: narrow = trust the number, wide = treat it as a rough estimate." />
+                  {path.confidenceLabel ? ` · ${path.confidenceLabel} confidence` : ""}
                 </span>
+              ) : (
+                path.confidenceLabel && <span>{path.confidenceLabel} confidence</span>
               )}
-            {path.confidenceLabel && (
-              <span
-                className={`flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${CONFIDENCE_TONE[path.confidenceLabel] ?? CONFIDENCE_TONE.medium}`}
-                title="How much to trust this score, from how its edge weights were derived: evidence-backed (KEV/EPSS/runtime) hops raise it, severity/assumed hops lower it. An honest read of a modeled number, not false precision."
-              >
-                ● {path.confidenceLabel} confidence
-              </span>
-            )}
-            {path.correlatedHops &&
-              path.scoreUpperBound != null &&
-              path.scoreUpperBound - path.score > 0.05 && (
+              {path.correlatedHops && path.scoreUpperBound != null && path.scoreUpperBound - path.score > 0.05 && (
                 <span
-                  className="flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300"
-                  title="The exploit score multiplies the hops as if they were independent. Two or more hops here rest on the same basis (a shared cause), so the product is a lower bound - if they're correlated the real exploitability could be as high as the weakest hop. The true value lies in this band."
+                  className="text-amber-700"
+                  title="The score multiplies hops as if independent; if two or more share a cause, the real value could be as high as the weakest hop (the Fréchet ceiling)."
                 >
-                  ↑ up to {(path.scoreUpperBound * 100).toFixed(0)}% if correlated
+                  up to {(path.scoreUpperBound * 100).toFixed(0)}% if correlated
                 </span>
               )}
+            </div>
           </div>
         </div>
 
         {path.profileScores && path.profileScores.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted">
+            <span className="flex items-center gap-1 text-[10px] text-muted">
               by attacker profile
               <InfoTip text="The exploit score multiplies the hops as if independent. Conditioning on a latent attacker capability (commodity / criminal / APT) makes that honest within a profile, and marginalizing reintroduces the correlation the bare product drops - a path trivial for an APT can be out of reach for a commodity actor. Each chip is that class's end-to-end success probability ∏ p(e|c); 'blended' is the threat-model-weighted average Σ P(c)·∏ p(e|c)." />
             </span>
             {path.profileScores.map((p) => {
-              const tone =
-                p.profile === "apt"
-                  ? "border-red-300 bg-red-50 text-red-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300"
-                  : p.profile === "criminal"
-                    ? "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300"
-                    : "border-edge bg-slate-500/10 text-slate-600";
               const label = p.profile === "apt" ? "APT" : p.profile.charAt(0).toUpperCase() + p.profile.slice(1);
               return (
                 <span
                   key={p.profile}
-                  className={`rounded-md border px-1.5 py-0.5 text-[11px] font-medium tabular-nums ${tone}`}
+                  className="rounded-md border border-edge px-2 py-0.5 text-[11px] tabular-nums text-muted"
                   title={`Threat-model prior ${(p.prior * 100).toFixed(0)}%`}
                 >
-                  {label} {(p.score * 100).toFixed(0)}%
+                  {label} <span className="font-medium text-slate-900">{(p.score * 100).toFixed(0)}%</span>
                 </span>
               );
             })}
@@ -755,7 +733,7 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
 
       {/* ── Kill chain ───────────────────────────────────────────────── */}
       <section className="rounded-xl border border-edge bg-panel shadow-card p-5">
-        <h3 className="mb-3 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-widest text-muted">
+        <h3 className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-muted">
           Kill chain
           <InfoTip text="The attacker’s step-by-step route, mapped to MITRE ATT&CK. Each arrow is one hop with its traversal probability (p) and technique; chips flag exposure, crown jewels, live alerts, known-exploited CVEs and how each weight was derived. Hover a hop to run a what-if cut." />
         </h3>
@@ -854,7 +832,7 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
 
       {/* ── Remediations ─────────────────────────────────────────────── */}
       <section>
-        <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted">
+        <h3 className="mb-2 text-xs font-semibold text-muted">
           Suggested remediation{path.remediations.length === 1 ? "" : "s"}
           {path.remediations.length > 0 && ` (${path.remediations.length})`}
         </h3>
@@ -874,7 +852,7 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
       {/* ── Detection-as-code ────────────────────────────────────────── */}
       {path.detections.length > 0 && (
         <section>
-          <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted">Detection-as-code ({path.detections.length})</h3>
+          <h3 className="mb-2 text-xs font-semibold text-muted">Detection-as-code ({path.detections.length})</h3>
           <p className="mb-2 text-xs text-muted">
             Remediation cuts the path; these Falco/Sigma rules <span className="font-medium">watch</span> it - deploy them to catch
             exploitation of the exposed workload.

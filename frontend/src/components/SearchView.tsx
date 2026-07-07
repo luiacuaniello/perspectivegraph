@@ -51,7 +51,7 @@ export default function SearchView({ enabled = true }: { enabled?: boolean }) {
             isn’t configured. Everything else works without it.
           </p>
           <div className="mt-4 rounded-xl bg-ink px-4 py-3 text-left text-[12px]">
-            <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-slate-500">Enable it</div>
+            <div className="mb-1 text-[11px] font-medium text-muted">Enable it</div>
             <code className="block font-mono text-teal-700">
               docker compose --profile app --profile search up -d --build
             </code>

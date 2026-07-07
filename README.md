@@ -74,14 +74,17 @@ it a risk tool rather than a number generator (see [Honest probabilities](#hones
 
 - **Correlation** - the product assumes independent hops, so it also reports `scoreUpperBound` (the
   shared-cause bound) and flags `correlatedHops`; the real value lies in `[score, scoreUpperBound]`.
-- **Epistemic uncertainty** - each `p` is a **Beta posterior** whose width reflects its evidence
-  (KEV/runtime tight, heuristic wide), propagated to a 90% **credible interval** on the score.
-- **The independence fix** - the score is also marginalized over a latent **attacker capability**,
-  `S(P) = Σ_c P(c)·∏ p(e|c)` (commodity/criminal/APT), which reintroduces the correlation the bare
-  product drops and yields a per-profile breakdown. The **headline risk** (`riskSimulation`) is
-  marginalized the same way (`Σ_c P(c)·R_c`, `mixtureCompromiseProbability` + `profileCompromise`), so
-  the environment-level number and the per-path scores share one correlation model instead of the
-  Monte Carlo silently assuming independent edges.
+- **One coherent posterior** (`posteriorMean` + `[scoreCiLow, scoreCiHigh]`) - a single Monte Carlo
+  composes the two uncertainties that used to be separate, non-nesting numbers: **epistemic** (each `p`
+  is a **Beta posterior** whose width reflects its evidence - KEV/runtime tight, heuristic wide; a real
+  `evidence_count` sets it directly when known) and **attacker capability** (the score is marginalized
+  over a latent attacker, `S(P) = Σ_c P(c)·∏ p(e|c)` over commodity/criminal/APT, reintroducing the
+  correlation the bare product drops). `posteriorMean` is the coherent point estimate the credible
+  interval brackets (it even corrects the Jensen gap the plug-in `mixtureScore` ignores); `profileScores`
+  keep the per-profile breakdown. The **headline risk** (`riskSimulation`) is marginalized the same way
+  (`Σ_c P(c)·R_c`, `mixtureCompromiseProbability` + `profileCompromise`), so the environment number and
+  the per-path scores share one correlation model instead of the Monte Carlo silently assuming
+  independent edges.
 - **Calibration** - red-team/BAS verdicts grade the scores against reality (Brier/ECE + a diagnosis),
   so "55%" is a *defensible probability*, not a label - the line between a demo and production.
 
@@ -124,7 +127,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full design.
 - **Sensors:** Trivy, Semgrep, Cloud Custodian, Falco, CI build-provenance (`/ingest/build`), supply-chain cosign/SLSA/SBOM (`/ingest/supplychain`)
 - **Discovery:** Kubernetes (`/ingest/k8s`, incl. **container-escape** detection → ATT&CK T1611), cloud-network (`/ingest/cloudnet`), IAM privilege-escalation graph (`/ingest/iam`), and SSO/IdP federation (`/ingest/sso`)
 - **Data classification:** Macie/DLP findings (`/ingest/dataclass`) mark assets as crown jewels with an authoritative `classified:<source>:<kind>` basis
-- **Agentless connectors:** scheduled, leader-only **PULL** sources that reach out to a cloud account instead of waiting for an upload (`CONNECTORS_ENABLED`, health at `GET /connectors`). First connector: **AWS** (`aws`)
+- **Agentless connectors:** scheduled, leader-only **PULL** sources that reach out to a cloud account instead of waiting for an upload (`CONNECTORS_ENABLED`, health at `GET /connectors`). Connectors: **AWS** (`aws`) and **Azure** (`azure`)
 - **Multi-tenant + SSO:** per-tenant isolated graphs (proven by test), bearer/OIDC auth with per-tenant/per-app/role RBAC, and a runtime login gate (`GET /auth/config` → token or "Sign in with SSO")
 - **Dev workflow:** GitHub PR comment + a **PR merge-gate status** (red when the change opens an internet→crown-jewel path), and **remediation-as-PR** (`POST /remediation/pr` opens a branch+commit+PR with the fix)
 - **AI-native (Claude *or* HuggingFace):** natural-language Q&A over the graph, a board-level executive summary, and plain-English path explanations - grounded in the live attack paths (`ANTHROPIC_API_KEY`, or a free `HF_TOKEN`)
@@ -224,16 +227,21 @@ minutes.*
 
 Crucially a connector publishes onto the **same bus** as the webhooks, so it
 reuses the entire pipeline unchanged - identity resolution, the graph, the
-analyzer. The first connector, **`aws`**, doesn't even add new parsing: it pulls
-the EC2 `describe-*` network state and IAM authorization details and feeds them
-straight into the existing `cloudnet`/`iam` collectors. The acquisition sits
-behind a swappable transport - **`fixtures`** (local JSON, so the whole pull
-pipeline is provable with zero credentials) and **`aws-sdk-go-v2`** for live AWS
-(read-only, optional cross-account `AssumeRole`).
+analyzer. The **`aws`** connector doesn't even add new parsing: it pulls the EC2
+`describe-*` network state and IAM authorization details and feeds them straight
+into the existing `cloudnet`/`iam` collectors. The **`azure`** connector adds a
+thin mapping layer - Azure's native model differs, so NSG rules become security
+groups, VMs become instances and VNet peerings become VPC peerings, then the
+**same** `cloudnet` collector parses the result. The acquisition sits behind a
+swappable transport - **`fixtures`** (local JSON, so the whole pull pipeline is
+provable with zero credentials) and a live SDK path (`aws-sdk-go-v2` for AWS,
+read-only with optional cross-account `AssumeRole`; `azure-sdk-for-go` is the
+wired extension point for Azure).
 
 ```bash
-# Demo (no AWS account): pull from local describe-* JSON
-CONNECTORS_ENABLED=aws AWS_CONNECTOR_MODE=fixtures AWS_FIXTURES_DIR=./backend/testdata
+# Demo (no cloud account): pull from local describe-* / normalized JSON
+CONNECTORS_ENABLED=aws,azure AWS_CONNECTOR_MODE=fixtures AZURE_CONNECTOR_MODE=fixtures \
+  AWS_FIXTURES_DIR=./backend/testdata AZURE_FIXTURES_DIR=./backend/testdata
 curl -s localhost:8081/connectors | jq   # per-connector health: last run, last error, events
 
 # Live (read-only): assume a cross-account role and pull EC2 + IAM
@@ -1104,10 +1112,12 @@ Every optional capability is wired through both `docker-compose.yml` (as
 `${VAR:-}` passthroughs, off by default) and the chart, so a feature you enable in
 code is actually reachable in the running stack:
 
-- **Agentless connectors** - `--set connectors.enabled='{aws}'` pulls cloud posture
-  on a schedule (`connectors.interval`); the AWS connector runs from bundled
-  fixtures unless `connectors.aws.mode=live` (then `connectors.aws.region` + an
-  assumable read-only `connectors.aws.roleArn`).
+- **Agentless connectors** - `--set connectors.enabled='{aws,azure}'` pulls cloud
+  posture on a schedule (`connectors.interval`); the AWS connector runs from bundled
+  fixtures unless `connectors.aws.mode=sdk` (then `connectors.aws.region` + an
+  assumable read-only `connectors.aws.roleArn`); the Azure connector runs from
+  fixtures (`connectors.azure.mode`), mapping normalized `az` state onto the
+  `cloudnet` shape.
 - **SSO login** - `auth.oidc.clientId` / `authorizeUrl` / `tokenUrl` / `scopes` are
   the SPA-facing coordinates the dashboard login gate reads from `GET /auth/config`
   to run the Authorization-Code + PKCE flow (the `issuer`/`audience`/`jwksUrl` trio

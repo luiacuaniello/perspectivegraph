@@ -27,7 +27,7 @@ func TestWeightBasisOf(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			basis, conf := weightBasisOf(tc.edge, tc.from, tc.to)
+			basis, conf, _ := weightBasisOf(tc.edge, tc.from, tc.to)
 			if basis != tc.wantBasis {
 				t.Errorf("basis = %q, want %q", basis, tc.wantBasis)
 			}

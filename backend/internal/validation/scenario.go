@@ -21,6 +21,7 @@ type SyntheticVerdict struct {
 	PredictedScore float64
 	Hops           int
 	CorrelatedHops bool
+	WeightBasis    string
 	Detected       *bool
 }
 
@@ -37,24 +38,38 @@ var Scenarios = []struct {
 	{"correlated", "#6", "correlated-hop paths over-confirm; independents stay calibrated"},
 	{"low-resolution", "low-resolution", "outcome independent of the score"},
 	{"detection", "#7", "calibrated, but reachable high-score paths are caught"},
+	{"per-basis", "per-basis", "EPSS hops run hot, heuristic hops run cold - a global rescale can't fix both"},
 }
 
 // groundTruths maps a scenario to its reality model: given the model's predicted path
 // score p (and whether the path is correlated-hops), it returns the TRUE per-path
 // success probability the outcome is drawn from. The gap between p and this is the
 // miscalibration the instrument must detect and attribute.
-var groundTruths = map[string]func(p float64, correlated bool) float64{
-	"calibrated":     func(p float64, _ bool) float64 { return p },
-	"overconfident":  func(p float64, _ bool) float64 { return math.Pow(p, 2.2) },
-	"underconfident": func(p float64, _ bool) float64 { return math.Pow(p, 0.45) },
-	"correlated": func(p float64, correlated bool) float64 {
+var groundTruths = map[string]func(p float64, correlated bool, basis string) float64{
+	"calibrated":     func(p float64, _ bool, _ string) float64 { return p },
+	"overconfident":  func(p float64, _ bool, _ string) float64 { return math.Pow(p, 2.2) },
+	"underconfident": func(p float64, _ bool, _ string) float64 { return math.Pow(p, 0.45) },
+	"correlated": func(p float64, correlated bool, _ string) float64 {
 		if correlated {
 			return math.Pow(p, 0.3) // over-confirm only on correlated paths ⇒ structural
 		}
 		return p
 	},
-	"low-resolution": func(float64, bool) float64 { return 0.5 }, // no resolution
-	"detection":      func(p float64, _ bool) float64 { return p }, // signal is in Detected
+	"low-resolution": func(float64, bool, string) float64 { return 0.5 }, // no resolution
+	"detection":      func(p float64, _ bool, _ string) float64 { return p }, // signal is in Detected
+	// per-basis: the SAME score means different things by evidence provenance - EPSS
+	// hops over-predict (run hot), heuristic hops under-predict (run cold). A single
+	// global monotone rescale can't separate them; a per-basis Platt correction can.
+	"per-basis": func(p float64, _ bool, basis string) float64 {
+		switch basis {
+		case "epss":
+			return math.Pow(p, 2.2) // hot
+		case "heuristic":
+			return math.Pow(p, 0.45) // cold
+		default:
+			return p
+		}
+	},
 }
 
 // GenerateScenario draws `count` synthetic verdicts for a scenario, deterministically
@@ -70,13 +85,22 @@ func GenerateScenario(scenario string, count int, seed uint64) ([]SyntheticVerdi
 		p := 0.05 + rng.Float64()*0.9 // predicted score in [0.05, 0.95]
 		hops := 1 + rng.IntN(8)       // 1..8 hops
 		correlated := rng.Float64() < 0.4
-		isConf := rng.Float64() <= gt(p, correlated)
+		basis := ""
+		if scenario == "per-basis" { // half the verdicts EPSS-based, half heuristic
+			if rng.Float64() < 0.5 {
+				basis = "epss"
+			} else {
+				basis = "heuristic"
+			}
+		}
+		isConf := rng.Float64() <= gt(p, correlated, basis)
 		v := SyntheticVerdict{
 			PathID:         fmt.Sprintf("gv-%s-%d", scenario, i),
 			Outcome:        Refuted,
 			PredictedScore: p,
 			Hops:           hops,
 			CorrelatedHops: correlated,
+			WeightBasis:    basis,
 		}
 		if isConf {
 			v.Outcome = Confirmed

@@ -19,6 +19,13 @@ function priorityTone(label?: string | null): string {
   return "bg-slate-500/15 text-slate-600";
 }
 
+// In the truncating list, strip the entry's trailing parenthetical (e.g. the
+// "(0.0.0.0/0)" CIDR) so the more important target name isn't what gets cut. The
+// full entry is on the detail panel and the graph.
+function shortEntry(name?: string): string {
+  return (name ?? "").replace(/\s*\([^)]*\)\s*$/, "");
+}
+
 export default function AttackPathList({ paths, selectedId, onSelect }: Props) {
   if (paths.length === 0) {
     return (
@@ -61,7 +68,7 @@ export default function AttackPathList({ paths, selectedId, onSelect }: Props) {
                   />
                 )}
                 <span className="truncate">
-                  {entry?.name} <span className="text-slate-500">→</span> {target?.name}
+                  {shortEntry(entry?.name)} <span className="text-slate-500">→</span> {target?.name}
                 </span>
               </span>
               {p.priorityLabel && (
@@ -79,7 +86,7 @@ export default function AttackPathList({ paths, selectedId, onSelect }: Props) {
               )}
               {p.suppressed && (
                 <span
-                  className="shrink-0 rounded-md bg-slate-500/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-500"
+                  className="shrink-0 rounded-md bg-slate-500/15 px-1.5 py-0.5 text-[10px] font-medium text-slate-500"
                   title={
                     p.suppression
                       ? `Suppressed · ${p.suppression.reason} · ${p.suppression.owner}`

@@ -35,6 +35,43 @@ func twoRouteSnap() graph.Snapshot {
 	}
 }
 
+// sharedCauseSnap: two internet routes reach the jewel, both gated by the same
+// weakness. With cause set, the two final hops are one shared draw (comonotonic), so
+// they fail together; with cause empty they are independent.
+func sharedCauseSnap(cause string) graph.Snapshot {
+	return graph.Snapshot{
+		Nodes: []ontology.Node{
+			{ID: "lb", Label: ontology.LabelLoadBalancer, Name: "edge-lb", Properties: map[string]any{ontology.PropInternetExposed: true}},
+			{ID: "a", Label: ontology.LabelContainer, Name: "a"},
+			{ID: "b", Label: ontology.LabelContainer, Name: "b"},
+			{ID: "role", Label: ontology.LabelIAMRole, Name: "admin", Properties: map[string]any{ontology.PropCrownJewel: true}},
+		},
+		Edges: []ontology.Edge{
+			{Type: ontology.EdgeExposes, From: "lb", To: "a", ExploitProbability: 1.0},
+			{Type: ontology.EdgeExposes, From: "lb", To: "b", ExploitProbability: 1.0},
+			{Type: ontology.EdgeExploits, From: "a", To: "role", ExploitProbability: 0.5, Properties: map[string]any{ontology.PropWeightCause: cause}},
+			{Type: ontology.EdgeExploits, From: "b", To: "role", ExploitProbability: 0.5, Properties: map[string]any{ontology.PropWeightCause: cause}},
+		},
+	}
+}
+
+// P3: two routes that rest on the SAME weakness are not real redundancy. Independent
+// sampling reports P(jewel) = 1-(1-0.5)² = 0.75; the common-cause coupling reports the
+// honest 0.5 (one weakness: it holds or it doesn't, and both routes go with it).
+func TestSharedCauseCouplesReachability(t *testing.T) {
+	indep := SimulateRisk(sharedCauseSnap(""), 20000, 1).AnyCompromiseProbability
+	if math.Abs(indep-0.75) > 0.02 {
+		t.Errorf("independent routes: P(jewel) = %.4f, want ≈ 0.75", indep)
+	}
+	coupled := SimulateRisk(sharedCauseSnap("CVE-X"), 20000, 1).AnyCompromiseProbability
+	if math.Abs(coupled-0.5) > 0.02 {
+		t.Errorf("common-cause routes: P(jewel) = %.4f, want ≈ 0.50 (they fail together)", coupled)
+	}
+	if coupled >= indep {
+		t.Errorf("common-cause coupling (%.4f) should reduce compromise vs independent (%.4f)", coupled, indep)
+	}
+}
+
 func TestSimulateRiskUnionExceedsBestPath(t *testing.T) {
 	sim := SimulateRisk(twoRouteSnap(), 20000, 1)
 	if len(sim.CrownJewels) != 1 {

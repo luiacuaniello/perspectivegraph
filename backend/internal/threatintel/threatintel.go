@@ -13,10 +13,12 @@ package threatintel
 import (
 	"context"
 	"log/slog"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/httpx"
@@ -36,20 +38,19 @@ type Intel struct {
 }
 
 // EdgeProbability upgrades a severity-derived fallback with observed intel:
-// a KEV CVE is exploited in the wild, so it floors high; otherwise EPSS is the
-// better estimate when known; otherwise the severity fallback stands.
+// a KEV CVE is exploited in the wild, so it floors high; otherwise EPSS - mapped
+// to a conditional-traversal proxy (see TraversalFromEPSS) - is the better estimate
+// when known; otherwise the severity fallback stands.
 //
-// CAVEAT (the input-provenance gap calibration is meant to surface): EPSS is a
-// *marginal* probability - P(any exploitation activity is observed in the wild for
-// this CVE within 30 days) - NOT the quantity the path score actually needs, which
-// is P(an attacker traverses THIS edge | they are on this path in THIS environment).
-// EPSS is a global base rate, usually small in absolute terms even for exploitable
-// CVEs, so taking it as p(e) tends to *understate* a present attacker's traversal.
-// We use it as-is on purpose: it is a calibration-bearing input, and the calibration
-// loop (validation.Calibration) is exactly what reveals and corrects the bias on real
-// verdicts (likely "underconfident on EPSS edges → recalibrate") rather than us
-// silently transforming it on a hunch. The hop also carries weight_basis="epss" so
-// the provenance - and this caveat - travel with the score.
+// CAVEAT this addresses (the input-provenance gap): EPSS is a *marginal* probability
+// - P(any exploitation activity is observed in the wild for this CVE within 30 days)
+// - NOT the quantity the path score needs, which is P(an attacker traverses THIS edge
+// | they are positioned on this path). EPSS is a global base rate, usually small in
+// absolute terms even for exploitable CVEs, so taking it as p(e) tends to *understate*
+// a present attacker's traversal. TraversalFromEPSS is the explicit hook that corrects
+// it; it is the identity by default (EPSS used as-is, the honest baseline the
+// calibration loop still grades) and applies the configured lift only when opted in.
+// The hop carries weight_basis="epss" so the provenance travels with the score.
 func (i Intel) EdgeProbability(fallback float64) float64 {
 	switch {
 	case i.KEV:
@@ -58,10 +59,50 @@ func (i Intel) EdgeProbability(fallback float64) float64 {
 		}
 		return 0.95
 	case i.EPSS > 0:
-		return i.EPSS
+		return TraversalFromEPSS(i.EPSS)
 	default:
 		return fallback
 	}
+}
+
+// traversalGamma is the exponent of the EPSS -> conditional-traversal map, set once at
+// startup. atomic so EdgeProbability reads it lock-free. Default 1.0 (identity).
+var traversalGamma atomic.Uint64 // float64 bits; 0 ⇒ unset ⇒ identity
+
+// SetTraversalGamma configures the EPSS -> traversal exponent (see TraversalFromEPSS).
+// gamma <= 0 resets to the identity (1.0). Safe to call once at startup.
+func SetTraversalGamma(gamma float64) {
+	if gamma <= 0 {
+		gamma = 1.0
+	}
+	traversalGamma.Store(math.Float64bits(gamma))
+}
+
+// TraversalFromEPSS maps a marginal EPSS score to a conditional-traversal proxy
+// p(traverse | positioned) = EPSS^gamma. gamma < 1 lifts EPSS (correcting the
+// marginal's under-statement of a positioned attacker), gamma = 1 returns EPSS
+// unchanged (the default). Monotone and bounded in [0,1]. This is a *prior* transform,
+// not a fitted map: fitting p(traverse|EPSS) from data needs per-edge verdict ground
+// truth (path-level verdicts don't isolate a single edge), so until that telemetry
+// exists an operator opts into the prior via EPSS_TRAVERSAL_GAMMA rather than the
+// engine rewriting the input on a hunch.
+func TraversalFromEPSS(epss float64) float64 {
+	bits := traversalGamma.Load()
+	if bits == 0 {
+		return epss // unset ⇒ identity
+	}
+	g := math.Float64frombits(bits)
+	if g == 1.0 {
+		return epss
+	}
+	p := math.Pow(epss, g)
+	if p < 0 {
+		return 0
+	}
+	if p > 1 {
+		return 1
+	}
+	return p
 }
 
 // Basis names the strongest evidence behind the probability EdgeProbability

@@ -48,10 +48,16 @@ func concentration(basisConf float64) float64 {
 	return concMin + (concMax-concMin)*math.Pow(c, concGamma)
 }
 
-// betaParams turns a point probability p and its basis confidence into the (α,β)
-// of a Beta posterior with mean p and evidence-scaled concentration. p is nudged
-// off {0,1} so α,β stay strictly positive.
-func betaParams(p, basisConf float64) (alpha, beta float64) {
+// kappaPrior is the Beta pseudo-count added to a real evidence count, so a single
+// corroborating observation still yields a proper (not overconfident) posterior.
+const kappaPrior = 2.0
+
+// betaParams turns a point probability p, its basis confidence, and (optionally) the
+// number of independent observations behind it into the (α,β) of a Beta posterior
+// with mean p. When evidenceCount > 0 the concentration is evidence-count-derived
+// (κ = count + prior) - the proper Bayesian width; otherwise it falls back to the
+// basis-confidence heuristic. p is nudged off {0,1} so α,β stay strictly positive.
+func betaParams(p, basisConf float64, evidenceCount int) (alpha, beta float64) {
 	if p < betaEps {
 		p = betaEps
 	}
@@ -59,6 +65,9 @@ func betaParams(p, basisConf float64) (alpha, beta float64) {
 		p = 1 - betaEps
 	}
 	k := concentration(basisConf)
+	if evidenceCount > 0 {
+		k = float64(evidenceCount) + kappaPrior
+	}
 	return p * k, (1 - p) * k
 }
 
@@ -99,16 +108,20 @@ func sampleBeta(rng *rand.Rand, alpha, beta float64) float64 {
 	return x / (x + y)
 }
 
-// scoreCredibleInterval returns the 90% credible interval (5th–95th percentile)
-// on a path's score S(P)=∏p, propagating each hop's Beta posterior. The point
-// Score is the product of the posterior means; this brackets it with the spread
-// the evidence justifies - tight when hops rest on observed exploitation, wide
-// when they're heuristic guesses. Deterministic: the sampler is seeded from the
-// path id, so a parallel pass produces a byte-identical interval. An empty path
-// collapses to (score, score).
-func scoreCredibleInterval(id string, steps []Step, score float64) (lo, hi float64) {
+// unifiedScorePosterior samples the ONE coherent posterior of a path's success
+// probability, composing the two uncertainties that the separate lenses used to keep
+// apart: epistemic (each hop's probability is a Beta posterior whose width reflects
+// its evidence) and attacker capability (the Σ_c P(c)·∏ p(e|c) mixture that
+// reintroduces the positive correlation the bare product drops). Per draw it samples
+// every hop's Beta once - the SAME uncertain world faces each attacker profile - and
+// forms the attacker-marginal mixture at those sampled probabilities. The mean is the
+// coherent point estimate (it even corrects the Jensen gap the plug-in mixture
+// ignores); the 5th/95th percentiles are the credible interval that now brackets the
+// mixture, not the independent product. Deterministic (seeded from the path id) so a
+// parallel pass is byte-identical; an empty path collapses to (point, point, point).
+func unifiedScorePosterior(id string, steps []Step, profiles []AttackerProfile, point float64) (mean, lo, hi float64) {
 	if len(steps) == 0 {
-		return score, score
+		return point, point, point
 	}
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(id))
@@ -116,28 +129,39 @@ func scoreCredibleInterval(id string, steps []Step, score float64) (lo, hi float
 
 	ab := make([][2]float64, len(steps))
 	for i, st := range steps {
-		a, b := betaParams(st.Probability, st.WeightConfidence)
+		a, b := betaParams(st.Probability, st.WeightConfidence, st.EvidenceCount)
 		ab[i] = [2]float64{a, b}
 	}
-	samples := make([]float64, scoreSamples)
-	for s := range samples {
-		prod := 1.0
-		for _, p := range ab {
-			prod *= sampleBeta(rng, p[0], p[1])
+	sampled := make([]float64, len(steps))
+	draws := make([]float64, scoreSamples)
+	var sum float64
+	for d := range draws {
+		for i := range steps {
+			sampled[i] = sampleBeta(rng, ab[i][0], ab[i][1]) // epistemic draw, shared across profiles
 		}
-		samples[s] = prod
+		var mix float64
+		for _, c := range profiles {
+			prod := 1.0
+			for i, st := range steps {
+				prod *= conditionalProb(sampled[i], st.WeightBasis, c.Skill)
+			}
+			mix += c.Prior * prod
+		}
+		draws[d] = mix
+		sum += mix
 	}
-	sort.Float64s(samples)
-	lo = samples[pctIndex(0.05, scoreSamples)]
-	hi = samples[pctIndex(0.95, scoreSamples)]
-	// Keep the point estimate inside its own interval despite MC noise / Beta skew.
-	if lo > score {
-		lo = score
+	mean = sum / float64(len(draws))
+	sort.Float64s(draws)
+	lo = draws[pctIndex(0.05, scoreSamples)]
+	hi = draws[pctIndex(0.95, scoreSamples)]
+	// Keep the posterior mean inside its own interval despite MC noise / skew.
+	if lo > mean {
+		lo = mean
 	}
-	if hi < score {
-		hi = score
+	if hi < mean {
+		hi = mean
 	}
-	return lo, hi
+	return mean, lo, hi
 }
 
 // pctIndex is the nearest-rank index into a sorted slice of length n for quantile

@@ -80,6 +80,19 @@ type Calibration struct {
 	// hops, long vs short), so a residual error can be *attributed*: concentrated on
 	// correlated/long paths ⇒ structural (#6).
 	Segments []CalibrationSegment `json:"segments,omitempty"`
+	// BasisSegments break the calibration down by the path's weakest evidence basis
+	// (kev/epss/cvss/severity/heuristic), so a residual error can be attributed to a
+	// provenance class - the diagnostic behind per-basis recalibration (P1).
+	BasisSegments []CalibrationSegment `json:"basis_segments,omitempty"`
+	// BrierRecalibratedByBasis is the Brier a *per-basis* Platt recalibration reaches
+	// (cross-validated). When it beats BrierRecalibrated (the global monotone floor) by
+	// a material margin, the miscalibration is provenance-structured and a single global
+	// rescale is not enough - apply RecalibrationByBasis instead.
+	BrierRecalibratedByBasis float64 `json:"brier_recalibrated_by_basis,omitempty"`
+	// RecalibrationByBasis is the learned per-basis correction (apply
+	// sigmoid(intercept + slope·logit(score)) for a path whose weakest hop basis is
+	// Basis), published for out-of-band use like RecalibrationMap.
+	RecalibrationByBasis []BasisRecalibration `json:"recalibration_by_basis,omitempty"`
 	// Detection summarizes, over confirmed (reachable) verdicts that carry a detection
 	// report, how often the path was actually caught/blocked - the evidence for the
 	// detection axis (#7). Nil until any confirmed verdict carries a Detected flag.
@@ -87,6 +100,13 @@ type Calibration struct {
 	// Diagnosis is the one-line gate recommendation derived from all of the above:
 	// calibrated / recalibrate-first / structural-#6 / detection-#7 / low-resolution.
 	Diagnosis string `json:"diagnosis,omitempty"`
+	// Target is the *target-scoped* calibration: verdicts that validated whether a
+	// crown jewel was reached AT ALL (by any route) grade the per-target compromise
+	// probability, not a single path's S(P). It is kept a separate track because they
+	// are different events - grading S(P) against an any-route outcome would bias the
+	// report. The top-level fields are the path-scoped track (S(P) vs a specific path).
+	// Nil when there are no target-scoped verdicts; its own Target is always nil.
+	Target *Calibration `json:"target,omitempty"`
 	// Persistent reports whether the verdict store survives a restart (VALIDATIONS_PATH
 	// set). When false, the calibration dataset is in-memory and is lost on restart -
 	// fine for a demo, but for a real engagement that accumulates verdicts over weeks it
@@ -115,41 +135,64 @@ func observedOutcome(o Outcome) (y float64, isSample bool) {
 	}
 }
 
-// Calibration computes the calibration report over a tenant's tested verdicts
-// that carry a predicted score. A nil *Store and an empty dataset both yield a
-// well-formed, zero-valued report (HasData false), so callers never special-case.
+// Calibration computes a tenant's calibration report as two independent tracks,
+// each grading the right prediction against the right event: the top-level fields
+// are the *path-scoped* track (predicted S(P) vs "this path was traversable"), and
+// the nested Target is the *target-scoped* track (predicted per-target compromise
+// probability vs "the crown jewel was reached at all"). Conflating them - grading a
+// path's S(P) against an any-route outcome - would bias the report, so the scope on
+// each verdict routes it to the correct track. A nil *Store and an empty dataset
+// both yield a well-formed, zero-valued report (HasData false).
 func (s *Store) Calibration(tenant string) Calibration {
-	cal := Calibration{Bins: emptyBins(), Verdict: "insufficient-data"}
 	if s == nil {
-		return cal
+		return Calibration{Bins: emptyBins(), Verdict: "insufficient-data"}
 	}
-	cal.Persistent = s.Persistent()
+	persistent := s.Persistent()
 	tenant = tenantKey(tenant)
 
 	s.mu.RLock()
 	records := s.byTenant[tenant]
-
-	samples := make([]calSample, 0, len(records))
 	detection := detectionStats(records)
+	pathSamples := make([]calSample, 0, len(records))
+	targetSamples := make([]calSample, 0, len(records))
 	for _, r := range records {
 		y, isSample := observedOutcome(r.Outcome)
-		if !isSample || r.PredictedScore <= 0 {
-			continue // no scored prediction to grade against
+		if !isSample {
+			continue
 		}
-		p := r.PredictedScore
-		if p > 1 {
-			p = 1
+		if scopeOrDefault(r.Scope) == ScopeTarget {
+			if r.PredictedCompromise > 0 {
+				targetSamples = append(targetSamples,
+					calSample{p: clampTop(r.PredictedCompromise), y: y, correlated: r.CorrelatedHops, hops: r.Hops, basis: r.WeightBasis})
+			}
+			continue
 		}
-		samples = append(samples, calSample{p: p, y: y, correlated: r.CorrelatedHops, hops: r.Hops})
+		if r.PredictedScore > 0 {
+			pathSamples = append(pathSamples,
+				calSample{p: clampTop(r.PredictedScore), y: y, correlated: r.CorrelatedHops, hops: r.Hops, basis: r.WeightBasis})
+		}
 	}
 	s.mu.RUnlock()
 
+	// Detection spans all confirmed verdicts (scope-agnostic) and must be set before
+	// diagnose(), so each track's diagnosis can raise the detection axis (#7).
+	cal := computeCalibration(pathSamples, detection, persistent)
+	if len(targetSamples) > 0 {
+		tcal := computeCalibration(targetSamples, detection, persistent)
+		cal.Target = &tcal
+	}
+	return cal
+}
+
+// computeCalibration grades a set of (prediction, outcome) samples - the shared core
+// behind both the path-scoped and target-scoped tracks. detection is attached before
+// diagnose() so the detection axis (#7) can fire; the caller attaches Target.
+func computeCalibration(samples []calSample, detection *DetectionStats, persistent bool) Calibration {
+	cal := Calibration{Bins: emptyBins(), Verdict: "insufficient-data", Persistent: persistent, Detection: detection}
 	n := len(samples)
 	if n == 0 {
-		cal.Detection = detection
 		return cal
 	}
-
 	core := calibrationStats(samples)
 	cal.Samples = core.n
 	cal.HasData = true
@@ -160,7 +203,6 @@ func (s *Store) Calibration(tenant string) Calibration {
 	cal.ECE = core.ece
 	cal.Verdict = core.verdict
 	cal.Bins = reliabilityDiagram(samples)
-	cal.Detection = detection
 
 	// Below the sample floor we report the raw numbers but withhold the calibrated
 	// reads (rescale, recalibration, segment diagnosis) - they would just fit noise.
@@ -176,8 +218,21 @@ func (s *Store) Calibration(tenant string) Calibration {
 	// use rather than silently rewriting the engine's scores.
 	cal.BrierRecalibrated, cal.RecalibrationMap = recalibrate(samples)
 	cal.Segments = calibrationSegments(samples)
+	// P1: does the miscalibration differ by evidence basis? Fit a per-basis correction
+	// and measure how much it beats the global monotone rescale.
+	cal.BasisSegments = basisSegments(samples)
+	cal.BrierRecalibratedByBasis, cal.RecalibrationByBasis = recalibrateByBasis(samples)
 	cal.Diagnosis = diagnose(cal)
 	return cal
+}
+
+// clampTop caps a probability at 1 (a server-captured prediction should already be
+// in range, but a client-supplied fallback might not be).
+func clampTop(p float64) float64 {
+	if p > 1 {
+		return 1
+	}
+	return p
 }
 
 // crossEntropy is the per-sample log loss -[y ln p + (1-y) ln(1-p)], with p

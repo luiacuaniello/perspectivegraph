@@ -134,6 +134,7 @@ func (a *API) Handler() (http.Handler, error) {
 	// writes additionally require admin (checked inside, when auth is on).
 	mux.Handle("GET /validations", secured("validations_list", http.HandlerFunc(a.listValidations)))
 	mux.Handle("POST /validations", secured("validations_put", http.HandlerFunc(a.putValidation)))
+	mux.Handle("POST /validations/import", secured("validations_import", http.HandlerFunc(a.importValidations)))
 	mux.Handle("DELETE /validations/{id}", secured("validations_delete", http.HandlerFunc(a.deleteValidation)))
 
 	return a.withCORS(mux), nil

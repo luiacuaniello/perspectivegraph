@@ -28,6 +28,7 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/config"
 	"github.com/luiacuaniello/perspectivegraph/internal/connector"
 	awsconn "github.com/luiacuaniello/perspectivegraph/internal/connector/aws"
+	azureconn "github.com/luiacuaniello/perspectivegraph/internal/connector/azure"
 	"github.com/luiacuaniello/perspectivegraph/internal/cryptostore"
 	"github.com/luiacuaniello/perspectivegraph/internal/exportsign"
 	"github.com/luiacuaniello/perspectivegraph/internal/graph"
@@ -263,6 +264,8 @@ func run(ctx context.Context, cfg config.Config) error {
 	// Threat-model priors for the attacker-profile mixture score (package-level, read
 	// lock-free by the per-path scoring). Empty config keeps the built-in defaults.
 	analyzer.SetAttackerProfilePriors(cfg.AttackerProfilePriors)
+	// EPSS -> conditional-traversal exponent (default 1.0 = identity = EPSS as-is).
+	threatintel.SetTraversalGamma(cfg.EPSSTraversalGamma)
 
 	analyzerSvc := analyzer.NewService(manager, cfg.AnalyzerInterval, sinks).
 		WithPolicy(policy.NewEngine(policy.Builtins()...)).
@@ -506,6 +509,17 @@ func buildConnectors(ctx context.Context, cfg config.Config, pub connector.Publi
 				continue
 			}
 			slog.Info("aws connector enabled", "mode", c.Mode())
+			conns = append(conns, c)
+		case "azure":
+			c, err := azureconn.NewFromConfig(ctx, azureconn.Config{
+				Mode:        cfg.AzureConnectorMode,
+				FixturesDir: cfg.AzureFixturesDir,
+			})
+			if err != nil {
+				slog.Error("azure connector disabled", "err", err)
+				continue
+			}
+			slog.Info("azure connector enabled", "mode", c.Mode())
 			conns = append(conns, c)
 		default:
 			slog.Warn("unknown connector, skipping", "name", name)

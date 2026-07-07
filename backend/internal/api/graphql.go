@@ -394,9 +394,10 @@ func (a *API) Schema() (graphql.Schema, error) {
 			"confidenceLabel":  &graphql.Field{Type: graphql.String, Description: "Qualitative band for the score's trustworthiness: high|medium|low - an honest answer to \"why this %?\" instead of false precision.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.ConfidenceLabel })},
 			"scoreUpperBound":  &graphql.Field{Type: graphql.Float, Description: "The path score if its hops share a common cause rather than being independent: the weakest hop's probability (the comonotonic upper bound). The headline score multiplies hops as if independent - a lower bound under positive correlation - so the true exploitability lies in [score, scoreUpperBound]. A wide gap means the independence assumption matters.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.ScoreUpperBound })},
 			"correlatedHops":   &graphql.Field{Type: graphql.Boolean, Description: "True when two or more hops rest on the same weight basis - a concrete reason the hops may not be independent, so the score/scoreUpperBound band is grounded rather than theoretical. Does not change the score.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.CorrelatedHops })},
-			"scoreCiLow":       &graphql.Field{Type: graphql.Float, Description: "Lower bound of the 90% Bayesian credible interval on the score: each hop is a Beta posterior whose width reflects how much evidence backs its probability (tight for kev/runtime, wide for heuristic), propagated through the product. This is *epistemic* uncertainty (how well we know the inputs), distinct from scoreUpperBound's *correlation* uncertainty.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.ScoreCILow })},
-			"scoreCiHigh":      &graphql.Field{Type: graphql.Float, Description: "Upper bound of the 90% Bayesian credible interval on the score (see scoreCiLow). A wide [scoreCiLow, scoreCiHigh] means the score rests on soft inputs; a narrow one means it's evidence-backed. The point score always lies inside.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.ScoreCIHigh })},
-			"mixtureScore":     &graphql.Field{Type: graphql.Float, Description: "The score marginalized over a latent attacker-capability variable: Σ P(c)·∏ p(e|c). The bare score assumes hops are independent; conditioning on a profile makes that honest within a profile, and marginalizing reintroduces the positive correlation the product drops. See profileScores for the per-profile breakdown.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.MixtureScore })},
+			"posteriorMean":    &graphql.Field{Type: graphql.Float, Description: "The mean of the ONE coherent posterior of the path's success probability: a single Monte Carlo composing epistemic uncertainty (each hop a Beta posterior) with the attacker-capability mixture (Σ_c P(c)·∏ p(e|c)). It is the point estimate [scoreCiLow, scoreCiHigh] brackets, and it even corrects the Jensen gap the plug-in mixtureScore ignores. It sits inside its interval and under scoreUpperBound (the Fréchet ceiling); being the attacker-marginal it can sit above or below the bare independent score depending on the profile priors.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.PosteriorMean })},
+			"scoreCiLow":       &graphql.Field{Type: graphql.Float, Description: "Lower bound of the 90% credible interval of the unified posterior (posteriorMean): it composes *epistemic* uncertainty (each hop a Beta posterior whose width reflects its evidence) with the *attacker-capability* mixture, so one interval brackets the correlation-aware score rather than the bare independent product.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.ScoreCILow })},
+			"scoreCiHigh":      &graphql.Field{Type: graphql.Float, Description: "Upper bound of the 90% credible interval of the unified posterior (see scoreCiLow/posteriorMean). Wide ⇒ the score rests on soft inputs; narrow ⇒ evidence-backed. posteriorMean always lies inside.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.ScoreCIHigh })},
+			"mixtureScore":     &graphql.Field{Type: graphql.Float, Description: "The deterministic plug-in of the attacker-capability mixture, Σ P(c)·∏ p(e|c) at the point probabilities (the fast closed form; posteriorMean is its sampled, epistemic-aware counterpart). See profileScores for the per-profile breakdown.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.MixtureScore })},
 			"profileScores":    &graphql.Field{Type: graphql.NewList(profileScoreType), Description: "Per-attacker-profile success probability ∏ p(e|c) with that profile's prior - the \"72% vs an APT, 18% vs commodity\" breakdown a SOC triages on. A path trivial for an APT but hard for a commodity actor reads very differently here than from the single naive score.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.ProfileScores })},
 			"priority":         &graphql.Field{Type: graphql.Float, Description: "Composite triage priority [0,100] blending exploitability (score) and trust (confidence) with corroboration (runtime-confirmed, KEV on path), target sensitivity (classified > tagged > inferred jewel), and entry blast radius. Paths are returned priority-first, so attackPaths(limit:N) is the actionable Top-N.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.Priority })},
 			"priorityLabel":    &graphql.Field{Type: graphql.String, Description: "Priority band: P1 (≥70) | P2 (≥40) | P3 - the \"fix these first\" bucket.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.PriorityLabel })},
@@ -692,6 +693,17 @@ func (a *API) Schema() (graphql.Schema, error) {
 		},
 	})
 
+	basisRecalibrationType := graphql.NewObject(graphql.ObjectConfig{
+		Name:        "BasisRecalibration",
+		Description: "The learned per-basis Platt correction (P1): for a path whose weakest evidence hop is `basis`, apply sigmoid(intercept + slope*logit(score)). Slope~1 and intercept~0 mean that basis is already calibrated; a large shift means that provenance class (e.g. EPSS, heuristic) is systematically over/under-confident.",
+		Fields: graphql.Fields{
+			"basis":     &graphql.Field{Type: graphql.String, Resolve: field[validation.BasisRecalibration](func(b validation.BasisRecalibration) any { return b.Basis })},
+			"samples":   &graphql.Field{Type: graphql.Int, Resolve: field[validation.BasisRecalibration](func(b validation.BasisRecalibration) any { return b.Samples })},
+			"intercept": &graphql.Field{Type: graphql.Float, Resolve: field[validation.BasisRecalibration](func(b validation.BasisRecalibration) any { return b.Intercept })},
+			"slope":     &graphql.Field{Type: graphql.Float, Resolve: field[validation.BasisRecalibration](func(b validation.BasisRecalibration) any { return b.Slope })},
+		},
+	})
+
 	detectionStatsType := graphql.NewObject(graphql.ObjectConfig{
 		Name:        "DetectionStats",
 		Description: "Of reachable (confirmed) paths carrying a detection report, how often the path was actually caught/blocked - the evidence for the detection axis (#7). A high rate on high-score paths means the score over-predicts *undetected* compromise.",
@@ -726,6 +738,9 @@ func (a *API) Schema() (graphql.Schema, error) {
 			"brierRecalibrated": &graphql.Field{Type: graphql.Float, Description: "Brier after an isotonic recalibration - the floor a monotone rescale can reach. If it's good, recalibration suffices (apply recalibrationMap); if it's still high, the model lacks resolution and no rescale fixes it (the line past which #6/#7 are warranted).", Resolve: field[validation.Calibration](func(c validation.Calibration) any { return c.BrierRecalibrated })},
 			"recalibrationMap":  &graphql.Field{Type: graphql.NewList(calibrationPointType), Description: "The learned monotone curve (raw score → calibrated probability) a consumer can apply out-of-band. The engine never silently rewrites scores.", Resolve: field[validation.Calibration](func(c validation.Calibration) any { return c.RecalibrationMap })},
 			"segments":          &graphql.Field{Type: graphql.NewList(calibrationSegmentType), Description: "Calibration split by path structure (correlated/independent hops, long/short), so a residual error can be attributed to a structural cause (#6).", Resolve: field[validation.Calibration](func(c validation.Calibration) any { return c.Segments })},
+			"basisSegments":     &graphql.Field{Type: graphql.NewList(calibrationSegmentType), Description: "Calibration split by the path's weakest evidence basis (kev/epss/cvss/severity/heuristic), so a residual error can be attributed to a provenance class - the diagnostic behind per-basis recalibration (P1).", Resolve: field[validation.Calibration](func(c validation.Calibration) any { return c.BasisSegments })},
+			"brierRecalibratedByBasis": &graphql.Field{Type: graphql.Float, Description: "Brier after a *per-basis* Platt recalibration (cross-validated). When it beats brierRecalibrated (the global monotone floor) by a material margin, the miscalibration is structured by evidence provenance and a single global rescale is not enough - apply recalibrationByBasis.", Resolve: field[validation.Calibration](func(c validation.Calibration) any { return c.BrierRecalibratedByBasis })},
+			"recalibrationByBasis":     &graphql.Field{Type: graphql.NewList(basisRecalibrationType), Description: "The learned per-basis correction (P1), applied out-of-band per the path's weakest basis.", Resolve: field[validation.Calibration](func(c validation.Calibration) any { return c.RecalibrationByBasis })},
 			"detection": &graphql.Field{Type: detectionStatsType, Description: "Detection-axis summary (#7): how often reachable paths were caught. Null until a confirmed verdict carries a detection report.", Resolve: field[validation.Calibration](func(c validation.Calibration) any {
 				if c.Detection == nil {
 					return nil
@@ -735,6 +750,22 @@ func (a *API) Schema() (graphql.Schema, error) {
 			"diagnosis": &graphql.Field{Type: graphql.String, Description: "The one-line gate recommendation derived from all of the above: calibrated / recalibrate-first / structural (#6) / detection-axis (#7) / low-resolution. The answer to \"and therefore what should we build?\".", Resolve: field[validation.Calibration](func(c validation.Calibration) any { return c.Diagnosis })},
 			"persistent": &graphql.Field{Type: graphql.Boolean, Description: "Whether the verdict store survives a restart (VALIDATIONS_PATH set). False ⇒ the calibration dataset is in-memory and lost on restart - fine for a demo, but set it for a real calibration program.", Resolve: field[validation.Calibration](func(c validation.Calibration) any { return c.Persistent })},
 		},
+	})
+	// The target-scoped track, added after creation so the field can reference the
+	// type recursively. The top-level fields grade a specific path's S(P) against
+	// "this path was traversable"; this nested track grades the per-target compromise
+	// probability against "the crown jewel was reached at all (by any route)" - the
+	// correct, un-conflated event for a target-reached verdict. Null when there are no
+	// target-scoped verdicts; its own target is always null.
+	calibrationType.AddFieldConfig("target", &graphql.Field{
+		Type:        calibrationType,
+		Description: "Target-scoped calibration: predicted per-target compromise probability vs \"the crown jewel was reached at all\", kept separate from the per-path S(P) track so the two different events are not conflated.",
+		Resolve: field[validation.Calibration](func(c validation.Calibration) any {
+			if c.Target == nil {
+				return nil
+			}
+			return *c.Target
+		}),
 	})
 
 	calibrationTrendPointType := graphql.NewObject(graphql.ObjectConfig{

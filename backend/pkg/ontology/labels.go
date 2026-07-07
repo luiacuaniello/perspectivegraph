@@ -181,4 +181,21 @@ const (
 	// | heuristic (estimate). Stamped by the threat-intel reweighter for kev/epss;
 	// the analyzer infers the rest. See analyzer.weightBasisOf.
 	PropWeightBasis = "weight_basis"
+
+	// PropEvidenceCount (int) is the number of independent observations behind an
+	// edge's probability (e.g. corroborating KEV/runtime sightings). When present it
+	// sets the Beta posterior's concentration directly (evidence-count-derived
+	// epistemic uncertainty) instead of the basis-confidence heuristic. Absent/0 ⇒
+	// the heuristic κ. A collector that tracks corroboration count should stamp it.
+	PropEvidenceCount = "evidence_count"
+
+	// PropWeightCause (string) identifies the SHARED cause driving an edge's
+	// probability - the specific CVE / leaked credential / misconfiguration behind
+	// it. Edges with the same cause are perfectly (comonotonically) correlated: in a
+	// given world the cause holds or it doesn't, so they succeed or fail together. The
+	// risk Monte Carlo couples them with one draw per cause (P(all) = min p, the
+	// Fréchet bound), instead of the independent sampling that overstates redundancy
+	// across paths that all rest on the same weakness. Absent ⇒ the edge is its own
+	// independent cause. A collector should stamp the CVE/credential id when known.
+	PropWeightCause = "weight_cause"
 )

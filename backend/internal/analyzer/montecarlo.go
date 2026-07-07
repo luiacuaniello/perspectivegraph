@@ -98,6 +98,54 @@ type probEdge struct {
 	p     float64
 	conf  float64 // weight-basis confidence, drives the Beta posterior for the credible band
 	basis string  // weight provenance (kev/epss/runtime/cvss/severity/heuristic), for p(e|c)
+	evid  int     // independent observations behind p (0 = unknown ⇒ heuristic κ)
+	cause string  // shared cause (CVE/credential id); edges sharing it are comonotonically coupled
+}
+
+// reachTrial runs one reachability trial from seeds over adj: a DFS that marks every
+// node reachable through an edge present() admits. visited is cleared and reused.
+func reachTrial(seeds []string, adj map[string][]probEdge, visited map[string]bool, present func(probEdge) bool) {
+	clear(visited)
+	stack := make([]string, 0, len(seeds))
+	for _, s := range seeds {
+		if !visited[s] {
+			visited[s] = true
+			stack = append(stack, s)
+		}
+	}
+	for len(stack) > 0 {
+		cur := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		for _, e := range adj[cur] {
+			if visited[e.to] {
+				continue
+			}
+			if present(e) {
+				visited[e.to] = true
+				stack = append(stack, e.to)
+			}
+		}
+	}
+}
+
+// comonotonicPresent returns a per-trial edge-presence test that couples edges sharing
+// a weight cause: one uniform per cause (memoized in causeU, which the caller clears
+// each trial), so a cause's failure knocks out ALL its edges together - the Fréchet
+// coupling where P(all edges of a cause succeed) = min p rather than ∏p (P3). This is
+// the common-cause correlation independent sampling misses: several paths that all rest
+// on the same CVE are not independent redundancy. Causeless edges draw independently.
+func comonotonicPresent(rng *rand.Rand, causeU map[string]float64) func(probEdge) bool {
+	return func(e probEdge) bool {
+		if e.cause == "" {
+			return rng.Float64() <= e.p
+		}
+		u, ok := causeU[e.cause]
+		if !ok {
+			u = rng.Float64()
+			causeU[e.cause] = u
+		}
+		return u <= e.p
+	}
 }
 
 // SimulateRisk runs `iterations` Monte Carlo trials over the snapshot. seed makes
@@ -121,8 +169,9 @@ func SimulateRisk(snap graph.Snapshot, iterations int, seed uint64) RiskSimulati
 		// Weight provenance (kev/runtime/epss/cvss/severity/heuristic): the confidence
 		// sets how much the credible band lets this edge move; the basis drives p(e|c)
 		// for the per-profile mixture - both shared with the per-path scoring.
-		basis, conf := weightBasisOf(e, nodes[e.From], nodes[e.To])
-		adj[e.From] = append(adj[e.From], probEdge{to: e.To, p: p, conf: conf, basis: basis})
+		basis, conf, evid := weightBasisOf(e, nodes[e.From], nodes[e.To])
+		cause, _ := e.Properties[ontology.PropWeightCause].(string)
+		adj[e.From] = append(adj[e.From], probEdge{to: e.To, p: p, conf: conf, basis: basis, evid: evid, cause: cause})
 	}
 
 	var seeds, jewels []string
@@ -144,32 +193,15 @@ func SimulateRisk(snap graph.Snapshot, iterations int, seed uint64) RiskSimulati
 	hits := make(map[string]int, len(jewels))
 	anyHits, totalCompromised := 0, 0
 	visited := make(map[string]bool, len(nodes))
+	// Reachability over the realized graph, with edges sharing a cause coupled
+	// comonotonically (one draw per cause per trial) so common-cause weaknesses fail
+	// together instead of as independent redundancy.
+	causeU := make(map[string]float64)
+	present := comonotonicPresent(rng, causeU)
 
 	for it := 0; it < iterations; it++ {
-		clear(visited)
-		// Reachability over the realized graph. Each directed edge is sampled
-		// exactly once per trial (its tail node is popped once), which is
-		// equivalent to pre-realizing every edge but cheaper.
-		stack := make([]string, 0, len(seeds))
-		for _, s := range seeds {
-			if !visited[s] {
-				visited[s] = true
-				stack = append(stack, s)
-			}
-		}
-		for len(stack) > 0 {
-			cur := stack[len(stack)-1]
-			stack = stack[:len(stack)-1]
-			for _, e := range adj[cur] {
-				if visited[e.to] {
-					continue
-				}
-				if rng.Float64() <= e.p { // edge is present in this realization
-					visited[e.to] = true
-					stack = append(stack, e.to)
-				}
-			}
-		}
+		clear(causeU)
+		reachTrial(seeds, adj, visited, present)
 
 		compromised, anyThis := 0, false
 		for _, j := range jewels {
@@ -236,38 +268,21 @@ func anyCompromiseCredibleBand(seeds, jewels []string, adj map[string][]probEdge
 		sampled[k] = make([]probEdge, len(es))
 	}
 
+	causeU := make(map[string]float64)
+	present := comonotonicPresent(innerRng, causeU)
 	rates := make([]float64, bandOuter)
 	for o := 0; o < bandOuter; o++ {
 		for k, es := range adj {
 			dst := sampled[k]
 			for i, e := range es {
-				a, b := betaParams(e.p, e.conf)
-				dst[i] = probEdge{to: e.to, p: sampleBeta(outerRng, a, b)}
+				a, b := betaParams(e.p, e.conf, e.evid)
+				dst[i] = probEdge{to: e.to, p: sampleBeta(outerRng, a, b), cause: e.cause}
 			}
 		}
 		anyHits := 0
 		for it := 0; it < bandInner; it++ {
-			clear(visited)
-			stack := make([]string, 0, len(seeds))
-			for _, s := range seeds {
-				if !visited[s] {
-					visited[s] = true
-					stack = append(stack, s)
-				}
-			}
-			for len(stack) > 0 {
-				cur := stack[len(stack)-1]
-				stack = stack[:len(stack)-1]
-				for _, e := range sampled[cur] {
-					if visited[e.to] {
-						continue
-					}
-					if innerRng.Float64() <= e.p {
-						visited[e.to] = true
-						stack = append(stack, e.to)
-					}
-				}
-			}
+			clear(causeU)
+			reachTrial(seeds, sampled, visited, present)
 			for _, j := range jewels {
 				if visited[j] {
 					anyHits++
@@ -315,39 +330,22 @@ func mixtureCompromise(seeds, jewels []string, adj map[string][]probEdge, iterat
 		cond[k] = make([]probEdge, len(es))
 	}
 	visited := make(map[string]bool)
+	causeU := make(map[string]float64)
 	out := make([]ProfileCompromise, 0, len(profs))
 	mixture := 0.0
 	for pi, c := range profs {
 		for k, es := range adj {
 			dst := cond[k]
 			for i, e := range es {
-				dst[i] = probEdge{to: e.to, p: conditionalProb(e.p, e.basis, c.Skill)}
+				dst[i] = probEdge{to: e.to, p: conditionalProb(e.p, e.basis, c.Skill), cause: e.cause}
 			}
 		}
 		rng := rand.New(rand.NewPCG(seed^(uint64(pi)+1)*0x9e3779b97f4a7c15, 0xdeadbeefcafef00d))
+		present := comonotonicPresent(rng, causeU)
 		anyHits := 0
 		for it := 0; it < iterations; it++ {
-			clear(visited)
-			stack := make([]string, 0, len(seeds))
-			for _, s := range seeds {
-				if !visited[s] {
-					visited[s] = true
-					stack = append(stack, s)
-				}
-			}
-			for len(stack) > 0 {
-				cur := stack[len(stack)-1]
-				stack = stack[:len(stack)-1]
-				for _, e := range cond[cur] {
-					if visited[e.to] {
-						continue
-					}
-					if rng.Float64() <= e.p {
-						visited[e.to] = true
-						stack = append(stack, e.to)
-					}
-				}
-			}
+			clear(causeU)
+			reachTrial(seeds, cond, visited, present)
 			for _, j := range jewels {
 				if visited[j] {
 					anyHits++

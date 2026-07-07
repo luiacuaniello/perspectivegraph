@@ -17,6 +17,7 @@ package analyzer
 import (
 	"container/heap"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math"
@@ -48,6 +49,11 @@ type Step struct {
 	// rest on observed exploitation and which are educated guesses.
 	WeightBasis      string  `json:"weight_basis,omitempty"`
 	WeightConfidence float64 `json:"weight_confidence,omitempty"`
+	// EvidenceCount is the number of independent observations behind this hop's
+	// probability (from the edge's evidence_count), when known. It sets the Beta
+	// posterior's concentration directly (evidence-count epistemic uncertainty)
+	// instead of the basis-confidence heuristic. 0 ⇒ unknown ⇒ heuristic κ.
+	EvidenceCount int `json:"evidence_count,omitempty"`
 }
 
 // AttackPath is a scored route from an exposed seed to a crown jewel.
@@ -78,19 +84,25 @@ type AttackPath struct {
 	// rather than theoretical. It does not change Score - it tells the reader the
 	// product may understate the real risk.
 	CorrelatedHops bool `json:"correlated_hops,omitempty"`
-	// ScoreCILow/ScoreCIHigh are the 90% Bayesian credible interval on Score: each
-	// hop's probability is a Beta posterior whose width reflects how much evidence
-	// backs it (tight for kev/runtime, wide for a heuristic guess), propagated
-	// through the product. Where ScoreUpperBound captures *correlation* uncertainty
-	// (the independence assumption), this captures *epistemic* uncertainty (how well
-	// we know each p) - so "55% [38-71%]" says the inputs are soft, "55% [52-58%]"
-	// says they're evidence-backed. The point Score always sits inside the interval.
-	ScoreCILow  float64 `json:"score_ci_low,omitempty"`
-	ScoreCIHigh float64 `json:"score_ci_high,omitempty"`
-	// MixtureScore is S(P) marginalized over a latent attacker-capability variable,
-	// Σ P(c)·∏ p(e|c). The bare Score assumes hops are independent; conditioning on a
-	// profile (commodity/criminal/apt) makes that honest *within* a profile, and
-	// marginalizing reintroduces the positive correlation the product drops. ProfileScores
+	// PosteriorMean, ScoreCILow and ScoreCIHigh are the ONE coherent posterior of the
+	// path's success probability: a single Monte Carlo that composes epistemic
+	// uncertainty (each hop's probability is a Beta posterior whose width reflects its
+	// evidence) with the attacker-capability mixture (Σ_c P(c)·∏ p(e|c), which
+	// reintroduces the positive correlation the bare product drops). PosteriorMean is
+	// its mean - the coherent point estimate that even corrects the Jensen gap the
+	// plug-in MixtureScore ignores - and [ScoreCILow, ScoreCIHigh] is its 90% credible
+	// interval, which now brackets that mean rather than the independent product. The
+	// four numbers now cohere around one distribution instead of describing different
+	// quantities: PosteriorMean sits inside its own interval and under ScoreUpperBound
+	// (the Fréchet ceiling). Being the attacker-*marginal*, it can sit above OR below the
+	// bare independent Score depending on the profile priors (weak-attacker-heavy priors
+	// pull it below). "55% [38-71%]" ⇒ soft inputs; "55% [52-58%]" ⇒ evidence-backed.
+	PosteriorMean float64 `json:"posterior_mean,omitempty"`
+	ScoreCILow    float64 `json:"score_ci_low,omitempty"`
+	ScoreCIHigh   float64 `json:"score_ci_high,omitempty"`
+	// MixtureScore is the deterministic plug-in of the attacker-capability mixture,
+	// Σ P(c)·∏ p(e|c) at the point probabilities - the fast closed form; PosteriorMean
+	// above is its sampled, epistemic-aware counterpart (the two are close). ProfileScores
 	// is the per-profile breakdown - the "72% vs an APT, 18% vs commodity" read - which
 	// is what a SOC actually triages on. The naive Score is kept as the independent
 	// baseline; these are the correlation-aware lens layered on top.
@@ -305,8 +317,8 @@ func attackPathFromRaw(rp graph.RawPath) (AttackPath, bool) {
 			p = 1
 		}
 		method, conf := resolutionOf(e.Properties)
-		basis, basisConf := weightBasisOf(e, rp.Nodes[i], rp.Nodes[i+1])
-		steps = append(steps, Step{EdgeType: e.Type, From: e.From, To: e.To, Probability: p, ResolutionMethod: method, ResolutionConfidence: conf, WeightBasis: basis, WeightConfidence: basisConf})
+		basis, basisConf, evid := weightBasisOf(e, rp.Nodes[i], rp.Nodes[i+1])
+		steps = append(steps, Step{EdgeType: e.Type, From: e.From, To: e.To, Probability: p, ResolutionMethod: method, ResolutionConfidence: conf, WeightBasis: basis, WeightConfidence: basisConf, EvidenceCount: evid})
 		score *= p
 		if p < minP {
 			minP = p
@@ -318,7 +330,7 @@ func attackPathFromRaw(rp graph.RawPath) (AttackPath, bool) {
 	src, dst := rp.Nodes[0], rp.Nodes[len(rp.Nodes)-1]
 	pConf, pLabel := pathConfidence(steps)
 	id := fmt.Sprintf("ap-%s-%s", shortID(src.ID), shortID(dst.ID))
-	ciLo, ciHi := scoreCredibleInterval(id, steps, score)
+	postMean, ciLo, ciHi := unifiedScorePosterior(id, steps, currentProfiles(), score)
 	mix, profs := attackerMixture(steps)
 	return AttackPath{
 		ID:               id,
@@ -330,6 +342,7 @@ func attackPathFromRaw(rp graph.RawPath) (AttackPath, bool) {
 		ConfidenceLabel:  pLabel,
 		ScoreUpperBound:  minP,
 		CorrelatedHops:   hopsCorrelated(steps),
+		PosteriorMean:    postMean,
 		ScoreCILow:       ciLo,
 		ScoreCIHigh:      ciHi,
 		MixtureScore:     mix,
@@ -373,6 +386,7 @@ type outEdge struct {
 	resConf   float64
 	basis     string  // provenance of `prob` (kev|epss|runtime|cvss|severity|heuristic)
 	basisConf float64 // how much to trust `prob`, [0,1]
+	evid      int     // independent observations behind `prob` (0 = unknown)
 }
 
 // weightBasisOf classifies where an edge's exploit probability came from and how
@@ -380,22 +394,49 @@ type outEdge struct {
 // a runtime-confirmed endpoint is observed evidence, a vuln edge with a CVSS
 // score is severity-derived but anchored, a bare severity label is a guess, and
 // everything else (topology/identity defaults) is an assumed heuristic.
-func weightBasisOf(e ontology.Edge, from, to ontology.Node) (string, float64) {
+func weightBasisOf(e ontology.Edge, from, to ontology.Node) (string, float64, int) {
+	n := evidenceCountOf(e)
 	if b, ok := e.Properties[ontology.PropWeightBasis].(string); ok && b != "" {
-		return b, basisConfidence(b)
+		return b, basisConfidence(b), n
 	}
 	if from.Bool(ontology.PropRuntimeAlert) || to.Bool(ontology.PropRuntimeAlert) {
-		return "runtime", basisConfidence("runtime")
+		return "runtime", basisConfidence("runtime"), n
 	}
 	switch e.Type {
 	case ontology.EdgeAffects, ontology.EdgeExploits:
 		if to.Properties[ontology.PropCVSS] != nil || from.Properties[ontology.PropCVSS] != nil {
-			return "cvss", basisConfidence("cvss")
+			return "cvss", basisConfidence("cvss"), n
 		}
-		return "severity", basisConfidence("severity")
+		return "severity", basisConfidence("severity"), n
 	default:
-		return "heuristic", basisConfidence("heuristic")
+		return "heuristic", basisConfidence("heuristic"), n
 	}
+}
+
+// evidenceCountOf reads an edge's evidence_count (independent observations behind its
+// probability) as a non-negative int - 0 when absent or malformed. Handles the numeric
+// shapes a property can arrive as (int from the in-memory store, float64/json.Number
+// from a JSON/AGE round-trip).
+func evidenceCountOf(e ontology.Edge) int {
+	switch v := e.Properties[ontology.PropEvidenceCount].(type) {
+	case int:
+		if v > 0 {
+			return v
+		}
+	case int64:
+		if v > 0 {
+			return int(v)
+		}
+	case float64:
+		if v > 0 {
+			return int(v)
+		}
+	case json.Number:
+		if n, err := v.Int64(); err == nil && n > 0 {
+			return int(n)
+		}
+	}
+	return 0
 }
 
 // basisConfidence maps a weight's provenance to how much to trust it. Observed
@@ -454,7 +495,7 @@ func buildAdjacency(edges []ontology.Edge, nodes map[string]ontology.Node) map[s
 			p = 1
 		}
 		method, conf := resolutionOf(e.Properties)
-		basis, basisConf := weightBasisOf(e, nodes[e.From], nodes[e.To])
+		basis, basisConf, evid := weightBasisOf(e, nodes[e.From], nodes[e.To])
 		adj[e.From] = append(adj[e.From], outEdge{
 			to:        e.To,
 			typ:       e.Type,
@@ -464,6 +505,7 @@ func buildAdjacency(edges []ontology.Edge, nodes map[string]ontology.Node) map[s
 			resConf:   conf,
 			basis:     basis,
 			basisConf: basisConf,
+			evid:      evid,
 		})
 	}
 	return adj
@@ -505,7 +547,7 @@ func dijkstra(src string, adj map[string][]outEdge) (dist map[string]float64, pr
 			nd := cur.d + e.weight
 			if old, ok := dist[e.to]; !ok || nd < old {
 				dist[e.to] = nd
-				prev[e.to] = Step{EdgeType: e.typ, From: cur.node, To: e.to, Probability: e.prob, ResolutionMethod: e.resMethod, ResolutionConfidence: e.resConf, WeightBasis: e.basis, WeightConfidence: e.basisConf}
+				prev[e.to] = Step{EdgeType: e.typ, From: cur.node, To: e.to, Probability: e.prob, ResolutionMethod: e.resMethod, ResolutionConfidence: e.resConf, WeightBasis: e.basis, WeightConfidence: e.basisConf, EvidenceCount: e.evid}
 				heap.Push(pq, heapItem{node: e.to, d: nd})
 			}
 		}
@@ -543,7 +585,7 @@ func reconstruct(seed, jewel string, prev map[string]Step, adj map[string][]outE
 
 	conf, label := pathConfidence(steps)
 	id := fmt.Sprintf("ap-%s-%s", shortID(seed), shortID(jewel))
-	ciLo, ciHi := scoreCredibleInterval(id, steps, score)
+	postMean, ciLo, ciHi := unifiedScorePosterior(id, steps, currentProfiles(), score)
 	mix, profs := attackerMixture(steps)
 	return AttackPath{
 		ID:               id,
@@ -555,6 +597,7 @@ func reconstruct(seed, jewel string, prev map[string]Step, adj map[string][]outE
 		ConfidenceLabel:  label,
 		ScoreUpperBound:  minP,
 		CorrelatedHops:   hopsCorrelated(steps),
+		PosteriorMean:    postMean,
 		ScoreCILow:       ciLo,
 		ScoreCIHigh:      ciHi,
 		MixtureScore:     mix,

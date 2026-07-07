@@ -21,6 +21,10 @@ backend:
   # breakdown. Retune the threat-model priors (names match the built-ins; renormalized).
   # Empty keeps the defaults (commodity:0.5,criminal:0.35,apt:0.15).
   attackerProfilePriors: ""
+  # EPSS -> conditional-traversal map: p(traverse|positioned) = EPSS^gamma. EPSS is a
+  # marginal 30-day rate, not the conditional a positioned attacker needs; gamma < 1
+  # lifts it (e.g. 0.5), empty or 1 keeps EPSS as-is (default). Opt-in, not auto-fitted.
+  epssTraversalGamma: ""
   # In-pod TLS for the API + ingest servers (HTTPS >= 1.2 directly, no proxy
   # needed). Off by default - usually TLS terminates at the ingress instead. When
   # enabled, secretName must reference a kubernetes.io/tls Secret (tls.crt/tls.key);
@@ -102,10 +106,12 @@ gitlab:
   apiUrl: https://gitlab.com/api/v4
   dryRun: false
 
-# Agentless connectors (PULL ingestion). enabled is a list, e.g. ["aws"]; empty
-# ⇒ ingestion stays push-only. tenant tags pulled assets (multi-tenant installs).
-# The AWS connector defaults to bundled fixtures; mode "live" uses the AWS SDK
-# (region + an assumable read-only roleArn via the pod's ambient credentials).
+# Agentless connectors (PULL ingestion). enabled is a list, e.g. ["aws","azure"];
+# empty ⇒ ingestion stays push-only. tenant tags pulled assets (multi-tenant
+# installs). The AWS connector defaults to fixtures; mode "sdk" uses the AWS SDK
+# (region + an assumable read-only roleArn via the pod's ambient credentials). The
+# Azure connector maps normalized `az` state onto the cloudnet shape; fixtures
+# default, "sdk" (azure-sdk-for-go) is the wired extension point.
 connectors:
   enabled: []
   interval: 15m
@@ -116,6 +122,9 @@ connectors:
     fixturesDir: ""
     region: ""
     roleArn: ""
+  azure:
+    mode: fixtures
+    fixturesDir: ""
 
 # AI-native layer. apiKey (Anthropic/Claude) is the preferred backend and enables
 # /ai/* (NL query, exec summary, path explain). hf.* is the free, OpenAI-compatible
@@ -207,6 +216,25 @@ persistence:
   size: 1Gi
   storageClass: ""
   mountPath: /data
+
+# Pod security context for the backend. The distroless image runs as the nonroot
+# user 65532; fsGroup makes a freshly-provisioned persistence PVC group-writable by
+# it (without it, the volume is root-owned and the first verdict/ticket/suppression
+# write fails - the reason persistence.enabled looked "durable" but silently broke).
+# runAsNonRoot pins the guarantee. Tune uid/gid to your cluster's PodSecurity policy.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+# Container security context: match the compose hardening (drop all caps, no
+# privilege escalation, read-only rootfs). /tmp is an emptyDir so the read-only
+# rootfs still has scratch space. Set to {} to opt out on a constrained runtime.
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
 
 # Graph staleness pruning (GRAPH_TTL): drop nodes/edges not re-observed within
 # this window so assets that left the source feeds stop generating phantom attack

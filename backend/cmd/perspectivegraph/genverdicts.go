@@ -74,6 +74,9 @@ func runGenverdicts(args []string) error {
 			"hops":           v.Hops,
 			"correlatedHops": v.CorrelatedHops,
 		}
+		if v.WeightBasis != "" {
+			body["weightBasis"] = v.WeightBasis
+		}
 		if v.Outcome == validation.Confirmed {
 			confirmed++
 		}

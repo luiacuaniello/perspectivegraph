@@ -230,24 +230,36 @@ un cassetto: aprilo col pulsante ☰ in alto a sinistra.
 
 ### 5.1 Overview ("Security posture")
 
-Le **card** in alto riassumono la postura:
+In cima c'è **una sola metrica-hero, "Account compromise"**, con accanto il
+verdetto di **calibrazione** e una lettura in linguaggio semplice: è la
+quantificazione **Monte Carlo** della probabilità che **almeno un** gioiello venga
+compromesso, con il numero atteso di gioielli che "cadono" e la **fascia modellata**
+(ricampionando ogni arco dalla sua Beta posteriore). È più della somma dei singoli
+percorsi perché tiene conto dei percorsi multipli che condividono archi: percorsi
+diversi che poggiano sulla **stessa causa** (un arco con `weight_cause`: stessa
+CVE/credenziale) sono accoppiati in modo comonotonico (falliscono insieme,
+`P=min p`), quindi non contano come ridondanza indipendente (P3).
 
-| Card | Cosa significa |
+Sotto l'hero, una **striscia compatta** di metriche secondarie (numero + etichetta,
+colorate solo quando indicano rischio reale):
+
+| Metrica | Cosa significa |
 |---|---|
 | **Critical paths** | Numero di attack path `internet → crown jewel` percorribili adesso. Rosso = > 0. |
-| **Account compromise** | Quantificazione **Monte Carlo**: probabilità che **almeno un** gioiello venga compromesso, e numero atteso di gioielli che "cadono". È più della somma dei singoli percorsi perché tiene conto dei percorsi multipli che condividono archi. |
 | **Runtime-confirmed** | Percorsi che attraversano un nodo con un **alert Falco attivo**: non solo teorici, ma in corso di sfruttamento. |
 | **KEV on paths** | CVE distinte presenti sui percorsi che sono nel catalogo **CISA KEV** (sfruttate in the wild). |
 | **Policy violations** | Invarianti architetturali violate (es. *internet → crown jewel diretto*). |
-| **Assets & findings** | Numero di **nodi** del grafo. |
-| **Relationships** | Numero di **archi** del grafo. |
+| **Validated** | Percentuale di percorsi **confermati** dai verdetti red-team/BAS (sul sottoinsieme testato, non una pretesa globale). |
 
-Sotto le card: il banner delle **violazioni di policy**, il banner del **piano di
-remediation** (*"N fix eliminano X% del rischio"*) e l'elenco dei **Top attack
-path**. Ogni riga mostra: numero, `sorgente → gioiello`, **percentuale** (lo
-score `S(P)`), numero di hop e la **kill chain** per categoria di nodo
-(`LoadBalancer → Container → Image → …`). Il fulmine ⚡ segnala i percorsi
-runtime-confirmed (ordinati per primi). Clicca una riga per il dettaglio.
+(I conteggi di **nodi** e **archi** del grafo vivono ora nella vista **Graph**, non
+più nell'Overview.) Più in basso: la **ripartizione per profilo attaccante**
+(commodity/criminal/apt, la vista *correlation-aware*) e lo **sparkline del trend**
+(critical paths e account compromise nel tempo), poi il banner delle **violazioni
+di policy**, il banner del **piano di remediation** (*"N fix eliminano X% del
+rischio"*) e l'elenco dei **Top attack path**. Ogni riga mostra: numero,
+`sorgente → gioiello`, **percentuale** (lo score `S(P)`), numero di hop e la
+**kill chain** per categoria di nodo (`LoadBalancer → Container → Image → …`); i
+percorsi runtime-confirmed sono ordinati per primi. Clicca una riga per il dettaglio.
 
 ### 5.2 Attack paths (dettaglio di un percorso)
 
@@ -438,17 +450,25 @@ lettura e vedi i tuoi attack path in minuti"*.
 
 Un connettore pubblica sullo **stesso bus** dei webhook, quindi riusa l'intera
 pipeline (risoluzione identità, grafo, analizzatore): cambia solo l'acquisizione.
-Il primo connettore, **`aws`**, non aggiunge nemmeno parsing - tira lo stato di
-rete EC2 (`describe-*`) e i dettagli IAM e li passa ai collector `cloudnet`/`iam`
-esistenti. L'acquisizione è dietro un *transport* sostituibile: **`fixtures`**
-(JSON locale, prova tutta la pull **senza credenziali**) e **`aws-sdk-go-v2`** per
-AWS reale (sola lettura, `AssumeRole` cross-account opzionale).
+Il connettore **`aws`** non aggiunge nemmeno parsing - tira lo stato di rete EC2
+(`describe-*`) e i dettagli IAM e li passa ai collector `cloudnet`/`iam`
+esistenti. Il connettore **`azure`** aggiunge un sottile strato di mappatura (il
+modello nativo Azure differisce): regole NSG in ingresso Allow → security group,
+VM → istanze (legate ai loro NSG + tag), peering VNet → peering VPC - il *service
+tag* `Internet` di Azure diventa `0.0.0.0/0`, così l'esposizione viene rilevata -
+poi lo **stesso** collector `cloudnet` fa il parsing. L'acquisizione è dietro un
+*transport* sostituibile: **`fixtures`** (JSON locale, prova tutta la pull **senza
+credenziali**) e un SDK live (**`aws-sdk-go-v2`** per AWS reale, sola lettura con
+`AssumeRole` cross-account opzionale; **`azure-sdk-for-go`** è il punto di
+estensione già cablato per Azure).
 
 ```bash
-# Demo senza account AWS: tira dai sample locali, ogni 15m (leader-only)
-CONNECTORS_ENABLED=aws
+# Demo senza account cloud: tira dai sample locali, ogni 15m (leader-only)
+CONNECTORS_ENABLED=aws,azure
 AWS_CONNECTOR_MODE=fixtures
+AZURE_CONNECTOR_MODE=fixtures
 AWS_FIXTURES_DIR=./backend/testdata
+AZURE_FIXTURES_DIR=./backend/testdata
 # Salute per-connettore (ultima run, ultimo errore, eventi): porta di ingest
 curl -s http://localhost:8081/connectors | jq
 
@@ -505,9 +525,11 @@ http://localhost:8080/graphql (playground attivo quando l'auth è disattivata).
 # scoreUpperBound + correlatedHops = onestà sull'assunzione di indipendenza:
 # lo score è il prodotto degli hop (indipendenti); se condividono una causa la
 # probabilità reale sta in [score, scoreUpperBound] (= l'hop più debole).
-# scoreCiLow/High = intervallo credibile al 90% (incertezza epistemica, posteriori Beta).
-# mixtureScore/profileScores = score marginalizzato sui profili d'attaccante (commodity/criminal/apt).
-{ attackPaths { id score scoreUpperBound correlatedHops scoreCiLow scoreCiHigh
+# posteriorMean + scoreCiLow/High = UNA posterior coerente (P2): un solo Monte Carlo
+# che compone incertezza epistemica (ogni hop una Beta) e attaccante (la mixture).
+# posteriorMean è il punto che il CI bracketa (corregge il gap di Jensen del mixtureScore).
+# mixtureScore/profileScores = mixture plug-in + breakdown per profilo (commodity/criminal/apt).
+{ attackPaths { id score scoreUpperBound correlatedHops posteriorMean scoreCiLow scoreCiHigh
     mixtureScore profileScores { profile prior score }
     confidence confidenceLabel steps { edgeType probability weightBasis weightConfidence } } }
 
@@ -536,6 +558,21 @@ curl -s http://localhost:8080/validations | jq .metrics    # precision / recall
 { validation { precision recall confirmed refuted missed tested } }   # anche via GraphQL
 ```
 
+**Import automatico BAS (push):** un webhook post-run di una piattaforma BAS può
+inviare un intero report a `POST /validations/import`; il server aggancia ogni finding
+a un percorso live (per path id, oppure per nome del crown jewel `target` + `from`
+opzionale), cattura la predizione e lo registra col giusto `scope`, restituendo
+`{recorded, unmatched}`. Così i verdetti affluiscono da soli, senza cron della CLI.
+
+```bash
+curl -s -X POST http://localhost:8080/validations/import -H 'Content-Type: application/json' \
+  -d '{"source":"safebreach","findings":[{"target":"customer-db","outcome":"confirmed","scope":"target","evidence":"exfil simulato"}]}'
+```
+
+Persistenza del dataset di calibrazione: `VALIDATIONS_PATH` (file cifrato a riposo);
+in Helm `persistence.enabled=true` lo mette su PVC (con `fsGroup` così il backend
+nonroot ci scrive). Senza, lo store è in-memory e si azzera al restart.
+
 **Calibrazione (il salto demo→produzione):** precision/recall dicono se un percorso
 *emerso* era reale; la **calibrazione** chiede se il *numero* significa qualcosa - i
 percorsi con score ~0.8 si confermano davvero ~80% delle volte? Ogni verdetto cattura
@@ -549,9 +586,18 @@ applicato in automatico, perché ricalibrare su pochi campioni significa insegui
 rumore). È l'artefatto che permette di difendere un "55%" come *probabilità* davanti a
 un auditor. In dashboard: pannello **Calibration** in Overview.
 
+La calibrazione gradua **l'evento giusto** tramite lo `scope` del verdetto. Un verdetto
+**path** ha validato *quel* cammino, quindi si gradua `S(P)` contro "il cammino è
+percorribile"; un verdetto **target** ha validato se il crown jewel è stato raggiunto
+*in qualunque modo* (ciò che un BAS "ho bucato il jewel" riporta davvero), quindi si
+gradua la **compromise probability per-target** contro "il jewel è raggiunto". Sono due
+eventi diversi: girano come **tracciati indipendenti** (`calibration` = path, `calibration.target`
+= target). `POST /validations` accetta `scope: path|target` (default `path`); uno stesso
+cammino può portarne uno per tipo.
+
 ```bash
 curl -s http://localhost:8080/validations | jq .calibration   # brier, ece, verdict, bins
-{ calibration { samples brier ece verdict bins { low meanPredicted observedRate } } }  # via GraphQL
+{ calibration { samples brier ece verdict bins { low meanPredicted observedRate } target { samples meanPredicted verdict } } }  # via GraphQL
 ```
 
 **Diagnostici di calibrazione ("e quindi cosa costruisco?"):** sapere di essere
@@ -566,7 +612,15 @@ resta alto, al modello manca *risoluzione* e nessuna riscalatura lo salva.
 correlation-aware (**#6**). (3) **detection** - su un verdetto `confirmed` l'operatore può
 segnare `detected` (preso/bloccato); un alto tasso di cattura sui path ad alto score
 significa che lo score sovrastima la compromissione *non rilevata* → asse detection
-(**#7**). La `diagnosis` finale è `recalibrate-first | structural (#6) | detection-axis
+(**#7**). (4) **per-basis (P1)** - la mappa globale è monotona nello score, quindi non
+può correggere un bias *strutturato per provenienza*: se gli hop EPSS "corrono caldi" e
+gli euristici "corrono freddi" allo stesso score, nessuna curva unica corregge entrambi
+(e possono annullarsi nell'aggregato, così il report globale dice "well-calibrated"
+mentre il modello è mal calibrato per classe). Il motore raggruppa per basis più debole
+del path e fitta una correzione Platt per basis (ridge verso l'identità, cross-validata):
+`brierRecalibratedByBasis` vs `brierRecalibrated` misura quanto il bias è per-provenienza,
+`basisSegments` lo attribuisce, `recalibrationByBasis` è la mappa da applicare. La
+`diagnosis` finale è `recalibrate-first | per-basis (P1) | structural (#6) | detection-axis
 (#7) | low-resolution`: si costruisce #6/#7 **solo** quando i verdetti reali lo provano.
 Se la diagnosi indica il #6, `make and-probe` (il tool `andprobe`) risponde alla
 domanda che *decide* un Bayesian Attack Graph: l'ambiente ha vera **semantica AND**
@@ -711,9 +765,12 @@ tamper-evident, **multi-tenancy**.
   > EPSS è una probabilità *marginale* - P(qualsiasi attività di exploitation in 30gg)
   > - non la P(un attaccante attraversa *questo* arco in *questo* ambiente) che serve
   > allo score. È un base rate globale (di solito basso), quindi usarlo come `p(e)`
-  > tende a *sottostimare* un attaccante presente. Lo passiamo così com'è di proposito
-  > e lasciamo che il loop di calibrazione riveli/corregga il bias sui verdetti reali,
-  > invece di trasformarlo a naso; anche gli ancoraggi `severity → p` (0.9/0.7/0.4/0.2)
+  > tende a *sottostimare* un attaccante presente. C'è un hook esplicito (P4):
+  > `p(traverse|positioned) = EPSS^gamma` via `EPSS_TRAVERSAL_GAMMA` - `gamma < 1` alza
+  > il marginale verso il condizionale, `gamma = 1` (default) lo lascia com'è (la
+  > baseline onesta che la calibrazione gradua). È un *prior* opt-in, non una mappa
+  > fittata (fittare `p(traverse|EPSS)` richiede ground-truth per-arco), quindi il
+  > motore non riscrive l'input a naso; anche gli ancoraggi `severity → p` (0.9/0.7/0.4/0.2)
   > sono euristiche, per questo portano basi a bassa confidence.
 - **SSO / federazione (Okta → cloud)** - l'IdP è un nodo `IdentityProvider`
   internet-facing; `AUTHENTICATES → User → ASSUMES → IAM_Role`. I ruoli federati
@@ -1249,10 +1306,12 @@ Ogni capacità opzionale è cablata **sia in `docker-compose.yml`** (passthrough
 `${VAR:-}`, spenti di default) **sia nel chart**, così una feature attivata nel
 codice è davvero raggiungibile nello stack in esecuzione:
 
-- **Connettori agentless** - `--set connectors.enabled='{aws}'` fa il PULL della
-  posture cloud a intervalli (`connectors.interval`); il connettore AWS gira su
-  fixtures finché `connectors.aws.mode=live` (poi `connectors.aws.region` + un
-  `connectors.aws.roleArn` read-only assumibile).
+- **Connettori agentless** - `--set connectors.enabled='{aws,azure}'` fa il PULL
+  della posture cloud a intervalli (`connectors.interval`); il connettore AWS gira
+  su fixtures finché `connectors.aws.mode=sdk` (poi `connectors.aws.region` + un
+  `connectors.aws.roleArn` read-only assumibile); il connettore Azure gira su
+  fixtures (`connectors.azure.mode`), mappando lo stato `az` normalizzato sulla
+  forma `cloudnet`.
 - **Login SSO** - `auth.oidc.clientId` / `authorizeUrl` / `tokenUrl` / `scopes`
   sono le coordinate lato-SPA che il login gate della dashboard legge da
   `GET /auth/config` per il flusso Authorization-Code + PKCE (la tripletta

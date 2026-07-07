@@ -58,6 +58,11 @@ func runImportVerdicts(args []string) error {
 			Detected *bool  `json:"detected"`
 			Route    string `json:"route"`
 			Evidence string `json:"evidence"`
+			// Scope: "path" (default) grades this specific path's S(P); "target" grades
+			// the per-target compromise probability - the right quantity when a BAS run
+			// reports "I reached the crown jewel" by any route rather than "I walked
+			// exactly this path".
+			Scope string `json:"scope"`
 		} `json:"findings"`
 	}
 	if err := json.Unmarshal(raw, &report); err != nil {
@@ -80,6 +85,9 @@ func runImportVerdicts(args []string) error {
 	posted, unmatched := 0, 0
 	for _, f := range report.Findings {
 		body := map[string]any{"outcome": f.Outcome, "source": source, "evidence": f.Evidence}
+		if f.Scope != "" {
+			body["scope"] = f.Scope
+		}
 		if f.Detected != nil {
 			body["detected"] = *f.Detected
 		}

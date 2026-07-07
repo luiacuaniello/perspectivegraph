@@ -46,6 +46,7 @@ data:
   ANALYZER_WORKERS: {{ .Values.backend.analyzerWorkers | quote }}
   ANALYZER_INCREMENTAL: {{ .Values.backend.analyzerIncremental | quote }}
   ATTACKER_PROFILE_PRIORS: {{ .Values.backend.attackerProfilePriors | quote }}
+  EPSS_TRAVERSAL_GAMMA: {{ .Values.backend.epssTraversalGamma | quote }}
   OPENSEARCH_URL: {{ .Values.opensearch.url | quote }}
   GITHUB_API_URL: {{ .Values.github.apiUrl | quote }}
   GITHUB_DRY_RUN: {{ .Values.github.dryRun | quote }}
@@ -76,6 +77,8 @@ data:
   AWS_FIXTURES_DIR: {{ .Values.connectors.aws.fixturesDir | quote }}
   AWS_REGION: {{ .Values.connectors.aws.region | quote }}
   AWS_ROLE_ARN: {{ .Values.connectors.aws.roleArn | quote }}
+  AZURE_CONNECTOR_MODE: {{ .Values.connectors.azure.mode | quote }}
+  AZURE_FIXTURES_DIR: {{ .Values.connectors.azure.fixturesDir | quote }}
   # AI-native layer. The keys (Anthropic + HF token) are in the Secret; these are
   # non-secret tuning for Anthropic (Claude) and the HuggingFace fallback.
   ANTHROPIC_MODEL: {{ .Values.ai.model | quote }}

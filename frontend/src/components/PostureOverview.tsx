@@ -24,26 +24,25 @@ function Sparkline({ values, tone }: { values: number[]; tone: string }) {
   );
 }
 
-interface CardProps {
+// StripStat is one secondary metric in the compact posture strip: a number and a
+// sentence-case label, monochrome by default, red only when it flags live danger
+// (a non-zero critical-path / runtime / KEV count) and amber for policy drift.
+function StripStat({
+  label,
+  value,
+  danger,
+  warn,
+}: {
   label: string;
   value: number | string;
-  accent: string;
-  ring: string;
-  hint: string;
-  tip?: string;
-}
-
-function Card({ label, value, accent, ring, hint, tip }: CardProps) {
+  danger?: boolean;
+  warn?: boolean;
+}) {
+  const tone = danger ? "text-red-600" : warn ? "text-amber-600" : "text-slate-900";
   return (
-    <div
-      className={`group accent-topline relative overflow-hidden rounded-2xl glass p-4 transition duration-200 hover:-translate-y-0.5 hover:shadow-glow ${ring}`}
-    >
-      <div className="flex items-center gap-1.5">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted">{label}</span>
-        {tip && <InfoTip text={tip} />}
-      </div>
-      <div className={`mt-2.5 text-[34px] font-bold leading-none tabular-nums tracking-tight ${accent}`}>{value}</div>
-      <div className="mt-1.5 text-[11px] text-muted">{hint}</div>
+    <div className="min-w-0">
+      <div className={`text-[19px] font-semibold leading-none tabular-nums ${tone}`}>{value}</div>
+      <div className="mt-1.5 text-[11px] text-muted">{label}</div>
     </div>
   );
 }
@@ -122,7 +121,7 @@ function CalibrationPanel({ calibration, trend }: { calibration: Calibration; tr
   return (
     <div className="rounded-2xl glass p-4">
       <div className="mb-3 flex items-center justify-between gap-2">
-        <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-slate-500">
+        <span className="flex items-center gap-1.5 text-[11px] font-medium text-muted">
           Calibration
           <InfoTip text="Do the scores mean anything? Each tested path's predicted score is paired with its observed red-team/BAS outcome (confirmed/refuted) to check whether paths scored ~80% actually confirm ~80% of the time. Brier and ECE are error metrics (lower is better); the diagram plots predicted vs observed - points on the diagonal are perfectly calibrated. This is what turns a heuristic score into a defensible probability." />
         </span>
@@ -142,7 +141,7 @@ function CalibrationPanel({ calibration, trend }: { calibration: Calibration; tr
         <div className="mb-3 flex items-center gap-2">
           <span className="text-[10px] uppercase tracking-wide text-muted">Brier over time</span>
           <div className="h-6 max-w-[180px] flex-1">
-            <Sparkline values={brierSeries} tone="rgb(56 200 255)" />
+            <Sparkline values={brierSeries} tone="rgb(109 108 240)" />
           </div>
           <span className="text-[10px] tabular-nums text-muted">
             {brierSeries.length} samples · now {calibration.brier.toFixed(3)}
@@ -167,7 +166,7 @@ function CalibrationPanel({ calibration, trend }: { calibration: Calibration; tr
         <div className="mt-3 border-t border-edge/60 pt-3">
           {calibration.diagnosis && (
             <div className="flex items-start gap-2">
-              <span className="mt-0.5 text-[10px] font-semibold uppercase tracking-widest text-muted">Diagnosis</span>
+              <span className="mt-0.5 text-[11px] font-medium text-muted">Diagnosis</span>
               <span className={`flex-1 text-[12px] leading-snug ${diagTone(calibration.diagnosis)}`}>{calibration.diagnosis}</span>
               <InfoTip text="The gate recommendation. recalibrate-first: a monotone rescale fixes it (apply the recalibration map). structural (#6): error concentrates on correlated/long paths, where the independence assumption breaks - consider a correlation-aware model. detection-axis (#7): reachable paths are routinely caught, so the score over-predicts undetected impact. low-resolution: even recalibration can't separate real from fake - revisit the inputs." />
             </div>
@@ -229,118 +228,79 @@ export default function PostureOverview({
   const pct = risk ? Math.round(risk.anyCompromiseProbability * 100) : null;
   const vp = validation?.precision != null ? Math.round(validation.precision * 100) : null;
   const trend = history?.trend ?? [];
+  const verdict = calibration?.hasData ? (VERDICT_STYLE[calibration.verdict] ?? VERDICT_STYLE["insufficient-data"]) : null;
+  const verdictDot =
+    calibration?.verdict === "well-calibrated"
+      ? "bg-emerald-500"
+      : calibration?.verdict === "overconfident"
+        ? "bg-red-500"
+        : calibration?.verdict === "underconfident"
+          ? "bg-amber-500"
+          : "bg-slate-400";
+  const reach = pct == null ? "" : pct >= 80 ? "near-certainty" : pct >= 40 ? "meaningful probability" : "low probability";
   return (
-    <div className="flex flex-col gap-3">
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-      <Card
-        label="Critical paths"
-        value={posture.activePaths}
-        accent={posture.activePaths > 0 ? "text-red-600" : "text-emerald-600"}
-        ring={posture.activePaths > 0 ? "shadow-[inset_0_1px_0_0_rgba(220,38,38,0.3)]" : ""}
-        hint={
-          posture.suppressedPaths > 0
-            ? `internet → crown jewel · ${posture.suppressedPaths} suppressed`
-            : "internet → crown jewel"
-        }
-        tip="Active routes an attacker could walk from an internet-exposed asset to a crown jewel - excluding paths an analyst has triaged off the board (accept-risk / false-positive / mitigating-control / duplicate). Zero is the goal."
-      />
-      {pct !== null && (
-        <Card
-          label="Account compromise"
-          value={`${pct}%`}
-          accent={pct >= 50 ? "text-red-600" : pct > 0 ? "text-amber-600" : "text-emerald-600"}
-          ring={pct >= 50 ? "shadow-[inset_0_1px_0_0_rgba(220,38,38,0.3)]" : ""}
-          hint={`modeled ${Math.round(risk!.sensitivityLow * 100)}–${Math.round(risk!.sensitivityHigh * 100)}% · ~${risk!.expectedCompromised.toFixed(1)} jewels fall`}
-          tip="Probability at least one crown jewel is compromised (Monte Carlo over thousands of attacker attempts). This number samples edges independently; the ‘modeled X–Y%’ range is a credible band from resampling each edge from its Beta posterior (how much the heuristic inputs move it). See ‘by attacker profile’ below for the correlation-aware view. A modeled estimate, not a measurement."
-        />
-      )}
-      <Card
-        label="Runtime-confirmed"
-        value={posture.runtimeConfirmed}
-        accent={posture.runtimeConfirmed > 0 ? "text-red-600" : "text-slate-500"}
-        ring={posture.runtimeConfirmed > 0 ? "shadow-[inset_0_1px_0_0_rgba(220,38,38,0.3)]" : ""}
-        hint="actively exploited"
-        tip="Paths crossing an asset with a live runtime alert (Falco). These aren’t theoretical - something is exercising them right now. Triage first."
-      />
-      <Card
-        label="KEV on paths"
-        value={posture.kevOnPaths}
-        accent={posture.kevOnPaths > 0 ? "text-red-600" : "text-slate-500"}
-        ring={posture.kevOnPaths > 0 ? "shadow-[inset_0_1px_0_0_rgba(220,38,38,0.3)]" : ""}
-        hint="exploited in the wild"
-        tip="CVEs on a path that are in CISA’s Known Exploited Vulnerabilities catalog - confirmed exploited in the wild, not just scored as risky."
-      />
-      <Card
-        label="Policy violations"
-        value={posture.policyViolations}
-        accent={posture.policyViolations > 0 ? "text-amber-600" : "text-emerald-600"}
-        ring={posture.policyViolations > 0 ? "shadow-[inset_0_1px_0_0_rgba(245,158,11,0.25)]" : ""}
-        hint="broken invariants"
-        tip="Architectural rules the environment breaks (e.g. “the internet must never reach a crown jewel directly”). Guardrails for architects."
-      />
-      {history && (
-        <Card
-          label="MTTR"
-          value={history.mttrSeconds != null ? humanDuration(history.mttrSeconds) : "-"}
-          accent={history.mttrSeconds != null ? "text-slate-700" : "text-slate-400"}
-          ring=""
-          hint={history.resolvedPaths > 0 ? `over ${history.resolvedPaths} resolved` : "no resolutions yet"}
-          tip="Mean time-to-remediate: the average time a critical path stayed open before it stopped appearing (was fixed or its asset went away). Tracked over the analysis history - the accountability metric a point-in-time scan can't give you."
-        />
-      )}
-      {validation && (
-        <Card
-          label="Validation"
-          value={vp != null ? `${vp}%` : "-"}
-          accent={vp == null ? "text-slate-400" : vp >= 70 ? "text-emerald-600" : vp >= 40 ? "text-amber-600" : "text-red-600"}
-          ring=""
-          hint={
-            validation.tested > 0
-              ? `precision · ${validation.confirmed}/${validation.tested} real${validation.missed > 0 ? ` · ${validation.missed} missed` : ""}`
-              : "no red-team/BAS verdicts yet"
-          }
-          tip="Red-team/BAS precision over the TESTED subset = confirmed ÷ (confirmed + refuted): of the paths the engine surfaced and someone actually tested, how many were real. Not a global claim - evidence that the engine is grounded, not just modeled. Record verdicts on a path or POST to /validations."
-        />
-      )}
-      <Card
-        label="Assets & findings"
-        value={posture.nodes}
-        accent="text-accent"
-        ring=""
-        hint="graph nodes"
-        tip="Every asset, identity and finding correlated into the graph - VMs, containers, images, CVEs, IAM roles, buckets…"
-      />
-      <Card
-        label="Relationships"
-        value={posture.edges}
-        accent="text-slate-600"
-        ring=""
-        hint="graph edges"
-        tip="Directed connections between nodes (exposes, routes-to, can-escalate-to…). Attack paths are walks over these edges."
-      />
-    </div>
+    <div className="flex flex-col gap-4">
+      <section className="rounded-2xl glass p-6">
+        <div className="flex items-center gap-1.5 text-[12px] text-muted">
+          Account compromise
+          <InfoTip text="Probability at least one crown jewel is compromised (Monte Carlo over thousands of attacker attempts, sampling edges independently). The modeled range is a credible band from resampling each edge from its Beta posterior. See the attacker-profile breakdown below for the correlation-aware view. A modeled estimate, not a measurement." />
+        </div>
+        <div className="mt-1.5 flex flex-wrap items-baseline gap-x-4 gap-y-2">
+          <span className={`text-[52px] font-semibold leading-none tabular-nums tracking-tight ${pct != null && pct >= 50 ? "text-red-600" : "text-slate-900"}`}>
+            {pct != null ? `${pct}%` : "-"}
+          </span>
+          {verdict && (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-edge px-2.5 py-1 text-[11px] text-muted">
+              <span className={`h-1.5 w-1.5 rounded-full ${verdictDot}`} />
+              model {verdict.label}
+            </span>
+          )}
+        </div>
+        {pct != null && (
+          <>
+            <p className="mt-3 max-w-[64ch] text-[13px] leading-relaxed text-slate-600">
+              An attacker reaches at least one crown jewel with {reach}; about {risk!.expectedCompromised.toFixed(1)} fall on average.
+              {posture.runtimeConfirmed > 0 &&
+                ` ${posture.runtimeConfirmed} route${posture.runtimeConfirmed === 1 ? "" : "s"} confirmed live in runtime.`}
+            </p>
+            <div className="mt-3.5 h-[3px] w-full overflow-hidden rounded-full bg-panel-2">
+              <div className={`h-full rounded-full ${pct >= 50 ? "bg-red-500/70" : "bg-accent/70"}`} style={{ width: `${pct}%` }} />
+            </div>
+            <div className="mt-2 text-[11px] text-muted">
+              modeled {Math.round(risk!.sensitivityLow * 100)} to {Math.round(risk!.sensitivityHigh * 100)}%
+            </div>
+          </>
+        )}
+
+        <div className="mt-6 grid grid-cols-2 gap-x-4 gap-y-4 border-t border-edge pt-5 sm:grid-cols-3 lg:grid-cols-5">
+          <StripStat label="Critical paths" value={posture.activePaths} danger={posture.activePaths > 0} />
+          <StripStat label="Runtime-confirmed" value={posture.runtimeConfirmed} danger={posture.runtimeConfirmed > 0} />
+          <StripStat label="KEV on paths" value={posture.kevOnPaths} danger={posture.kevOnPaths > 0} />
+          <StripStat label="Policy violations" value={posture.policyViolations} warn={posture.policyViolations > 0} />
+          <StripStat label="Validated" value={vp != null ? `${vp}%` : "-"} />
+        </div>
+        <div className="mt-4 text-[11px] text-muted">
+          {posture.nodes} assets &middot; {posture.edges} relationships
+          {posture.suppressedPaths > 0 && ` · ${posture.suppressedPaths} suppressed`}
+          {history?.mttrSeconds != null && ` · MTTR ${humanDuration(history.mttrSeconds)}`}
+        </div>
+      </section>
 
       {risk?.profileCompromise && risk.profileCompromise.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5 rounded-2xl glass px-4 py-2.5">
-          <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-widest text-muted">
-            compromise by attacker profile
+          <span className="flex items-center gap-1 text-[11px] text-muted">
+            Compromise by attacker profile
             <InfoTip text="P(any crown jewel compromised) marginalized over attacker capability - the correlation-aware headline Σ P(c)·R_c. The 'Account compromise' card above samples edges independently (the baseline); this reintroduces the same latent-capability correlation the per-path scores already reflect, broken down per profile." />
           </span>
           {risk.profileCompromise.map((p) => {
-            const tone =
-              p.profile === "apt"
-                ? "border-red-300 bg-red-50 text-red-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300"
-                : p.profile === "criminal"
-                  ? "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300"
-                  : "border-edge bg-slate-500/10 text-slate-600";
             const label = p.profile === "apt" ? "APT" : p.profile.charAt(0).toUpperCase() + p.profile.slice(1);
             return (
               <span
                 key={p.profile}
-                className={`rounded-md border px-1.5 py-0.5 text-[11px] font-medium tabular-nums ${tone}`}
+                className="rounded-md border border-edge px-2 py-0.5 text-[11px] tabular-nums text-muted"
                 title={`threat-model prior ${Math.round(p.prior * 100)}%`}
               >
-                {label} {Math.round(p.probability * 100)}%
+                {label} <span className="font-medium text-slate-900">{Math.round(p.probability * 100)}%</span>
               </span>
             );
           })}
@@ -358,7 +318,7 @@ export default function PostureOverview({
       {trend.length >= 2 && (
         <div className="rounded-2xl glass p-4">
           <div className="mb-2 flex items-center justify-between">
-            <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-slate-500">
+            <span className="flex items-center gap-1.5 text-[11px] font-medium text-muted">
               Exposure trend
               <InfoTip text="Critical paths and account-compromise probability over the analysis history. Security is managed on trends, not snapshots - a rising line is a regression to chase, a falling one is progress." />
             </span>

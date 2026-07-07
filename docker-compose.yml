@@ -109,6 +109,8 @@ services:
       ANALYZER_INCREMENTAL: ${ANALYZER_INCREMENTAL:-false}
       # Attacker-profile mixture priors (commodity/criminal/apt); empty = defaults.
       ATTACKER_PROFILE_PRIORS: ${ATTACKER_PROFILE_PRIORS:-}
+      # EPSS -> conditional-traversal exponent p=EPSS^gamma; gamma<1 lifts, empty/1 = as-is.
+      EPSS_TRAVERSAL_GAMMA: ${EPSS_TRAVERSAL_GAMMA:-}
       # Staleness pruning: nodes/edges not re-observed within GRAPH_TTL are
       # removed (leader-only) so departed assets can't produce phantom paths.
       # Empty/0 disables it (the default).
@@ -166,6 +168,8 @@ services:
       AWS_FIXTURES_DIR: ${AWS_FIXTURES_DIR:-}
       AWS_REGION: ${AWS_REGION:-}
       AWS_ROLE_ARN: ${AWS_ROLE_ARN:-}
+      AZURE_CONNECTOR_MODE: ${AZURE_CONNECTOR_MODE:-fixtures}
+      AZURE_FIXTURES_DIR: ${AZURE_FIXTURES_DIR:-}
       # Dev workflow (GitHub): PR comment + merge-gate status + remediation-as-PR.
       # Empty token → dry-run (logged, not posted).
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}

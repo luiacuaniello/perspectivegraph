@@ -364,27 +364,29 @@ export default function GraphCanvas({ nodes, edges, highlightNodes, highlightEdg
           </svg>
         </GraphControl>
       </div>
-      <div className="pointer-events-none absolute bottom-3 left-3 flex flex-col gap-1.5 rounded-lg border border-edge bg-panel/90 px-3 py-2 shadow-card backdrop-blur">
-        {(Object.keys(CATEGORY_STYLE) as Category[]).map((cat) => (
-          <span key={cat} className="flex items-center gap-2 text-[10px] text-slate-500">
-            <ShapeGlyph cat={cat} />
-            {CATEGORY_STYLE[cat].name}
-          </span>
-        ))}
-        <span className="mt-1.5 flex flex-col gap-1 border-t border-edge pt-1.5 text-[10px] text-slate-500">
+      <div className="pointer-events-none absolute bottom-3 left-3 rounded-lg border border-edge bg-panel/90 px-2.5 py-2 text-[10px] text-slate-500 shadow-card backdrop-blur">
+        <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+          {(Object.keys(CATEGORY_STYLE) as Category[]).map((cat) => (
+            <span key={cat} className="flex items-center gap-1.5">
+              <ShapeGlyph cat={cat} />
+              {CATEGORY_STYLE[cat].name}
+            </span>
+          ))}
+        </div>
+        <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 border-t border-edge pt-1.5">
           <span className="flex items-center gap-1.5">
-            <span className="grid h-3 w-3 place-items-center rounded-full border-2" style={{ borderColor: "#2f9e5f" }} />
-            entry (internet-exposed)
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="grid h-3 w-3 place-items-center rounded-full border-2" style={{ borderColor: "#caa53a" }} />
-            target (crown jewel)
+            <span className="h-3 w-3 rounded-full border-2" style={{ borderColor: "#2f9e5f" }} />
+            entry
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="grid h-3 w-3 place-items-center rounded-full border-2" style={{ borderColor: "#e0683a" }} />
-            runtime-confirmed (live)
+            <span className="h-3 w-3 rounded-full border-2" style={{ borderColor: "#caa53a" }} />
+            crown jewel
           </span>
-        </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-3 w-3 rounded-full border-2" style={{ borderColor: "#e0683a" }} />
+            runtime
+          </span>
+        </div>
       </div>
     </div>
   );

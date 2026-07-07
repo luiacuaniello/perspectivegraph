@@ -31,7 +31,7 @@ function viewFromHash(): View {
 const VIEW_META: Record<View, { title: string; subtitle: string }> = {
   overview: {
     title: "Security posture",
-    subtitle: "Reachable attack paths across code, cloud & runtime - not another flat CVE list.",
+    subtitle: "Reachable routes from internet exposure to your crown jewels.",
   },
   paths: {
     title: "Attack paths",
@@ -338,7 +338,7 @@ export default function App() {
 
                 <section>
                   <div className="mb-2 flex items-baseline justify-between">
-                    <h2 className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+                    <h2 className="text-[13px] font-medium text-slate-700">
                       Top attack paths
                     </h2>
                     <button

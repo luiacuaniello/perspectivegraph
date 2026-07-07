@@ -46,6 +46,7 @@ type calSample struct {
 	p, y       float64
 	correlated bool
 	hops       int
+	basis      string // the path's weakest-evidence hop basis (kev|epss|...), for per-basis recalibration
 }
 
 // CalibrationPoint is one step of the learned recalibration curve (raw model score
@@ -314,6 +315,209 @@ func calibrationSegments(samples []calSample) []CalibrationSegment {
 	return out
 }
 
+// ── P1: per-basis recalibration ─────────────────────────────────────
+//
+// The global isotonic map is monotone in the raw score, so it cannot fix a bias
+// that is *structured by evidence basis*: if EPSS-derived hops run hot and heuristic
+// hops run cold at the SAME score, no single curve corrects both. We attack that by
+// bucketing each verdict by the path's weakest-evidence basis (a path is only as
+// trustworthy as its least-evidenced hop) and fitting a per-basis Platt correction
+// logit(p_cal) = a + b·logit(p_raw), ridge-shrunk toward the identity (0,1) so a thin
+// basis bucket stays near the raw score instead of overfitting. The gap between the
+// global recalibrated Brier and the per-basis one measures how much the miscalibration
+// is provenance-structured - the P1 payoff, quantified.
+
+const (
+	// basisShrinkage is the ridge weight pulling each per-basis Platt fit toward the
+	// identity. Fixed, so a thin bucket (few samples relative to it) barely moves off
+	// the raw score while a well-populated one gets the full correction.
+	basisShrinkage = 2.0
+	// basisImprovementThreshold is how much (in Brier) a per-basis recalibration must
+	// beat the global one before we call the miscalibration provenance-structured.
+	basisImprovementThreshold = 0.02
+)
+
+// BasisRecalibration is the learned per-basis Platt correction: apply
+// p_cal = sigmoid(Intercept + Slope·logit(p_raw)) to a path whose weakest hop basis
+// is Basis. Slope≈1 & Intercept≈0 ⇒ that basis is already calibrated.
+type BasisRecalibration struct {
+	Basis     string  `json:"basis"`
+	Samples   int     `json:"samples"`
+	Intercept float64 `json:"intercept"`
+	Slope     float64 `json:"slope"`
+}
+
+func logitP(p float64) float64 {
+	p = clamp(p, 1e-6, 1-1e-6)
+	return math.Log(p / (1 - p))
+}
+
+func sigmoidP(x float64) float64 { return 1 / (1 + math.Exp(-x)) }
+
+// plattFit fits logit(p_cal) = a + b·logit(p_raw) by ridge-regularized logistic MLE
+// (Newton/IRLS), shrinking (a,b) toward the identity (0,1) with weight lambda.
+func plattFit(samples []calSample, lambda float64) (a, b float64) {
+	a, b = 0, 1 // identity start
+	for iter := 0; iter < 50; iter++ {
+		var g0, g1, h00, h01, h11 float64
+		for _, s := range samples {
+			z := logitP(s.p)
+			mu := sigmoidP(a + b*z)
+			w := mu * (1 - mu)
+			if w < 1e-9 {
+				w = 1e-9
+			}
+			r := mu - s.y
+			g0 += r
+			g1 += r * z
+			h00 += w
+			h01 += w * z
+			h11 += w * z * z
+		}
+		g0 += 2 * lambda * a       // ridge gradient toward (0,1)
+		g1 += 2 * lambda * (b - 1) //
+		h00 += 2 * lambda
+		h11 += 2 * lambda
+		det := h00*h11 - h01*h01
+		if math.Abs(det) < 1e-12 {
+			break
+		}
+		da := (h11*g0 - h01*g1) / det
+		db := (h00*g1 - h01*g0) / det
+		a -= da
+		b -= db
+		if math.Abs(da)+math.Abs(db) < 1e-9 {
+			break
+		}
+	}
+	return a, b
+}
+
+func basisOrUnknown(b string) string {
+	if b == "" {
+		return "unknown"
+	}
+	return b
+}
+
+// basisFits returns the full-data per-basis Platt coefficients keyed by basis.
+func basisFits(samples []calSample) map[string][2]float64 {
+	byBasis := map[string][]calSample{}
+	for _, s := range samples {
+		k := basisOrUnknown(s.basis)
+		byBasis[k] = append(byBasis[k], s)
+	}
+	fits := make(map[string][2]float64, len(byBasis))
+	for k, sub := range byBasis {
+		a, b := plattFit(sub, basisShrinkage)
+		fits[k] = [2]float64{a, b}
+	}
+	return fits
+}
+
+// recalibrateByBasis fits a per-basis Platt correction and returns the Brier that
+// basis-conditioned map reaches (k-fold cross-validated when there is enough data, so
+// it doesn't flatter itself on thin buckets) plus the publishable per-basis curves.
+func recalibrateByBasis(samples []calSample) (float64, []BasisRecalibration) {
+	n := len(samples)
+	if n == 0 {
+		return 0, nil
+	}
+	fits := basisFits(samples)
+	bases := make([]string, 0, len(fits))
+	for k := range fits {
+		bases = append(bases, k)
+	}
+	sort.Strings(bases)
+	counts := map[string]int{}
+	for _, s := range samples {
+		counts[basisOrUnknown(s.basis)]++
+	}
+	var perBasis []BasisRecalibration
+	for _, k := range bases {
+		perBasis = append(perBasis, BasisRecalibration{Basis: k, Samples: counts[k], Intercept: fits[k][0], Slope: fits[k][1]})
+	}
+	if n >= cvMinSamples {
+		return plattByBasisBrierCV(samples, cvFolds), perBasis
+	}
+	// In-sample fallback (too few to cross-validate).
+	var sum float64
+	for _, s := range samples {
+		ab := fits[basisOrUnknown(s.basis)]
+		d := sigmoidP(ab[0]+ab[1]*logitP(s.p)) - s.y
+		sum += d * d
+	}
+	return sum / float64(n), perBasis
+}
+
+// plattByBasisBrierCV cross-validates the per-basis recalibration: fit per-basis Platt
+// on the train folds, score the held-out fold with each sample's own basis fit (a basis
+// unseen in training falls back to the raw score). Deterministic split (reproducible).
+func plattByBasisBrierCV(samples []calSample, k int) float64 {
+	n := len(samples)
+	idx := make([]int, n)
+	for i := range idx {
+		idx[i] = i
+	}
+	rng := rand.New(rand.NewPCG(0x5eed, 0x1234))
+	rng.Shuffle(n, func(i, j int) { idx[i], idx[j] = idx[j], idx[i] })
+	fold := make([]int, n)
+	for pos, i := range idx {
+		fold[i] = pos % k
+	}
+	var sum float64
+	cnt := 0
+	for f := 0; f < k; f++ {
+		var train []calSample
+		for i := range samples {
+			if fold[i] != f {
+				train = append(train, samples[i])
+			}
+		}
+		fits := basisFits(train)
+		for i := range samples {
+			if fold[i] != f {
+				continue
+			}
+			s := samples[i]
+			pred := s.p // basis unseen in training ⇒ raw score
+			if ab, ok := fits[basisOrUnknown(s.basis)]; ok {
+				pred = sigmoidP(ab[0] + ab[1]*logitP(s.p))
+			}
+			d := pred - s.y
+			sum += d * d
+			cnt++
+		}
+	}
+	if cnt == 0 {
+		return 0
+	}
+	return sum / float64(cnt)
+}
+
+// basisSegments splits the samples by weakest-evidence basis and calibrates each, so a
+// residual error can be attributed to a provenance class (e.g. EPSS vs heuristic).
+func basisSegments(samples []calSample) []CalibrationSegment {
+	byBasis := map[string][]calSample{}
+	for _, s := range samples {
+		byBasis[basisOrUnknown(s.basis)] = append(byBasis[basisOrUnknown(s.basis)], s)
+	}
+	bases := make([]string, 0, len(byBasis))
+	for k := range byBasis {
+		bases = append(bases, k)
+	}
+	sort.Strings(bases)
+	var out []CalibrationSegment
+	for _, k := range bases {
+		c := calibrationStats(byBasis[k])
+		out = append(out, CalibrationSegment{
+			Name: "basis:" + k, Samples: c.n, Brier: c.brier, ECE: c.ece,
+			MeanPredicted: c.meanPred, ObservedRate: c.obsRate, Verdict: c.verdict,
+		})
+	}
+	return out
+}
+
 // detectionStats summarizes, over confirmed verdicts that carry a detection report,
 // how often the (reachable) path was caught - overall and among high-score paths.
 func detectionStats(records []Record) *DetectionStats {
@@ -363,6 +567,16 @@ func diagnose(cal Calibration) string {
 	// compromise no matter how well it predicts reachability.
 	if d := cal.Detection; d != nil && d.HighScoreTested >= minCalibrationSamples && d.HighScoreDetectionRate >= detectionConcern {
 		return "detection-axis (#7): reachable high-score paths are frequently detected/blocked, so the score over-predicts undetected compromise - add a P(reach and not-detected) term."
+	}
+	// Provenance-structured (P1), checked before low-resolution: if a per-basis rescale
+	// materially beats the global monotone one, the evidence basis supplies the
+	// separation the raw score lacks - the miscalibration is provenance-structured (EPSS
+	// hot, heuristic cold), not irreducibly low-resolution, and the per-basis map fixes
+	// it where a single global curve can't. It is also the cheapest fix, so it precedes
+	// the structural (#6) branch.
+	if len(cal.RecalibrationByBasis) >= 2 && cal.BrierRecalibratedByBasis > 0 &&
+		cal.BrierRecalibrated-cal.BrierRecalibratedByBasis > basisImprovementThreshold {
+		return "per-basis recalibration (P1): the score is miscalibrated differently by evidence basis (e.g. EPSS runs hot, heuristic runs cold), which a single global rescale can't fix - apply the per-basis map (recalibrationByBasis)."
 	}
 	// Resolution first: if the score barely discriminates (per-bin observed rates hug
 	// the base rate), no rescale helps - a constant forecast is calibrated yet useless.

@@ -23,7 +23,7 @@ function FixRow({ fix, rank, cumulative }: { fix: Fix; rank: number; cumulative:
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="shrink-0 rounded bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+            <span className="shrink-0 rounded border border-edge bg-ink px-2 py-0.5 font-mono text-[10px] text-slate-500">
               {fix.kind}
             </span>
             <span className="truncate text-sm font-medium text-slate-800">{fix.title}</span>
@@ -116,7 +116,7 @@ export default function RemediationPlan({
     <div className="flex flex-col gap-4">
       {/* Headline summary - the pitch */}
       <div className="rounded-xl border border-edge bg-panel shadow-card p-5">
-        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-slate-500">
+        <div className="flex items-center gap-2 text-[13px] font-medium text-slate-700">
           <TargetIcon className="h-4 w-4 text-accent" />
           Optimized remediation plan
         </div>

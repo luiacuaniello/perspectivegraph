@@ -14,9 +14,9 @@
   --c-panel: 255 255 255; /* #ffffff cards */
   --c-panel-2: 244 247 252; /* #f4f7fc raised/inset */
   --c-edge: 221 227 237; /* #dde3ed hairline */
-  --c-accent: 13 110 210; /* #0d6ed2 electric blue */
-  --c-accent-strong: 9 88 178; /* #0958b2 */
-  --c-accent-soft: 231 241 252; /* #e7f1fc accent tint surface */
+  --c-accent: 79 70 229; /* #4f46e5 indigo - the single accent (matches dark) */
+  --c-accent-strong: 67 56 202; /* #4338ca */
+  --c-accent-soft: 238 238 252; /* #eeeefc accent tint surface */
   --c-muted: 100 116 139; /* #64748b secondary text */
   --c-shadow: 31 41 55; /* shadow base */
   /* Brand gradient (logo mark, primary CTA, glows) - sky-cyan to indigo */
@@ -55,9 +55,9 @@
   --c-panel: 15 20 31; /* #0f141f glass card base */
   --c-panel-2: 21 28 42; /* #151c2a raised/inset */
   --c-edge: 39 51 73; /* #273349 lit hairline */
-  --c-accent: 56 200 255; /* #38c8ff electric cyan-blue */
-  --c-accent-strong: 125 222 255; /* #7ddeff */
-  --c-accent-soft: 17 33 52; /* dark accent-tinted surface */
+  --c-accent: 109 108 240; /* #6d6cf0 refined indigo - the single accent */
+  --c-accent-strong: 157 156 245; /* #9d9cf5 */
+  --c-accent-soft: 29 30 54; /* #1d1e36 indigo-tinted surface */
   --c-muted: 144 160 184; /* secondary text */
   --c-shadow: 0 0 0;
   --c-grad-from: 56 200 255; /* #38c8ff cyan */
@@ -121,17 +121,9 @@ body,
 }
 
 body {
-  /* "Mission control": a tactical grid mesh + two electric glows over a deep
-     canvas. Subtle in light, dramatic in dark. */
-  background:
-    radial-gradient(58rem 46rem at 8% -10%, rgb(var(--c-canvas-glow) / var(--canvas-glow-alpha)), transparent 60%),
-    radial-gradient(48rem 40rem at 102% -4%, rgb(var(--c-grad-to) / calc(var(--canvas-glow-alpha) * 0.85)), transparent 55%),
-    radial-gradient(70rem 50rem at 50% 118%, rgb(var(--c-canvas-glow) / calc(var(--canvas-glow-alpha) * 0.55)), transparent 60%),
-    linear-gradient(rgb(var(--c-grid) / var(--grid-alpha)) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(var(--c-grid) / var(--grid-alpha)) 1px, transparent 1px),
-    rgb(var(--c-ink));
-  background-size: 100% 100%, 100% 100%, 100% 100%, 40px 40px, 40px 40px, 100% 100%;
-  background-attachment: fixed;
+  /* Flat near-black canvas. No mesh, no glows - hierarchy comes from type and
+     space, not decoration. */
+  background-color: rgb(var(--c-ink));
   color: rgb(var(--c-fg));
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -154,25 +146,21 @@ body {
 
 /* ── Mission-control primitives ──────────────────────────────────────────── */
 
-/* Glass panel: translucent surface + backdrop blur + lit hairline. The base card
-   look for the whole app - swap `bg-panel border border-edge` for `glass`. */
+/* Flat panel: solid surface + a single hairline. The base card look for the whole
+   app - swap `bg-panel border border-edge` for `glass`. No blur, no glow. */
 .glass {
-  background-color: rgb(var(--c-panel) / var(--glass-alpha));
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-  border: 1px solid rgb(var(--c-edge) / 0.9);
+  background-color: rgb(var(--c-panel));
+  border: 1px solid rgb(var(--c-edge));
 }
 
-/* A gradient hairline that reads as a "lit edge" on hover/active cards. */
+/* A quiet 1px accent ring for the active/selected card (no glow blur). */
 .glow-ring {
-  box-shadow:
-    0 0 0 1px rgb(var(--c-accent) / 0.35),
-    0 0 24px -6px rgb(var(--c-accent) / 0.45);
+  box-shadow: 0 0 0 1px rgb(var(--c-accent) / 0.4);
 }
 
-/* Neon text glow for headline numbers / key accents. */
+/* No neon text glow - headline numbers carry weight, not luminosity. */
 .text-glow {
-  text-shadow: 0 0 18px rgb(var(--c-accent) / 0.45);
+  text-shadow: none;
 }
 
 /* A thin accent rule that "lights up" a card's top edge. */

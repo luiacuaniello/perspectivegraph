@@ -37,7 +37,7 @@ describe("PostureOverview", () => {
   it("communicates Monte Carlo uncertainty via the sensitivity band, not a bare %", () => {
     render(<PostureOverview posture={posture} risk={risk} />);
     expect(screen.getByText("Account compromise")).toBeInTheDocument();
-    // The honest secondary line must show the modeled band (82–100%), not just 100%.
-    expect(screen.getByText(/modeled 82–100%/)).toBeInTheDocument();
+    // The honest secondary line must show the modeled band (82 to 100%), not just 100%.
+    expect(screen.getByText(/modeled 82 to 100%/)).toBeInTheDocument();
   });
 });

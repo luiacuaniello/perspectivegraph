@@ -154,7 +154,7 @@
 								"connectors"
 							]
 						},
-						"description": "Status of the agentless PULL connectors (e.g. aws): last run, events emitted, errors. Empty when CONNECTORS_ENABLED is unset."
+						"description": "Status of the agentless PULL connectors (e.g. aws, azure): last run, events emitted, errors. Empty when CONNECTORS_ENABLED is unset."
 					}
 				},
 				{
@@ -741,11 +741,11 @@
 						"body": {
 							"mode": "graphql",
 							"graphql": {
-								"query": "{ attackPaths { id score scoreUpperBound correlatedHops scoreCiLow scoreCiHigh mixtureScore profileScores { profile prior score } confidence confidenceLabel steps { edgeType probability weightBasis weightConfidence } } }",
+								"query": "{ attackPaths { id score scoreUpperBound correlatedHops posteriorMean scoreCiLow scoreCiHigh mixtureScore profileScores { profile prior score } confidence confidenceLabel steps { edgeType probability weightBasis weightConfidence } } }",
 								"variables": ""
 							}
 						},
-						"description": "Honest probabilities. Every path reports a confidence (high|medium|low) and every hop a weightBasis - kev|epss|runtime (observed evidence) vs cvss|severity|heuristic (estimate). It also exposes three views of uncertainty: (1) the independence assumption - score is the product of the hops (independent), scoreUpperBound is the weakest hop (the score if they share a common cause), correlatedHops flags when >=2 hops rest on the same basis, so the true exploitability lies in [score, scoreUpperBound]; (2) epistemic uncertainty - scoreCiLow/scoreCiHigh are the 90% Bayesian credible interval (each edge a Beta posterior whose width reflects how much evidence backs it), so a wide CI means the score rests on soft inputs; (3) attacker-profile mixture - mixtureScore = sum over profiles P(c)*prod p(e|c) and profileScores breaks it down per profile (commodity/criminal/apt), the '72% vs an APT, 18% vs commodity' read that fixes the independence assumption at the root by conditioning on attacker capability. None of these change the point score; tune the priors with ATTACKER_PROFILE_PRIORS."
+						"description": "Honest probabilities. Every path reports a confidence (high|medium|low) and every hop a weightBasis - kev|epss|runtime (observed evidence) vs cvss|severity|heuristic (estimate). It also exposes three views of uncertainty: (1) the independence assumption - score is the product of the hops (independent), scoreUpperBound is the weakest hop (the score if they share a common cause), correlatedHops flags when >=2 hops rest on the same basis, so the true exploitability lies in [score, scoreUpperBound]; (2) one coherent posterior (P2) - posteriorMean with scoreCiLow/scoreCiHigh is a single Monte Carlo that composes epistemic uncertainty (each edge a Beta posterior whose width reflects its evidence, or its evidence_count directly when known) with the attacker-capability mixture; posteriorMean is the coherent point estimate the 90% credible interval brackets (it even corrects the Jensen gap the plug-in mixtureScore ignores), so a wide CI means soft inputs; (3) the per-profile breakdown - mixtureScore = sum over profiles P(c)*prod p(e|c) and profileScores breaks it down per profile (commodity/criminal/apt), the '72% vs an APT, 18% vs commodity' read. posteriorMean is the attacker-marginal so it can sit above or below the bare score; tune the priors with ATTACKER_PROFILE_PRIORS."
 					}
 				},
 				{
@@ -891,7 +891,7 @@
 								"variables": ""
 							}
 						},
-						"description": "Per-trial edge realization -> P(crown jewel compromised) with a 95% Wilson CI, plus P(at least one compromised) and the expected count. Captures path multiplicity that the per-path product cannot. Reproducible per seed."
+						"description": "Per-trial edge realization -> P(crown jewel compromised) with a 95% Wilson CI, plus P(at least one compromised) and the expected count. Captures path multiplicity that the per-path product cannot. Edges sharing a weight_cause (same CVE/credential) are coupled comonotonically - one draw per cause per trial, so routes resting on the same weakness fail together instead of counting as independent redundancy (P3); mixtureCompromiseProbability additionally marginalizes over the attacker profiles. Reproducible per seed."
 					},
 					"response": []
 				},
@@ -1519,7 +1519,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"pathId\": \"{{suppressPathId}}\",\n  \"outcome\": \"confirmed\",\n  \"source\": \"caldera\",\n  \"evidence\": \"atomic test T1190 reached the crown jewel\",\n  \"detected\": false\n}",
+							"raw": "{\n  \"pathId\": \"{{suppressPathId}}\",\n  \"outcome\": \"confirmed\",\n  \"scope\": \"target\",\n  \"source\": \"caldera\",\n  \"evidence\": \"atomic test T1190 reached the crown jewel\",\n  \"detected\": false\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -1535,7 +1535,7 @@
 								"validations"
 							]
 						},
-						"description": "Record a red-team/BAS verdict on a path: outcome ∈ confirmed | refuted | partial (references a path id from attackPaths) | missed (a real path the engine did NOT surface - needs route, not pathId). source required. Admin role when auth is on. The server captures the path's predicted score and structure at verdict time, so this feeds precision/recall AND the calibration diagnostics. Optional `detected` (true/false) on a confirmed verdict reports whether the attempt was caught/blocked - the evidence for the detection axis (#7). For OFFLINE/synthetic verdicts whose path isn't live (e.g. the `genverdicts` self-test), you may also supply `predictedScore`/`hops`/`correlatedHops` as a fallback; for a live path the server-captured values always win."
+						"description": "Record a red-team/BAS verdict on a path: outcome ∈ confirmed | refuted | partial (references a path id from attackPaths) | missed (a real path the engine did NOT surface - needs route, not pathId). source required. Admin role when auth is on. The server captures the path's predicted score and structure at verdict time, so this feeds precision/recall AND the calibration diagnostics. Optional `detected` (true/false) on a confirmed verdict reports whether the attempt was caught/blocked - the evidence for the detection axis (#7). For OFFLINE/synthetic verdicts whose path isn't live (e.g. the `genverdicts` self-test), you may also supply `predictedScore`/`hops`/`correlatedHops` (and `predictedCompromise` for target scope) as a fallback; for a live path the server-captured values always win. Optional `scope`: `path` (default) grades this path's S(P); `target` grades the per-target compromise probability - use it when the verdict means \"the crown jewel was reached (by any route)\" rather than \"this exact path works\". The two scopes calibrate as separate tracks (`calibration` vs `calibration.target`)."
 					}
 				},
 				{
@@ -1570,6 +1570,38 @@
 					}
 				},
 				{
+					"name": "2b. Import a BAS report (batch push)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"source\": \"safebreach\",\n  \"findings\": [\n    { \"target\": \"customer-db\", \"outcome\": \"confirmed\", \"scope\": \"target\", \"evidence\": \"exfil simulated\" },\n    { \"target\": \"payments-admin\", \"from\": \"edge-alb\", \"outcome\": \"confirmed\", \"scope\": \"path\", \"evidence\": \"path walked\" }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{apiUrl}}/validations/import",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"validations",
+								"import"
+							]
+						},
+						"description": "Push path for automatic BAS ingestion: a red-team/BAS platform's post-run webhook posts a whole report (source + findings) and the server matches each finding to a live path server-side - by pathId, or by crown-jewel `target` (+ optional `from` entry) - captures the prediction, and records it with the finding's `scope` (path | target). Returns {recorded, unmatched}; a finding matching no live path (and not `missed`) is counted unmatched, not recorded. Admin role when auth is on. The two scopes feed the two calibration tracks (calibration vs calibration.target)."
+					}
+				},
+				{
 					"name": "3. List verdicts + precision/recall",
 					"request": {
 						"method": "GET",
@@ -1599,7 +1631,7 @@
 						"body": {
 							"mode": "graphql",
 							"graphql": {
-								"query": "{\n  calibration {\n    samples\n    brier\n    logLoss\n    ece\n    meanPredicted\n    observedRate\n    recommendedScale\n    brierRecalibrated\n    verdict\n    diagnosis\n    persistent\n    hasData\n    bins { low high count meanPredicted observedRate }\n    recalibrationMap { score calibrated }\n    segments { name samples brier ece meanPredicted observedRate verdict }\n    detection { tested detected detectionRate highScoreTested highScoreDetectionRate }\n  }\n  calibrationTrend { at brier ece samples }\n}",
+								"query": "{\n  calibration {\n    samples\n    brier\n    logLoss\n    ece\n    meanPredicted\n    observedRate\n    recommendedScale\n    brierRecalibrated\n    verdict\n    diagnosis\n    persistent\n    hasData\n    bins { low high count meanPredicted observedRate }\n    recalibrationMap { score calibrated }\n    segments { name samples brier ece meanPredicted observedRate verdict }\n    basisSegments { name samples meanPredicted observedRate verdict }\n    brierRecalibratedByBasis\n    recalibrationByBasis { basis samples intercept slope }\n    detection { tested detected detectionRate highScoreTested highScoreDetectionRate }\n    target { samples brier ece meanPredicted observedRate verdict diagnosis }\n  }\n  calibrationTrend { at brier ece samples }\n}",
 								"variables": ""
 							}
 						},

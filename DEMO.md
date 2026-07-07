@@ -87,7 +87,7 @@ the right PR. Make that status a *required* check in branch protection and the r
 
 The sample seed is synthetic but realistic. To run it against a real environment,
 point an agentless connector at a read-only cloud account
-(`CONNECTORS_ENABLED=aws`, `AWS_CONNECTOR_MODE=live`, an assumable read-only role -
+(`CONNECTORS_ENABLED=aws`, `AWS_CONNECTOR_MODE=sdk`, an assumable read-only role -
 see the README) or POST your own scanner output to the ingest webhooks. The PR
 gate and the ranked paths work the same way.
 

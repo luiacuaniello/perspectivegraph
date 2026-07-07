@@ -55,6 +55,14 @@ type Config struct {
 	// built-in defaults. Names match the built-in profiles; priors are renormalized.
 	AttackerProfilePriors string
 
+	// EPSSTraversalGamma is the exponent of the EPSS -> conditional-traversal map
+	// p(traverse|positioned) = EPSS^gamma, applied where EPSS sets an edge probability.
+	// EPSS is a marginal 30-day exploitation rate, not the conditional a positioned
+	// attacker's traversal needs; gamma < 1 lifts it (correcting the known
+	// under-statement), gamma = 1 (default) keeps EPSS as-is. Opt-in: no fitted map is
+	// applied silently. See threatintel.EdgeProbability.
+	EPSSTraversalGamma float64
+
 	// GitHub PR commenter (action layer)
 	// AI-native layer. Anthropic (Claude) is the preferred backend; HuggingFace
 	// (HFToken, OpenAI-compatible) is the free/self-hosted alternative used when no
@@ -187,6 +195,13 @@ type Config struct {
 	AWSRegion        string
 	AWSRoleARN       string
 
+	// Azure connector. AzureConnectorMode is "fixtures" (default - pull from local
+	// normalized `az network`/`az vm -o json` state, no credentials needed) or "sdk"
+	// (live Azure, wired extension point). AzureFixturesDir is the JSON directory for
+	// fixtures mode.
+	AzureConnectorMode string
+	AzureFixturesDir   string
+
 	// CORS: browser origins allowed to call the API cross-origin. Defaults to the
 	// local Vite dev server + the docker-compose dashboard. Set to "*" to allow any
 	// origin (not recommended), or to your dashboard's real origin in production.
@@ -237,12 +252,13 @@ func Load() Config {
 		TLSCertFile: getenv("TLS_CERT_FILE", ""),
 		TLSKeyFile:  getenv("TLS_KEY_FILE", ""),
 
-		AnalyzerInterval:    getdur("ANALYZER_INTERVAL", 30*time.Second),
-		AnalyzerMaxHops:     getint("ANALYZER_MAX_HOPS", 12),
-		AnalyzerDBPaths:     getbool("ANALYZER_DB_PATHS", false),
+		AnalyzerInterval:      getdur("ANALYZER_INTERVAL", 30*time.Second),
+		AnalyzerMaxHops:       getint("ANALYZER_MAX_HOPS", 12),
+		AnalyzerDBPaths:       getbool("ANALYZER_DB_PATHS", false),
 		AnalyzerWorkers:       getint("ANALYZER_WORKERS", 0),
 		AnalyzerIncremental:   getbool("ANALYZER_INCREMENTAL", false),
 		AttackerProfilePriors: getenv("ATTACKER_PROFILE_PRIORS", ""),
+		EPSSTraversalGamma:    getfloat("EPSS_TRAVERSAL_GAMMA", 1.0),
 
 		AnthropicAPIKey:  getenv("ANTHROPIC_API_KEY", ""),
 		AnthropicModel:   getenv("ANTHROPIC_MODEL", ""),
@@ -271,9 +287,9 @@ func Load() Config {
 		IngestHMACSecrets: getenv("INGEST_HMAC_SECRETS", ""),
 		APITokens:         getenv("API_TOKENS", ""),
 
-		OIDCJWKSURL:  getenv("OIDC_JWKS_URL", ""),
-		OIDCIssuer:   getenv("OIDC_ISSUER", ""),
-		OIDCAudience: getenv("OIDC_AUDIENCE", ""),
+		OIDCJWKSURL:   getenv("OIDC_JWKS_URL", ""),
+		OIDCIssuer:    getenv("OIDC_ISSUER", ""),
+		OIDCAudience:  getenv("OIDC_AUDIENCE", ""),
 		OIDCClientID:  getenv("OIDC_CLIENT_ID", ""),
 		OIDCAuthURL:   getenv("OIDC_AUTHORIZE_URL", ""),
 		OIDCTokenURL:  getenv("OIDC_TOKEN_URL", ""),
@@ -304,6 +320,9 @@ func Load() Config {
 		AWSFixturesDir:    getenv("AWS_FIXTURES_DIR", ""),
 		AWSRegion:         getenv("AWS_REGION", ""),
 		AWSRoleARN:        getenv("AWS_ROLE_ARN", ""),
+
+		AzureConnectorMode: getenv("AZURE_CONNECTOR_MODE", "fixtures"),
+		AzureFixturesDir:   getenv("AZURE_FIXTURES_DIR", ""),
 
 		CORSAllowedOrigins: getlist("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000"),
 

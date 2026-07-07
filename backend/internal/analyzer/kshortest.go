@@ -42,8 +42,8 @@ func newWGraph(snap graph.Snapshot) *wgraph {
 		if p > 1 {
 			p = 1
 		}
-		basis, basisConf := weightBasisOf(e, g.nodes[e.From], g.nodes[e.To])
-		oe := outEdge{to: e.To, typ: e.Type, weight: -math.Log(p), prob: p, basis: basis, basisConf: basisConf}
+		basis, basisConf, evid := weightBasisOf(e, g.nodes[e.From], g.nodes[e.To])
+		oe := outEdge{to: e.To, typ: e.Type, weight: -math.Log(p), prob: p, basis: basis, basisConf: basisConf, evid: evid}
 		m := g.adj[e.From]
 		if m == nil {
 			m = map[string]outEdge{}
@@ -210,7 +210,7 @@ func (g *wgraph) toAttackPath(seq []string) AttackPath {
 		}
 		if i+1 < len(seq) {
 			e := g.adj[id][seq[i+1]]
-			steps = append(steps, Step{EdgeType: e.typ, From: id, To: seq[i+1], Probability: e.prob, WeightBasis: e.basis, WeightConfidence: e.basisConf})
+			steps = append(steps, Step{EdgeType: e.typ, From: id, To: seq[i+1], Probability: e.prob, WeightBasis: e.basis, WeightConfidence: e.basisConf, EvidenceCount: e.evid})
 			score *= e.prob
 		}
 	}

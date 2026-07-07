@@ -117,17 +117,17 @@ export default function Sidebar({
 
   return (
     <aside
-      className={`fixed inset-y-0 left-0 z-40 flex w-56 shrink-0 flex-col border-r border-edge bg-panel shadow-xl transition-transform duration-200 lg:static lg:z-auto lg:bg-panel/55 lg:backdrop-blur-md lg:shadow-none lg:transition-none ${
+      className={`fixed inset-y-0 left-0 z-40 flex w-56 shrink-0 flex-col border-r border-edge bg-panel shadow-xl transition-transform duration-200 lg:static lg:z-auto lg:shadow-none lg:transition-none ${
         open ? "translate-x-0" : "-translate-x-full"
       } lg:translate-x-0`}
     >
       <div className="flex items-center gap-2.5 px-5 pb-5 pt-6">
-        <span className="grid h-9 w-9 place-items-center rounded-xl bg-brand-gradient text-white shadow-glow ring-1 ring-white/10">
+        <span className="grid h-9 w-9 place-items-center rounded-xl bg-brand-gradient text-white ring-1 ring-white/10">
           <ShieldIcon className="h-5 w-5" />
         </span>
         <div className="leading-tight">
-          <div className="text-[15px] font-bold tracking-tight text-slate-900">PerspectiveGraph</div>
-          <div className="text-[10px] font-semibold uppercase tracking-widest text-accent/90">Attack-path engine</div>
+          <div className="text-[15px] font-semibold tracking-tight text-slate-900">PerspectiveGraph</div>
+          <div className="text-[10px] text-muted">Attack-path engine</div>
         </div>
         <button
           onClick={onClose}
@@ -150,7 +150,7 @@ export default function Sidebar({
               }}
               className={`group flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium transition ${
                 active
-                  ? "bg-accent-soft text-accent shadow-[inset_3px_0_0_0_theme(colors.accent),0_0_20px_-6px_theme(colors.accent)]"
+                  ? "bg-accent-soft text-accent shadow-[inset_2px_0_0_0_theme(colors.accent)]"
                   : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"
               }`}
             >
