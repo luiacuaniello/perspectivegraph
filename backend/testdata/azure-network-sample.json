@@ -1,5 +1,5 @@
 {
-  "_comment": "Normalized Azure network state (the shape the Azure connector's fixtures transport consumes: `az network nsg list` / `az vm list -o json` with the VM->NIC->NSG association resolved). A web VM sits behind an NSG that admits the Internet service tag (mapped to 0.0.0.0/0 -> internet-exposed), peered toward a PII database VM tagged as a crown jewel.",
+  "_comment": "Normalized Azure network state (the shape the Azure connector's fixtures transport consumes: `az network nsg list` / `az vm list -o json` with the VM->NIC->NSG and ASG associations resolved). A web VM sits behind an NSG that admits the Internet service tag (mapped to 0.0.0.0/0 -> internet-exposed) and belongs to the web-asg. The db NSG admits that ASG on 5432 (east-west micro-segmentation), so the discovered lateral edge is internet -> web-vm -> payments-db-vm, a PII database VM tagged as a crown jewel.",
   "networkSecurityGroups": [
     {
       "name": "web-nsg",
@@ -10,12 +10,13 @@
     {
       "name": "db-nsg",
       "securityRules": [
-        { "name": "allow-web-subnet", "direction": "Inbound", "access": "Allow", "protocol": "Tcp", "destinationPortRange": "5432", "sourceAddressPrefix": "10.0.1.0/24" }
+        { "name": "allow-web-subnet", "direction": "Inbound", "access": "Allow", "protocol": "Tcp", "destinationPortRange": "5432", "sourceAddressPrefix": "10.0.1.0/24" },
+        { "name": "allow-web-asg", "direction": "Inbound", "access": "Allow", "protocol": "Tcp", "destinationPortRange": "5432", "sourceApplicationSecurityGroups": ["web-asg"] }
       ]
     }
   ],
   "virtualMachines": [
-    { "name": "web-vm", "networkSecurityGroups": ["web-nsg"], "tags": { "app": "web", "env": "prod" } },
+    { "name": "web-vm", "networkSecurityGroups": ["web-nsg"], "applicationSecurityGroups": ["web-asg"], "tags": { "app": "web", "env": "prod" } },
     { "name": "payments-db-vm", "networkSecurityGroups": ["db-nsg"], "tags": { "data-classification": "pii", "crown-jewel": "true" } }
   ],
   "vnetPeerings": [

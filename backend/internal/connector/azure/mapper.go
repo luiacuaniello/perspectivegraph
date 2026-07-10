@@ -28,12 +28,20 @@ type azRule struct {
 	Access                string   `json:"access"`    // Allow | Deny
 	SourceAddressPrefix   string   `json:"sourceAddressPrefix"`
 	SourceAddressPrefixes []string `json:"sourceAddressPrefixes"`
+	// SourceApplicationSecurityGroups is Azure's east-west micro-segmentation: an
+	// inbound rule can admit source *ASGs* rather than CIDRs, and VMs are members of
+	// ASGs. This is how a real subscription expresses "the web tier may reach the db
+	// tier", so it must survive the mapping - see mapNetworkToCloudnet.
+	SourceApplicationSecurityGroups []string `json:"sourceApplicationSecurityGroups"`
 }
 
 type azVM struct {
-	Name                  string            `json:"name"`
-	NetworkSecurityGroups []string          `json:"networkSecurityGroups"`
-	Tags                  map[string]string `json:"tags"`
+	Name                  string   `json:"name"`
+	NetworkSecurityGroups []string `json:"networkSecurityGroups"`
+	// ApplicationSecurityGroups are the ASGs this VM belongs to - the membership an
+	// NSG rule's SourceApplicationSecurityGroups references to allow east-west traffic.
+	ApplicationSecurityGroups []string          `json:"applicationSecurityGroups"`
+	Tags                      map[string]string `json:"tags"`
 }
 
 type azPeer struct {
@@ -57,11 +65,19 @@ type cnSecurityGroup struct {
 }
 
 type cnIpPermission struct {
-	IpRanges []cnIpRange `json:"IpRanges"`
+	IpRanges         []cnIpRange         `json:"IpRanges"`
+	UserIdGroupPairs []cnUserIdGroupPair `json:"UserIdGroupPairs,omitempty"`
 }
 
 type cnIpRange struct {
 	CidrIp string `json:"CidrIp"`
+}
+
+// cnUserIdGroupPair is cloudnet's SG-to-SG ingress reference: instances in the
+// source group can reach instances in the group that admits it. It is the shape
+// the collector turns into the discovered lateral-reachability (CONNECTS_TO) edge.
+type cnUserIdGroupPair struct {
+	GroupID string `json:"GroupId"`
 }
 
 type cnSGRef struct {
@@ -90,11 +106,15 @@ type cnVpcRef struct {
 
 // mapNetworkToCloudnet converts normalized Azure network state into the cloudnet
 // bundle the existing collector parses (provider "azure"), so identity resolution,
-// the graph, and the analyzer run unchanged. An NSG becomes a security group whose
-// inbound Allow rules become ingress CIDRs - Azure's "Internet"/"*"/"Any" service
-// tags map to 0.0.0.0/0, so cloudnet flags the exposure exactly as it does for an
-// AWS 0.0.0.0/0 SG; a VM becomes an instance bound to its NSGs; a VNet peering
-// becomes a peering. Deterministic output (sorted tags) so a re-pull is byte-stable.
+// the graph, and the analyzer run unchanged. An NSG becomes a security group; its
+// inbound Allow rules become ingress - CIDR sources become IpRanges (Azure's
+// "Internet"/"*"/"Any" service tags map to 0.0.0.0/0, so cloudnet flags exposure as
+// it does an AWS 0.0.0.0/0 SG) and *ASG* sources become UserIdGroupPairs, the SG-to-SG
+// reference cloudnet turns into the east-west CONNECTS_TO edge. A VM becomes an
+// instance bound to its NSGs *and its ASGs* (so a rule that admits an ASG connects
+// that ASG's members), and a VNet peering becomes a peering. Without the ASG mapping
+// the exposed tier would dead-end and no internet -> crown-jewel path would form.
+// Deterministic output (sorted tags) so a re-pull is byte-stable.
 func mapNetworkToCloudnet(raw []byte) ([]byte, error) {
 	var in azureNetwork
 	if err := json.Unmarshal(raw, &in); err != nil {
@@ -112,7 +132,12 @@ func mapNetworkToCloudnet(raw []byte) ([]byte, error) {
 			for _, cidr := range sourceCidrs(r) {
 				perm.IpRanges = append(perm.IpRanges, cnIpRange{CidrIp: cidr})
 			}
-			if len(perm.IpRanges) > 0 {
+			for _, asg := range r.SourceApplicationSecurityGroups {
+				if asg != "" {
+					perm.UserIdGroupPairs = append(perm.UserIdGroupPairs, cnUserIdGroupPair{GroupID: asgGroupID(asg)})
+				}
+			}
+			if len(perm.IpRanges) > 0 || len(perm.UserIdGroupPairs) > 0 {
 				sg.IpPermissions = append(sg.IpPermissions, perm)
 			}
 		}
@@ -123,6 +148,9 @@ func mapNetworkToCloudnet(raw []byte) ([]byte, error) {
 		inst := cnInstance{InstanceID: vm.Name}
 		for _, nsg := range vm.NetworkSecurityGroups {
 			inst.SecurityGroups = append(inst.SecurityGroups, cnSGRef{GroupID: nsg})
+		}
+		for _, asg := range vm.ApplicationSecurityGroups {
+			inst.SecurityGroups = append(inst.SecurityGroups, cnSGRef{GroupID: asgGroupID(asg)})
 		}
 		for _, k := range sortedKeys(vm.Tags) {
 			inst.Tags = append(inst.Tags, cnTag{Key: k, Value: vm.Tags[k]})
@@ -157,6 +185,11 @@ func sourceCidrs(r azRule) []string {
 	}
 	return out
 }
+
+// asgGroupID namespaces an application-security-group name into the cloudnet group
+// id space so it can't collide with an NSG that happens to share the name (both
+// become cloudnet "security groups", but they are distinct membership sets).
+func asgGroupID(name string) string { return "asg/" + name }
 
 func sortedKeys(m map[string]string) []string {
 	keys := make([]string, 0, len(m))

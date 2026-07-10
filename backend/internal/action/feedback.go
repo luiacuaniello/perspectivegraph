@@ -70,7 +70,7 @@ func badges(n ontology.Node) string {
 		out += "  🌐 internet-exposed"
 	}
 	if n.Bool(ontology.PropCrownJewel) {
-		out += "  💎 crown-jewel"
+		out += "  💎 sensitive asset"
 	}
 	if sev, ok := n.Properties[ontology.PropSeverity].(string); ok && sev != "" {
 		out += "  ⚠️ " + sev

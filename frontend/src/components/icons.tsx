@@ -25,6 +25,35 @@ function make(children: ReactNode) {
 
 export const ShieldIcon = make(<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />);
 
+// Logo: the brand mark - a small node-graph seen in perspective (an isometric
+// plane) with a lit attack path climbing from an internet-exposed entry through a
+// hub to a crown jewel (the amber gem). The cool-to-warm gradient is the product in
+// one glyph: a graph, a perspective, a path to the jewel. Its palette rides the
+// theme via CSS vars (bright on the dark chip, saturated on the light chip), set
+// through `style` so var() resolves as a CSS property; the off-path node is filled
+// with the chip colour so it reads hollow.
+export function Logo(props: IconProps) {
+  return (
+    <svg viewBox="0 0 48 48" fill="none" aria-hidden="true" {...props}>
+      <defs>
+        <linearGradient id="pgLogoPath" x1="12" y1="32" x2="37" y2="15" gradientUnits="userSpaceOnUse">
+          <stop offset="0" style={{ stopColor: "var(--logo-entry)" }} />
+          <stop offset="0.55" style={{ stopColor: "var(--logo-hub)" }} />
+          <stop offset="1" style={{ stopColor: "var(--logo-gem)" }} />
+        </linearGradient>
+      </defs>
+      <path d="M24 11 L42 22 L24 33 L6 22 Z" strokeOpacity="0.22" strokeWidth="1" style={{ stroke: "var(--logo-tile)" }} />
+      <path d="M12 32 L31 33 M24 26 L31 33" strokeOpacity="0.55" strokeWidth="1.4" strokeLinecap="round" style={{ stroke: "var(--logo-off)" }} />
+      <circle cx="31" cy="33" r="2.4" strokeOpacity="0.8" strokeWidth="1.2" style={{ fill: "rgb(var(--c-panel-2))", stroke: "var(--logo-off)" }} />
+      <path d="M12 32 L24 26 L37 15" stroke="url(#pgLogoPath)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="12" cy="32" r="3.2" style={{ fill: "var(--logo-entry)" }} />
+      <circle cx="24" cy="26" r="3" style={{ fill: "var(--logo-hub)" }} />
+      <path d="M37 9 L42 15 L37 22 L32 15 Z" style={{ fill: "var(--logo-gem)" }} />
+      <circle cx="37" cy="15" r="1.7" style={{ fill: "var(--logo-gem-hi)" }} />
+    </svg>
+  );
+}
+
 export const GlobeIcon = make(
   <>
     <circle cx="12" cy="12" r="10" />

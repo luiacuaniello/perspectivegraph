@@ -32,9 +32,9 @@ func TestBuiltinInvariants(t *testing.T) {
 	}
 
 	// Path invariant: lb -> c -> role should fire.
-	v, ok := got["no-internet-to-crown-jewel"]
+	v, ok := got["no-internet-to-sensitive-asset"]
 	if !ok {
-		t.Fatal("expected no-internet-to-crown-jewel violation")
+		t.Fatal("expected no-internet-to-sensitive-asset violation")
 	}
 	if len(v.Nodes) != 3 || v.Nodes[0].ID != "lb" || v.Nodes[2].ID != "role" {
 		t.Errorf("unexpected violation path: %+v", v.Nodes)

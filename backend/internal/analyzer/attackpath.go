@@ -93,10 +93,13 @@ type AttackPath struct {
 	// plug-in MixtureScore ignores - and [ScoreCILow, ScoreCIHigh] is its 90% credible
 	// interval, which now brackets that mean rather than the independent product. The
 	// four numbers now cohere around one distribution instead of describing different
-	// quantities: PosteriorMean sits inside its own interval and under ScoreUpperBound
-	// (the Fréchet ceiling). Being the attacker-*marginal*, it can sit above OR below the
-	// bare independent Score depending on the profile priors (weak-attacker-heavy priors
-	// pull it below). "55% [38-71%]" ⇒ soft inputs; "55% [52-58%]" ⇒ evidence-backed.
+	// quantities: PosteriorMean sits inside its own interval, and with the default
+	// weak-attacker-weighted priors it also stays under ScoreUpperBound (the Fréchet
+	// ceiling) - though APT-heavy priors set via ATTACKER_PROFILE_PRIORS can lift the
+	// attacker-marginal above it. Being the attacker-*marginal*, it can likewise sit
+	// above OR below the bare independent Score depending on the profile priors
+	// (weak-attacker-heavy priors pull it below). "55% [38-71%]" ⇒ soft inputs;
+	// "55% [52-58%]" ⇒ evidence-backed.
 	PosteriorMean float64 `json:"posterior_mean,omitempty"`
 	ScoreCILow    float64 `json:"score_ci_low,omitempty"`
 	ScoreCIHigh   float64 `json:"score_ci_high,omitempty"`

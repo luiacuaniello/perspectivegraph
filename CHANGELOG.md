@@ -41,16 +41,32 @@ what to build next.
 - **Azure agentless connector** (`azure`) - a second cloud PULL source alongside `aws`,
   broadening the "connect read-only, see attack paths in minutes" reach. Azure's native
   model differs from the collector shape, so a thin mapper turns normalized `az` state
-  into the `cloudnet` shape (NSG inbound Allow rules → security groups, VMs → instances
-  bound to their NSGs + tags, VNet peerings → VPC peerings; the `Internet` service tag
-  normalizes to `0.0.0.0/0` so exposure is detected), then the **same** `cloudnet`
-  collector parses it - identity resolution, graph and analyzer run unchanged. Transport
-  is `fixtures` today (normalized `az network`/`az vm -o json`, no credentials), with
+  into the `cloudnet` shape (NSG inbound Allow rules → security groups: CIDR sources →
+  IpRanges with the `Internet` service tag normalizing to `0.0.0.0/0` so exposure is
+  detected, and **ASG** sources → SG-to-SG `UserIdGroupPairs`, Azure's east-west
+  micro-segmentation; VMs → instances bound to their NSGs **and ASGs** + tags; VNet
+  peerings → VPC peerings), then the **same** `cloudnet` collector parses it - identity
+  resolution, graph and analyzer run unchanged. The ASG mapping is what lets the exposed
+  tier actually reach the crown jewel (without it the web VM dead-ends). Transport is
+  `fixtures` today (normalized `az network`/`az vm -o json`, no credentials), with
   `azure-sdk-for-go` the wired extension point. `CONNECTORS_ENABLED=aws,azure`,
   `AZURE_CONNECTOR_MODE`/`AZURE_FIXTURES_DIR`, wired through compose + Helm; covered by a
-  fixtures test (Internet-open NSG → internet-exposed VM, PII VM as crown jewel).
+  fixtures test (Internet-open NSG → internet-exposed web VM → ASG east-west → crown-jewel
+  DB, the full internet → jewel path).
 
 ### Changed
+- **Terminology + UX polish.** The user-facing vocabulary drops "crown jewel" for the
+  plainer, more neutral **sensitive asset** across the whole product surface - the
+  dashboard (labels, tooltips, legends, hero and per-path copy), the triage priority
+  factors (`sensitive asset target`), the policy invariant (`no-internet-to-sensitive-asset`
+  + description), the OSCAL export, the GitHub PR comment / merge-gate status, and the
+  product docs (README, ARCHITECTURE, GUIDA, DEMO, ONBOARDING). The gem glyph stays as
+  the marker. The graph property key (`crown_jewel`), the operator
+  tag (`crown-jewel: true`) and the API field names are unchanged (data contract). Two
+  small simplifications rode along: the policy-violations view dropped a paragraph that
+  duplicated its own subtitle, and the attack-path header no longer shows a
+  "runtime-confirmed" priority chip next to the identical "ACTIVELY EXPLOITED" status
+  badge.
 - **Dashboard restyle - minimal over decorative.** The overview went from nine co-equal
   rainbow stat cards to a single hero metric (account compromise, with the calibration
   verdict beside it and a plain-language read) over a compact secondary strip. Surfaces

@@ -431,10 +431,10 @@ function NodeBadges({ node }: { node: Node }) {
   const inferredJewel = basis.startsWith("inferred");
   const classifiedJewel = basis.startsWith("classified");
   const jewelTitle = inferredJewel
-    ? `Inferred crown jewel (${basis.replace("inferred:", "signal: ")}) - guessed from a sensitive-data signal, not an explicit tag. Verify the classification.`
+    ? `Inferred sensitive asset (${basis.replace("inferred:", "signal: ")}) - guessed from a sensitive-data signal, not an explicit tag. Verify the classification.`
     : classifiedJewel
-      ? `Crown jewel from a real data classifier (${basis.replace("classified:", "")}) - authoritative, not a name guess.`
-      : "Crown jewel - a high-value traversal target.";
+      ? `Sensitive asset from a real data classifier (${basis.replace("classified:", "")}) - authoritative, not a name guess.`
+      : "Sensitive asset - a high-value traversal target.";
   return (
     <span className="flex flex-wrap items-center gap-1.5">
       {node.internetExposed && (
@@ -444,7 +444,7 @@ function NodeBadges({ node }: { node: Node }) {
       )}
       {node.crownJewel && (
         <Badge tone="warn" icon={<GemIcon className="h-3 w-3" />} title={jewelTitle}>
-          crown jewel{inferredJewel ? " (inferred)" : classifiedJewel ? " (classified)" : ""}
+          sensitive asset{inferredJewel ? " (inferred)" : classifiedJewel ? " (classified)" : ""}
         </Badge>
       )}
       {node.classification && (
@@ -618,11 +618,13 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
                 >
                   {path.priorityLabel} · priority {path.priority?.toFixed(0)}
                 </span>
-                {path.priorityFactors?.map((f) => (
-                  <span key={f} className="rounded-md bg-slate-500/10 px-1.5 py-0.5 text-[10px] text-slate-600">
-                    {f}
-                  </span>
-                ))}
+                {path.priorityFactors
+                  ?.filter((f) => f !== "runtime-confirmed (active)")
+                  .map((f) => (
+                    <span key={f} className="rounded-md bg-slate-500/10 px-1.5 py-0.5 text-[10px] text-slate-600">
+                      {f}
+                    </span>
+                  ))}
               </div>
             )}
           </div>
@@ -661,7 +663,7 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="flex items-center gap-1 text-[10px] text-muted">
               by attacker profile
-              <InfoTip text="The exploit score multiplies the hops as if independent. Conditioning on a latent attacker capability (commodity / criminal / APT) makes that honest within a profile, and marginalizing reintroduces the correlation the bare product drops - a path trivial for an APT can be out of reach for a commodity actor. Each chip is that class's end-to-end success probability ∏ p(e|c); 'blended' is the threat-model-weighted average Σ P(c)·∏ p(e|c)." />
+              <InfoTip text="Success probability per attacker class (commodity / criminal / APT); 'blended' averages them by threat-model prior. Easy for an APT can be hard for a commodity actor." />
             </span>
             {path.profileScores.map((p) => {
               const label = p.profile === "apt" ? "APT" : p.profile.charAt(0).toUpperCase() + p.profile.slice(1);
@@ -735,7 +737,7 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
       <section className="rounded-xl border border-edge bg-panel shadow-card p-5">
         <h3 className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-muted">
           Kill chain
-          <InfoTip text="The attacker’s step-by-step route, mapped to MITRE ATT&CK. Each arrow is one hop with its traversal probability (p) and technique; chips flag exposure, crown jewels, live alerts, known-exploited CVEs and how each weight was derived. Hover a hop to run a what-if cut." />
+          <InfoTip text="The step-by-step route, mapped to MITRE ATT&CK: each hop's probability (p), technique, and flags (exposure, sensitive asset, live alert, KEV). Hover a hop for a what-if cut." />
         </h3>
 
         {whatIf && (
@@ -756,7 +758,7 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
                 {whatIf.result.riskReduction > 0.0005 ? (
                   <span className="text-emerald-700">↓ {(whatIf.result.riskReduction * 100).toFixed(1)} pts removed</span>
                 ) : (
-                  <span className="text-amber-700">no global drop - other paths still reach a jewel</span>
+                  <span className="text-amber-700">no global drop - other paths still reach a sensitive asset</span>
                 )}
               </span>
               <span className="text-slate-400">·</span>
@@ -804,7 +806,7 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
                       tone="warn"
                       dashed
                       icon={<AlertTriangleIcon className="h-3 w-3" />}
-                      title={`This hop was inferred by the resolver (${path.steps[i].resolutionMethod} match), not asserted by a tool. Confidence ${(path.steps[i].resolutionConfidence! * 100).toFixed(0)}% - verify this link; the probability above is already discounted for it.`}
+                      title={`Inferred by the resolver (${path.steps[i].resolutionMethod} match), not tool-asserted - ${(path.steps[i].resolutionConfidence! * 100).toFixed(0)}% confidence. Verify this link; the probability above already accounts for it.`}
                     >
                       heuristic join · {(path.steps[i].resolutionConfidence! * 100).toFixed(0)}%
                     </Badge>

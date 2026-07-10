@@ -80,7 +80,7 @@ export default function IntroBanner({ onDismiss }: { onDismiss: () => void }) {
         <span className="text-slate-400">→</span>
         <FlowChip
           icon={<GemIcon className="h-3.5 w-3.5" />}
-          label="Crown jewel (target)"
+          label="Sensitive asset (target)"
           tone="bg-amber-500/15 text-amber-700"
         />
       </div>

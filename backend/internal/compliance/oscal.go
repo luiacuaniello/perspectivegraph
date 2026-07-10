@@ -180,14 +180,14 @@ func Build(tenant string, paths []analyzer.AttackPath, now time.Time) Document {
 		res.Observations = append(res.Observations, Observation{
 			UUID:  obsUUID[i],
 			Title: fmt.Sprintf("Reachable attack path %s", p.ID),
-			Description: fmt.Sprintf("Internet-exposed %q reaches crown jewel %q via: %s (exploit likelihood S=%.4f%s).",
+			Description: fmt.Sprintf("Internet-exposed %q reaches sensitive asset %q via: %s (exploit likelihood S=%.4f%s).",
 				p.Source().Name, p.Target().Name, route, p.Score, runtimeNote(p)),
 			Methods:   []string{"TEST"},
 			Collected: ts,
 		})
 		res.Risks = append(res.Risks, Risk{
 			UUID:        riskUUID[i],
-			Title:       fmt.Sprintf("Crown jewel %q reachable from the internet", p.Target().Name),
+			Title:       fmt.Sprintf("Sensitive asset %q reachable from the internet", p.Target().Name),
 			Description: fmt.Sprintf("A correlated attack path lets an internet attacker reach %q.", p.Target().Name),
 			Statement:   route,
 			Status:      "open",

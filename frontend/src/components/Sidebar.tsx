@@ -1,4 +1,4 @@
-import { ShieldIcon, TargetIcon, XIcon } from "./icons";
+import { Logo, TargetIcon, XIcon } from "./icons";
 
 export type View = "overview" | "paths" | "plan" | "graph" | "violations" | "search" | "assistant";
 
@@ -122,8 +122,8 @@ export default function Sidebar({
       } lg:translate-x-0`}
     >
       <div className="flex items-center gap-2.5 px-5 pb-5 pt-6">
-        <span className="grid h-9 w-9 place-items-center rounded-xl bg-brand-gradient text-white ring-1 ring-white/10">
-          <ShieldIcon className="h-5 w-5" />
+        <span className="grid h-9 w-9 place-items-center rounded-xl bg-panel-2 ring-1 ring-edge">
+          <Logo className="h-7 w-7" />
         </span>
         <div className="leading-tight">
           <div className="text-[15px] font-semibold tracking-tight text-slate-900">PerspectiveGraph</div>

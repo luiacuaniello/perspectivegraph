@@ -1068,7 +1068,7 @@
 								"variables": ""
 							}
 						},
-						"description": "Architectural invariants currently broken (e.g. no-internet-to-crown-jewel)."
+						"description": "Architectural invariants currently broken (e.g. no-internet-to-sensitive-asset)."
 					}
 				},
 				{
@@ -1598,7 +1598,7 @@
 								"import"
 							]
 						},
-						"description": "Push path for automatic BAS ingestion: a red-team/BAS platform's post-run webhook posts a whole report (source + findings) and the server matches each finding to a live path server-side - by pathId, or by crown-jewel `target` (+ optional `from` entry) - captures the prediction, and records it with the finding's `scope` (path | target). Returns {recorded, unmatched}; a finding matching no live path (and not `missed`) is counted unmatched, not recorded. Admin role when auth is on. The two scopes feed the two calibration tracks (calibration vs calibration.target)."
+						"description": "Push path for automatic BAS ingestion: a red-team/BAS platform's post-run webhook posts a whole report (source + findings) and the server matches each finding to a live path server-side - by pathId, or by crown-jewel `target` (+ optional `from` entry) - captures the prediction, and records it with the finding's `scope` (path | target). Returns {recorded, unmatched, rejected}: unmatched = a non-missed finding matched no live path (a legitimate gap), rejected = the record itself was invalid (e.g. a bad outcome/scope). If nothing recorded and everything was rejected it answers 400 rather than a cheerful 200. Admin role when auth is on. The two scopes feed the two calibration tracks (calibration vs calibration.target)."
 					}
 				},
 				{

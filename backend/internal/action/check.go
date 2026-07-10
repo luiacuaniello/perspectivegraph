@@ -59,7 +59,7 @@ func (s *StatusReporter) OnCriticalPaths(ctx context.Context, paths []analyzer.A
 	}
 
 	for key, ref := range refs {
-		desc := fmt.Sprintf("%d critical attack path(s) reach a crown jewel from this change", counts[key])
+		desc := fmt.Sprintf("%d critical attack path(s) reach a sensitive asset from this change", counts[key])
 		if err := s.p.postStatus(ctx, ref.slug, ref.sha, "failure", desc, s.targetURL); err != nil {
 			slog.Error("pr check failed", "forge", s.p.forge(), "slug", ref.slug, "sha", short(ref.sha), "err", err)
 			continue

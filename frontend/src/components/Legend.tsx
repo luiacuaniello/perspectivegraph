@@ -29,7 +29,7 @@ export default function Legend() {
           <Row badge={<Badge tone="info" icon={<GlobeIcon className="h-3 w-3" />}>internet-exposed</Badge>}>
             A valid attack <b>entry point</b> (seed) - reachable from the internet.
           </Row>
-          <Row badge={<Badge tone="warn" icon={<GemIcon className="h-3 w-3" />}>crown jewel</Badge>}>
+          <Row badge={<Badge tone="warn" icon={<GemIcon className="h-3 w-3" />}>sensitive asset</Badge>}>
             A high-value <b>target</b>. <i>(inferred)</i> = guessed from a sensitive name, not tagged.
           </Row>
           <Row badge={<Badge tone="danger" icon={<ZapIcon className="h-3 w-3" />}>ACTIVELY EXPLOITED</Badge>}>

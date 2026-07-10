@@ -31,11 +31,11 @@ function viewFromHash(): View {
 const VIEW_META: Record<View, { title: string; subtitle: string }> = {
   overview: {
     title: "Security posture",
-    subtitle: "Reachable routes from internet exposure to your crown jewels.",
+    subtitle: "Reachable routes from internet exposure to your sensitive assets.",
   },
   paths: {
     title: "Attack paths",
-    subtitle: "Ranked end-to-end routes from internet exposure to crown jewels.",
+    subtitle: "Ranked end-to-end routes from internet exposure to sensitive assets.",
   },
   plan: {
     title: "Remediation plan",

@@ -37,10 +37,6 @@ export default function ViolationList({ violations }: { violations: Violation[] 
 
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-xs text-muted">
-        Architectural rules the environment breaks - forbidden graph shapes (e.g. “the internet must never reach a crown
-        jewel”). Each lists the offending nodes.
-      </p>
       {[...groups.values()].map((group) => {
         const head = group[0];
         return (

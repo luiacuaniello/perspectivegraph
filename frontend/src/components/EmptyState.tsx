@@ -14,7 +14,7 @@ export default function EmptyState() {
           PerspectiveGraph correlates the output of the scanners you already run into{" "}
           <span className="font-medium text-slate-800">reachable attack paths</span> - from{" "}
           <GlobeIcon className="inline h-3.5 w-3.5 text-accent align-[-2px]" /> internet exposure to{" "}
-          <GemIcon className="inline h-3.5 w-3.5 text-amber-700 align-[-2px]" /> your crown jewels.
+          <GemIcon className="inline h-3.5 w-3.5 text-amber-700 align-[-2px]" /> your sensitive assets.
         </p>
 
         <div className="mt-5 rounded-xl bg-ink px-4 py-3 text-left">

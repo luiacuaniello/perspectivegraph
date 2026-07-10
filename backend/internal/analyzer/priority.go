@@ -106,12 +106,12 @@ func jewelWeight(target ontology.Node) (float64, string) {
 		}
 		return 1.0, "classified target"
 	case basis == "tagged":
-		return 0.7, "tagged crown jewel"
+		return 0.7, "tagged sensitive asset"
 	case strings.HasPrefix(basis, "inferred"):
-		return 0.4, "inferred crown jewel"
+		return 0.4, "inferred sensitive asset"
 	default:
 		if target.Bool(ontology.PropCrownJewel) {
-			return 0.6, "crown jewel target"
+			return 0.6, "sensitive asset target"
 		}
 		return 0, ""
 	}

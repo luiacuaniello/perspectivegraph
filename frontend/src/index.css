@@ -17,6 +17,14 @@
   --c-accent: 79 70 229; /* #4f46e5 indigo - the single accent (matches dark) */
   --c-accent-strong: 67 56 202; /* #4338ca */
   --c-accent-soft: 238 238 252; /* #eeeefc accent tint surface */
+  /* Logo mark palette. Saturated so it reads on the light chip (the chip follows
+     the theme; these follow the chip). */
+  --logo-entry: #0ea5e9; /* internet-exposed entry (sky) */
+  --logo-hub: #4f46e5; /* hub (indigo accent) */
+  --logo-gem: #d97706; /* crown jewel (deep amber) */
+  --logo-gem-hi: #f59e0b; /* jewel highlight */
+  --logo-tile: #4f46e5; /* faint isometric plane */
+  --logo-off: #94a0b3; /* off-path edges/node */
   --c-muted: 100 116 139; /* #64748b secondary text */
   --c-shadow: 31 41 55; /* shadow base */
   /* Brand gradient (logo mark, primary CTA, glows) - sky-cyan to indigo */
@@ -58,6 +66,13 @@
   --c-accent: 109 108 240; /* #6d6cf0 refined indigo - the single accent */
   --c-accent-strong: 157 156 245; /* #9d9cf5 */
   --c-accent-soft: 29 30 54; /* #1d1e36 indigo-tinted surface */
+  /* Logo mark palette (bright on the dark chip). */
+  --logo-entry: #38c8ff;
+  --logo-hub: #6d6cf0;
+  --logo-gem: #f59e0b;
+  --logo-gem-hi: #ffe08a;
+  --logo-tile: #6d6cf0;
+  --logo-off: #8a93a6;
   --c-muted: 144 160 184; /* secondary text */
   --c-shadow: 0 0 0;
   --c-grad-from: 56 200 255; /* #38c8ff cyan */

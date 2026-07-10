@@ -24,9 +24,6 @@ rest: a queryable dashboard of your **~5 critical attack paths** (not 10,000 fla
 runtime confirmation, an AI summary, and always-current architecture maps. **But the wedge is the
 pull request.**
 
-> 🇮🇹 **In italiano?** La [Guida completa (docs/GUIDA.md)](docs/GUIDA.md) spiega come avviare/spegnere
-> tutto (con e senza Docker), come provarlo sui tuoi progetti e il significato dei dati in dashboard.
-
 ![PerspectiveGraph dashboard - security posture overview](docs/screenshot-overview.png)
 
 <details>
@@ -45,7 +42,7 @@ and missing context**.
 
 | Role | Pain today | What PerspectiveGraph gives them |
 | --- | --- | --- |
-| **Developer** | CI/CD blocked by thousands of irrelevant CVEs | A PR check that goes red *only* when the change opens a real internet→crown-jewel path - plus the fix as a one-click PR |
+| **Developer** | CI/CD blocked by thousands of irrelevant CVEs | A PR check that goes red *only* when the change opens a real internet→sensitive-asset path - plus the fix as a one-click PR |
 | **Security** | Triage on flat lists of 10,000 findings | A ranked list of ~5 critical **attack paths**, queryable like a database |
 | **Architect** | No live view of how IaC becomes attack surface | Auto-generated, always-current architecture & data-flow maps + drift detection |
 
@@ -57,7 +54,7 @@ We model the whole environment as a directed graph `G = (V, E)`:
 - **Edges `E`** - relationships (`HOSTS`, `ASSUMES`, `AFFECTS`, `EXPOSES`, ...)
 
 An **attack path** `P` is a sequence of nodes `v₁ → v₂ → … → vₖ` from an *Internet-Exposed* node to a
-*Crown Jewel*. The **baseline** score composes the per-edge exploit probabilities:
+*Sensitive Asset*. The **baseline** score composes the per-edge exploit probabilities:
 
 ```
 S(P) = ∏  p(vᵢ, vᵢ₊₁)
@@ -88,30 +85,258 @@ it a risk tool rather than a number generator (see [Honest probabilities](#hones
 - **Calibration** - red-team/BAS verdicts grade the scores against reality (Brier/ECE + a diagnosis),
   so "55%" is a *defensible probability*, not a label - the line between a demo and production.
 
-## Architecture at a glance
+## Architecture
+
+PerspectiveGraph is **event-driven and modular**. Each layer is decoupled so individual scanners and
+sensors can be swapped without touching the core. Data flows in one direction: raw scanner output →
+normalized events → graph → attack paths → actions.
 
 ```
-            ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
- Trivy ───► │              │   │ Normalization│   │  Graph Core  │
- Semgrep ─► │  Ingestion   │──►│  & Identity  │──►│ Postgres +   │
- Custodian► │  Collectors  │   │  Resolution  │   │ Apache AGE   │
- Falco ───► │              │   │              │   │ (openCypher) │
-            └──────────────┘   └──────────────┘   └──────┬───────┘
-                   │ NATS JetStream (event bus)           │
-                   └──────────────────────────────────────┤
-                                                           ▼
-                                            ┌──────────────────────────┐
-                                            │  Attack Path Analyzer     │
-                                            │  (BFS/Dijkstra reachability)
-                                            └──────────────┬────────────┘
-                                                           ▼
-          ┌──────────────┐   GraphQL    ┌──────────────────────────┐
-          │  React UI     │◄────────────│  API / Action & Feedback  │
-          │ Cytoscape.js  │   (BFF)     │  (PR comments, policies)  │
-          └──────────────┘             └──────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 1. INGESTION LAYER  (Go plugins)                                              │
+│    Static collectors (Trivy, Semgrep, Checkov)  - push via webhook / file     │
+│    Agentless connectors (AWS, Azure, …)         - scheduled PULL, leader-only │
+│    Discovery collectors (K8s, cloud-net, IAM)   - topology & privesc graph    │
+│    Runtime collectors (Falco / eBPF)            - live syscall stream         │
+│    → push and pull both normalize to an event and publish it on the same bus  │
+└───────────────────────────────────┬───────────────────────────────────────────┘
+                                     │  NATS JetStream  (subject: perspective.events.*)
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 2. NORMALIZATION & IDENTITY RESOLUTION                                        │
+│    Maps every tool's vocabulary onto one common Ontology.                      │
+│    Deduplicates assets (Trivy "image:tag" == ECR ARN == K8s PodSpec).         │
+└───────────────────────────────────┬───────────────────────────────────────────┘
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 3. GRAPH CORE   (PostgreSQL + Apache AGE, openCypher)                          │
+│    Stores the directed graph G = (V, E). Upserts nodes & edges.               │
+└───────────────────────────────────┬───────────────────────────────────────────┘
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 4. ATTACK PATH ANALYZER                                                       │
+│    Traverses from `internet-exposed` seeds to `sensitive-asset` targets.      │
+│    Scores paths: S(P) = ∏ p(edge). Emits Critical Attack Path events.         │
+└───────────────────────────────────┬───────────────────────────────────────────┘
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 5. ACTION & FEEDBACK + API (BFF)                                              │
+│    GraphQL API for the dashboard. PR comments for devs. Policy invariants     │
+│    for architects. Auto-remediation suggestions (Terraform / K8s NetworkPol). │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full design.
+## The ontology
+
+The common vocabulary every collector maps onto. Defined in
+[`backend/pkg/ontology`](./backend/pkg/ontology).
+
+| Category | Node labels (`V`) | Edge types (`E`) |
+| --- | --- | --- |
+| **Infrastructure** | `VirtualMachine`, `Container`, `VPC`, `LoadBalancer`, `Database`, `Bucket` | `HOSTS`, `CONNECTS_TO`, `EXPOSES`, `ROUTES_TO` |
+| **Code / App** | `Repository`, `Package`, `Library`, `Image` | `DEPENDS_ON`, `COMPILED_INTO`, `BUILT_FROM` |
+| **Identity** | `User`, `IAM_Role`, `ServiceAccount` | `ASSUMES`, `HAS_PERMISSION`, `CAN_ESCALATE_TO` |
+| **Security** | `CVE`, `Weakness`, `Misconfiguration`, `Secret` | `AFFECTS`, `EXPLOITS`, `MITIGATES` |
+
+`CVE` is a known vulnerability in a dependency (from Trivy); `Weakness` is a
+SAST/code-level finding, CWE-classified (from Semgrep); `Misconfiguration` is an
+IaC/cloud misconfiguration; `Secret` is an exposed credential.
+
+`CAN_ESCALATE_TO` is an IAM **privilege-escalation** edge: a principal that can,
+through its effective permissions, gain another's privileges (the "BloodHound
+for cloud" question). The IAM collector flattens each principal's allowed
+actions and matches them against known escalation primitives (e.g. `iam:PassRole`
++ a compute action, `iam:AttachUserPolicy`, `iam:CreatePolicyVersion`), drawing
+the edge toward a synthetic account-admin sensitive asset. A role whose trust policy
+admits `"Principal":"*"` is marked `internet_exposed` - publicly assumable, the
+seed of a full internet→admin path.
+
+Two boolean node attributes drive analysis:
+
+- `internet_exposed` - a valid **seed** for traversal.
+- `crown_jewel` - a valid **target** (e.g. a DB holding PII, an admin IAM role).
+
+## Risk scoring
+
+Each edge carries an exploit probability `p ∈ (0, 1]`. The probability that a full path is
+exploitable (assuming independence, for tractability) is the product of its edge probabilities:
+
+```
+S(P) = ∏ p(vᵢ, vᵢ₊₁)
+```
+
+We convert to a traversal cost `w = -ln(p)` so that **maximizing `S(P)` becomes a shortest-path
+problem** (minimizing `Σ w`) solvable with Dijkstra. See
+[`backend/internal/analyzer`](./backend/internal/analyzer).
+
+The product assumes the hops are **independent**. When they share a common cause (one weakness
+gating several steps) they are positively correlated, and the product is then a *lower* bound for
+"all hops succeed"; the comonotonic (Fréchet) upper bound is the weakest single hop, `min p`. So
+rather than dressing up `S(P)` as exact, each path also exposes a `scoreUpperBound` (= `min p`) and
+a `correlatedHops` flag (set when ≥2 hops rest on the same weight basis) - the true exploitability
+lies in `[score, scoreUpperBound]`, and a wide band says the independence assumption is doing the
+work. The headline score is unchanged.
+
+A second, orthogonal uncertainty is *epistemic*: how well is each `p` known at all? Each edge is
+modelled as a **Beta(α,β) posterior** with mean `p` and concentration κ scaled by the weight basis's
+confidence - many pseudo-observations for kev/runtime, few for a heuristic guess
+([`uncertainty.go`](./backend/internal/analyzer/uncertainty.go), Marsaglia-Tsang gamma→beta, zero
+deps). Propagating those posteriors through the product gives a 90% credible interval per path
+(`scoreCiLow`/`scoreCiHigh`), and re-driving the Monte Carlo from them (an outer epistemic loop
+around the inner reachability trials) replaces the old flat ±30% sensitivity band with one the
+evidence justifies. Point estimates are untouched; only their *trust* is now quantified.
+
+The independence assumption itself is addressed at the root by an **attacker-profile mixture**
+([`profiles.go`](./backend/internal/analyzer/profiles.go)). Hops are correlated through a latent
+variable - the attacker's capability - so the score is marginalized over a small set of profiles c
+(commodity/criminal/apt), each with a prior `P(c)` and a skill that shifts every hop's success
+log-odds, scaled by the hop's skill-sensitivity (≈0 for a public KEV exploit, ≈1 for a heuristic
+guess): `p(e|c) = σ(logit p + skill(c)·sens(basis))`, `S(P) = Σ P(c)·∏ p(e|c)`. Conditioning makes
+independence honest *within* a profile; marginalizing reintroduces the correlation the bare product
+drops. The per-profile breakdown (`profileScores`, `mixtureScore`) is the *"72% vs an APT, 18% vs
+commodity"* read a SOC triages on. Priors are operator-tunable via `ATTACKER_PROFILE_PRIORS`; the
+naive `Score` stays as the independent baseline.
+
+**Where the traversal runs.** Node *and edge* properties are stored as **native
+agtype** in Apache AGE, so the graph is genuinely queryable. The per-pass
+critical-path search uses the **in-process Dijkstra by default** - a polynomial,
+bounded algorithm that is the right engine for "all best paths every pass".
+
+A DB-side finder is available as an **opt-in** (`ANALYZER_DB_PATHS=true`): a Cypher
+variable-length match (`MATCH p=(a)-[*1..N]->(b) WHERE a.internet_exposed AND
+b.crown_jewel`, bounded by `ANALYZER_MAX_HOPS`). It is honestly *not* a perf win
+for the batch - AGE has no weighted shortest-path, so this **enumerates** paths,
+which is unbounded in the worst case on dense/cyclic graphs. It is therefore
+safe-railed (server `statement_timeout` + `LIMIT`, plus a client deadline that
+**falls back to Dijkstra** on a runaway query) and best reserved for bounded or
+targeted queries. The store-contract test asserts the DB finder and Dijkstra
+agree on scores, and documents the recall bound when a path exceeds `maxHops`.
+Either way the per-pass snapshot is materialized for the policy-invariant engine
+and the Monte Carlo risk model, which need the full edge set.
+
+### Scaling the analyzer
+
+Three layers keep the per-pass cost flat as the graph grows, in increasing order
+of how much they assume:
+
+- **Change-detection (always on).** The analyzer skips a pass entirely when the
+  store's write version hasn't moved since the last one - a steady graph costs
+  nothing but a version read (a periodic forced rescan bounds staleness for the
+  multi-replica case, where another replica's writes don't move *this* process's
+  counter).
+- **Parallel pathfinding (on by default).** Each internet-exposed seed runs an
+  independent Dijkstra over the same immutable adjacency, so the searches fan out
+  across a bounded worker pool (`ANALYZER_WORKERS`, default = `GOMAXPROCS`). The
+  per-seed results are assembled in seed order before the final sort, so the
+  output is **byte-for-byte identical to a sequential run** regardless of worker
+  count - parallelism is a speedup, never a behavior change (asserted by
+  `TestParallelMatchesSequential`). On a 10k-node / 64-seed synthetic graph the
+  `BenchmarkPathfindWorkers` benchmark shows ~2.9× at 8 workers.
+- **Incremental snapshotting (opt-in, `ANALYZER_INCREMENTAL`).** Instead of
+  re-reading the whole graph each pass, the analyzer keeps it resident and patches
+  it with just the elements observed since the last pass - a store `DeltaStore`
+  capability (`SnapshotSince`, filtered on the same `last_seen` the pruner uses, so
+  only the changed slice leaves Postgres). It still recomputes *all* paths (an
+  attack path can change non-locally), but skips the dominant fetch +
+  deserialization cost on a large AGE graph. Correctness is fenced: a full re-read
+  rebuilds the cache on the first pass, right after a prune (deltas carry no
+  deletions), periodically as a drift safety net, and on any delta error - and
+  `TestIncrementalMatchesFullSnapshot` asserts the delta path reports the same
+  paths as a one-shot full read. Graph size, snapshot mode (`full|delta`), and
+  pathfinding latency are all exported to `/metrics`.
+
+For load-testing the whole pipeline end-to-end, `perspectivegraph genload` (and
+`make seed-load`) POSTs a large synthetic attack surface to the ingest webhook.
+
+### Beyond the single best path
+
+The per-path product answers "how exploitable is *this* route". Three analyses go further:
+
+- **K-shortest paths (Yen's algorithm).** The top-K highest-probability loopless routes to a
+  sensitive asset, so cutting the single best edge doesn't hide the near-best alternates.
+- **Monte Carlo risk quantification.** Each trial realizes every edge independently (present
+  with probability `p`), then checks sensitive-asset reachability. The fraction of trials where a
+  sensitive asset is reachable is an unbiased estimate of its **compromise probability** - accounting for
+  path multiplicity and shared edges that `∏p` can't - reported with a 95% Wilson confidence
+  interval (sampling error) **and** a Beta-resampled credible band (input uncertainty; see above).
+  This is the `P(at least one sensitive asset compromised)` a CISO actually asks for. It is *also*
+  marginalized over the attacker-profile mixture (`mixtureCompromiseProbability = Σ_c P(c)·R_c`, with
+  `R_c` conditioning every edge on `p(e|c)`), so the headline shares the per-path score's correlation
+  model rather than assuming independent edges - the independent number stays as the baseline, plus a
+  per-profile `profileCompromise` breakdown.
+- **What-if simulation.** Remove a set of edges (a proposed remediation) and recompute paths +
+  risk, using *common random numbers* so the before/after delta reflects the cut, not sampling
+  noise. Pairs with the choke-point optimizer: "if we fix these N edges, residual risk drops from
+  X to Y".
+
+Exposed as the GraphQL `kShortestPaths`, `riskSimulation` and `whatIf` queries.
+
+### Closing the loop: calibration against observed outcomes
+
+The product, the bounds and the Monte Carlo are all *models*. What turns a model into a
+production risk tool is checking it against reality. Each red-team/BAS verdict is recorded with the
+path's **predicted score `S(P)` at test time** (captured server-side from the live analysis), so the
+verdict log doubles as a calibration dataset: predicted probability paired with observed outcome
+(confirmed→1, refuted→0, partial→0.5). From it `internal/validation` computes the standard scoring
+rules - **Brier score**, **log loss**, **ECE** (expected calibration error) - plus a **reliability
+diagram** (predicted vs observed per bucket) and a verdict (well-calibrated / over- / under-confident).
+It also surfaces an *advisory* rescale (`observed/predicted`) rather than silently rewriting scores:
+on a thin sample that would fit noise, and on a demo's synthetic outcomes it would be circular. This
+is the demo→production boundary - the evidence that lets you defend a "55%" as a probability. Exposed
+as the GraphQL `calibration` query and in the `GET /validations` response.
+
+Knowing you're miscalibrated isn't enough; the report ([`diagnostics.go`](./backend/internal/validation/diagnostics.go))
+adds three lenses and folds them into one **diagnosis** so the gate is self-directing. (1) **Recalibration**:
+an isotonic (pool-adjacent-violators) fit yields `brierRecalibrated` - the Brier a monotone rescale can
+reach - plus the `recalibrationMap` (raw → calibrated) a consumer applies out-of-band; a residual that
+stays high means the model lacks *resolution*, which no rescale fixes. (2) **Segments**: calibration split
+by path structure (correlated/independent hops, long/short paths, captured on the verdict at test time);
+error concentrated on correlated/long paths is structural → a correlation-aware model (**#6**). (3)
+**Detection**: an operator can mark a confirmed verdict `detected`; a high catch rate on high-score paths
+means the score over-predicts *undetected* compromise → a detection axis (**#7**). `diagnose()` returns
+`recalibrate-first | structural (#6) | detection-axis (#7) | low-resolution` - so you build #6/#7 only when
+real verdicts prove the simpler fixes won't do.
+
+## Event contract
+
+Collectors emit a single normalized envelope (`ontology.Event`) onto NATS. This is the *only*
+contract collectors must satisfy - everything downstream consumes it:
+
+```jsonc
+{
+  "source": "trivy",            // which collector
+  "kind": "finding",            // asset | finding | relationship | runtime
+  "observed_at": "2026-06-08T…",
+  "nodes": [ /* ontology.Node[] */ ],
+  "edges": [ /* ontology.Edge[] */ ]
+}
+```
+
+## Component map
+
+| Layer | Package | Responsibility |
+| --- | --- | --- |
+| Ingestion (push) | `internal/ingestion` | HTTP webhook + collectors: scanners (`trivy`, `semgrep`, `custodian`, `falco`, `build`), discovery (`k8s` incl. deep RBAC escalation, `cloudnet`, `iam` privesc), identity federation (`sso`: IdP→User→IAM_Role) and supply-chain (`supplychain`: cosign/SLSA trust + SBOM) |
+| Connectors (pull) | `internal/connector` | Agentless, scheduled PULL sources that feed the **same** bus, so the whole downstream pipeline is reused. A leader-only `Scheduler` (mirrors `analyzer.Service`) polls each `Connector`, isolates per-source failures, and exposes health at `GET /connectors` + `connector_*` metrics. Connector `aws` reuses the `cloudnet`/`iam` collectors verbatim (transport-abstracted: `fixtures` for demo/test, `aws-sdk-go-v2` for live); `azure` maps normalized `az` network state (NSG CIDR rules + ASG sources, VMs, VNet peerings) onto the `cloudnet` shape - ASG micro-segmentation becomes SG-to-SG so the east-west path forms - then reuses that collector (transport-abstracted: `fixtures`, with `azure-sdk-for-go` the wired extension point) |
+| Bus | `internal/broker` | NATS JetStream publish/subscribe |
+| Normalization | `internal/normalization` | identity resolution (image dedup, container→image) with **join confidence + provenance** (`resolution_method` / `resolution_confidence` / `resolution_alias`), event → graph |
+| Graph | `internal/graph` | `Store` interface + in-memory & Apache AGE implementations (native agtype node/edge properties; optional DB-side `CriticalPaths` via Cypher, safe-railed; optional `Pruner` capability - `last_seen` staleness TTL so departed assets don't become phantom paths) |
+| Analyzer | `internal/analyzer` | reachability (in-process Dijkstra by default; opt-in DB-side Cypher) + path scoring + runtime confirmation; Yen K-shortest, Monte Carlo risk quantification, what-if simulation |
+| Compliance | `internal/compliance` | render attack-path posture as a NIST OSCAL 1.1.2 assessment-results document |
+| Observability | `internal/metrics` | Prometheus collectors (ingest/normalize/analyzer/dead-letter) exposed at `/metrics` |
+| Rate limiting | `internal/ratelimit` | per-client-IP token-bucket middleware for the ingest and API servers |
+| Leader election | `internal/leader` | Postgres advisory-lock singleton so only one replica fires at-most-once side-effects |
+| Policy | `internal/policy` | architectural invariants (forbidden graph shapes) |
+| Action | `internal/action` | GitHub/GitLab PR/MR commenters (shared base) |
+| Remediation | `internal/remediation` | generate K8s NetworkPolicy / Terraform to cut an edge; each fix records the structured edge it cuts so the API can *verify* it via what-if |
+| Ticketing | `internal/ticket` | owned, tracked remediation tickets per path (one open per path; file-backed `TICKETS_PATH` + optional `TICKET_WEBHOOK_URL` external dispatch) |
+| Validation | `internal/validation` | red-team/BAS verdicts per path (confirmed/refuted/partial/missed) + precision/recall over the tested subset; **probability calibration** (Brier/log-loss/ECE + reliability diagram) pairing each verdict with the path's predicted score; file-backed `VALIDATIONS_PATH` |
+| Search | `internal/search` | optional OpenSearch full-text index |
+| Suppression | `internal/suppress` | triage/suppression store (per-tenant, keyed by attack-path id; reason + owner + optional expiry; file-backed, atomic writes) |
+| History | `internal/history` | temporal store: per-path lifecycle (first/last seen, open/resolved → MTTR, reopens) + posture trend series, fed each analyzer pass; file-backed (`HISTORY_PATH`) so path age survives restarts |
+| API | `internal/api` | GraphQL BFF + REST triage board (`/suppressions`) for the dashboard |
+
+The full, dated feature history is in [CHANGELOG.md](CHANGELOG.md).
 
 ## Tech stack
 
@@ -126,12 +351,111 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full design.
 - **Frontend:** React + TailwindCSS + [Cytoscape.js](https://js.cytoscape.org/)
 - **Sensors:** Trivy, Semgrep, Cloud Custodian, Falco, CI build-provenance (`/ingest/build`), supply-chain cosign/SLSA/SBOM (`/ingest/supplychain`)
 - **Discovery:** Kubernetes (`/ingest/k8s`, incl. **container-escape** detection → ATT&CK T1611), cloud-network (`/ingest/cloudnet`), IAM privilege-escalation graph (`/ingest/iam`), and SSO/IdP federation (`/ingest/sso`)
-- **Data classification:** Macie/DLP findings (`/ingest/dataclass`) mark assets as crown jewels with an authoritative `classified:<source>:<kind>` basis
+- **Data classification:** Macie/DLP findings (`/ingest/dataclass`) mark assets as sensitive assets with an authoritative `classified:<source>:<kind>` basis
 - **Agentless connectors:** scheduled, leader-only **PULL** sources that reach out to a cloud account instead of waiting for an upload (`CONNECTORS_ENABLED`, health at `GET /connectors`). Connectors: **AWS** (`aws`) and **Azure** (`azure`)
 - **Multi-tenant + SSO:** per-tenant isolated graphs (proven by test), bearer/OIDC auth with per-tenant/per-app/role RBAC, and a runtime login gate (`GET /auth/config` → token or "Sign in with SSO")
-- **Dev workflow:** GitHub PR comment + a **PR merge-gate status** (red when the change opens an internet→crown-jewel path), and **remediation-as-PR** (`POST /remediation/pr` opens a branch+commit+PR with the fix)
+- **Dev workflow:** GitHub PR comment + a **PR merge-gate status** (red when the change opens an internet→sensitive-asset path), and **remediation-as-PR** (`POST /remediation/pr` opens a branch+commit+PR with the fix)
 - **AI-native (Claude *or* HuggingFace):** natural-language Q&A over the graph, a board-level executive summary, and plain-English path explanations - grounded in the live attack paths (`ANTHROPIC_API_KEY`, or a free `HF_TOKEN`)
 - **ATT&CK:** each kill-chain hop mapped to a MITRE ATT&CK technique + tactic
+
+## Demo (90 seconds)
+
+The wedge in one run: feed the security scanners you already use, watch them
+correlate into a *real, reachable* internet → sensitive-asset path, and turn the fix
+into a pull request. This page is the script for trying it (and for recording a
+short GIF).
+
+### Prerequisites
+
+- Docker (the stack runs in containers; ~4 GB free is comfortable).
+- `jq` and `curl` (the demo prints the top path as JSON). `brew install jq`.
+- ~2-3 minutes for the first run (it builds the images).
+
+### One command
+
+```bash
+make demo
+```
+
+That target:
+
+1. `up-full` - builds and starts the whole stack (Postgres+AGE, NATS, backend,
+   dashboard on **:3000**).
+2. Seeds the sample sources - Trivy CVEs, Semgrep SAST, Cloud Custodian, Falco
+   runtime alerts, a Kubernetes dump, IAM authorization details, SSO federation,
+   supply-chain provenance, data classification.
+3. Waits for the analyzer to correlate them, then prints the **top attack path**:
+   the kill chain (internet → … → sensitive asset), its priority (P1/P2/P3), score,
+   whether it's runtime-confirmed, and the **generated fix** (NetworkPolicy /
+   Terraform / IAM policy).
+
+You'll see something like:
+
+```
+════════ TOP ATTACK PATH  (internet → sensitive asset, ranked) ════════
+{
+  "priorityLabel": "P1",
+  "priority": 92.4,
+  "score": 0.61,
+  "runtimeConfirmed": true,
+  "nodes": [ { "name": "payments-api ingress", "label": "Service" }, … ,
+             { "name": "customer-exports", "label": "S3Bucket" } ],
+  "remediations": [ { "title": "Deny lateral path", "kind": "NetworkPolicy", … } ]
+}
+```
+
+Then open **http://localhost:3000** for the visual: the ranked paths, the kill
+chain on the path detail, and the **Open fix PR** button.
+
+### The 90-second story (for a recording)
+
+1. **The noise** (5s): "Scanners give you 10,000 findings. Which one can actually
+   reach something valuable?"
+2. **`make demo`** (40s): the stack comes up, findings stream in, "correlating…",
+   then the **one** ranked P1 path prints - internet → … → a sensitive asset - with
+   the fix attached.
+3. **The dashboard** (30s): open `:3000`, click the top path, show the kill chain
+   (each hop, runtime-confirmed in red), then click **Open fix PR**.
+4. **The point** (15s): "It caught the reachable path and opened the fix as a PR -
+   in the developer's workflow, not a runtime console months later."
+
+Recording tips: a terminal + a browser side by side; tools like
+[asciinema](https://asciinema.org) (terminal) or Kap/LICEcap (screen GIF). Keep
+it under ~90s; the printed JSON + the kill-chain view are the money shots.
+
+### Make "Open fix PR" a real pull request
+
+By default the action layer runs **dry-run** (it logs what it would post). To open
+an actual PR on a sandbox repo:
+
+```bash
+GITHUB_TOKEN=<token with pull_requests: write on a sandbox repo> \
+DASHBOARD_URL=http://localhost:3000 \
+  docker compose --profile app up -d backend
+```
+
+Then click **Open fix PR** on a path (or `POST /remediation/pr {"pathId":"…"}`).
+It branches off the default branch, commits the generated fix, and opens the PR.
+The same path context the analyzer carries (`repo_slug` / `pr_number` /
+`commit_sha`, set when a scan is fed with PR context - e.g. the Trivy seed uses
+`?slug=acme/payments-api&pr=42`) is what routes the comment + the **merge-gate
+status** (`perspectivegraph/attack-paths`, red on an internet→sensitive-asset path) to
+the right PR. Make that status a *required* check in branch protection and the red
+**blocks the merge**.
+
+### Prove it on your own data
+
+The sample seed is synthetic but realistic. To run it against a real environment,
+point an agentless connector at a read-only cloud account
+(`CONNECTORS_ENABLED=aws`, `AWS_CONNECTOR_MODE=sdk`, an assumable read-only role -
+see the README) or POST your own scanner output to the ingest webhooks. The PR
+gate and the ranked paths work the same way.
+
+### Teardown
+
+```bash
+make down
+```
 
 ## Quick start
 
@@ -142,7 +466,7 @@ findings correlate into the top ranked attack path with its fix:
 make demo           # needs Docker + jq; then open http://localhost:3000
 ```
 
-See [DEMO.md](DEMO.md) for the walkthrough (and how to turn the fix into a real PR).
+See the [90-second demo](#demo-90-seconds) above (and how to turn the fix into a real PR).
 
 **Or step by step (everything in containers):**
 
@@ -180,7 +504,7 @@ make seed
 (dependency CVEs), CI build provenance (image ↔ repository), a Semgrep report
 (SAST weaknesses), a Cloud Custodian export (cloud infra/identity), and a Falco
 runtime alert. They **correlate** into
-multiple ranked attack paths to crown jewels, for example:
+multiple ranked attack paths to sensitive assets, for example:
 
 - **Trivy** → `internet LB → container → image → log4j → Log4Shell → admin IAM role`
 - **Semgrep** → `internet LB → container → image → repo → command-injection → customers PII DB`
@@ -188,7 +512,7 @@ multiple ranked attack paths to crown jewels, for example:
 
 The **Falco** alert on the payments container flips the paths through it to
 ⚡ *runtime-confirmed* (actively exploited, ranked first). The **policy engine**
-flags forbidden shapes (e.g. *internet → crown jewel*), and each path carries
+flags forbidden shapes (e.g. *internet → sensitive asset*), and each path carries
 generated **remediation** (a K8s NetworkPolicy or Terraform that cuts one edge).
 
 ### The wedge: attack paths in your pull request
@@ -200,7 +524,7 @@ already work, so PerspectiveGraph plugs straight into the PR:
 - **A PR comment** on the change that sits on a critical path (the kill chain +
   the one-edge fixes).
 - **A merge-gate status** - a GitHub commit status `perspectivegraph/attack-paths`
-  that goes **red** when the change opens an internet→crown-jewel path and **green**
+  that goes **red** when the change opens an internet→sensitive-asset path and **green**
   once it no longer does. Make it a *required* status check in branch protection
   and it **blocks the merge** - shift-left, not a comment you can scroll past.
 - **Remediation-as-PR** - `POST /remediation/pr` (or the **Open fix PR** button on
@@ -230,9 +554,11 @@ reuses the entire pipeline unchanged - identity resolution, the graph, the
 analyzer. The **`aws`** connector doesn't even add new parsing: it pulls the EC2
 `describe-*` network state and IAM authorization details and feeds them straight
 into the existing `cloudnet`/`iam` collectors. The **`azure`** connector adds a
-thin mapping layer - Azure's native model differs, so NSG rules become security
-groups, VMs become instances and VNet peerings become VPC peerings, then the
-**same** `cloudnet` collector parses the result. The acquisition sits behind a
+thin mapping layer - Azure's native model differs, so NSG CIDR rules become security
+groups, NSG **ASG** sources become SG-to-SG (the east-west micro-segmentation that
+lets the exposed tier reach the sensitive asset), VMs become instances bound to their
+NSGs and ASGs, and VNet peerings become VPC peerings, then the **same** `cloudnet`
+collector parses the result. The acquisition sits behind a
 swappable transport - **`fixtures`** (local JSON, so the whole pull pipeline is
 provable with zero credentials) and a live SDK path (`aws-sdk-go-v2` for AWS,
 read-only with optional cross-account `AssumeRole`; `azure-sdk-for-go` is the
@@ -281,18 +607,18 @@ the exposure/reachability topology no scanner produces:
 - **IAM privesc graph** ("BloodHound for cloud") → flattens each principal's
   effective permissions, matches them against known escalation primitives
   (`iam:PassRole`+compute, `iam:AttachUserPolicy`, `iam:CreatePolicyVersion`, …)
-  and draws `CAN_ESCALATE_TO` edges to a synthetic **account-admin** crown jewel.
+  and draws `CAN_ESCALATE_TO` edges to a synthetic **account-admin** sensitive asset.
   A role trusting `"Principal":"*"` is flagged internet-exposed, surfacing
   *internet → publicly-assumable role → CAN_ESCALATE_TO → account compromise*.
 
 This is what turns "demo that works because the IDs line up by hand" into
 "discovery on real infrastructure".
 
-Crown-jewel classification isn't purely tag-driven either: an untagged
+Sensitive-asset classification isn't purely tag-driven either: an untagged
 `Database`/`Bucket` whose name carries a strong sensitive-data signal (pii,
-customer, payment, credential, …) is **inferred** a crown jewel and marked
+customer, payment, credential, …) is **inferred** a sensitive asset and marked
 `crown_jewel_basis="inferred:<signal>"` - so a missed tag doesn't hide a target,
-and the guess is auditable (the dashboard shows *crown jewel (inferred)*). An
+and the guess is auditable (the dashboard shows *sensitive asset (inferred)*). An
 explicit owner tag always wins.
 
 ### Supply-chain provenance (SBOM, signing, SLSA)
@@ -315,7 +641,7 @@ not just the vulnerable parts Trivy flags). Crucially, an **unsigned image is
 treated as a tampering vector**: the built-in invariant
 **`no-internet-to-unsigned-image`** fires when one is reachable from the internet,
 and the kill chain flags the image **⚠ unsigned** - so "this prod image isn't
-signed *and* sits on a path to the crown jewel" surfaces as a policy violation,
+signed *and* sits on a path to the sensitive asset" surfaces as a policy violation,
 not a footnote. `sbom` accepts a plain component list or a CycloneDX document
 (raw `syft`/`trivy` output), so real tool output drops in unchanged.
 
@@ -330,7 +656,7 @@ the daily workflow:
   The sticky feature - you hear about a regression the moment a deploy introduces it.
 - **Detection-as-code** - every path generates **Falco + Sigma** rules that
   *detect* exploitation of its exposed workload (scoped by container/namespace,
-  referencing the path's CVE and crown jewel). Remediation cuts the path;
+  referencing the path's CVE and sensitive asset). Remediation cuts the path;
   detection watches it - closing the offense→defense loop.
 - **SIEM enrichment export** - `GET /export/ndjson` streams one record per asset
   on a critical path (`on_critical_path`, `max_path_score`, `kev`,
@@ -469,7 +795,7 @@ the signals an analyst actually weighs:
 - exploitability (`score`) and how much to trust it (`confidence`),
 - **runtime-confirmed** (a live Falco alert - it's not theoretical, it's happening),
 - a **KEV** weakness anywhere on the route (known-exploited in the wild),
-- **target sensitivity** (a classified-PII jewel outranks a name-heuristic guess),
+- **target sensitivity** (a classified-PII sensitive asset outranks a name-heuristic guess),
 - **blast radius** (an internet entry that opens many paths is higher leverage).
 
 Paths come back **priority-first**, so `attackPaths(limit:5)` *is* the "fix these
@@ -670,7 +996,7 @@ vulnerable target** (CloudGoat via the AWS connector, a local OWASP Juice Shop, 
 manual pentest) - all authorized, your-own/sandbox infrastructure - and feed the
 results back with zero custom integration. `make import-verdicts FILE=report.json`
 (the `importverdicts` subcommand) reads a **tool-agnostic** attack report and matches
-each finding to a live path by its target (crown-jewel name) and optional entry, so a
+each finding to a live path by its target (sensitive-asset name) and optional entry, so a
 tester reports *"I confirmed a path to account-admin"* without knowing internal ids:
 
 ```jsonc
@@ -690,12 +1016,12 @@ diagnosis - now on real data - decides whether #6/#7 are actually warranted.
 account - just a genuinely exploitable local target. `make ingest-real IMAGE=<img>`
 (the `ingestreal` subcommand) scans a vulnerable image with **Trivy** (real CVEs,
 real CVSS; real KEV/EPSS with `THREATINTEL=on`) and wires the minimal topology so the
-CVE sits *on* an internet → crown-jewel path:
+CVE sits *on* an internet → sensitive-asset path:
 
 ```bash
 # stand up a real, exploitable log4shell (free), then ingest its real CVEs:
 git clone https://github.com/vulhub/vulhub && cd vulhub/log4j/CVE-2021-44228 && docker compose up -d
-make ingest-real IMAGE=<the vulhub image>          # → internet-lb → image → log4j-core → CVE-2021-44228 → crown-jewel
+make ingest-real IMAGE=<the vulhub image>          # → internet-lb → image → log4j-core → CVE-2021-44228 → sensitive-asset
 # ...exploit the running target for real, then record the verdict:
 make import-verdicts FILE=my-report.json           # {"target":"secrets-vault","outcome":"confirmed"}
 ```
@@ -710,17 +1036,17 @@ A path score answers "how exploitable is *this* route". Boards and auditors ask
 harder questions, and PerspectiveGraph answers them:
 
 - **Monte Carlo risk quantification** (`riskSimulation`) - each trial realizes
-  every edge independently, then checks crown-jewel reachability. Over thousands
-  of trials it estimates **P(crown jewel compromised)** with a 95% confidence
-  interval, plus **P(at least one crown jewel compromised)** and the expected
+  every edge independently, then checks sensitive-asset reachability. Over thousands
+  of trials it estimates **P(sensitive asset compromised)** with a 95% confidence
+  interval, plus **P(at least one sensitive asset compromised)** and the expected
   number that fall. Unlike `∏p`, it accounts for the many routes that share edges
-  - in the demo, *P(account compromise) ≈ 1.0, ~5 crown jewels expected to fall*.
+  - in the demo, *P(account compromise) ≈ 1.0, ~5 sensitive assets expected to fall*.
   The headline is honest about its own uncertainty: alongside the sampling CI it
   reports a **sensitivity band** (the answer when the heuristic per-edge
   probabilities are scaled ±30%), shown as *“modeled X–Y%”* - a tight band means
   trust the number, a wide one means treat it qualitatively.
 - **K-shortest paths** (`kShortestPaths`) - Yen's algorithm lists the top-K routes
-  to a crown jewel, so you see the near-best alternates a single edge-cut would
+  to a sensitive asset, so you see the near-best alternates a single edge-cut would
   leave standing.
 - **What-if simulation** (`whatIf`) - propose a set of edges to cut and get the
   surviving paths and the **residual risk** (before → after, with enough trials
@@ -877,7 +1203,7 @@ health checks, every ingest webhook (with the demo payloads embedded) and all
 GraphQL queries, ready to run.
 
 Pointing it at a **real environment** (your own scanners, not the demo seed)?
-Follow the [onboarding runbook](./docs/ONBOARDING.md) - per-source `curl`/CI
+Follow the [onboarding runbook](#onboarding-runbook) - per-source `curl`/CI
 snippets, the identifier-correlation helper, and a "no paths?" troubleshooting
 guide.
 
@@ -928,7 +1254,7 @@ Beyond the container surface, the backend itself is built defensively:
 - **Self-applied SAST.** CI runs `gosec` (static security analysis of the tool's
   own Go) and `gitleaks` (secret scan) alongside `govulncheck` + Trivy - a security
   tool held to the bar it sets.
-- **At-rest encryption of its own crown-jewel data.** `STORE_ENCRYPTION_KEY`
+- **At-rest encryption of its own sensitive-asset data.** `STORE_ENCRYPTION_KEY`
   encrypts the governance stores (suppressions/tickets/validations/history) **and
   the audit log** with AES-256-GCM, so a stolen volume or backup doesn't hand over
   the attack map plus who-viewed-it in plaintext. (Reads pre-encryption files
@@ -1040,7 +1366,7 @@ make seed   # and make seed-discovery - they post to localhost:8081 (the ingest 
 ```
 
 Full walk-through (incl. why the OIDC URLs differ) in
-[GUIDA §9.5.3](./docs/GUIDA.md). Demo only: locally-built images + Keycloak in
+the SSO demo section above. Demo only: locally-built images + Keycloak in
 `start-dev`.
 
 ### Hardening a real deployment (beyond a trusted cluster)
@@ -1203,6 +1529,591 @@ The per-pass cost stays flat as the graph grows, with three layers you can tune:
 > makes a misconfigured DB fail loudly. Because the graph is rebuildable, an AGE
 > issue is an availability concern, not a correctness or data-durability one.
 
+## Onboarding runbook
+
+PerspectiveGraph does **not** scan your infrastructure - it *correlates* the
+output of the scanners you already run. There are no agents and nothing pulls:
+your CI/cron runs the tools and **POSTs** their reports to the ingest webhook.
+This runbook is the minimum a tester needs to light up a real attack path.
+
+Set these once for every snippet below:
+
+```bash
+export INGEST_URL=http://your-host:8081     # ingestion webhook
+export API_URL=http://your-host:8080        # GraphQL / dashboard BFF
+export SLUG=acme/payments-api               # forge "owner/repo" (for PR comments)
+```
+
+---
+
+### 0. Prerequisites
+
+- The stack is up. Quickest path: **`make up-full`** runs everything in
+  containers (infra + backend + dashboard on `:3000`). For the host dev loop use
+  `make up` (just **Postgres+AGE** + **NATS**) then `make run-backend`. OpenSearch
+  and `THREATINTEL=on` are optional. With `make up-full`, `INGEST_URL` is
+  `http://localhost:8081` and `API_URL` is `http://localhost:8080`.
+- Network: the tester's CI/cron can reach `INGEST_URL`. ⚠️ **The ingest and API
+  endpoints have no authentication in this MVP** - keep them on an isolated
+  network or behind an authenticating reverse proxy. Single-tenant.
+- You can run **Trivy, Semgrep, Cloud Custodian, Falco** against the target, and
+  add one **CI step** for build provenance.
+- You can **tag** your sensitive data stores (this is what makes them targets -
+  see §3).
+
+Health check first:
+
+```bash
+curl -s $INGEST_URL/healthz   # → ok
+curl -s $API_URL/healthz      # → ok
+```
+
+#### Authentication
+
+If the backend runs with auth enabled (it should, outside a laptop), every
+request must be signed/authorized - otherwise you get `401`.
+
+- **Ingest** (`INGEST_HMAC_SECRET` set): sign the request **body** with HMAC-SHA256
+  and send `X-PerspectiveGraph-Signature: sha256=<hex>`. A reusable helper:
+
+  ```bash
+  export INGEST_HMAC_SECRET=...   # the shared secret
+  pgsign() {  # usage: pgsign <file>  → prints the signature header value
+    printf 'sha256=%s' "$(openssl dgst -sha256 -hmac "$INGEST_HMAC_SECRET" -hex < "$1" | sed 's/^.*= //')"
+  }
+  # then on every ingest POST add:  -H "X-PerspectiveGraph-Signature: $(pgsign report.json)"
+  ```
+
+- **API** (`API_TOKENS` set): send `Authorization: Bearer <viewer-token>` on
+  every GraphQL request. The in-browser playground is disabled when auth is on.
+
+- **Multi-tenant** (`INGEST_HMAC_SECRETS` / token `:tenant` suffix): add
+  `-H "X-Tenant: <your-tenant>"` to ingest requests and sign with *that tenant's*
+  secret; the API token's tenant scopes what you can read. Each tenant's data is
+  fully isolated in its own graph.
+
+- **Audit-of-views** (`AUDIT_LOG_PATH` set): the tool is a map of how to breach
+  the org, so set this in production - it tamper-evidently records who *viewed*
+  the attack paths/graph (with the path ids seen) and who *exported* the map, not
+  just who changed it. Check integrity with `perspectivegraph verify-audit <path>`.
+
+The snippets below show the unsigned, single-tenant form for readability; add the
+signature / bearer / `X-Tenant` headers when auth and tenancy are enabled.
+
+---
+
+### 1. The order that builds a correct graph
+
+Feed these sources. Order doesn't strictly matter (edges whose endpoints haven't
+arrived yet are retried), but this is the logical flow:
+
+| # | Source | Endpoint | Gives the graph |
+|---|--------|----------|-----------------|
+| 1 | Cloud Custodian | `POST /ingest/custodian` | cloud topology + IAM + the `internet_exposed`/`crown_jewel` markers |
+| 2 | Trivy | `POST /ingest/trivy` | images → libraries → CVEs |
+| 3 | CI build provenance | `POST /ingest/build` | the **image ↔ repository** link (`BUILT_FROM`) |
+| 4 | Semgrep | `POST /ingest/semgrep` | repository → code weaknesses / secrets |
+| 5 | Falco | `POST /ingest/falco` | runtime confirmation on containers |
+| 6 | Kubernetes dump | `POST /ingest/k8s` | **exposure topology**: Ingress→Service→Pod→SA→Role |
+| 7 | Cloud network | `POST /ingest/cloudnet` | **reachability**: internet-facing SGs, SG-to-SG, VPC peering |
+| 8 | IAM authorization | `POST /ingest/iam` | **privilege escalation**: `CAN_ESCALATE_TO` edges to account-admin, public-trust roles |
+
+Sources 6–8 are the **discovery** collectors: they extract the network/exposure
+topology and IAM privilege-escalation graph automatically, so paths form without
+hand-stitched ids.
+
+---
+
+### 2. Per-source snippets
+
+#### Trivy (dependency / image CVEs)
+
+The report's `ArtifactName` becomes the Image node - pass the **full image ref**
+you actually deploy. `slug`/`pr`/`sha` attach PR context so the action layer can
+comment on the right pull request.
+
+```bash
+trivy image --format json --output trivy.json registry.example.com/payments-api:1.4.2
+
+curl -sS -X POST "$INGEST_URL/ingest/trivy?slug=$SLUG&pr=42&sha=$(git rev-parse HEAD)" \
+  -H 'Content-Type: application/json' --data-binary @trivy.json
+```
+
+#### CI build provenance (the link that connects code findings)
+
+Emit this from CI **right after pushing the image**. Without it, Semgrep findings
+float disconnected from the running workload. `image` must match Trivy's
+`ArtifactName`; `repository` must match Semgrep's `repo` (next step).
+
+```bash
+curl -sS -X POST "$INGEST_URL/ingest/build" -H 'Content-Type: application/json' -d '{
+  "image":      "registry.example.com/payments-api:1.4.2",
+  "repository": "payments-api",
+  "slug":       "'"$SLUG"'",
+  "sha":        "'"$(git rev-parse HEAD)"'"
+}'
+```
+
+#### Supply-chain provenance (cosign / SLSA / SBOM)
+
+Emit this from CI after signing/attesting the image. It stamps the image with
+its **trust signals** and **bill of materials**, assembled straight from the
+tools you already run - no bespoke format:
+
+```bash
+IMG="registry.example.com/payments-api:1.4.2"
+syft "$IMG" -o cyclonedx-json > sbom.json                          # SBOM (or: trivy image --format cyclonedx)
+cosign verify "$IMG" >/dev/null 2>&1 && SIGNED=true || SIGNED=false # signature
+# SLSA level from your attestation policy (cosign verify-attestation --type slsaprovenance "$IMG")
+curl -sS -X POST "$INGEST_URL/ingest/supplychain" -H 'Content-Type: application/json' -d '{
+  "image":       "'"$IMG"'",
+  "signed":      '"$SIGNED"',
+  "slsa_level":  3,
+  "provenance_builder": "github-actions",
+  "source_repo": "payments-api",
+  "sbom":        '"$(cat sbom.json)"'
+}'
+```
+
+`sbom` accepts the raw CycloneDX document above **or** a plain
+`[{"name","version","type","purl"}]` list. Each component becomes a
+`Library`/`Package` the image `DEPENDS_ON`. Set `signed:false` for an image whose
+signature you couldn't verify - if it's reachable from the internet, the
+`no-internet-to-unsigned-image` invariant fires (Violations view), and the kill
+chain marks it **⚠ unsigned**. Omit `signed` entirely for "not assessed" (no
+violation - unknown is not the same as unsigned).
+
+#### Semgrep (SAST weaknesses + secrets)
+
+`repo` **must equal** the build provenance `repository`, so findings hang off the
+same Repository node that `BUILT_FROM` links to.
+
+```bash
+semgrep --config auto --json --output semgrep.json
+
+curl -sS -X POST "$INGEST_URL/ingest/semgrep?repo=payments-api&slug=$SLUG&pr=42&sha=$(git rev-parse HEAD)" \
+  -H 'Content-Type: application/json' --data-binary @semgrep.json
+```
+
+#### Cloud Custodian (cloud inventory + IAM)
+
+The collector consumes a **bundle** that groups Custodian's per-policy
+`resources.json` outputs by resource type. Assemble it like this (real AWS field
+shapes - EC2 `PublicIpAddress`/`IamInstanceProfile`/`Tags`, ALB `Scheme`, IAM
+`AttachedManagedPolicies`, S3 ACL grants, RDS `PubliclyAccessible`):
+
+```bash
+curl -sS -X POST "$INGEST_URL/ingest/custodian" -H 'Content-Type: application/json' -d '{
+  "provider": "aws",
+  "account_id": "123456789012",
+  "policies": [
+    { "policy": "elb-internet-facing", "resource": "aws.elbv2", "resources": [
+      { "LoadBalancerName": "prod-alb", "Scheme": "internet-facing", "Tags": [{"Key":"app","Value":"payments"}] }
+    ]},
+    { "policy": "ec2", "resource": "aws.ec2", "resources": [
+      { "InstanceId": "i-0abc", "PublicIpAddress": "203.0.113.10",
+        "IamInstanceProfile": {"Arn": "arn:aws:iam::123456789012:instance-profile/payments-role"},
+        "Tags": [{"Key":"Name","Value":"payments-vm"},{"Key":"app","Value":"payments"}] }
+    ]},
+    { "policy": "iam-admin", "resource": "aws.iam-role", "resources": [
+      { "RoleName": "payments-role", "AttachedManagedPolicies": [
+        {"PolicyName":"AdministratorAccess","PolicyArn":"arn:aws:iam::aws:policy/AdministratorAccess"} ] }
+    ]},
+    { "policy": "s3-classified", "resource": "aws.s3", "resources": [
+      { "Name": "customer-pii", "Tags": [{"Key":"classification","Value":"pii"}] }
+    ]}
+  ]
+}'
+```
+
+#### Falco (runtime confirmation)
+
+Point **falcosidekick**'s webhook output at the endpoint, or POST raw Falco JSON
+(`-o json_output=true`). Each alert needs `output_fields["container.name"]`
+(or `container.id`); include `container.image` so the runtime container links to
+the scanned image (its ref must match Trivy's, after registry strip).
+
+```bash
+curl -sS -X POST "$INGEST_URL/ingest/falco" -H 'Content-Type: application/json' -d '{
+  "rule": "Terminal shell in container",
+  "priority": "Warning",
+  "output": "A shell was spawned in a container",
+  "output_fields": {
+    "container.name": "payments",
+    "container.image": "registry.example.com/payments-api:1.4.2",
+    "k8s.pod.name": "payments-7d9", "k8s.ns.name": "prod"
+  }
+}'
+```
+
+#### Kubernetes topology (auto-discovered exposure)
+
+Post a raw cluster dump and PerspectiveGraph discovers the exposure topology -
+`Ingress ──ROUTES_TO──▶ Service ──EXPOSES──▶ Pod ──ASSUMES──▶ ServiceAccount
+──ASSUMES──▶ Role` - with no hand-stitched ids. Pods carry their image ref, so
+they stitch to the scanned image automatically.
+
+```bash
+kubectl get ingress,service,pod,serviceaccount,role,clusterrole,rolebinding,clusterrolebinding \
+  -A -o json > cluster.json
+curl -sS -X POST "$INGEST_URL/ingest/k8s" -H 'Content-Type: application/json' --data-binary @cluster.json
+```
+
+#### Cloud network reachability (auto-discovered)
+
+Post security groups + instances + VPC peerings; PerspectiveGraph derives who can
+reach whom (`0.0.0.0/0 → internet_exposed`, SG-to-SG ingress → `CONNECTS_TO`).
+
+```bash
+# Assemble a bundle from: aws ec2 describe-security-groups / describe-instances /
+# describe-vpc-peering-connections (see backend/testdata/cloudnet-sample.json).
+curl -sS -X POST "$INGEST_URL/ingest/cloudnet" -H 'Content-Type: application/json' --data-binary @cloudnet.json
+```
+
+#### IAM privilege-escalation graph (auto-discovered)
+
+Post the account's IAM reality and PerspectiveGraph builds the "BloodHound for
+cloud" view: it flattens each principal's **effective** allowed actions (managed
++ inline + group policies, resolving the default policy version) and matches them
+against known escalation primitives - `iam:PassRole` paired with a compute action
+(`lambda:CreateFunction`, `ec2:RunInstances`, …), `iam:AttachUserPolicy`,
+`iam:PutRolePolicy`, `iam:CreatePolicyVersion`, `iam:UpdateAssumeRolePolicy`, and
+more. Each match draws a `CAN_ESCALATE_TO` edge to a synthetic **account-admin**
+sensitive asset. A role whose trust policy admits `"Principal":"*"` is marked
+`internet_exposed` (publicly assumable) - the seed of a full internet→admin path.
+
+```bash
+# One call dumps every user, role, group and policy in the account.
+aws iam get-account-authorization-details > iam.json
+curl -sS -X POST "$INGEST_URL/ingest/iam" -H 'Content-Type: application/json' --data-binary @iam.json
+```
+
+> **Read-only & honest about scope.** The collector needs only the read-only
+> `iam:GetAccountAuthorizationDetails` permission. It intentionally ignores
+> Resource scoping, Condition keys and explicit Deny, so it **over-reports rather
+> than misses** an escalation - treat its findings as "worth confirming", the
+> same trade PMapper makes. See `backend/testdata/iam-sample.json` for the shape.
+
+#### SSO / IdP federation (Okta → cloud - the modern front door)
+
+Phishing/credential-stuffing an SSO user inherits every cloud role they federate
+into. Post a directory export (Okta/Entra admin API) and PerspectiveGraph models
+`IdentityProvider(internet) → User → ASSUMES → IAM_Role`. Set `federated_roles`
+to the **role ARNs** each user can assume - they converge with the roles the IAM
+collector discovered, so a no-MFA user federating into an admin/escalation role
+completes the chain *internet → Okta → user → cloud admin*.
+
+```bash
+curl -sS -X POST "$INGEST_URL/ingest/sso" -H 'Content-Type: application/json' -d '{
+  "provider": "okta",
+  "users": [
+    {"email":"alice@acme.com","mfa":false,"groups":["cloud-admins"],
+     "federated_roles":["arn:aws:iam::123456789012:role/admin-role"]}
+  ]
+}'
+```
+
+`mfa:false` weights the IdP→user hop as easily phishable; `internet_login`
+(default true) makes the IdP a seed. Build the payload from your IdP's API -
+e.g. Okta `/api/v1/users` + the AWS-federation app's role mappings.
+
+---
+
+### 3. The two markers that make paths appear
+
+The analyzer looks for routes from an **`internet_exposed`** node (seed) to a
+**`crown_jewel`** node (target). **No marker on either side → no paths, empty
+dashboard.** They are derived for you, but only if your data carries the signal:
+
+- **`internet_exposed`** ← Custodian: ALB `Scheme: internet-facing`, EC2
+  `PublicIpAddress`, S3 ACL granting `AllUsers`, RDS `PubliclyAccessible: true`.
+- **`crown_jewel`** ← **tag your sensitive stores** with one of
+  `classification` / `data-classification` / `data` / `sensitivity` =
+  `pii | sensitive | confidential | restricted | secret`, or literally
+  `crown-jewel=true`; or an IAM role with the `AdministratorAccess` policy.
+
+If your real export doesn't carry these, set them directly on a node via
+`/ingest/events` (see §5).
+
+---
+
+### 4. Identifier correlation (the make-or-break detail)
+
+A path forms only when every source names the *same real asset* with the *same
+node id*. The collectors compute it as:
+
+```
+<Label>:<first 16 hex of sha1( lowercase(name) )>
+```
+
+Use this helper to compute an id when you reference a node by hand:
+
+```bash
+pgid() { printf '%s' "$2" | tr 'A-Z' 'a-z' | shasum | cut -c1-16 | sed "s|^|$1:|"; }
+
+pgid Image     "payments-api:1.4.2"   # → Image:98b06dcdd2c1656f
+pgid Container "payments"
+pgid IAM_Role  "web-admin"
+```
+
+Practical rules:
+
+- Use the **same image ref** in Trivy, build provenance and Falco. Registry
+  prefixes are stripped automatically (`registry/…/payments-api:1.4.2` ≡
+  `payments-api:1.4.2`), and Docker Hub `library/` is normalized - but anything
+  more exotic must match exactly.
+- Keep Semgrep `repo` == build provenance `repository`.
+- Prefer setting markers through the native source (Custodian tags) so you don't
+  have to hand-compute ids at all.
+
+---
+
+### 5. Network topology - now auto-discovered
+
+Earlier this needed hand-stitched `/ingest/events`. It no longer does: the
+**`/ingest/k8s`**, **`/ingest/cloudnet`** and **`/ingest/iam`** collectors (§2)
+extract exposure, reachability and privilege escalation for you -
+Ingress→Service→Pod, Pod→ServiceAccount→Role, internet-facing security groups,
+SG-to-SG reachability, VPC peering, and `CAN_ESCALATE_TO` edges to account-admin.
+Feed the raw `kubectl get -o json`, AWS `describe-*` and
+`get-account-authorization-details` output and the topology appears.
+
+You can still hand-author edges via `/ingest/events` for anything the collectors
+don't cover (computing endpoint ids with the `pgid` helper from §4):
+
+```bash
+LB=$(pgid LoadBalancer ingress-prod); C=$(pgid Container payments)
+curl -sS -X POST "$INGEST_URL/ingest/events" -H 'Content-Type: application/json' -d '{
+  "source": "topology", "kind": "relationship",
+  "nodes": [{ "id": "'"$LB"'", "label": "LoadBalancer", "name": "ingress-prod",
+              "properties": { "internet_exposed": true } }],
+  "edges": [{ "type": "EXPOSES", "from": "'"$LB"'", "to": "'"$C"'", "exploit_probability": 0.9 }]
+}'
+```
+
+Edge types: `EXPOSES`, `ROUTES_TO`, `HOSTS`, `CONNECTS_TO`, `ASSUMES`,
+`HAS_PERMISSION`, `BUILT_FROM`, `DEPENDS_ON`, `AFFECTS`. Labels: `LoadBalancer`,
+`VirtualMachine`, `Container`, `VPC`, `Database`, `Bucket`, `Repository`,
+`Image`, `Library`, `User`, `IAM_Role`, `ServiceAccount`, `CVE`, `Weakness`,
+`Misconfiguration`, `Secret`.
+
+---
+
+### 6. Verify a path formed
+
+Wait one analyzer interval (`ANALYZER_INTERVAL`, default 30s) after ingest, then:
+
+```bash
+curl -s -X POST "$API_URL/graphql" -H 'Content-Type: application/json' -d '{
+  "query": "{ posture { criticalPaths kevOnPaths runtimeConfirmed } attackPaths { score nodes { name label } } remediationPlan { title coveragePct } }"
+}' | jq
+```
+
+`criticalPaths > 0` means correlation worked. Open the dashboard for the kill
+chains, the graph, and the **Remediation** plan. (See the Postman collection in
+this folder for ready-made queries.)
+
+#### Quantify risk, simulate fixes, export for compliance
+
+Once paths exist, four analyses turn "here are the routes" into decisions:
+
+```bash
+# Monte Carlo: P(sensitive asset compromised) with a 95% CI, over the whole graph.
+curl -s -X POST "$API_URL/graphql" -H 'Content-Type: application/json' -d '{
+  "query": "{ riskSimulation(iterations: 5000) { anyCompromiseProbability expectedCompromised crownJewels { name compromiseProbability ciLow ciHigh } } }"
+}' | jq
+
+# K-shortest: the top routes to one sensitive asset (id or name), best first.
+curl -s -X POST "$API_URL/graphql" -H 'Content-Type: application/json' -d '{
+  "query": "{ kShortestPaths(target: \"customers-db (PII)\", k: 5) { score nodes { name } } }"
+}' | jq
+
+# What-if: cut an edge (from/to accept id or name) and see the residual risk.
+curl -s -X POST "$API_URL/graphql" -H 'Content-Type: application/json' -d '{
+  "query": "{ whatIf(cuts: [{from: \"public-deployer\", to: \"account-admin (effective)\", type: \"CAN_ESCALATE_TO\"}]) { removedEdges riskReduction afterRisk { anyCompromiseProbability } } }"
+}' | jq
+
+# OSCAL: the posture as a NIST 800-53 assessment-results document for GRC tooling.
+curl -s "$API_URL/export/oscal" | jq '.["assessment-results"].results[0].findings[].title'
+```
+
+`riskSimulation` is reproducible per `seed`; what-if shares the seed across
+before/after so the delta is the cut's effect, not Monte Carlo noise.
+
+Each path also reports the **provenance** of its score so it isn't false
+precision: `confidence` + `confidenceLabel` (high/medium/low) summarize how its
+hops were weighted, and each `steps { weightBasis }` is `kev`/`epss`/`runtime`
+(observed evidence) or `cvss`/`severity`/`heuristic` (an estimate). Turn on
+`THREATINTEL=on` to upgrade CVE hops from severity guesses to KEV/EPSS evidence -
+which raises the confidence of paths that rest on really-exploited CVEs. (Caveat:
+EPSS is a *marginal* exploitation rate, not a per-edge traversal probability - fed
+as-is on purpose so calibration corrects the bias; see README "Honest probabilities".)
+
+The bare product `∏p` is only the baseline; each path also exposes **three honest
+uncertainty views**: the correlation band `[score, scoreUpperBound]` (the
+independence assumption), a 90% Bayesian credible interval `[scoreCiLow, scoreCiHigh]`
+(how well we know the inputs), and an **attacker-profile mixture** `profileScores`
+(`Σ P(c)·∏ p(e|c)` over commodity/criminal/apt, retunable via
+`ATTACKER_PROFILE_PRIORS`). The headline `riskSimulation` carries a Wilson CI plus a
+Beta-resampled credible band. Point estimates are unchanged; what's added is how much
+to trust them.
+
+#### Close the loop: verify a fix, then own it
+
+A remediation you can't trust is a scaffold. Each generated fix records the edge
+it cuts, so the API *verifies* it by simulating the removal - the plan shows
+`verification { verified pathsEliminated riskReductionPct }`, i.e. "this provably
+removes N paths and drops risk by X%", not just "here's a YAML". Then turn a path
+into an **owned, tracked ticket** so it actually gets done:
+
+```bash
+# Open a ticket (admin when auth is on). One open ticket per path; with
+# TICKET_WEBHOOK_URL set it's also POSTed to your tracker (Jira/GitHub/SOAR).
+curl -s -X POST "$API_URL/tickets" -H 'Content-Type: application/json' \
+  -d '{"pathId":"ap-1a2b-3c4d","owner":"secops@acme"}' | jq
+curl -s "$API_URL/tickets" | jq                        # the work board
+curl -s -X POST "$API_URL/tickets/tk-abc123/close"      # mark it done
+```
+
+#### Validate against reality (red-team / BAS)
+
+A modeled path is a hypothesis. Feed the verdict back so the engine earns trust
+with evidence - wire your BAS platform (Caldera, AttackIQ, SafeBreach…) or a
+human to post the result of testing a path:
+
+```bash
+# outcome ∈ confirmed | refuted | partial (reference a path id), or missed
+# (a real path the engine didn't surface - describe it in route). source required.
+curl -s -X POST "$API_URL/validations" -H 'Content-Type: application/json' -d '{
+  "pathId":"ap-1a2b-3c4d","outcome":"confirmed","source":"caldera","evidence":"atomic T1190"}' | jq
+curl -s "$API_URL/validations" | jq .metrics    # precision / recall over the tested subset
+```
+
+Each tested path then shows a **✓ validated real / ✗ refuted** badge, and the
+overview a **Validation** precision card. It's evidence on what was *actually*
+tested - not a global precision/recall claim. Set `VALIDATIONS_PATH` to persist
+(the calibration report flags an `in-memory` dataset otherwise).
+
+Those verdicts also feed **probability calibration** (`{ calibration { … } }`): each
+captures the path's predicted score, so the report grades it (Brier/ECE + a reliability
+diagram), cross-validates a recalibration map, segments by path structure, tracks a
+detection axis, and folds it all into one **diagnosis** -
+`recalibrate-first | structural (#6) | detection-axis (#7) | low-resolution` - the
+answer to "and therefore what should we build?". You don't need real infra to exercise
+it: `make calibration-selftest SCENARIO=…` draws verdicts from a known reality and the
+gate must name the cause (also a deterministic CI test). A "Brier over time" trend on
+the Overview lets you watch the evidence accumulate.
+
+#### Triage a path you've decided about
+
+Not every path is a fire to fight - some you accept, some are false positives,
+some a control outside the graph already covers. Record that decision so the
+board reflects reality (and so the next analyst sees *who* decided and *why*):
+
+```bash
+# Suppress a path (admin when API auth is on). reason ∈
+# accept-risk | false-positive | mitigating-control | duplicate. owner required.
+curl -s -X POST "$API_URL/suppressions" -H 'Content-Type: application/json' -d '{
+  "pathId": "ap-1a2b-3c4d", "reason": "mitigating-control",
+  "owner": "secops@acme", "note": "WAF blocks this", "ttlDays": 30 }' | jq
+
+curl -s "$API_URL/suppressions" | jq            # the triage board (incl. expired)
+curl -s -X DELETE "$API_URL/suppressions/ap-1a2b-3c4d"   # un-suppress
+```
+
+`pathId` is the `attackPaths { id }` value (stable for a seed→sensitive-asset pair).
+Suppressed paths drop out of the overview's **active** count and the
+`riskSimulation` doesn't change - suppression is a *view* decision, not a graph
+edit. Set `SUPPRESSIONS_PATH` so decisions survive a restart (otherwise they are
+in-memory only). In the dashboard, use **⊘ suppress / triage** on any path and
+the **Show suppressed** toggle on the list.
+
+> Tip: when a kill chain shows a **"⚠ heuristic join · N%"** badge, the link was
+> *inferred* (e.g. container→image by tag/name, not digest) - verify it before
+> acting, or mark the path **false-positive** if the correlation is wrong.
+
+---
+
+### 7. Troubleshooting - "I see no attack paths"
+
+Work down this list; it is almost always one of these:
+
+1. **No seed** - nothing is `internet_exposed`. Check §3; mark an entry point.
+2. **No target** - nothing is `crown_jewel`. Tag a sensitive store (§3).
+3. **Seed and target exist but aren't connected** - the topology edge between
+   them is missing (the §5 gap). Add the `EXPOSES`/`ROUTES_TO` edge.
+4. **Ids don't match across sources** - the image ref or repo name differs. Use
+   `pgid` to compare; align Trivy/build/Falco image refs and Semgrep `repo`.
+5. **Ingest returns 5xx** - check the backend logs; a malformed payload is
+   rejected per-source, an unknown collector name 404s.
+6. **Data is in but stale** - give it one `ANALYZER_INTERVAL`; the analyzer only
+   recomputes when the graph changed.
+
+---
+
+### 8. Run it continuously
+
+A pilot is a few manual POSTs; production is the scanners wired to fire on their
+own cadence:
+
+- **CI (per PR / per build):** add the Trivy + build-provenance + Semgrep POSTs
+  as a job step after you build the image, passing `?slug=&pr=&sha=` from the CI
+  context. PR comments then land only on findings that sit on a real path.
+- **Cloud (hourly/daily cron):** run Custodian, assemble the bundle, POST to
+  `/ingest/custodian`. Re-posting is idempotent (deterministic ids + upserts).
+- **Discovery (daily cron):** dump `kubectl get -o json`, the AWS `describe-*`
+  bundle and `aws iam get-account-authorization-details`, POST to `/ingest/k8s`,
+  `/ingest/cloudnet` and `/ingest/iam`. Each re-post is idempotent, so drift in
+  exposure or IAM escalation surfaces as new/closed paths between runs.
+- **Runtime (continuous):** point falcosidekick's HTTP output at
+  `/ingest/falco`.
+
+Start narrow - one app with a known internet entry point and a known sensitive
+store - confirm a path end-to-end, *then* widen the scanners' scope.
+
+**Deploying it on Kubernetes.** The Helm chart in `deploy/helm/perspectivegraph`
+brings up backend + dashboard + Postgres+AGE + NATS in one command (or point it at
+managed Postgres/NATS with `postgres.enabled=false`/`nats.enabled=false`). The
+default install is *unauthenticated with in-memory governance* - fine for a demo
+inside a trusted cluster, but for anything reachable beyond it, turn the controls
+on: `--set auth.apiTokens="$(openssl rand -hex 16):admin"` (bearer auth),
+`--set ingest.hmacSecret=…` (signed ingestion), and `--set persistence.enabled=true`
+so suppressions, tickets, validations, MTTR history and the **audit log** persist
+across restarts. The stores are single-writer, so the chart refuses to render with
+`backend.replicas > 1` while persistence is on, and the post-install notes flag any
+control you left off. Full hardening recipe: the "Hardening a real deployment"
+section of the README above.
+
+#### Keep it fresh (so it can't drift into fiction)
+
+Once feeds run on a cadence, set **`GRAPH_TTL`** to a few feed-cycles (e.g.
+`168h`). Each observation stamps `last_seen`; the analyzer then removes anything
+not re-seen within the window, so a deleted pod or torn-down security group stops
+producing a **phantom path** instead of lingering forever. Make the TTL
+comfortably longer than your slowest feed's interval, so one briefly-missed scan
+doesn't evict a still-present asset. Watch it via `status { prunedNodes
+prunedEdges lastPrunedAt }`, the dashboard footer (*“pruned N stale”*), or
+`perspectivegraph_graph_pruned_{nodes,edges}_total`. The graph is **derived**
+state - rebuildable by re-ingesting the feeds - so a lost AGE database is a
+re-seed, not data loss; back Postgres up (`pg_dump`) for history.
+
+#### Manage on trends, not snapshots
+
+Once it runs continuously, the temporal layer turns passes into a history. Set
+**`HISTORY_PATH`** so it survives restarts, then track exposure over time:
+
+```bash
+curl -s -X POST "$API_URL/graphql" -H 'Content-Type: application/json' -d '{
+  "query": "{ history { openPaths resolvedPaths mttrSeconds oldestOpenSince trend { at criticalPaths riskPct } } }"
+}' | jq
+```
+
+Each path also exposes `openForSeconds` (the dashboard's *“open 5d”* badge) and
+`reopens` (*“⟳ reopened N×”* - a path that came back after being fixed, i.e. a
+deploy reintroduced it). **MTTR** is the mean *resolved − first_seen* over paths
+that closed - the accountability number for management reporting. The overview
+plots the trend as a sparkline: chase a rising line, show a board a falling one.
+
 ## Project status
 
 **Implemented end-to-end, with tests.** Ten ingestion collectors, a NATS bus,
@@ -1216,7 +2127,62 @@ first-class: ingest HMAC, bearer/OIDC auth with role + **per-application RBAC**,
 a tamper-evident **audit log**, **at-rest encryption**, **Ed25519-signed exports**,
 and auth-lockout + exfiltration alerting - plus a Helm chart that surfaces all of
 it. The graph store defaults to Apache AGE and falls back to in-memory for
-zero-dependency dev. See [the roadmap](./ARCHITECTURE.md#roadmap) for what's next.
+zero-dependency dev. See [the changelog](CHANGELOG.md) for what's next.
+
+## Release checklist
+
+Status legend: items checked are done in the working tree and only need to be committed.
+
+### 0. Done in the working tree (commit these)
+
+- [x] Pin Apache AGE docker image to an existing tag (`release_PG16_1.6.0`) - `PG16_latest` was removed from Docker Hub (docker-compose.yml, helm values)
+- [x] AGE store parity with the in-memory reference: property merge on `UpsertNode` (shared `graph.MergeProps`), explicit error + broker redelivery for edges whose endpoints are not in the graph yet
+- [x] Store contract test suite that runs against **both** implementations (in-memory always, AGE when Postgres is reachable, on an isolated graph)
+- [x] Frontend redesign: sidebar navigation (Overview / Attack paths / Graph / Violations / Search), attack-path detail with kill chain + generated remediations, policy violations view
+- [x] Graph canvas no longer rebuilt on every poll (pan/zoom preserved); dangling edges filtered before Cytoscape
+- [x] OpenSearch integrated end-to-end: `make up-search` target, full-text Search view in the dashboard, README aligned (quick start no longer claims `make up` boots OpenSearch)
+- [x] Helm chart verified on a real cluster (docker-desktop): `helm lint` clean, external-endpoint guards behave, full deploy of backend/frontend/Postgres+AGE/NATS, seed + GraphQL through the frontend's nginx proxy all green. Publishing prerequisite: `docker push` both images to `ghcr.io/luiacuaniello/*` (and make the packages public) so `helm install` works without a local build
+
+### 1. Blockers - do before the first push
+
+- [x] **GitHub account vs module path**: module is `github.com/luiacuaniello/perspectivegraph` and images are `ghcr.io/luiacuaniello/*` - matches the publishing account. One manual step left: **name the GitHub repo exactly `perspectivegraph`**, or `go install` and the documented docker builds break
+- [x] Add `.claude/` to `.gitignore` (local tooling config)
+- [x] README accuracy pass: "five sources", *Project status* refreshed (search UI, store-parity contract tests, dashboard sections)
+- [x] Makefile `seed` help text updated (five sources → six ranked attack paths)
+- [x] README screenshots: `docs/screenshot-overview.png` + `docs/screenshot-paths.png` (dashboard supports `#view` deep links, e.g. `/#paths`)
+- [x] Helm external endpoints implemented: `postgres.externalHost`/`externalPort` and `nats.externalUrl` (with `required` guards when the bundled component is disabled); README deploy section documents them
+- [x] `.env.example` now accurate: `loadDotEnv` reads `.env` from the working directory **and** its parent, so `make run-backend` picks up the repo-root file
+- [x] Fresh-stack smoke test passed (volumes wiped → `make up` → backend with pure defaults → seed → 6 paths / 2 runtime-confirmed on AGE); CI commands green locally (`go build/vet/test` ×11 pkgs, `npm ci && npm run build`)
+- [x] Secret scan of the tree (only fake tokens in tests; `.env` is gitignored)
+
+### 2. Hardening - soon after publishing
+
+- [x] NATS consumer: `MaxDeliver=8` + per-attempt backoff (1s→1m via `NakWithDelay`); poison events are Terminated after the cap instead of redelivering forever
+- [x] `subjectFor` hardened: the configured subject is a base (legacy `.*`/`.>` suffixes accepted), the stream binds `base.>`, and source tokens are sanitized (`my.scanner` → `my-scanner`) - verified live: dotted sources ingest fine
+- [x] `ANALYZER_INTERVAL` validated in config (non-positive/malformed → default) plus a defensive guard in `analyzer.NewService`
+- [x] GitHub & GitLab commenters paginate the marker search (up to 2,000 comments); restart-dedupe rides the forge-side marker comment (find → update), the in-memory hash only skips redundant API calls
+- [x] OpenSearch `_bulk`: per-item `errors` parsed; partial failures now return an error with the count and first reason
+- [x] Falco decoder: streaming `json.Decoder` handles compact, pretty-printed, NDJSON and concatenated objects (test added)
+- [x] `NormalizeImageRef` converges `nginx:1.25` ≡ `library/nginx:1.25` ≡ `docker.io/library/nginx:1.25` (and strips `localhost/`)
+- [x] Dangling-edge contract decided: **both** stores reject edges with missing endpoints; the broker's redelivery turns it into eventual consistency (encoded in the contract tests, proven live: edge-only event retried with backoff, landed once its nodes arrived)
+
+### 3. Demo → product (architecture)
+
+- [x] Custodian reads **real AWS export shapes** (Tags/TagList, `AttachedManagedPolicies`, `PublicIpAddress`, `Scheme`, ACL AllUsers grants, `PubliclyAccessible`); sensitive-asset classification is **data-driven via resource tags** (`ingestion.CrownJewelFromTags`); LB→EC2 inferred from the shared `app` tag, admin-role reach inferred from AdministratorAccess - same demo topology, zero invented fields
+- [x] New **build-provenance collector** (`POST /ingest/build`): a CI step posts image↔repository and the Image --BUILT_FROM--> Repository edge connects SAST findings without the hand-fed context (wired into `make seed` and the Postman collection)
+- [x] One severity→probability scale (`ingestion.SeverityProbability`); trivy and semgrep map through it (semgrep keeps its confidence discount on top)
+- [x] Remediation is a **rule registry** (`remediation.Registry`) + a hint registry (`remediation.Hints`) that the PR commenter renders - the parallel switch in the commenter is gone
+- [x] GraphQL: `attackPaths(app, limit)`, `graph(app, limit, offset)` with connected-component scoping, `applications` listing; **one snapshot per request** (context-memoized loader); analyzer **change-detection** via `graph.VersionedStore` (verified: zero passes in 31s of idle that previously ran 3)
+- [x] Multi-application dashboard: header selector (All applications / repo slugs / app tags) scoping paths + graph; posture stays environment-wide by design
+- [x] Dead code & duplication removed: `Normalizer.Alias`, `Engine.Add`, unreachable `events` guard, fake schema assertion, the 7 resolver clones (one generic `field[T]`), and `requestJSON`/`search.do` now share `internal/httpx`
+
+### 4. OSS repo polish
+
+- [ ] CI badge in the README
+- [x] `SECURITY.md` with a responsible-disclosure policy (it is a security tool - expected)
+- [x] Update the feature history in `CHANGELOG.md` - kept current (store-parity, search UI, dark mode, ATT&CK, the A/B hardening blocks)
+- [x] Frontend tests in CI - the frontend job now runs **Vitest** + `npm audit` (not just build). Still open: an **ESLint** step and **code-splitting** the ~666 kB bundle (lazy-load Cytoscape)
+- [ ] GitHub side (manual): repo description, topics, issue templates, `v0.1.0` tag with the first push
 
 ## License
 

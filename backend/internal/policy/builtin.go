@@ -10,8 +10,8 @@ func Builtins() []Invariant {
 
 	return []Invariant{
 		{
-			ID:          "no-internet-to-crown-jewel",
-			Description: "No internet-exposed asset may have a path to a crown-jewel asset.",
+			ID:          "no-internet-to-sensitive-asset",
+			Description: "No internet-exposed asset may have a path to a sensitive asset.",
 			Severity:    "CRITICAL",
 			Source:      internetExposed,
 			Target:      crownJewel,

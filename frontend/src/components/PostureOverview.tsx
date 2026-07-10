@@ -123,7 +123,7 @@ function CalibrationPanel({ calibration, trend }: { calibration: Calibration; tr
       <div className="mb-3 flex items-center justify-between gap-2">
         <span className="flex items-center gap-1.5 text-[11px] font-medium text-muted">
           Calibration
-          <InfoTip text="Do the scores mean anything? Each tested path's predicted score is paired with its observed red-team/BAS outcome (confirmed/refuted) to check whether paths scored ~80% actually confirm ~80% of the time. Brier and ECE are error metrics (lower is better); the diagram plots predicted vs observed - points on the diagonal are perfectly calibrated. This is what turns a heuristic score into a defensible probability." />
+          <InfoTip text="Whether the scores hold up: each tested path's predicted score vs its real red-team/BAS outcome. Brier and ECE are the error (lower is better); the diagram plots predicted vs observed." />
         </span>
         <div className="flex items-center gap-1.5">
           {ephemeral && (
@@ -168,14 +168,14 @@ function CalibrationPanel({ calibration, trend }: { calibration: Calibration; tr
             <div className="flex items-start gap-2">
               <span className="mt-0.5 text-[11px] font-medium text-muted">Diagnosis</span>
               <span className={`flex-1 text-[12px] leading-snug ${diagTone(calibration.diagnosis)}`}>{calibration.diagnosis}</span>
-              <InfoTip text="The gate recommendation. recalibrate-first: a monotone rescale fixes it (apply the recalibration map). structural (#6): error concentrates on correlated/long paths, where the independence assumption breaks - consider a correlation-aware model. detection-axis (#7): reachable paths are routinely caught, so the score over-predicts undetected impact. low-resolution: even recalibration can't separate real from fake - revisit the inputs." />
+              <InfoTip text="The gate recommendation: recalibrate-first (a rescale fixes it), structural #6 (error on correlated/long paths), detection-axis #7 (paths get caught, so the score over-predicts), or low-resolution (inputs can't tell real from fake)." />
             </div>
           )}
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             {calibration.brierRecalibrated != null && (
               <span
                 className="rounded-md bg-slate-500/10 px-1.5 py-0.5 text-[10px] tabular-nums text-slate-600"
-                title="Brier after isotonic recalibration - the floor a monotone rescale can reach. Close to the raw Brier means recalibration won't help; much lower means apply the recalibration map."
+                title="Brier after isotonic recalibration - the best a rescale can reach. Near the raw Brier: recalibration won't help. Much lower: apply the map."
               >
                 recalibrated Brier {calibration.brierRecalibrated.toFixed(3)}
               </span>
@@ -243,7 +243,7 @@ export default function PostureOverview({
       <section className="rounded-2xl glass p-6">
         <div className="flex items-center gap-1.5 text-[12px] text-muted">
           Account compromise
-          <InfoTip text="Probability at least one crown jewel is compromised (Monte Carlo over thousands of attacker attempts, sampling edges independently). The modeled range is a credible band from resampling each edge from its Beta posterior. See the attacker-profile breakdown below for the correlation-aware view. A modeled estimate, not a measurement." />
+          <InfoTip text="P(at least one sensitive asset compromised) - Monte Carlo over thousands of attacker attempts. The modeled range is the credible band from per-edge evidence. An estimate, not a measurement." />
         </div>
         <div className="mt-1.5 flex flex-wrap items-baseline gap-x-4 gap-y-2">
           <span className={`text-[52px] font-semibold leading-none tabular-nums tracking-tight ${pct != null && pct >= 50 ? "text-red-600" : "text-slate-900"}`}>
@@ -259,7 +259,7 @@ export default function PostureOverview({
         {pct != null && (
           <>
             <p className="mt-3 max-w-[64ch] text-[13px] leading-relaxed text-slate-600">
-              An attacker reaches at least one crown jewel with {reach}; about {risk!.expectedCompromised.toFixed(1)} fall on average.
+              An attacker reaches at least one sensitive asset with {reach}; about {risk!.expectedCompromised.toFixed(1)} fall on average.
               {posture.runtimeConfirmed > 0 &&
                 ` ${posture.runtimeConfirmed} route${posture.runtimeConfirmed === 1 ? "" : "s"} confirmed live in runtime.`}
             </p>
@@ -290,7 +290,7 @@ export default function PostureOverview({
         <div className="flex flex-wrap items-center gap-1.5 rounded-2xl glass px-4 py-2.5">
           <span className="flex items-center gap-1 text-[11px] text-muted">
             Compromise by attacker profile
-            <InfoTip text="P(any crown jewel compromised) marginalized over attacker capability - the correlation-aware headline Σ P(c)·R_c. The 'Account compromise' card above samples edges independently (the baseline); this reintroduces the same latent-capability correlation the per-path scores already reflect, broken down per profile." />
+            <InfoTip text="P(any sensitive asset compromised), broken down per attacker profile - the correlation-aware counterpart to 'Account compromise', which samples edges independently." />
           </span>
           {risk.profileCompromise.map((p) => {
             const label = p.profile === "apt" ? "APT" : p.profile.charAt(0).toUpperCase() + p.profile.slice(1);
@@ -320,7 +320,7 @@ export default function PostureOverview({
           <div className="mb-2 flex items-center justify-between">
             <span className="flex items-center gap-1.5 text-[11px] font-medium text-muted">
               Exposure trend
-              <InfoTip text="Critical paths and account-compromise probability over the analysis history. Security is managed on trends, not snapshots - a rising line is a regression to chase, a falling one is progress." />
+              <InfoTip text="Critical paths and account-compromise probability over time. Manage on trends, not snapshots: a rising line is a regression, a falling one is progress." />
             </span>
             <span className="text-[11px] text-slate-400">
               {trend.length} samples{history?.oldestOpenSince ? ` · oldest open ${new Date(history.oldestOpenSince).toLocaleDateString()}` : ""}

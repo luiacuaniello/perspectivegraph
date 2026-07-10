@@ -106,9 +106,9 @@ different tools correlate onto the same asset.
 - **Frontend:** must pass `tsc`, `build`, and `vitest`. Use the inline SVG icon
   set (`components/icons.tsx`) - **no emoji in the UI**; colors come from the
   CSS-variable design tokens (so light/dark both work), not hardcoded hex.
-- **Docs + Postman:** every user-facing feature updates the relevant `.md`
-  (`README.md`, `ARCHITECTURE.md`, `docs/GUIDA.md` / `docs/ONBOARDING.md`,
-  `.env.example`) **and** the Postman collection
+- **Docs + Postman:** every user-facing feature updates `README.md` (the single
+  source of truth: architecture, onboarding runbook, deploy) and `.env.example`
+  **and** the Postman collection
   (`docs/perspectivegraph.postman_collection.json`).
 - **Security:** this tool is a map of how to attack the org, so don't weaken its
   own controls (ingest HMAC, API auth/RBAC, audit log, at-rest encryption,

@@ -138,7 +138,7 @@ func commentBody(p analyzer.AttackPath) string {
 	}
 	fmt.Fprintf(&b, "This change sits on a **verified attack path** "+
 		"(exploit likelihood **%.0f%%**) from an internet-exposed entry point "+
-		"to a crown-jewel asset (`%s`).\n\n", p.Score*100, p.Target().Name)
+		"to a sensitive asset (`%s`).\n\n", p.Score*100, p.Target().Name)
 
 	b.WriteString("**Path**\n```\n")
 	b.WriteString(strings.TrimLeft(RenderPath(p), "\n"))

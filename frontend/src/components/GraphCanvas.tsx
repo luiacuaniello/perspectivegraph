@@ -380,7 +380,7 @@ export default function GraphCanvas({ nodes, edges, highlightNodes, highlightEdg
           </span>
           <span className="flex items-center gap-1.5">
             <span className="h-3 w-3 rounded-full border-2" style={{ borderColor: "#caa53a" }} />
-            crown jewel
+            sensitive asset
           </span>
           <span className="flex items-center gap-1.5">
             <span className="h-3 w-3 rounded-full border-2" style={{ borderColor: "#e0683a" }} />

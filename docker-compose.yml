@@ -226,7 +226,7 @@ services:
   # Opt-in demo identity provider so you can exercise the dashboard's SSO login
   # gate end-to-end on a laptop, no cloud IdP needed:
   #   docker compose --profile app --profile sso up -d
-  # then set the backend OIDC_* env (see docs/GUIDA §5.x / the realm file) and open
+  # then set the backend OIDC_* env (see the README SSO section / the realm file) and open
   # http://localhost:3000. Realm "demo", user demo/demo, client perspectivegraph.
   # Dev image/flags (start-dev, in-memory) - for local testing only, not production.
   keycloak:

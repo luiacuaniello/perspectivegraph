@@ -31,26 +31,41 @@ func TestAzureConnectorFixturesPull(t *testing.T) {
 		t.Fatal("no events from the Azure fixtures pull")
 	}
 	names := map[string]bool{}
-	exposed, jewel := false, false
+	var exposedID, jewelID string
 	for _, ev := range evs {
 		for _, n := range ev.Nodes {
 			names[n.Name] = true
 			if n.Bool(ontology.PropInternetExposed) {
-				exposed = true
+				exposedID = n.ID
 			}
 			if n.Bool(ontology.PropCrownJewel) {
-				jewel = true
+				jewelID = n.ID
 			}
 		}
 	}
 	if !names["web-vm"] {
 		t.Error("expected a web-vm node from the pull")
 	}
-	if !exposed {
+	if exposedID == "" {
 		t.Error("the web VM behind the Internet-open NSG should be internet-exposed")
 	}
-	if !jewel {
+	if jewelID == "" {
 		t.Error("the PII db VM tagged crown-jewel should be a crown jewel")
+	}
+	// The whole point of the connector: the exposed tier must actually REACH the
+	// crown jewel. The db NSG admits the web ASG, so cloudnet must discover a
+	// CONNECTS_TO edge from the exposed web VM to the jewel - without it the exposed
+	// VM dead-ends and there is no internet -> crown-jewel path to surface.
+	lateral := false
+	for _, ev := range evs {
+		for _, e := range ev.Edges {
+			if e.Type == ontology.EdgeConnectsTo && e.From == exposedID && e.To == jewelID {
+				lateral = true
+			}
+		}
+	}
+	if !lateral {
+		t.Error("expected a CONNECTS_TO edge from the internet-exposed web VM to the crown-jewel db VM (east-west via the admitted ASG)")
 	}
 }
 
@@ -81,6 +96,14 @@ func TestMapNetworkToCloudnet(t *testing.T) {
 	if !sgHasCIDR(b, "db-nsg", "10.0.1.0/24") {
 		t.Error("db-nsg should preserve its specific source CIDR")
 	}
+	// East-west: db-nsg admits the web ASG, which must become an SG-to-SG pair, and
+	// the web VM must be bound to that ASG group so cloudnet can connect the two.
+	if !sgAdmitsGroup(b, "db-nsg", asgGroupID("web-asg")) {
+		t.Error("db-nsg should admit the web ASG as an SG-to-SG (UserIdGroupPairs) source")
+	}
+	if !instanceInGroup(b, "web-vm", asgGroupID("web-asg")) {
+		t.Error("web-vm should be bound to its web-asg group so the admitted ASG connects it")
+	}
 }
 
 func sgHasCIDR(b cloudnetBundle, sg, cidr string) bool {
@@ -93,6 +116,36 @@ func sgHasCIDR(b cloudnetBundle, sg, cidr string) bool {
 				if r.CidrIp == cidr {
 					return true
 				}
+			}
+		}
+	}
+	return false
+}
+
+func sgAdmitsGroup(b cloudnetBundle, sg, group string) bool {
+	for _, g := range b.SecurityGroups {
+		if g.GroupID != sg {
+			continue
+		}
+		for _, p := range g.IpPermissions {
+			for _, pair := range p.UserIdGroupPairs {
+				if pair.GroupID == group {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func instanceInGroup(b cloudnetBundle, instance, group string) bool {
+	for _, inst := range b.Instances {
+		if inst.InstanceID != instance {
+			continue
+		}
+		for _, ref := range inst.SecurityGroups {
+			if ref.GroupID == group {
+				return true
 			}
 		}
 	}

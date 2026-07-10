@@ -241,8 +241,10 @@ type importFinding struct {
 // BAS verdict ingestion: a red-team/BAS platform's post-run webhook posts a whole
 // report (a source + many findings) and the server matches each finding to a live
 // path, captures the prediction, and records it - no per-finding round-trips and no
-// client-side path matching. Admin-only; findings that match no live path (and are
-// not "missed") are reported as unmatched rather than recorded.
+// client-side path matching. Admin-only. The response breaks findings into recorded,
+// unmatched (a non-missed finding matched no live path - a legitimate gap), and
+// rejected (the record was invalid, e.g. a bad outcome/scope - a client error); if
+// nothing recorded and everything was rejected it answers 400, not a cheerful 200.
 func (a *API) importValidations(w http.ResponseWriter, r *http.Request) {
 	if !a.adminWritable(r) {
 		writeJSONError(w, http.StatusForbidden, "admin role required to import validations")
@@ -265,11 +267,19 @@ func (a *API) importValidations(w http.ResponseWriter, r *http.Request) {
 	if source == "" {
 		source = "bas-import"
 	}
-	recorded, unmatched := 0, 0
+	// Three distinct outcomes, kept separate so a malformed report doesn't hide behind
+	// "unmatched": recorded (stored), unmatched (a non-missed finding matched no live
+	// path - a legitimate gap), and rejected (the record itself was invalid, e.g. a bad
+	// outcome/scope - a client error worth surfacing).
+	recorded, unmatched, rejected := 0, 0, 0
 	for _, f := range req.Findings {
 		pathID := f.PathID
 		if pathID == "" && f.Outcome != string(validation.Missed) {
-			pathID = a.matchPath(tenant, f.Target, f.From) // "" ⇒ Put rejects (counted unmatched)
+			pathID = a.matchPath(tenant, f.Target, f.From)
+			if pathID == "" {
+				unmatched++ // no live path to reference; not an error, just nothing to grade
+				continue
+			}
 		}
 		_, err := a.validation.Put(a.buildRecord(tenant, verdictFields{
 			pathID: pathID, outcome: f.Outcome, scope: f.Scope, source: source,
@@ -277,16 +287,22 @@ func (a *API) importValidations(w http.ResponseWriter, r *http.Request) {
 			predictedScore: f.PredictedScore, predictedCompromise: f.PredictedCompromise,
 		}))
 		if err != nil {
-			unmatched++
+			rejected++ // the finding matched (or carried) a path but was invalid
 			continue
 		}
 		recorded++
 	}
 	p := auth.PrincipalFromContext(r.Context())
 	a.audit.Record("validation.import", p.Subject, p.Role.String(), p.Tenant, map[string]any{
-		"source": source, "recorded": recorded, "unmatched": unmatched,
+		"source": source, "recorded": recorded, "unmatched": unmatched, "rejected": rejected,
 	})
-	writeJSON(w, http.StatusOK, map[string]any{"recorded": recorded, "unmatched": unmatched})
+	// Nothing stored and every finding was a client error ⇒ 400, so a broken integration
+	// gets told rather than a cheerful 200 with zero effect.
+	status := http.StatusOK
+	if recorded == 0 && rejected > 0 && unmatched == 0 {
+		status = http.StatusBadRequest
+	}
+	writeJSON(w, status, map[string]any{"recorded": recorded, "unmatched": unmatched, "rejected": rejected})
 }
 
 // containsFold reports whether s contains sub, case-insensitively - the loose match
