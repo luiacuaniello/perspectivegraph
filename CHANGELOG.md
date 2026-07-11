@@ -225,6 +225,16 @@ what to build next.
   inspects `securityContext.capabilities.add` (CAP_ prefix / casing normalized) and
   emits `ESCAPES_TO` cluster-admin for the privileged-equivalent set.
 
+### Security
+- **Go toolchain 1.25.11 → 1.25.12** to clear two standard-library CVEs that the CI
+  govulncheck + Trivy gates flagged: `GO-2026-5856` (Encrypted Client Hello privacy
+  leak in `crypto/tls`, reachable via the NATS TLS handshake, HTTPS server and HTTP
+  client) and `CVE-2026-39822` (HIGH - `os.Root` symlink-following directory traversal).
+  Both are fixed in go1.25.12; no application-code change. Pinned consistently across
+  `go.mod` (`toolchain`), CI (`go-version`), the backend Dockerfile (digest-pinned
+  `golang:1.25.12-alpine`), the dev/harness scripts and CONTRIBUTING. Verified locally:
+  govulncheck now reports 0 affected vulnerabilities.
+
 ## [0.2.0] - 2026-06-23
 
 ### Added

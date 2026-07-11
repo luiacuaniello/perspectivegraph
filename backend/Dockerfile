@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Multi-stage build producing a tiny static PerspectiveGraph binary.
 
-FROM golang:1.25.11-alpine@sha256:8d95af53d0d58e1759ddb4028285d9b1239067e4fbf4f544618cad0f60fbc354 AS build
+FROM golang:1.25.12-alpine@sha256:56961d79ea8129efddcc0b8643fd8a5416b4e6228cfd477e3fd61deb2672c587 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
