@@ -234,6 +234,12 @@ what to build next.
   `go.mod` (`toolchain`), CI (`go-version`), the backend Dockerfile (digest-pinned
   `golang:1.25.12-alpine`), the dev/harness scripts and CONTRIBUTING. Verified locally:
   govulncheck now reports 0 affected vulnerabilities.
+- **Release-readiness hardening for going public.** Added `CODEOWNERS` and a `NOTICE`
+  file; pinned every GitHub Actions dependency to a commit SHA (Dependabot's
+  `github-actions` updates keep them current); added an OpenSSF Scorecard workflow; and
+  a candid "Project status & maturity" section to the README that scopes exactly what is
+  feature-complete, what is only calibrated on synthetic topology, and what still needs
+  operator hardening before production.
 
 ## [0.2.0] - 2026-06-23
 

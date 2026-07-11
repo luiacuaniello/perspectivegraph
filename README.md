@@ -35,6 +35,30 @@ pull request.**
 
 </details>
 
+## Project status & maturity
+
+PerspectiveGraph is **pre-1.0** and built in the open. Read this before you rely on it:
+
+- **Engine: feature-complete.** The correlation engine, agentless connectors, triage,
+  SSO, the PR merge-gate, the AI assistant, and the scale work are all implemented and
+  covered by tests.
+- **Probabilities: calibrated on synthetic topology, not yet field-validated.** The
+  self-calibration flywheel has been exercised end-to-end against deliberately-vulnerable
+  targets (a log4shell app, a `kind` Kubernetes RBAC scenario) - not yet against a breadth
+  of real cloud/Kubernetes accounts. Treat the path scores as **directionally honest, not
+  production-validated**. The `make validate-aws` and `make validate-harness*` harnesses
+  are the path to changing that, on your own environment.
+- **Deployment: demo-grade defaults.** The bundled `docker compose` / Helm setup is
+  hardened for a demo (distroless, non-root, read-only rootfs, digest-pinned 0-CVE images,
+  opt-in TLS). A production rollout still needs your own hardening: an external managed
+  PostgreSQL+AGE, secrets in a manager (not env vars), TLS on by default, backups, and HA
+  for the leader-gated scheduler. See [`SECURITY.md`](SECURITY.md).
+- **Scope.** It answers the reachable attack-path question in the developer workflow. It is
+  not a scanner, a CNAPP, or a compliance product, and it does not replace them.
+
+Issues and PRs are welcome. Nothing here is claimed beyond what the tests and the listed
+validation cover.
+
 ## Why?
 
 Modern security teams don't suffer from a lack of tools - they suffer from **noise, fragmentation,

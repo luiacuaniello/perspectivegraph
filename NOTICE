@@ -1,0 +1,22 @@
+PerspectiveGraph
+Copyright 2026 PerspectiveGraph authors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+It depends on, and in some deployment modes bundles, third-party open-source
+software, each distributed under its own license. The authoritative inventory of
+those components and their licenses is the dependency manifests in this repo:
+
+  - Go modules:   backend/go.mod, backend/go.sum
+  - npm packages: frontend/package.json, frontend/package-lock.json
+
+Notable third-party components used at runtime (refer to each project for its
+full license text):
+
+  - PostgreSQL with the Apache AGE graph extension. For production, bring your own
+    managed instance instead of the bundled demo image.
+  - NATS server (event bus).
+  - nginx (serves the dashboard's static assets).
+
+No third-party code included in this repository has been modified in a way that
+alters its original license terms.

@@ -1,0 +1,9 @@
+# Code owners for PerspectiveGraph.
+#
+# Every pull request requires review from an owner. Enforce it in the repo:
+#   Settings -> Branches -> branch protection for `main`
+#     -> Require a pull request before merging
+#     -> Require review from Code Owners
+#
+# Replace / extend the owner as the team grows (teams: @org/team-name).
+* @luiacuaniello
