@@ -574,12 +574,19 @@ curl -s localhost:8081/connectors | jq   # per-connector health: last run, last 
 CONNECTORS_ENABLED=aws AWS_CONNECTOR_MODE=sdk AWS_REGION=us-east-1 \
   AWS_ROLE_ARN=arn:aws:iam::<account>:role/perspectivegraph-readonly
 # grant only: ec2:Describe*, iam:GetAccountAuthorizationDetails (≈ SecurityAudit)
+
+# See what the live connector discovers before wiring it in (describe-* only):
+AWS_REGION=us-east-1 ROLE_ARN=arn:aws:iam::<account>:role/perspectivegraph-readonly \
+  make validate-aws       # internet-exposed seeds vs SG-open-but-suppressed, with reasons
 ```
 
 Connectors are **leader-only** (replicas don't multiply API calls), interval-driven
 (`CONNECTOR_INTERVAL`), and observable via `GET /connectors` plus
 `perspectivegraph_connector_*` Prometheus metrics. SDK mode uses the standard AWS
-credential chain (env / shared profile / IRSA / instance role).
+credential chain (env / shared profile / IRSA / instance role). The network pull also
+reads route tables, NACLs and subnets, so an SG open to `0.0.0.0/0` on an instance in a
+**private** subnet (NAT / transit-gateway egress, or a denying NACL) is *not* reported as
+internet-exposed - the classic false positive that inflates attack-surface counts.
 
 ### Topology discovery (no hand-stitched IDs)
 
@@ -1029,6 +1036,51 @@ make import-verdicts FILE=my-report.json           # {"target":"secrets-vault","
 The CVE, its severity and its KEV/EPSS are **real** (only the deployment topology is
 modeled - use the `k8s` collector on a local cluster to make that real too). Now the
 score rests on a CVE you can actually exploit, so the verdict calibrates the real thing.
+
+**One command that runs the whole loop: `make validate-harness`.** It brings up a
+genuinely-exploitable log4shell app, lets the engine surface the path, then *actually
+exploits the live app* and takes the verdict from an **independent oracle** - did the
+app make the JNDI callback? A callback ⇒ `confirmed`, none (patched / blocked / not
+vulnerable) ⇒ `refuted` - so the outcome is real, not something you asserted (which is
+why building your own vulnerable app is the wrong move: the verdict has to come from an
+exploit that succeeds or fails on its own, and calibration needs the honest `refuted`
+verdicts too). Repeatable; override `TARGET_IMAGE=…` to point at a patched build (to
+harvest `refuted`) or another target. `scripts/validate-harness.sh`; needs docker + the
+stack up.
+
+**Real topology, not modelled: `make validate-harness-k8s`.** The log4shell harness
+models the path (hardcoded edge probabilities); this one goes further. It stands up a
+`kind` cluster with two misconfigured RBAC scenarios and lets the **k8s collector
+discover** the topology, so the attack-path *score* is the engine's real output, then
+exploits each path and takes the verdict from the Kubernetes API server's own RBAC
+decision: a ServiceAccount with cluster-wide `secrets/read` reads a secret it shouldn't
+(HTTP 200 ⇒ `confirmed`), while one with `bind` on clusterrolebindings tries to bind
+itself to cluster-admin and is blocked by Kubernetes' anti-privilege-escalation (HTTP
+403 ⇒ `refuted`). That refuted is a real **false positive** - the collector's escalation
+heuristic over-reports the bind primitive - exactly the signal calibration exists to
+catch. `SUFFIX=<x>` makes distinct samples so a loop accumulates volume; `DELETE_CLUSTER=1`
+tears the cluster down. `scripts/validate-harness-k8s.sh`; needs `kind`.
+
+**First contact with a real cloud account: `make validate-aws`.** The two harnesses above
+run on synthetic topology; this points the **live AWS connector** at a real read-only
+account (`describe-*` only, never a write) and prints what it discovered - the
+internet-exposed seeds *and* the SG-open instances the route/NACL layer **suppressed**,
+each naming why (private subnet via a NAT / transit gateway / egress-only IGW, or a NACL
+that denies the internet). Eyeballing "exposed should be genuinely reachable, suppressed
+genuinely private" is the honest test of reachability precision on data you didn't design.
+Credentials come from the standard AWS chain; `AWS_REGION=<region>` is required,
+`ROLE_ARN=<arn>` assumes a cross-account read-only role first (the "customer grants you a
+role" model), and `INGEST_URL=<url>` also pushes the discovered events into a running
+stack for full attack-path scoring. Read-only grant: the AWS-managed **SecurityAudit** or
+**ViewOnlyAccess** policy (covers `ec2:Describe*` + `iam:GetAccountAuthorizationDetails`).
+`scripts/validate-aws-readonly.sh`; the same thing standalone is
+`perspectivegraph awscollect -region <r> [-role <arn>] [-json] [-ingest <url>]`.
+
+**Persistence is on by default in `docker compose`.** The stack mounts a
+`perspective-govdata` volume (its ownership fixed by a one-shot `gov-init` so the
+non-root, read-only-rootfs backend can write it) and defaults `VALIDATIONS_PATH` into it,
+so a calibration program's verdicts accumulate across restarts. Set `VALIDATIONS_PATH=`
+to go back to in-memory.
 
 ### Quantified risk, what-if & compliance export
 
@@ -1762,11 +1814,19 @@ curl -sS -X POST "$INGEST_URL/ingest/k8s" -H 'Content-Type: application/json' --
 #### Cloud network reachability (auto-discovered)
 
 Post security groups + instances + VPC peerings; PerspectiveGraph derives who can
-reach whom (`0.0.0.0/0 → internet_exposed`, SG-to-SG ingress → `CONNECTS_TO`).
+reach whom (`0.0.0.0/0 → internet_exposed`, SG-to-SG ingress → `CONNECTS_TO`). For
+**reachability precision**, also include `subnets` + `route_tables` + `network_acls`:
+an SG open to `0.0.0.0/0` then only marks an instance internet-exposed if its subnet
+actually routes to an internet gateway *and* its NACL admits it - so an open SG on a
+*private*-subnet instance is no longer a false positive. Omit them and the SG-only
+heuristic applies (backward-compatible).
 
 ```bash
 # Assemble a bundle from: aws ec2 describe-security-groups / describe-instances /
 # describe-vpc-peering-connections (see backend/testdata/cloudnet-sample.json).
+# Optional precision: add describe-subnets / describe-route-tables /
+# describe-network-acls as "subnets"/"route_tables"/"network_acls" (each instance
+# carries its "SubnetId").
 curl -sS -X POST "$INGEST_URL/ingest/cloudnet" -H 'Content-Type: application/json' --data-binary @cloudnet.json
 ```
 

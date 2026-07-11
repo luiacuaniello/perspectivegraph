@@ -53,6 +53,16 @@ services:
       timeout: 5s
       retries: 10
 
+  # One-shot: make the governance volume writable by the non-root backend (uid 65532),
+  # so file-backed persistence (VALIDATIONS_PATH etc.) survives restarts. Exits at once.
+  gov-init:
+    image: busybox:1.37
+    command: ["sh", "-c", "mkdir -p /govdata && chown -R 65532:65532 /govdata"]
+    volumes:
+      - perspective-govdata:/govdata
+    restart: "no"
+    profiles: ["app"]
+
   # ── Backend: ingestion + normalization + analyzer + GraphQL API ─────
   backend:
     <<: *hardening
@@ -66,11 +76,15 @@ services:
       - /tmp
     cap_drop:
       - ALL
+    volumes:
+      - perspective-govdata:/var/lib/perspectivegraph
     depends_on:
       postgres:
         condition: service_healthy
       nats:
         condition: service_healthy
+      gov-init:
+        condition: service_completed_successfully
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
@@ -133,9 +147,10 @@ services:
       # external tracker. Same writable-volume note for TICKETS_PATH.
       TICKETS_PATH: ${TICKETS_PATH:-}
       TICKET_WEBHOOK_URL: ${TICKET_WEBHOOK_URL:-}
-      # Red-team / BAS validation verdicts (precision/recall). Same writable-volume
-      # note for VALIDATIONS_PATH.
-      VALIDATIONS_PATH: ${VALIDATIONS_PATH:-}
+      # Red-team / BAS validation verdicts + probability calibration. Defaults ON here
+      # (the perspective-govdata volume), so a calibration program's verdicts accumulate
+      # across restarts. Set VALIDATIONS_PATH= to disable (back to in-memory).
+      VALIDATIONS_PATH: ${VALIDATIONS_PATH:-/var/lib/perspectivegraph/validations.json}
       # Tamper-evident audit log (writes AND reads of the attack map). Empty →
       # disabled. The rootfs is read-only; /tmp is a tmpfs, or mount a volume for
       # durability. Verify the hash chain with: perspectivegraph verify-audit <path>
@@ -246,3 +261,7 @@ services:
 
 volumes:
   perspective-pgdata:
+  # Persists the file-backed governance stores (validations/calibration, suppressions,
+  # history, tickets, audit log) across restarts. gov-init fixes its ownership so the
+  # non-root, read-only-rootfs backend can actually write it.
+  perspective-govdata:

@@ -206,9 +206,11 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 		}
 		roleID := ontology.NewID(ontology.LabelIAMRole, roleName)
 		g.upsert(ontology.Node{ID: roleID, Label: ontology.LabelIAMRole, Name: roleName, Properties: props})
-		// A non-admin role that grants an escalation primitive can reach cluster-admin.
+		// A non-admin role that grants an escalation primitive can reach cluster-admin,
+		// weighted by how reliably that specific primitive actually gets there (not all
+		// are equal - see escalationProb).
 		if !isAdmin && escalation != "" {
-			g.edge(ontology.EdgeCanEscalateTo, roleID, clusterAdmin(g), 0.9)
+			g.edge(ontology.EdgeCanEscalateTo, roleID, clusterAdmin(g), escalationProb(escalation))
 		}
 		for _, subj := range b.Subjects {
 			switch strings.ToLower(subj.Kind) {
@@ -459,6 +461,35 @@ func escalateReason(it item) string {
 		}
 	}
 	return ""
+}
+
+// escalationProb weights the CAN_ESCALATE_TO edge by how RELIABLY the primitive
+// actually reaches cluster-admin - not all are equal, and treating them uniformly is
+// what left the score with no resolution (a real-topology calibration finding: it
+// scored a genuinely-exploitable secrets/read path the same as a bind path that
+// Kubernetes' own anti-privilege-escalation blocks). `bind` on rolebindings is the
+// notorious false positive: creating a binding to a role you don't hold is refused
+// unless you also have `bind` on the *target* role, which this shallow check can't
+// see - so it is weighted well below the primitives that just work (escalate,
+// impersonate, secret/token theft). This gives the path score the resolution to
+// separate a real escalation from an over-reported one.
+func escalationProb(reason string) float64 {
+	switch reason {
+	case "roles/escalate":
+		return 0.9 // the `escalate` verb exists precisely to grant beyond your own perms
+	case "impersonate":
+		return 0.85 // impersonate a cluster-admin user/SA - reliable
+	case "secrets/read":
+		return 0.85 // read every SA token in scope -> impersonate admins
+	case "serviceaccounts/token":
+		return 0.85 // mint a token for any SA
+	case "workloads/create":
+		return 0.6 // run a pod as a mounted SA / a node-mounting pod - usually works, but PodSecurity/OPA can block
+	case "rolebindings/bind":
+		return 0.4 // often blocked by k8s anti-privesc (needs `bind` on the target role) - the common false positive
+	default:
+		return 0.7
+	}
 }
 
 func anyOf(have []string, want ...string) bool {

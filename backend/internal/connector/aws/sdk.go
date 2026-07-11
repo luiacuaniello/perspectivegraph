@@ -9,6 +9,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -21,6 +22,12 @@ type ec2API interface {
 	DescribeSecurityGroups(context.Context, *ec2.DescribeSecurityGroupsInput, ...func(*ec2.Options)) (*ec2.DescribeSecurityGroupsOutput, error)
 	DescribeInstances(context.Context, *ec2.DescribeInstancesInput, ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error)
 	DescribeVpcPeeringConnections(context.Context, *ec2.DescribeVpcPeeringConnectionsInput, ...func(*ec2.Options)) (*ec2.DescribeVpcPeeringConnectionsOutput, error)
+	// The network layer that turns "SG open to 0.0.0.0/0" into "actually reachable":
+	// route tables (is there an internet-gateway route?), NACLs (does the subnet admit
+	// it?) and subnets (which route table / NACL each instance sits behind).
+	DescribeRouteTables(context.Context, *ec2.DescribeRouteTablesInput, ...func(*ec2.Options)) (*ec2.DescribeRouteTablesOutput, error)
+	DescribeNetworkAcls(context.Context, *ec2.DescribeNetworkAclsInput, ...func(*ec2.Options)) (*ec2.DescribeNetworkAclsOutput, error)
+	DescribeSubnets(context.Context, *ec2.DescribeSubnetsInput, ...func(*ec2.Options)) (*ec2.DescribeSubnetsOutput, error)
 }
 
 type iamAPI interface {
@@ -111,7 +118,13 @@ func (t *sdkTransport) fetchNetwork(ctx context.Context) ([]byte, error) {
 		}
 		for _, res := range out.Reservations {
 			for _, inst := range res.Instances {
-				i := instJSON{InstanceID: aws.ToString(inst.InstanceId)}
+				// Real accounts keep terminated/shutting-down instances in DescribeInstances
+				// for a while; they have no live network presence, so skip them rather than
+				// emit phantom nodes (and phantom internet-exposed seeds).
+				if st := inst.State; st != nil && (st.Name == ec2types.InstanceStateNameTerminated || st.Name == ec2types.InstanceStateNameShuttingDown) {
+					continue
+				}
+				i := instJSON{InstanceID: aws.ToString(inst.InstanceId), SubnetID: aws.ToString(inst.SubnetId)}
 				for _, sg := range inst.SecurityGroups {
 					i.SecurityGroups = append(i.SecurityGroups, sgRefJSON{GroupID: aws.ToString(sg.GroupId)})
 				}
@@ -149,14 +162,112 @@ func (t *sdkTransport) fetchNetwork(ctx context.Context) ([]byte, error) {
 		pcxTok = out.NextToken
 	}
 
+	// Route tables: emit each table's routes, and index which route table each subnet
+	// uses (an explicit association wins; a subnet with none uses its VPC's main table).
+	subnetRT, mainRTByVPC := map[string]string{}, map[string]string{}
+	var rtTok *string
+	for {
+		out, err := t.ec2.DescribeRouteTables(ctx, &ec2.DescribeRouteTablesInput{NextToken: rtTok})
+		if err != nil {
+			return nil, fmt.Errorf("describe route tables: %w", err)
+		}
+		for _, rt := range out.RouteTables {
+			rtID := aws.ToString(rt.RouteTableId)
+			r := routeTableJSON{RouteTableID: rtID}
+			for _, rte := range rt.Routes {
+				// Capture every default-route target kind: a real 0.0.0.0/0 route may point
+				// at a NAT/transit-gateway/peering/egress-only-IGW - none of which are the
+				// internet gateway - so the collector can tell "private egress" from
+				// "internet-exposed" instead of seeing a blank gateway.
+				r.Routes = append(r.Routes, routeJSON{
+					DestinationCidrBlock: aws.ToString(rte.DestinationCidrBlock),
+					GatewayID:            aws.ToString(rte.GatewayId),
+					NatGatewayID:         aws.ToString(rte.NatGatewayId),
+					TransitGatewayID:     aws.ToString(rte.TransitGatewayId),
+					VpcPeeringConnID:     aws.ToString(rte.VpcPeeringConnectionId),
+					EgressOnlyIGWID:      aws.ToString(rte.EgressOnlyInternetGatewayId),
+				})
+			}
+			b.RouteTables = append(b.RouteTables, r)
+			for _, a := range rt.Associations {
+				if aws.ToBool(a.Main) {
+					mainRTByVPC[aws.ToString(rt.VpcId)] = rtID
+				} else if sid := aws.ToString(a.SubnetId); sid != "" {
+					subnetRT[sid] = rtID
+				}
+			}
+		}
+		if out.NextToken == nil {
+			break
+		}
+		rtTok = out.NextToken
+	}
+
+	// Network ACLs: emit each ACL's entries and index each subnet's ACL.
+	subnetNacl := map[string]string{}
+	var aclTok *string
+	for {
+		out, err := t.ec2.DescribeNetworkAcls(ctx, &ec2.DescribeNetworkAclsInput{NextToken: aclTok})
+		if err != nil {
+			return nil, fmt.Errorf("describe network acls: %w", err)
+		}
+		for _, acl := range out.NetworkAcls {
+			aclID := aws.ToString(acl.NetworkAclId)
+			n := naclJSON{NetworkACLID: aclID}
+			for _, e := range acl.Entries {
+				n.Entries = append(n.Entries, naclEntryJSON{
+					RuleNumber: int(aws.ToInt32(e.RuleNumber)),
+					Egress:     aws.ToBool(e.Egress),
+					CidrBlock:  aws.ToString(e.CidrBlock),
+					RuleAction: string(e.RuleAction),
+				})
+			}
+			b.NetworkACLs = append(b.NetworkACLs, n)
+			for _, a := range acl.Associations {
+				if sid := aws.ToString(a.SubnetId); sid != "" {
+					subnetNacl[sid] = aclID
+				}
+			}
+		}
+		if out.NextToken == nil {
+			break
+		}
+		aclTok = out.NextToken
+	}
+
+	// Subnets: resolve each to its route table (explicit or the VPC main) + NACL, the
+	// shape the collector uses to gate SG-open exposure on real reachability.
+	var subTok *string
+	for {
+		out, err := t.ec2.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{NextToken: subTok})
+		if err != nil {
+			return nil, fmt.Errorf("describe subnets: %w", err)
+		}
+		for _, s := range out.Subnets {
+			sid := aws.ToString(s.SubnetId)
+			rt := subnetRT[sid]
+			if rt == "" {
+				rt = mainRTByVPC[aws.ToString(s.VpcId)]
+			}
+			b.Subnets = append(b.Subnets, subnetJSON{SubnetID: sid, RouteTableID: rt, NetworkACLID: subnetNacl[sid]})
+		}
+		if out.NextToken == nil {
+			break
+		}
+		subTok = out.NextToken
+	}
+
 	return json.Marshal(b)
 }
 
 type networkBundle struct {
-	Provider       string        `json:"provider"`
-	SecurityGroups []sgJSON      `json:"security_groups"`
-	Instances      []instJSON    `json:"instances"`
-	VPCPeerings    []peeringJSON `json:"vpc_peerings"`
+	Provider       string           `json:"provider"`
+	SecurityGroups []sgJSON         `json:"security_groups"`
+	Instances      []instJSON       `json:"instances"`
+	VPCPeerings    []peeringJSON    `json:"vpc_peerings"`
+	Subnets        []subnetJSON     `json:"subnets,omitempty"`
+	RouteTables    []routeTableJSON `json:"route_tables,omitempty"`
+	NetworkACLs    []naclJSON       `json:"network_acls,omitempty"`
 }
 
 type sgJSON struct {
@@ -180,8 +291,41 @@ type sgRefJSON struct {
 
 type instJSON struct {
 	InstanceID     string      `json:"InstanceId"`
+	SubnetID       string      `json:"SubnetId,omitempty"`
 	SecurityGroups []sgRefJSON `json:"SecurityGroups"`
 	Tags           []tagJSON   `json:"Tags"`
+}
+
+type subnetJSON struct {
+	SubnetID     string `json:"SubnetId"`
+	RouteTableID string `json:"RouteTableId,omitempty"`
+	NetworkACLID string `json:"NetworkAclId,omitempty"`
+}
+
+type routeTableJSON struct {
+	RouteTableID string      `json:"RouteTableId"`
+	Routes       []routeJSON `json:"Routes"`
+}
+
+type routeJSON struct {
+	DestinationCidrBlock string `json:"DestinationCidrBlock"`
+	GatewayID            string `json:"GatewayId,omitempty"`
+	NatGatewayID         string `json:"NatGatewayId,omitempty"`
+	TransitGatewayID     string `json:"TransitGatewayId,omitempty"`
+	VpcPeeringConnID     string `json:"VpcPeeringConnectionId,omitempty"`
+	EgressOnlyIGWID      string `json:"EgressOnlyInternetGatewayId,omitempty"`
+}
+
+type naclJSON struct {
+	NetworkACLID string          `json:"NetworkAclId"`
+	Entries      []naclEntryJSON `json:"Entries"`
+}
+
+type naclEntryJSON struct {
+	RuleNumber int    `json:"RuleNumber"`
+	Egress     bool   `json:"Egress"`
+	CidrBlock  string `json:"CidrBlock,omitempty"`
+	RuleAction string `json:"RuleAction"`
 }
 
 type tagJSON struct {

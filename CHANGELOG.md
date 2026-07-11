@@ -55,6 +55,51 @@ what to build next.
   DB, the full internet → jewel path).
 
 ### Changed
+- **Cloud network reachability precision: route tables + NACLs.** An open security
+  group is necessary but not sufficient to reach an instance - it also needs a route
+  to an internet gateway and a permitting network ACL. The `cloudnet` collector now
+  accepts optional `subnets` / `route_tables` / `network_acls` (real `describe-subnets`
+  / `describe-route-tables` / `describe-network-acls` shapes): an SG-open instance is
+  flagged `internet_exposed` only if its subnet has a `0.0.0.0/0` → `igw-*` route AND
+  its NACL admits internet ingress (evaluated in ascending rule order, first
+  `0.0.0.0/0` match wins). This removes the classic false positive - an open SG on an
+  instance in a *private* subnet (routed only through a NAT) - which is exactly the
+  reachability-precision frontier where trust is won or lost. Backward-compatible: with
+  no subnet/route/NACL data the SG-only heuristic stands, so existing feeds are
+  unchanged; a blocked instance carries a `net_reachability` note explaining why. The
+  live AWS connector (`sdk` mode) now fetches it too - `DescribeRouteTables` /
+  `DescribeNetworkAcls` / `DescribeSubnets`, resolving each subnet to its route table
+  (explicit association or the VPC's main) and NACL - so the agentless PULL produces the
+  enriched bundle directly (grant adds `ec2:DescribeRouteTables`/`DescribeNetworkAcls`/
+  `DescribeSubnets`, all in SecurityAudit/ViewOnlyAccess). Hardened for real VPCs before
+  first contact: the default route's target is classified (NAT / transit-gateway / VPC
+  peering / egress-only-IGW are all private egress, only `igw-*` is internet), IPv6
+  (`::/0`) public subnets are handled, and terminated/shutting-down instances are dropped
+  instead of emitting phantom seeds; the `net_reachability` note now names the egress
+  path. Covered by fake-client + collector tests.
+- **k8s escalation scoring gains resolution (a calibration-driven fix).** The
+  `CAN_ESCALATE_TO` edge was a flat `0.9` for every RBAC primitive, so the path score
+  couldn't tell a genuinely-exploitable escalation from a false positive. A
+  real-topology calibration run (a `kind` cluster with misconfigured RBAC, exploited
+  live, verdict taken from the API server's own RBAC decision) diagnosed exactly this
+  as `low-resolution`. `escalationProb` now weights each primitive by how reliably it
+  actually reaches cluster-admin: `bind` on rolebindings drops to `0.4` (Kubernetes'
+  own anti-privilege-escalation usually refuses it - the common false positive), while
+  `escalate`/`impersonate`/`secrets/read`/`serviceaccounts/token` stay high (0.85-0.9)
+  and `workloads/create` sits at `0.6`. The score now discriminates (a secrets/read
+  path at ~0.49 vs a bind path at ~0.23), and re-calibration moves the diagnosis off
+  `low-resolution` to the fixable `recalibrate-first` - the calibration flywheel closing
+  on the model's own behavior. Added the repeatable harnesses that surface this
+  (`make validate-harness` / `make validate-harness-k8s`) and default-on verdict
+  persistence in `docker compose` (a `perspective-govdata` volume + a `gov-init`
+  ownership fix so the non-root backend can write it).
+- **Real-account validation for the live AWS connector.** A new `awscollect`
+  subcommand (and `make validate-aws`) runs the `sdk` connector once against a real
+  read-only account (`describe-*` only, no writes) and prints what it discovered - the
+  internet-exposed seeds vs the SG-open instances the route/NACL layer suppressed, each
+  naming why. It's the first-contact check for reachability precision on data you didn't
+  design; `-json` dumps the raw events and `-ingest <url>` pushes them into a running
+  stack for full path scoring. Read-only grant: SecurityAudit / ViewOnlyAccess.
 - **Terminology + UX polish.** The user-facing vocabulary drops "crown jewel" for the
   plainer, more neutral **sensitive asset** across the whole product surface - the
   dashboard (labels, tooltips, legends, hero and per-path copy), the triage priority

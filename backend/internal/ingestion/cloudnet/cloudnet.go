@@ -6,15 +6,28 @@
 //	SG-to-SG ingress rule → instances in the source SG ──CONNECTS_TO──▶ instances in the target SG
 //	VPC peering           → VPC ──CONNECTS_TO──▶ VPC
 //
+// Reachability precision (opt-in, when the input carries it): a security group
+// open to 0.0.0.0/0 is *not* enough to reach an instance - the traffic also needs a
+// route to an internet gateway and a permitting network ACL. When the bundle
+// supplies subnets + route_tables + network_acls (real describe-subnets /
+// describe-route-tables / describe-network-acls shapes), an SG-open instance is
+// flagged internet_exposed ONLY if its subnet has a 0.0.0.0/0 → igw route AND its
+// NACL admits inbound from the internet. This removes the classic false positive:
+// an open SG on an instance in a *private* subnet. When that data is absent the
+// SG-only heuristic still applies, so existing feeds degrade gracefully.
+//
 // Input is a bundle of real AWS shapes (describe-security-groups /
-// describe-instances / describe-vpc-peering-connections). Crown-jewel
-// classification is tag-driven (ingestion.CrownJewelFromTags).
+// describe-instances / describe-vpc-peering-connections, plus the optional
+// route/NACL shapes). Sensitive-asset classification is tag-driven
+// (ingestion.CrownJewelFromTags).
 package cloudnet
 
 import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion"
@@ -37,6 +50,7 @@ type bundle struct {
 	} `json:"security_groups"`
 	Instances []struct {
 		InstanceID     string `json:"InstanceId"`
+		SubnetID       string `json:"SubnetId"` // optional: enables route/NACL-aware exposure
 		SecurityGroups []struct {
 			GroupID string `json:"GroupId"`
 		} `json:"SecurityGroups"`
@@ -53,6 +67,35 @@ type bundle struct {
 			VpcID string `json:"VpcId"`
 		} `json:"AccepterVpcInfo"`
 	} `json:"vpc_peerings"`
+	// Optional network-layer detail: when present, an SG-open instance is only
+	// internet_exposed if its subnet actually routes to an IGW and its NACL admits
+	// the internet. Absent → the SG-only heuristic stands (backward-compatible).
+	Subnets []struct {
+		SubnetID     string `json:"SubnetId"`
+		RouteTableID string `json:"RouteTableId"`
+		NetworkACLID string `json:"NetworkAclId"`
+	} `json:"subnets"`
+	RouteTables []struct {
+		RouteTableID string `json:"RouteTableId"`
+		Routes       []struct {
+			DestinationCidrBlock string `json:"DestinationCidrBlock"`
+			GatewayID            string `json:"GatewayId"`
+			// Non-internet-gateway default-route targets (all mean "private egress"):
+			NatGatewayID     string `json:"NatGatewayId"`
+			TransitGatewayID string `json:"TransitGatewayId"`
+			VpcPeeringConnID string `json:"VpcPeeringConnectionId"`
+			EgressOnlyIGWID  string `json:"EgressOnlyInternetGatewayId"`
+		} `json:"Routes"`
+	} `json:"route_tables"`
+	NetworkACLs []struct {
+		NetworkACLID string `json:"NetworkAclId"`
+		Entries      []struct {
+			RuleNumber int    `json:"RuleNumber"`
+			Egress     bool   `json:"Egress"`
+			CidrBlock  string `json:"CidrBlock"`
+			RuleAction string `json:"RuleAction"` // "allow" | "deny"
+		} `json:"Entries"`
+	} `json:"network_acls"`
 }
 
 type Collector struct{}
@@ -84,6 +127,64 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 		}
 	}
 
+	// Optional network-layer maps: subnet → route table / NACL, whether a route table
+	// reaches an internet gateway, and whether a NACL admits internet ingress. Empty
+	// when the bundle carries no subnet/route/NACL data (the SG-only path).
+	subnetRT, subnetNacl := map[string]string{}, map[string]string{}
+	for _, s := range b.Subnets {
+		if s.RouteTableID != "" {
+			subnetRT[s.SubnetID] = s.RouteTableID
+		}
+		if s.NetworkACLID != "" {
+			subnetNacl[s.SubnetID] = s.NetworkACLID
+		}
+	}
+	// Classify each route table's default (0.0.0.0/0 or ::/0) route by target. ONLY an
+	// internet-gateway target makes a subnet inbound-reachable; a NAT/transit-gateway/
+	// peering/egress-only-IGW target is private egress - recorded so the audit note can
+	// say *why* an SG-open instance is not actually exposed.
+	rtHasIgw := map[string]bool{}
+	rtEgressVia := map[string]string{}
+	for _, rt := range b.RouteTables {
+		for _, r := range rt.Routes {
+			if r.DestinationCidrBlock != "0.0.0.0/0" && r.DestinationCidrBlock != "::/0" {
+				continue
+			}
+			switch {
+			case strings.HasPrefix(r.GatewayID, "igw-"):
+				rtHasIgw[rt.RouteTableID] = true
+			case r.NatGatewayID != "":
+				rtEgressVia[rt.RouteTableID] = "a NAT gateway"
+			case r.TransitGatewayID != "":
+				rtEgressVia[rt.RouteTableID] = "a transit gateway"
+			case r.VpcPeeringConnID != "":
+				rtEgressVia[rt.RouteTableID] = "a VPC peering connection"
+			case r.EgressOnlyIGWID != "" || strings.HasPrefix(r.GatewayID, "eigw-"):
+				rtEgressVia[rt.RouteTableID] = "an egress-only internet gateway"
+			}
+		}
+	}
+	// A NACL is stateless and evaluated in ascending rule order, first match wins. For
+	// "does it admit the internet", the first ingress entry on 0.0.0.0/0 decides; no
+	// such entry means the implicit deny applies.
+	naclNetAllow := map[string]bool{}
+	for _, n := range b.NetworkACLs {
+		es := n.Entries
+		sort.Slice(es, func(i, j int) bool { return es[i].RuleNumber < es[j].RuleNumber })
+		for _, e := range es {
+			if e.Egress {
+				continue
+			}
+			if e.CidrBlock == "0.0.0.0/0" || e.CidrBlock == "::/0" {
+				naclNetAllow[n.NetworkACLID] = strings.EqualFold(e.RuleAction, "allow")
+				break
+			}
+		}
+		if _, seen := naclNetAllow[n.NetworkACLID]; !seen {
+			naclNetAllow[n.NetworkACLID] = false // no internet ingress rule → implicit deny
+		}
+	}
+
 	g := &builder{nodes: map[string]ontology.Node{}}
 	instancesBySG := map[string][]string{} // sg -> [instance node id…]
 
@@ -97,10 +198,21 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 		for _, t := range inst.Tags {
 			tags[t.Key] = t.Value
 		}
+		sgOpen := false
 		for _, sg := range inst.SecurityGroups {
 			instancesBySG[sg.GroupID] = append(instancesBySG[sg.GroupID], id)
 			if sgInternet[sg.GroupID] {
+				sgOpen = true
+			}
+		}
+		if sgOpen {
+			// An open SG is necessary but not sufficient: the traffic also needs a route
+			// to the internet and a permitting NACL. With that data, a private-subnet
+			// instance is correctly NOT exposed; without it, the SG alone stands.
+			if reachable, note := internetReachable(inst.SubnetID, subnetRT, subnetNacl, rtHasIgw, rtEgressVia, naclNetAllow); reachable {
 				props[ontology.PropInternetExposed] = true
+			} else if note != "" {
+				props["net_reachability"] = note
 			}
 		}
 		if ingestion.CrownJewelFromTags(tags) {
@@ -145,6 +257,33 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 		Nodes:      g.nodeSlice(),
 		Edges:      g.edges,
 	}}, nil
+}
+
+// internetReachable decides whether an already-SG-open instance is *actually*
+// reachable from the internet, using the optional route/NACL maps. It returns a
+// short note when the instance is SG-open but blocked (for the UI / audit). With no
+// subnet/route data it defaults to reachable - the SG-only heuristic, so feeds that
+// don't carry the network layer degrade gracefully instead of losing every seed.
+func internetReachable(subnetID string, subnetRT, subnetNacl map[string]string, rtHasIgw map[string]bool, rtEgressVia map[string]string, naclNetAllow map[string]bool) (bool, string) {
+	if subnetID == "" {
+		return true, "" // no subnet info on the instance → SG-only
+	}
+	rt, known := subnetRT[subnetID]
+	if !known {
+		return true, "" // subnet not described → SG-only
+	}
+	if !rtHasIgw[rt] {
+		if via := rtEgressVia[rt]; via != "" {
+			return false, "SG-open but in a private subnet (egress via " + via + ", not an internet gateway)"
+		}
+		return false, "SG-open but in a private subnet (no internet-gateway route)"
+	}
+	if nacl := subnetNacl[subnetID]; nacl != "" {
+		if allow, seen := naclNetAllow[nacl]; seen && !allow {
+			return false, "SG-open and routed, but the network ACL denies internet ingress"
+		}
+	}
+	return true, ""
 }
 
 type builder struct {

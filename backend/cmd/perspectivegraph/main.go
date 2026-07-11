@@ -132,6 +132,18 @@ func main() {
 		return
 	}
 
+	// Real-account validation primitive: run the live AWS connector (sdk transport)
+	// once and show the discovered internet-exposed seeds vs the SG-open instances the
+	// route/NACL layer suppressed - the read-only "does it read my real VPC correctly?"
+	// check. See runAwsCollect. Exits when done.
+	if len(os.Args) >= 2 && os.Args[1] == "awscollect" {
+		if err := runAwsCollect(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "awscollect:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	// Container healthcheck: hit the API's /healthz and exit 0/1. Lets the
 	// distroless image (no shell, no curl) be probed with `perspectivegraph
 	// healthz` from a Docker HEALTHCHECK / compose healthcheck.

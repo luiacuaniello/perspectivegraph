@@ -179,10 +179,22 @@ import-verdicts:
 	@echo "→ precision/recall + calibration after import:"
 	@curl -sS http://localhost:8080/validations | jq -c '{metrics: .metrics, calibration: (.calibration | {samples,verdict,diagnosis,detection})}'
 
-## ingest-real: zero-cost REAL ingest - Trivy-scan a genuinely vulnerable image (IMAGE=<image>, e.g. the running vulhub log4shell image) and wire the minimal topology so the real CVE sits on an internet->crown-jewel path (real CVSS; real KEV/EPSS with THREATINTEL=on). REPORT=<trivy.json> uses a saved report instead of running trivy. Then exploit for real and `make import-verdicts`.
+## validate-harness: repeatable REAL-verdict loop with no circularity - bring up a genuinely-exploitable log4shell app, let the engine surface the path, EXPLOIT the live app, and take the verdict from an independent oracle (did the app make the JNDI callback?). Records confirmed/refuted with the path's server-captured predicted score -> calibration. Override TARGET_IMAGE=... to point at a patched image (harvests honest 'refuted') or another target. Needs docker + the stack up.
+validate-harness:
+	@bash scripts/validate-harness.sh
+
+## validate-harness-k8s: REAL-topology verdict loop - stand up a kind cluster with two misconfigured RBAC scenarios, let the k8s collector DISCOVER the paths (real scores, not modelled), then exploit each and take the verdict from the Kubernetes API server's own RBAC decision (reader=confirmed, webapp=refuted false-positive). SUFFIX=<x> makes distinct samples to accumulate; DELETE_CLUSTER=1 tears the cluster down. Needs kind + the stack up.
+validate-harness-k8s:
+	@bash scripts/validate-harness-k8s.sh
+
+## validate-aws: run the LIVE AWS connector against a REAL read-only account (describe-* only, no writes) and print what it discovered - the internet-exposed seeds vs the SG-open instances the route/NACL layer SUPPRESSED (naming why). The first-contact check for reachability precision on real data. AWS_REGION=<region> required; ROLE_ARN=<arn> assumes a cross-account read-only role; INGEST_URL=<url> also pushes into a running stack for full path scoring. Read-only grant: SecurityAudit or ViewOnlyAccess. Needs AWS creds in the environment.
+validate-aws:
+	@bash scripts/validate-aws-readonly.sh
+
+## ingest-real: zero-cost REAL ingest - Trivy-scan a genuinely vulnerable image (IMAGE=<image>, e.g. the running vulhub log4shell image) and wire the minimal topology so the real CVE sits on an internet->sensitive-asset path (real CVSS; real KEV/EPSS with THREATINTEL=on). REPORT=<trivy.json> uses a saved report instead of running trivy. Then exploit for real and `make import-verdicts`.
 ingest-real:
 	cd backend && $(GO) run ./cmd/perspectivegraph ingestreal $(if $(REPORT),--report $(REPORT),--image "$(IMAGE)")
-	@echo "→ give the analyzer a pass, then the real path appears under attackPaths (target the crown jewel)."
+	@echo "→ give the analyzer a pass, then the real path appears under attackPaths (target the sensitive asset)."
 
 ## ingest-k8s: ingest REAL cluster topology from your current kubectl context (Ingress/Service/Pod/SA/RBAC -> exposure + privesc + escape edges). Point kubectl at a local cluster first (e.g. kind + kubernetes-goat for a vulnerable one). Then `make and-probe` to see real AND-semantics.
 ingest-k8s:

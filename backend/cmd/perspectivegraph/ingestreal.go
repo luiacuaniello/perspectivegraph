@@ -24,8 +24,8 @@ import (
 //
 // Trivy emits Image --DEPENDS_ON--> Library --AFFECTS--> CVE. This adds an
 // internet-exposed load balancer that EXPOSES the image, and marks a Secret as a
-// crown jewel that the chosen CVE EXPLOITS - so the analyzer surfaces
-// internet-lb → image → library → CVE(log4shell) → crown-jewel, scored on the CVE's
+// sensitive asset that the chosen CVE EXPLOITS - so the analyzer surfaces
+// internet-lb → image → library → CVE(log4shell) → sensitive-asset, scored on the CVE's
 // *real* severity/KEV/EPSS. The vulnerability evidence is real; the surrounding
 // deployment topology you model here (or use the k8s collector for real topology).
 // Then exploit the target for real and record the verdict with `importverdicts`.
@@ -35,7 +35,7 @@ func runIngestReal(args []string) error {
 	ingest := fs.String("ingest", "http://localhost:8081", "ingest base URL")
 	token := fs.String("token", os.Getenv("API_TOKEN"), "bearer token if ingest auth is on (HMAC-secured ingest is not handled here)")
 	cveWant := fs.String("cve", "CVE-2021-44228", "CVE to place on the attack path (must be present in the scan)")
-	jewel := fs.String("jewel", "secrets-vault (crown jewel)", "crown-jewel node name")
+	jewel := fs.String("jewel", "secrets-vault (sensitive asset)", "sensitive-asset node name")
 	entry := fs.String("entry", "internet-lb (log4shell demo)", "internet-exposed entry node name")
 	reportFile := fs.String("report", "", "use this Trivy JSON report instead of running trivy (offline / no trivy binary)")
 	trivyBin := fs.String("trivy", "trivy", "path to the trivy binary")
@@ -94,7 +94,7 @@ func runIngestReal(args []string) error {
 		return fmt.Errorf("POST /ingest/trivy returned %d: %s", st, string(rb))
 	}
 
-	// 2. Minimal modeled topology so the CVE sits on an internet → crown-jewel path.
+	// 2. Minimal modeled topology so the CVE sits on an internet → sensitive-asset path.
 	imageID := ontology.NewID(ontology.LabelImage, rep.ArtifactName)
 	cveID := ontology.NewID(ontology.LabelCVE, target)
 	lbID := ontology.NewID(ontology.LabelLoadBalancer, *entry)
