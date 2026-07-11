@@ -239,7 +239,9 @@ what to build next.
   `github-actions` updates keep them current); added an OpenSSF Scorecard workflow; and
   a candid "Project status & maturity" section to the README that scopes exactly what is
   feature-complete, what is only calibrated on synthetic topology, and what still needs
-  operator hardening before production.
+  operator hardening before production. Published a [threat model](docs/THREAT-MODEL.md)
+  (trust boundaries, assets, STRIDE walk with residual risk, and an operator checklist),
+  linked from the README and SECURITY.md.
 
 ## [0.2.0] - 2026-06-23
 

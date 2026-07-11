@@ -52,7 +52,8 @@ PerspectiveGraph is **pre-1.0** and built in the open. Read this before you rely
   hardened for a demo (distroless, non-root, read-only rootfs, digest-pinned 0-CVE images,
   opt-in TLS). A production rollout still needs your own hardening: an external managed
   PostgreSQL+AGE, secrets in a manager (not env vars), TLS on by default, backups, and HA
-  for the leader-gated scheduler. See [`SECURITY.md`](SECURITY.md).
+  for the leader-gated scheduler. See [`SECURITY.md`](SECURITY.md) and the
+  [threat model](docs/THREAT-MODEL.md).
 - **Scope.** It answers the reachable attack-path question in the developer workflow. It is
   not a scanner, a CNAPP, or a compliance product, and it does not replace them.
 

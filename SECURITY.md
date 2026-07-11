@@ -78,7 +78,8 @@ Please give us a reasonable window to ship a fix before any public disclosure.
 ## Running PerspectiveGraph safely
 
 Because the tool maps how to breach the org, **harden any deployment reachable
-beyond a trusted boundary**. The controls below are built in and documented in the
+beyond a trusted boundary**. See the [threat model](docs/THREAT-MODEL.md) for the
+full trust-boundary and asset analysis and the operator checklist. The controls below are built in and documented in the
 [README "Application hardening" section](./README.md#application-hardening) and in
 [`.env.example`](./.env.example):
 
