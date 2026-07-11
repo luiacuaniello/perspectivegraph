@@ -1,0 +1,106 @@
+name: Publish images
+
+# Build, push, sign, and attest the release images. For each image it:
+#   1. builds from its Dockerfile and pushes to GHCR (tag + latest),
+#   2. signs it with cosign keyless (Sigstore, OIDC - no long-lived keys),
+#   3. generates an SPDX SBOM (syft), attests it to the image, and attaches it to
+#      the GitHub release,
+#   4. attaches a SLSA build-provenance attestation.
+#
+# Called by the release workflow when release-please cuts a release (so it fires
+# automatically without a PAT), and runnable by hand against any existing tag.
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag to build and sign (e.g. v0.3.0)
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to (re)build and sign (e.g. v0.3.0)
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # attach SBOMs to the GitHub release
+      packages: write # push images + signatures + attestations to GHCR
+      id-token: write # cosign keyless + provenance (Sigstore OIDC)
+      attestations: write # SLSA build-provenance attestation
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            context: ./backend
+            image: perspectivegraph
+          - name: dashboard
+            context: ./frontend
+            image: perspectivegraph-dashboard
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=${{ inputs.tag }}
+            type=raw,value=latest
+
+      - id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: false # a portable SLSA attestation is attached below instead
+          sbom: false # an SPDX SBOM is generated + attested below
+
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+
+      - name: Sign the image (cosign keyless)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+
+      - name: Generate the SBOM (SPDX)
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: sbom-${{ matrix.name }}.spdx.json
+
+      - name: Attest the SBOM to the image
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign attest --yes --type spdxjson --predicate "sbom-${{ matrix.name }}.spdx.json" "${IMAGE}@${DIGEST}"
+
+      - name: Attach the SBOM to the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ inputs.tag }}" "sbom-${{ matrix.name }}.spdx.json" --clobber
+
+      - name: SLSA build provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true

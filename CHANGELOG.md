@@ -242,6 +242,12 @@ what to build next.
   operator hardening before production. Published a [threat model](docs/THREAT-MODEL.md)
   (trust boundaries, assets, STRIDE walk with residual risk, and an operator checklist),
   linked from the README and SECURITY.md.
+- **Signed, SBOM'd, provenanced release images.** A `publish-images` workflow (called
+  by release-please when a release is cut, so it fires without a PAT) builds and pushes
+  both images to GHCR, **signs them with cosign keyless** (Sigstore/OIDC, no long-lived
+  keys), generates an **SPDX SBOM** per image (attested to the image and attached to the
+  GitHub release), and attaches a **SLSA build-provenance** attestation. SECURITY.md now
+  documents how to verify all three before running an image.
 
 ## [0.2.0] - 2026-06-23
 

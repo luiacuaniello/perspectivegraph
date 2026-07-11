@@ -102,4 +102,27 @@ auth or persistence is left off.
 
 The project holds itself to the bar it sets: CI runs `gosec` (SAST), `gitleaks`
 (secret scan), `govulncheck`, and a Trivy image scan; backend images are distroless,
-non-root, read-only-rootfs, and digest-pinned.
+non-root, read-only-rootfs, and digest-pinned. GitHub Actions are pinned to commit
+SHAs (Dependabot keeps them current) and an OpenSSF Scorecard workflow tracks the
+repo's posture.
+
+Released images (`v0.3.0` onward, on `ghcr.io/luiacuaniello/`) are **signed with
+cosign keyless**, ship an **SPDX SBOM** (attested to the image and attached to the
+GitHub release), and carry a **SLSA build-provenance** attestation. Verify before you
+run them:
+
+```bash
+IMG=ghcr.io/luiacuaniello/perspectivegraph:v0.3.0
+ID_RE="^https://github.com/luiacuaniello/perspectivegraph/.github/workflows/"
+ISSUER=https://token.actions.githubusercontent.com
+
+# 1. signature (who built it, in which workflow)
+cosign verify --certificate-identity-regexp "$ID_RE" --certificate-oidc-issuer "$ISSUER" "$IMG"
+
+# 2. SBOM attestation
+cosign verify-attestation --type spdxjson \
+  --certificate-identity-regexp "$ID_RE" --certificate-oidc-issuer "$ISSUER" "$IMG"
+
+# 3. SLSA build provenance
+gh attestation verify "oci://$IMG" --repo luiacuaniello/perspectivegraph
+```
