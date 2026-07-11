@@ -248,6 +248,11 @@ what to build next.
   keys), generates an **SPDX SBOM** per image (attested to the image and attached to the
   GitHub release), and attaches a **SLSA build-provenance** attestation. SECURITY.md now
   documents how to verify all three before running an image.
+- **Operations & production-hardening runbook** ([docs/OPERATIONS.md](docs/OPERATIONS.md)) -
+  what changes from the demo defaults for a real deployment: the secure-config env
+  reference (auth, ingest HMAC + rate limit, TLS, `POSTGRES_SSLMODE`), external managed
+  Postgres+AGE, **backup & restore** of the graph, upgrades, observability/SLOs, HA notes,
+  and a pre-production checklist. Linked from the README maturity section.
 
 ## [0.2.0] - 2026-06-23
 
