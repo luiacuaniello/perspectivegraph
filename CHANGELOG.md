@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0](https://github.com/luiacuaniello/perspectivegraph/compare/v0.2.0...v0.3.0) (2026-07-11)
+
+
+### Features
+
+* agentless connectors, triage, SSO login, PR gate, AI, and scale ([80b2b11](https://github.com/luiacuaniello/perspectivegraph/commit/80b2b11503cb0702a10422d4db61bba67ebbe9d1))
+* Azure connector, math calibration, UX restyle, doc/screenshot refresh ([394a9f7](https://github.com/luiacuaniello/perspectivegraph/commit/394a9f7cd6440dd1d8bfc22d14e13b86935f68ee))
+* initial release of PerspectiveGraph ([a1a901a](https://github.com/luiacuaniello/perspectivegraph/commit/a1a901a79b8a395e4f873ff15cffdfe61655f960))
+* real-data validation + cloud network reachability precision ([d1ec584](https://github.com/luiacuaniello/perspectivegraph/commit/d1ec584177a0772d15ba7d1417d8ca3d4d2e1a44))
+* sensitive-asset terminology, Azure fix, logo + UX polish, docs into README ([444a5e8](https://github.com/luiacuaniello/perspectivegraph/commit/444a5e86c2726305f2da3ed43872fb771c25b219))
+
+
+### Bug Fixes
+
+* bump Go toolchain to 1.25.12 to clear two stdlib CVEs ([c628cc1](https://github.com/luiacuaniello/perspectivegraph/commit/c628cc12507d6d8af6521c87b2e6573f2c6954c9))
+
 ## [Unreleased]
 
 The "demo → production" line of work: make the attack-path **score honest about its
