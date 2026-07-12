@@ -52,6 +52,28 @@ Least privilege for the outbound integrations: give connectors a read-only cloud
 to the target repo only, and leave `ANTHROPIC_API_KEY`/`HF_TOKEN` unset unless you accept
 sending attack-path context to that provider.
 
+Two ready-to-use hardened profiles apply all of the above:
+
+- **Kubernetes (recommended):** `deploy/helm/perspectivegraph/values-production.yaml` -
+  auth + ingest HMAC on, external Postgres+AGE with `sslMode: verify-full`, TLS at the
+  ingress, durable audit log, and secrets sourced from your own manager
+  (`secrets.existingSecret`, e.g. Vault / Sealed Secrets / External Secrets).
+
+  ```bash
+  helm upgrade --install perspectivegraph deploy/helm/perspectivegraph \
+    -f deploy/helm/perspectivegraph/values-production.yaml \
+    --set postgres.externalHost=db.internal --set ingress.host=pg.example.com
+  ```
+
+- **Docker Compose (single host / on-prem):** `.env.production.example` (copy to `.env`,
+  fill in, `chmod 600`) plus the `docker-compose.prod.yml` override for the in-app TLS cert
+  mount.
+
+  ```bash
+  cp .env.production.example .env   # then fill it in and: chmod 600 .env
+  docker compose --profile app -f docker-compose.yml -f docker-compose.prod.yml up -d
+  ```
+
 ## 3. External PostgreSQL + Apache AGE
 
 The demo runs the `apache/age` image; **do not use it in production** (see the

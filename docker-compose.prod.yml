@@ -1,0 +1,18 @@
+# Production override for the compose stack. Apply it ON TOP of the base file:
+#
+#   cp .env.production.example .env    # fill it in, then: chmod 600 .env
+#   docker compose --profile app -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# The hardening itself is driven by .env (see .env.production.example), because the
+# base compose reads every knob from it. This override adds the one thing .env cannot:
+# a read-only mount of your TLS certificate so the backend can serve HTTPS directly.
+# Put tls.crt + tls.key in ./tls/ (gitignored). If you terminate TLS at a reverse
+# proxy instead, you can skip this override and leave TLS_CERT_FILE/KEY unset.
+#
+# For a real managed, TLS-encrypted Postgres+AGE (sslmode=verify-full), prefer the
+# Helm chart with values-production.yaml (postgres.enabled=false) - the bundled demo
+# database has no TLS.
+services:
+  backend:
+    volumes:
+      - ./tls:/etc/pg/tls:ro

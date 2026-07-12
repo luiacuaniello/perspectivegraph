@@ -6,8 +6,13 @@
 useDefault = true
 
 [allowlist]
-description = "Test fixtures: non-real example secrets used to test the scrubber"
+description = "Non-real example secrets: scrubber test fixtures + doc/template placeholders"
 paths = [
   '''backend/internal/scrub/scrub_test.go''',
   '''backend/testdata/.*''',
+]
+# Obvious fill-me-in placeholders in templates (e.g. .env.production.example). Only the
+# placeholder token is allowlisted, so a real secret pasted anywhere is still caught.
+regexes = [
+  '''REPLACE_WITH_[A-Z0-9_]+''',
 ]

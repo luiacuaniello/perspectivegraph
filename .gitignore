@@ -20,6 +20,8 @@ node_modules/
 .env
 *.pem
 *.key
+*.crt
+/tls/
 
 # Editor / OS / local tooling
 .DS_Store

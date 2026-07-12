@@ -1,0 +1,109 @@
+# Production values for the PerspectiveGraph chart - a secure-by-default starting
+# point. It inverts every demo default that is unsafe beyond a trusted boundary:
+# authentication and ingest HMAC on, TLS everywhere, an external managed
+# Postgres+AGE, durable audit log, and secrets sourced from your own manager.
+#
+#   helm upgrade --install perspectivegraph deploy/helm/perspectivegraph \
+#     -f deploy/helm/perspectivegraph/values-production.yaml \
+#     --set postgres.externalHost=db.internal --set ingress.host=pg.example.com
+#
+# SECRETS: this file holds NO secrets. It points `secrets.existingSecret` at a
+# Secret you manage (External Secrets / Sealed Secrets / Vault) carrying the keys
+# listed below. To let the chart create the Secret instead, set
+# `secrets.existingSecret: ""` and pass each value with --set (never commit them).
+
+backend:
+  replicas: 1 # keep 1 while persistence is on (the governance stores are single-writer)
+  logLevel: info
+  resources:
+    requests: { cpu: "250m", memory: "512Mi" }
+    limits: { cpu: "2", memory: "2Gi" }
+  # In-pod HTTPS. Leave off if you terminate TLS at the ingress (below); enable for
+  # a zero-proxy / service-mesh-passthrough setup, pointing at a kubernetes.io/tls Secret.
+  tls:
+    enabled: false
+    secretName: ""
+  # Pin the wait helper image by digest in security-sensitive clusters.
+  waitImage: busybox:1.37
+
+# Bring your own managed, encrypted Postgres with the Apache AGE extension (the
+# bundled demo image has no TLS, so it cannot satisfy sslMode: verify-full).
+postgres:
+  enabled: false
+  externalHost: db.internal # REQUIRED: change to your managed instance
+  externalPort: 5432
+  graph: perspective
+  sslMode: verify-full # encrypt + verify the cert (the connection carries the attack map)
+  auth:
+    user: perspective
+    database: perspectivegraph
+    # password comes from the Secret (see secrets.existingSecret)
+
+# In-cluster NATS is fine for production when the mesh provides mTLS between pods.
+# To bring your own, set enabled: false and nats.externalUrl (e.g. tls://nats.internal:4222).
+nats:
+  enabled: true
+  externalUrl: ""
+  tls:
+    enabled: false
+    secretName: "" # Secret with ca.crt (+ tls.crt/tls.key for mutual TLS to external NATS)
+
+# Data hygiene on by default.
+scrubIngest: true
+
+# At-rest encryption of the governance stores + signed exports. The keys live in the
+# Secret; generate with: openssl rand -hex 32
+crypto:
+  storeEncryptionKey: ""
+  exportSigningKey: ""
+
+# Source every secret from a Secret YOU manage. It must carry (as needed):
+# POSTGRES_PASSWORD, API_TOKENS, INGEST_HMAC_SECRET, STORE_ENCRYPTION_KEY,
+# EXPORT_SIGNING_KEY, and any GITHUB_TOKEN / ANTHROPIC_API_KEY / HF_TOKEN you use.
+secrets:
+  create: false
+  existingSecret: perspectivegraph-secrets
+
+# Authentication is mandatory here. API_TOKENS (and any OIDC secret bits) come from
+# the Secret; the non-secret OIDC coordinates + rate limits are set below.
+auth:
+  apiTokens: "" # from the Secret
+  oidc:
+    issuer: "" # e.g. https://idp.example.com/realms/perspectivegraph
+    audience: ""
+    jwksUrl: ""
+    clientId: ""
+    authorizeUrl: ""
+    tokenUrl: ""
+    scopes: "openid profile email"
+    logoutUrl: ""
+  apiRateRps: 60
+  ingestRateRps: 30
+
+# Ingest authenticity: scanners must sign webhook bodies. The secret is in the Secret.
+ingest:
+  hmacSecret: "" # from the Secret (or use hmacSecrets for the per-tenant form)
+
+# Durable governance state: the tamper-evident audit log and the calibration /
+# suppression / ticket / history stores survive restarts. Requires backend.replicas: 1.
+persistence:
+  enabled: true
+  size: 2Gi
+  storageClass: "" # set to your cluster's default/fast class
+  mountPath: /data
+
+# Drop assets that left the source feeds so they stop producing phantom paths.
+graph:
+  ttl: "168h" # 7 days
+
+# Serve HTTPS at the ingress (recommended). cert-manager issues + fills the cert.
+ingress:
+  enabled: true
+  className: "" # e.g. nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  host: perspectivegraph.example.com # REQUIRED: your public host
+  tls:
+    enabled: true
+    secretName: perspectivegraph-tls
+    host: "" # defaults to ingress.host
