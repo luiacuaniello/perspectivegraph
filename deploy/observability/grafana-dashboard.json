@@ -1,0 +1,131 @@
+{
+  "title": "PerspectiveGraph",
+  "uid": "perspectivegraph",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "label": "Prometheus",
+        "current": {}
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Critical paths",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "refId": "A", "expr": "sum(perspectivegraph_analyzer_critical_paths)" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Graph nodes",
+      "type": "stat",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "refId": "A", "expr": "sum(perspectivegraph_analyzer_graph_nodes)" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Graph edges",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "refId": "A", "expr": "sum(perspectivegraph_analyzer_graph_edges)" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Analyzer passes / min",
+      "type": "stat",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(perspectivegraph_analyzer_passes_total[5m])) * 60" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Analyzer pass time (p50 / p95)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "legendFormat": "p50", "expr": "histogram_quantile(0.50, sum(rate(perspectivegraph_analyzer_pass_seconds_bucket[10m])) by (le))" },
+        { "refId": "B", "legendFormat": "p95", "expr": "histogram_quantile(0.95, sum(rate(perspectivegraph_analyzer_pass_seconds_bucket[10m])) by (le))" }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Ingest events / s by source",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{source}}", "expr": "sum(rate(perspectivegraph_ingest_events_total[5m])) by (source)" }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Connector runs / s (source, result)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{source}} {{result}}", "expr": "sum(rate(perspectivegraph_connector_runs_total[10m])) by (source, result)" }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "HTTP requests / s by code",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{code}}", "expr": "sum(rate(perspectivegraph_http_requests_total[5m])) by (code)" }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Normalize errors + dead-lettered / s",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 20, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "legendFormat": "normalize {{result}}", "expr": "sum(rate(perspectivegraph_normalize_events_total{result!=\"ok\"}[5m])) by (result)" },
+        { "refId": "B", "legendFormat": "dead-lettered", "expr": "sum(rate(perspectivegraph_broker_dead_lettered_total[5m]))" }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "TTL-pruned nodes + edges / s",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 20, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "legendFormat": "nodes", "expr": "sum(rate(perspectivegraph_graph_pruned_nodes_total[10m]))" },
+        { "refId": "B", "legendFormat": "edges", "expr": "sum(rate(perspectivegraph_graph_pruned_edges_total[10m]))" }
+      ]
+    }
+  ]
+}

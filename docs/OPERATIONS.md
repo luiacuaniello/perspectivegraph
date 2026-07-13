@@ -131,6 +131,10 @@ Pin to a signed, digest-referenced image and verify it before rollout (see
 - Suggested SLOs to alert on: ingest error rate, analyzer pass duration vs
   `ANALYZER_INTERVAL`, connector `last_error`, and `auth.deny` spikes (possible
   credential stuffing) from the audit log.
+- **Ready-to-use**: [`deploy/observability`](../deploy/observability) ships a Grafana
+  dashboard and Prometheus alert rules for exactly these signals - import the dashboard,
+  load the rules, point a scrape at `/metrics`. For analyzer load/scale characterization see
+  [SCALE.md](SCALE.md) (`make scale-test`).
 
 ## 7. High availability
 

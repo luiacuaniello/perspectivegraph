@@ -167,6 +167,10 @@ seed-validation:
 seed-load:
 	cd backend && $(GO) run ./cmd/perspectivegraph genload --seeds 32 --jewels 16 --layers 8 --width 500 --fanout 4
 
+## scale-test: characterize the analyzer at a target graph size - generate a large synthetic graph, wait for a full analyzer pass, and report graph size + per-pass timing from /metrics. Tune with SEEDS/JEWELS/LAYERS/WIDTH/FANOUT; set ANALYZER_WORKERS on the backend for parallel pathfinding. Needs the stack up. See docs/SCALE.md.
+scale-test:
+	@bash scripts/scale-test.sh
+
 ## calibration-selftest: exercise + TEST the calibration diagnostics WITHOUT real infra. Draws verdicts from a known reality (SCENARIO=calibrated|overconfident|underconfident|correlated|low-resolution|detection) and prints the diagnosis it should produce. e.g. make calibration-selftest SCENARIO=correlated
 calibration-selftest:
 	cd backend && $(GO) run ./cmd/perspectivegraph genverdicts --scenario $(or $(SCENARIO),calibrated) --count $(or $(COUNT),500) --reset
