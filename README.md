@@ -41,7 +41,9 @@ PerspectiveGraph is **pre-1.0** and built in the open. Read this before you rely
 
 - **Engine: feature-complete.** The correlation engine, agentless connectors, triage,
   SSO, the PR merge-gate, the AI assistant, and the scale work are all implemented and
-  covered by tests.
+  covered by tests. The public API contract (GraphQL, ingest events, config, CLI) is
+  documented and the GraphQL schema is frozen + drift-guarded - see the
+  [API stability policy](docs/API-STABILITY.md).
 - **Probabilities: calibrated on synthetic topology, not yet field-validated.** The
   self-calibration flywheel has been exercised end-to-end against deliberately-vulnerable
   targets (a log4shell app, a `kind` Kubernetes RBAC scenario) - not yet against a breadth

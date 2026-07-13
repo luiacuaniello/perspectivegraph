@@ -1,0 +1,344 @@
+type AttackPath {
+  confidence: Float
+  confidenceLabel: String
+  correlatedHops: Boolean
+  detections: [Detection]
+  firstSeen: String
+  id: String
+  mixtureScore: Float
+  nodes: [Node]
+  openForSeconds: Int
+  posteriorMean: Float
+  priority: Float
+  priorityFactors: [String]
+  priorityLabel: String
+  profileScores: [ProfileScore]
+  remediations: [Remediation]
+  reopens: Int
+  runtimeConfirmed: Boolean
+  score: Float
+  scoreCiHigh: Float
+  scoreCiLow: Float
+  scoreUpperBound: Float
+  steps: [AttackPathStep]
+  suppressed: Boolean
+  suppression: Suppression
+  ticket: Ticket
+  validation: Validation
+}
+
+type AttackPathStep {
+  attack: AttackTechnique
+  edgeType: String
+  from: String
+  probability: Float
+  resolutionConfidence: Float
+  resolutionMethod: String
+  to: String
+  weightBasis: String
+  weightConfidence: Float
+}
+
+type AttackTechnique {
+  id: String
+  name: String
+  tactic: String
+  tacticId: String
+  url: String
+}
+
+type BasisRecalibration {
+  basis: String
+  intercept: Float
+  samples: Int
+  slope: Float
+}
+
+type Calibration {
+  basisSegments: [CalibrationSegment]
+  bins: [ReliabilityBin]
+  brier: Float
+  brierRecalibrated: Float
+  brierRecalibratedByBasis: Float
+  detection: DetectionStats
+  diagnosis: String
+  ece: Float
+  hasData: Boolean
+  logLoss: Float
+  meanPredicted: Float
+  observedRate: Float
+  persistent: Boolean
+  recalibrationByBasis: [BasisRecalibration]
+  recalibrationMap: [CalibrationPoint]
+  recommendedScale: Float
+  samples: Int
+  segments: [CalibrationSegment]
+  target: Calibration
+  verdict: String
+}
+
+type CalibrationPoint {
+  calibrated: Float
+  score: Float
+}
+
+type CalibrationSegment {
+  brier: Float
+  ece: Float
+  meanPredicted: Float
+  name: String
+  observedRate: Float
+  samples: Int
+  verdict: String
+}
+
+type CalibrationTrendPoint {
+  at: String
+  brier: Float
+  ece: Float
+  samples: Int
+}
+
+type CrownJewelRisk {
+  ciHigh: Float
+  ciLow: Float
+  compromiseProbability: Float
+  id: String
+  label: String
+  name: String
+}
+
+type Detection {
+  content: String
+  filename: String
+  kind: String
+  rationale: String
+  title: String
+}
+
+type DetectionStats {
+  detected: Int
+  detectionRate: Float
+  highScoreDetectionRate: Float
+  highScoreTested: Int
+  tested: Int
+}
+
+type Edge {
+  attack: AttackTechnique
+  from: String
+  probability: Float
+  to: String
+  type: String
+}
+
+input EdgeCutInput {
+  from: String!
+  to: String!
+  type: String
+}
+
+type Fix {
+  content: String
+  coveragePct: Float
+  filename: String
+  kind: String
+  pathCount: Int
+  pathsCut: [String]
+  rationale: String
+  riskCovered: Float
+  title: String
+  verification: RemediationEffect
+}
+
+type GraphView {
+  edges: [Edge]
+  nodes: [Node]
+}
+
+type History {
+  mttrSeconds: Float
+  oldestOpenSince: String
+  openPaths: Int
+  persistent: Boolean
+  resolvedPaths: Int
+  trend: [PosturePoint]
+}
+
+type Node {
+  classification: String
+  crownJewel: Boolean
+  crownJewelBasis: String
+  cvss: Float
+  epss: Float
+  id: String!
+  internetExposed: Boolean
+  kev: Boolean
+  label: String
+  name: String
+  resolutionAlias: String
+  resolutionConfidence: Float
+  resolutionMethod: String
+  runtimeAlert: Boolean
+  sbomComponents: Int
+  secretsScrubbed: Boolean
+  severity: String
+  signed: Boolean
+  slsaLevel: Int
+}
+
+type PolicyViolation {
+  description: String
+  invariantId: String
+  nodes: [Node]
+  severity: String
+}
+
+type Posture {
+  activePaths: Int
+  criticalPaths: Int
+  edges: Int
+  kevOnPaths: Int
+  nodes: Int
+  policyViolations: Int
+  runtimeConfirmed: Int
+  suppressedPaths: Int
+}
+
+type PosturePoint {
+  at: String
+  criticalPaths: Int
+  riskPct: Float
+}
+
+type ProfileCompromise {
+  prior: Float
+  probability: Float
+  profile: String
+}
+
+type ProfileScore {
+  prior: Float
+  profile: String
+  score: Float
+}
+
+type Query {
+  aiEnabled: Boolean
+  applications: [String]
+  attackPaths(app: String, limit: Int): [AttackPath]
+  calibration: Calibration
+  calibrationTrend(points: Int): [CalibrationTrendPoint]
+  graph(app: String, limit: Int, offset: Int): GraphView
+  history(points: Int): History
+  invariantViolations: [PolicyViolation]
+  kShortestPaths(from: String, k: Int, target: String!): [AttackPath]
+  posture: Posture
+  remediationPlan(app: String): [Fix]
+  riskSimulation(iterations: Int, seed: Int): RiskSimulation
+  search(query: String!, size: Int): [SearchHit]
+  searchEnabled: Boolean
+  status: Status
+  validation: ValidationMetrics
+  whatIf(cuts: [EdgeCutInput!]!, iterations: Int, seed: Int): WhatIfResult
+}
+
+type ReliabilityBin {
+  count: Int
+  high: Float
+  low: Float
+  meanPredicted: Float
+  observedRate: Float
+}
+
+type Remediation {
+  content: String
+  filename: String
+  kind: String
+  rationale: String
+  title: String
+  verification: RemediationEffect
+}
+
+type RemediationEffect {
+  pathsAfter: Int
+  pathsBefore: Int
+  pathsEliminated: Int
+  removedEdges: Int
+  riskReductionPct: Float
+  verified: Boolean
+}
+
+type RiskSimulation {
+  anyCiHigh: Float
+  anyCiLow: Float
+  anyCompromiseProbability: Float
+  crownJewels: [CrownJewelRisk]
+  expectedCompromised: Float
+  iterations: Int
+  mixtureCompromiseProbability: Float
+  profileCompromise: [ProfileCompromise]
+  sensitivityHigh: Float
+  sensitivityLow: Float
+}
+
+type SearchHit {
+  id: String
+  label: String
+  name: String
+  score: Float
+}
+
+type Status {
+  analyzedAt: String
+  lastPrunedAt: String
+  passes: Int
+  paths: Int
+  prunedEdges: Int
+  prunedNodes: Int
+  version: String
+}
+
+type Suppression {
+  createdAt: String
+  expiresAt: String
+  note: String
+  owner: String
+  reason: String
+}
+
+type Ticket {
+  createdAt: String
+  externalUrl: String
+  id: String
+  owner: String
+  status: String
+  title: String
+}
+
+type Validation {
+  evidence: String
+  outcome: String
+  source: String
+  testedAt: String
+}
+
+type ValidationMetrics {
+  confirmed: Int
+  missed: Int
+  partial: Int
+  precision: Float
+  recall: Float
+  refuted: Int
+  tested: Int
+}
+
+type WhatIfResult {
+  after: [AttackPath]
+  afterRisk: RiskSimulation
+  before: [AttackPath]
+  beforeRisk: RiskSimulation
+  removedEdges: Int
+  riskReduction: Float
+}
+
