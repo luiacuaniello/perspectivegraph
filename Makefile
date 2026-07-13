@@ -72,6 +72,12 @@ test:
 bench:
 	cd backend && $(GO) test ./internal/analyzer -run '^$$' -bench 'BenchmarkFindCriticalPaths|BenchmarkPathfindWorkers' -benchmem
 
+## fuzz: fuzz the collector parse boundary (attacker-influenceable input) for panics/OOM. Runs every FuzzXxx briefly (FUZZTIME per target, default 20s). Deep run: cd backend && go test ./internal/ingestion/fuzz -run x -fuzz FuzzCloudnet -fuzztime 5m
+fuzz:
+	@cd backend && for t in FuzzCloudnet FuzzIAM FuzzK8s FuzzTrivy FuzzSemgrep FuzzFalco FuzzCustodian FuzzSupplychain FuzzSSO FuzzDataclass FuzzBuild; do \
+	  echo "== $$t =="; $(GO) test ./internal/ingestion/fuzz -run x -fuzz $$t -fuzztime $(or $(FUZZTIME),20s) || exit 1; \
+	done
+
 ## install-frontend: install dashboard dependencies
 install-frontend:
 	cd frontend && npm install

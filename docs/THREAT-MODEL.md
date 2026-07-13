@@ -55,7 +55,7 @@ Scanners/CI ─► Ingest :8081 ──────────────┼─
 | ingest | I | Secrets embedded in scanned artifacts land in the graph | Secret scrubbing on ingest | Best-effort; do not rely on it as the only control |
 | B4 AI | T | Prompt injection via ingested content steering the AI summary | AI answers are grounded on the live path set, every call audited | Ingested text is untrusted; treat AI output as advisory, not authoritative |
 | B1/B2 | D | Denial of service via large or frequent payloads | Ingest body-size limit; connectors leader-gated (replicas don't multiply calls) | No API-level rate limiting yet - put the engine behind a gateway/WAF in prod |
-| the tool itself | T | Supply-chain compromise of the build | Digest-pinned base images (distroless, non-root, read-only rootfs), SHA-pinned GitHub Actions, `govulncheck`/`gosec`/`gitleaks`/Trivy gates in CI, Dependabot | SBOM + image signing (cosign) + SLSA provenance are planned, not yet shipped |
+| the tool itself | T | Supply-chain compromise of the build | Digest-pinned base images (distroless, non-root, read-only rootfs), SHA-pinned GitHub Actions, `govulncheck`/`gosec`/CodeQL/`gitleaks`/Trivy gates + parser fuzzing in CI, Dependabot; release images are cosign-signed with an SBOM + SLSA provenance | No formal third-party penetration test yet (automated + community review only) |
 | B1 | R | Actions not attributable | Tamper-evident audit log (sealed); `auth.deny` and mutating actions recorded | Strong non-repudiation needs shipping the log to external WORM storage |
 
 ## Data handling and privacy
@@ -82,8 +82,11 @@ Scanners/CI ─► Ingest :8081 ──────────────┼─
 
 Host/OS/hypervisor security; the security of the Kubernetes platform the engine runs on;
 physical access; the correctness of the third-party scanners whose output is ingested; and
-any threat that assumes an already-compromised operator or CI system. The engine has not
-yet undergone a formal third-party penetration test (see the maturity note).
+any threat that assumes an already-compromised operator or CI system. Security review to
+date is automated + community-based (CodeQL taint analysis, `gosec`, `govulncheck`, Trivy,
+and fuzzing of the ingest parse boundary in CI, plus GitHub Private Vulnerability
+Reporting); the engine has **not** yet undergone a formal third-party penetration test (see
+the maturity note).
 
 ## Reporting a vulnerability
 
