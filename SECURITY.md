@@ -100,11 +100,16 @@ auth or persistence is left off.
 
 ## Our own supply chain
 
-The project holds itself to the bar it sets: CI runs `gosec` (SAST), `gitleaks`
-(secret scan), `govulncheck`, and a Trivy image scan; backend images are distroless,
-non-root, read-only-rootfs, and digest-pinned. GitHub Actions are pinned to commit
-SHAs (Dependabot keeps them current) and an OpenSSF Scorecard workflow tracks the
-repo's posture.
+The project holds itself to the bar it sets: CI runs `gosec` (SAST), **CodeQL**
+(semantic taint analysis), `gitleaks` (secret scan), `govulncheck`, and a Trivy image
+scan; backend images are distroless, non-root, read-only-rootfs, and digest-pinned.
+GitHub Actions are pinned to commit SHAs (Dependabot keeps them current) and an OpenSSF
+Scorecard workflow tracks the repo's posture.
+
+The collector **parse boundary** - where attacker-influenceable scanner/cloud/cluster
+dumps become events - is **fuzzed** (`internal/ingestion/fuzz`, Go native fuzzing, OSS-Fuzz
+compatible): the seed corpus runs on every CI build, and `make fuzz` (or a deep
+`go test -fuzz`) hunts panics and unbounded work on malformed input.
 
 Released images (`v0.3.0` onward, on `ghcr.io/luiacuaniello/`) are **signed with
 cosign keyless**, ship an **SPDX SBOM** (attested to the image and attached to the
