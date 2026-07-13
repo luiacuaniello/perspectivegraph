@@ -1,0 +1,74 @@
+# Prometheus alerting rules for PerspectiveGraph. Load them into Prometheus
+# (rule_files) or a PrometheusRule CR (Prometheus Operator). They fire on the SLOs
+# in docs/OPERATIONS.md, using the perspectivegraph_* metrics from GET /metrics.
+groups:
+  - name: perspectivegraph
+    rules:
+      - alert: PerspectiveGraphAnalyzerStalled
+        # The analyzer is what keeps attack paths current. No completed pass = stale posture.
+        expr: rate(perspectivegraph_analyzer_passes_total[15m]) == 0
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: Analyzer has not completed a pass in 15m
+          description: perspectivegraph_analyzer_passes_total is not increasing; the attack-path view is going stale.
+
+      - alert: PerspectiveGraphAnalyzerPassSlow
+        # p95 pass time creeping past a typical ANALYZER_INTERVAL means passes overlap.
+        expr: histogram_quantile(0.95, sum(rate(perspectivegraph_analyzer_pass_seconds_bucket[15m])) by (le)) > 60
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Analyzer p95 pass time is above 60s
+          description: Consider ANALYZER_WORKERS (parallel pathfinding) or ANALYZER_INCREMENTAL, or scale the graph store. See docs/SCALE.md.
+
+      - alert: PerspectiveGraphConnectorFailing
+        # An agentless pull source erroring means its slice of the graph is not refreshed.
+        expr: increase(perspectivegraph_connector_runs_total{result="error"}[15m]) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Connector {{ $labels.source }} is failing
+          description: perspectivegraph_connector_runs_total{result="error"} is increasing; check GET /connectors for the last error.
+
+      - alert: PerspectiveGraphIngestErrors
+        # Feeds that fail to normalize are silently missing from the graph.
+        expr: sum(rate(perspectivegraph_normalize_events_total{result!="ok"}[10m])) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Ingested events are failing to normalize
+          description: A scanner feed may be malformed; inspect perspectivegraph_normalize_events_total{result!="ok"}.
+
+      - alert: PerspectiveGraphAuthDenialSpike
+        # A burst of 401/403 can be credential stuffing against the API/ingest.
+        expr: sum(rate(perspectivegraph_http_requests_total{code=~"401|403"}[5m])) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Elevated 401/403 rate on the API
+          description: Possible credential stuffing or a misconfigured client; cross-check the audit log auth.deny events.
+
+      - alert: PerspectiveGraphHTTPErrorRatio
+        expr: sum(rate(perspectivegraph_http_requests_total{code=~"5.."}[5m])) / sum(rate(perspectivegraph_http_requests_total[5m])) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: API 5xx error ratio above 5%
+          description: The backend is returning server errors; check its logs and the database/bus health.
+
+      - alert: PerspectiveGraphDeadLettering
+        # Poison events dropped after the redelivery cap point at a persistent bad feed.
+        expr: increase(perspectivegraph_broker_dead_lettered_total[15m]) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Events are being dead-lettered
+          description: perspectivegraph_broker_dead_lettered_total is increasing; a source keeps emitting events that never land.
