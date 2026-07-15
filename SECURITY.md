@@ -108,8 +108,9 @@ Scorecard workflow tracks the repo's posture.
 
 The collector **parse boundary** - where attacker-influenceable scanner/cloud/cluster
 dumps become events - is **fuzzed** (`internal/ingestion/fuzz`, Go native fuzzing, OSS-Fuzz
-compatible): the seed corpus runs on every CI build, and `make fuzz` (or a deep
-`go test -fuzz`) hunts panics and unbounded work on malformed input.
+compatible): the seed corpus runs on every CI build, a scheduled **Fuzz** workflow
+explores each target for minutes weekly (and on ingestion changes), and `make fuzz` (or a
+deep `go test -fuzz`) hunts panics and unbounded work on malformed input locally.
 
 Released images (`v0.3.0` onward, on `ghcr.io/luiacuaniello/`) are **signed with
 cosign keyless**, ship an **SPDX SBOM** (attested to the image and attached to the
