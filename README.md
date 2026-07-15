@@ -600,7 +600,8 @@ curl -s localhost:8081/connectors | jq   # per-connector health: last run, last 
 # Live (read-only): assume a cross-account role and pull EC2 + IAM
 CONNECTORS_ENABLED=aws AWS_CONNECTOR_MODE=sdk AWS_REGION=us-east-1 \
   AWS_ROLE_ARN=arn:aws:iam::<account>:role/perspectivegraph-readonly
-# grant only: ec2:Describe*, iam:GetAccountAuthorizationDetails (≈ SecurityAudit)
+# grant only: ec2:Describe*, iam:GetAccountAuthorizationDetails, iam:ListInstanceProfiles
+# (all covered by the AWS-managed SecurityAudit policy - verified against a live account)
 
 # See what the live connector discovers before wiring it in (describe-* only):
 AWS_REGION=us-east-1 ROLE_ARN=arn:aws:iam::<account>:role/perspectivegraph-readonly \
@@ -614,6 +615,14 @@ credential chain (env / shared profile / IRSA / instance role). The network pull
 reads route tables, NACLs and subnets, so an SG open to `0.0.0.0/0` on an instance in a
 **private** subnet (NAT / transit-gateway egress, or a denying NACL) is *not* reported as
 internet-exposed - the classic false positive that inflates attack-surface counts.
+
+It also resolves each instance's **IAM instance profile** to the role behind it and draws
+`instance --ASSUMES--> IAM_Role`. That edge is what joins the network half of the graph to
+the identity half: without it, *"the internet reaches this box"* and *"this role owns the
+account"* sit in disconnected components and the canonical AWS path - internet → instance →
+IMDS → role → privilege escalation (the Capital One shape) - cannot form. The hop is priced
+on the instance's real IMDS posture: `HttpTokens=required` (IMDSv2) makes a blind SSRF
+insufficient, while IMDSv1 hands the credentials to a single GET.
 
 ### Topology discovery (no hand-stitched IDs)
 

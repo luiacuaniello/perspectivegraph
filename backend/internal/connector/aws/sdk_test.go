@@ -32,9 +32,13 @@ func (fakeEC2) DescribeSecurityGroups(context.Context, *ec2.DescribeSecurityGrou
 
 func (fakeEC2) DescribeInstances(context.Context, *ec2.DescribeInstancesInput, ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
 	return &ec2.DescribeInstancesOutput{Reservations: []ec2types.Reservation{{Instances: []ec2types.Instance{
-		// i-web sits in a PUBLIC subnet (IGW route) - genuinely internet-exposed.
+		// i-web sits in a PUBLIC subnet (IGW route) - genuinely internet-exposed. It carries
+		// an instance profile (the role an attacker inherits via IMDS) and still answers
+		// IMDSv1, so a blind SSRF suffices.
 		{InstanceId: aws.String("i-web"), SubnetId: aws.String("subnet-pub"), SecurityGroups: []ec2types.GroupIdentifier{{GroupId: aws.String("sg-web")}},
-			Tags: []ec2types.Tag{{Key: aws.String("Name"), Value: aws.String("web-tier")}}},
+			IamInstanceProfile: &ec2types.IamInstanceProfile{Arn: aws.String("arn:aws:iam::123456789012:instance-profile/web-profile")},
+			MetadataOptions:    &ec2types.InstanceMetadataOptionsResponse{HttpTokens: ec2types.HttpTokensStateOptional},
+			Tags:               []ec2types.Tag{{Key: aws.String("Name"), Value: aws.String("web-tier")}}},
 		// i-lonely has the SAME open SG but sits in a PRIVATE subnet (NAT only) - the
 		// false positive the route/NACL layer removes.
 		{InstanceId: aws.String("i-lonely"), SubnetId: aws.String("subnet-priv"), SecurityGroups: []ec2types.GroupIdentifier{{GroupId: aws.String("sg-web")}},
@@ -81,8 +85,19 @@ func (fakeEC2) DescribeSubnets(context.Context, *ec2.DescribeSubnetsInput, ...fu
 
 // fakeIAM returns one role with a URL-encoded trust + inline policy - exactly how
 // the real GetAccountAuthorizationDetails encodes documents - to prove the iam
-// parser unescapes what our mapping emits.
+// parser unescapes what our mapping emits. Its ListInstanceProfiles resolves i-web's
+// profile to that SAME role, which is what joins the network graph to the identity graph.
 type fakeIAM struct{}
+
+func (fakeIAM) ListInstanceProfiles(context.Context, *iam.ListInstanceProfilesInput, ...func(*iam.Options)) (*iam.ListInstanceProfilesOutput, error) {
+	return &iam.ListInstanceProfilesOutput{InstanceProfiles: []iamtypes.InstanceProfile{{
+		Arn: aws.String("arn:aws:iam::123456789012:instance-profile/web-profile"),
+		Roles: []iamtypes.Role{{
+			Arn:      aws.String("arn:aws:iam::123456789012:role/deployer"),
+			RoleName: aws.String("deployer"),
+		}},
+	}}}, nil
+}
 
 func (fakeIAM) GetAccountAuthorizationDetails(context.Context, *iam.GetAccountAuthorizationDetailsInput, ...func(*iam.Options)) (*iam.GetAccountAuthorizationDetailsOutput, error) {
 	trust := url.QueryEscape(`{"Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}`)
@@ -135,6 +150,50 @@ func TestSDKMapping(t *testing.T) {
 	}
 	if !internet {
 		t.Error("the 0.0.0.0/0 security group should have produced an internet-exposed node")
+	}
+}
+
+// TestSDKInstanceProfileJoinsNetworkAndIdentity guards the gap that only real-account
+// validation exposed: EC2 reports an instance's IAM *instance profile*, never the role
+// behind it, so without resolving the profile the network graph and the identity graph
+// stay disconnected and the canonical AWS path - internet → instance → IMDS → role →
+// privilege escalation - cannot form at all. The ASSUMES edge must land on the SAME node
+// the iam collector builds (both key roles by ARN), which is what fuses the two halves.
+func TestSDKInstanceProfileJoinsNetworkAndIdentity(t *testing.T) {
+	events, err := New(&sdkTransport{ec2: fakeEC2{}, iam: fakeIAM{}}).Collect(context.Background())
+	if err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	var (
+		vmID    = ontology.NewID(ontology.LabelVirtualMachine, "i-web")
+		roleID  = ontology.NewID(ontology.LabelIAMRole, "arn:aws:iam::123456789012:role/deployer")
+		edgeP   = -1.0
+		fromIAM bool
+	)
+	for _, ev := range events {
+		for _, e := range ev.Edges {
+			if e.Type == ontology.EdgeAssumes && e.From == vmID && e.To == roleID {
+				edgeP = e.ExploitProbability
+			}
+		}
+		// The iam feed must independently produce a node with that same id - proof the two
+		// collectors converge rather than making parallel, unlinked roles.
+		if ev.Source == "iam" {
+			for _, n := range ev.Nodes {
+				if n.ID == roleID {
+					fromIAM = true
+				}
+			}
+		}
+	}
+	if edgeP < 0 {
+		t.Fatal("missing i-web --ASSUMES--> deployer: the network and identity halves stay disconnected")
+	}
+	if edgeP != 0.9 {
+		t.Errorf("ASSUMES probability = %v, want 0.9 (IMDSv1 optional: a blind SSRF reads the credentials)", edgeP)
+	}
+	if !fromIAM {
+		t.Error("the iam collector did not produce the same role node id - the halves would not fuse")
 	}
 }
 

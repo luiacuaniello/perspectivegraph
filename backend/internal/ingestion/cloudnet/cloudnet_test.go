@@ -178,6 +178,67 @@ func TestNaclRuleOrdering(t *testing.T) {
 	}
 }
 
+// An instance's IAM instance profile is the hop that turns "a box on the network" into
+// "an identity": it is what an attacker with a foothold reads out of IMDS. EC2 reports
+// only the profile ARN, so the collector resolves it to the role (keyed by ARN, matching
+// the iam collector) and prices the hop on the instance's real IMDS posture.
+func TestInstanceProfileAssumesRoleGatedByImds(t *testing.T) {
+	const bundle = `{
+	  "provider": "aws",
+	  "security_groups": [ { "GroupId": "sg-a", "IpPermissions": [] } ],
+	  "instances": [
+	    { "InstanceId": "i-imdsv1",    "SecurityGroups": [ { "GroupId": "sg-a" } ],
+	      "IamInstanceProfile": { "Arn": "arn:aws:iam::1:instance-profile/p-a" },
+	      "MetadataOptions": { "HttpTokens": "optional" } },
+	    { "InstanceId": "i-imdsv2",    "SecurityGroups": [ { "GroupId": "sg-a" } ],
+	      "IamInstanceProfile": { "Arn": "arn:aws:iam::1:instance-profile/p-a" },
+	      "MetadataOptions": { "HttpTokens": "required" } },
+	    { "InstanceId": "i-noprofile", "SecurityGroups": [ { "GroupId": "sg-a" } ] },
+	    { "InstanceId": "i-unknown",   "SecurityGroups": [ { "GroupId": "sg-a" } ],
+	      "IamInstanceProfile": { "Arn": "arn:aws:iam::1:instance-profile/p-missing" } }
+	  ],
+	  "instance_profiles": [
+	    { "Arn": "arn:aws:iam::1:instance-profile/p-a",
+	      "Roles": [ { "Arn": "arn:aws:iam::1:role/app-role", "RoleName": "app-role" } ] }
+	  ]
+	}`
+	events, err := New().Parse(strings.NewReader(bundle), ingestion.Options{})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	roleID := ontology.NewID(ontology.LabelIAMRole, "arn:aws:iam::1:role/app-role")
+	assumes := map[string]float64{}
+	for _, e := range events[0].Edges {
+		if e.Type == ontology.EdgeAssumes && e.To == roleID {
+			assumes[e.From] = e.ExploitProbability
+		}
+	}
+	vm := func(name string) string { return ontology.NewID(ontology.LabelVirtualMachine, name) }
+
+	if got := assumes[vm("i-imdsv1")]; got != 0.9 {
+		t.Errorf("IMDSv1 (HttpTokens=optional) ASSUMES p = %v, want 0.9 - a blind SSRF reads the credentials", got)
+	}
+	if got := assumes[vm("i-imdsv2")]; got != 0.6 {
+		t.Errorf("IMDSv2 (HttpTokens=required) ASSUMES p = %v, want 0.6 - the attacker must mint a token first", got)
+	}
+	if _, ok := assumes[vm("i-noprofile")]; ok {
+		t.Error("an instance with no profile must not assume a role")
+	}
+	if _, ok := assumes[vm("i-unknown")]; ok {
+		t.Error("an unresolvable profile ARN must not invent a role edge")
+	}
+	// The role node must exist so the edge is not dangling before the iam feed arrives.
+	var haveRole bool
+	for _, n := range events[0].Nodes {
+		if n.ID == roleID && n.Name == "app-role" {
+			haveRole = true
+		}
+	}
+	if !haveRole {
+		t.Error("missing the IAM_Role node the ASSUMES edge points at")
+	}
+}
+
 func TestDiscoversReachability(t *testing.T) {
 	f, err := os.Open("../../../testdata/cloudnet-sample.json")
 	if err != nil {
