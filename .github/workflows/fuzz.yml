@@ -1,0 +1,65 @@
+# Continuous fuzzing of the collector parse boundary - the self-hosted equivalent of
+# OSS-Fuzz, with no external onboarding. The seed corpus already runs on every CI build
+# (in the Go job); this explores each target deeper: weekly, on demand, and when the
+# ingestion code changes. A discovered crasher fails the job and is uploaded as an
+# artifact (Go writes it under testdata/fuzz/) so it can be committed as a regression seed.
+name: Fuzz
+
+on:
+  schedule:
+    - cron: "17 4 * * 0" # weekly, Sunday
+  workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: Fuzz duration per target (Go duration, e.g. 5m)
+        default: "5m"
+        type: string
+  pull_request:
+    paths:
+      - "backend/internal/ingestion/**"
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - FuzzCloudnet
+          - FuzzIAM
+          - FuzzK8s
+          - FuzzTrivy
+          - FuzzSemgrep
+          - FuzzFalco
+          - FuzzCustodian
+          - FuzzSupplychain
+          - FuzzSSO
+          - FuzzDataclass
+          - FuzzBuild
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.25.12"
+
+      - name: Fuzz ${{ matrix.target }}
+        working-directory: backend
+        run: >
+          go test ./internal/ingestion/fuzz -run '^$'
+          -fuzz '^${{ matrix.target }}$'
+          -fuzztime '${{ inputs.fuzztime || '3m' }}'
+
+      - name: Upload crasher on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fuzz-crasher-${{ matrix.target }}
+          path: backend/internal/ingestion/fuzz/testdata/fuzz/
+          if-no-files-found: ignore
