@@ -32,6 +32,10 @@ type ec2API interface {
 
 type iamAPI interface {
 	GetAccountAuthorizationDetails(context.Context, *iam.GetAccountAuthorizationDetailsInput, ...func(*iam.Options)) (*iam.GetAccountAuthorizationDetailsOutput, error)
+	// ListInstanceProfiles resolves an instance's IAM instance profile to the role it
+	// carries - the link that joins the network half of the graph to the identity half.
+	// EC2 reports only the *profile* ARN; the role behind it lives in IAM.
+	ListInstanceProfiles(context.Context, *iam.ListInstanceProfilesInput, ...func(*iam.Options)) (*iam.ListInstanceProfilesOutput, error)
 }
 
 // sdkTransport pulls live AWS state and renders it as the exact describe-* JSON
@@ -125,6 +129,18 @@ func (t *sdkTransport) fetchNetwork(ctx context.Context) ([]byte, error) {
 					continue
 				}
 				i := instJSON{InstanceID: aws.ToString(inst.InstanceId), SubnetID: aws.ToString(inst.SubnetId)}
+				// The instance profile is what an attacker with a foothold on the box turns
+				// into IAM credentials (via IMDS) - the hop that connects "internet reached
+				// this instance" to "and now it is an identity".
+				if p := inst.IamInstanceProfile; p != nil {
+					i.IamInstanceProfile = &profileRefJSON{Arn: aws.ToString(p.Arn)}
+				}
+				// IMDSv2 enforcement decides how cheap that hop is: with HttpTokens=optional
+				// a blind SSRF reads the credentials outright; required means the attacker
+				// needs code execution to mint a token first.
+				if m := inst.MetadataOptions; m != nil {
+					i.MetadataOptions = &metadataOptsJSON{HTTPTokens: string(m.HttpTokens)}
+				}
 				for _, sg := range inst.SecurityGroups {
 					i.SecurityGroups = append(i.SecurityGroups, sgRefJSON{GroupID: aws.ToString(sg.GroupId)})
 				}
@@ -257,17 +273,67 @@ func (t *sdkTransport) fetchNetwork(ctx context.Context) ([]byte, error) {
 		subTok = out.NextToken
 	}
 
+	// Instance profiles: EC2 hands out only the *profile* ARN, so resolve each to the
+	// role it carries. This is what lets the collector draw instance --ASSUMES--> role,
+	// joining the network graph to the identity graph. Deliberately NON-fatal: if the
+	// grant lacks iam:ListInstanceProfiles we emit no profile map (and therefore no
+	// ASSUMES edges) rather than sinking the whole network feed over one permission.
+	var ipTok *string
+	for {
+		out, err := t.iam.ListInstanceProfiles(ctx, &iam.ListInstanceProfilesInput{Marker: ipTok})
+		if err != nil {
+			b.InstanceProfiles = nil
+			break
+		}
+		for _, p := range out.InstanceProfiles {
+			ip := instanceProfileJSON{Arn: aws.ToString(p.Arn)}
+			for _, r := range p.Roles {
+				ip.Roles = append(ip.Roles, profileRoleJSON{Arn: aws.ToString(r.Arn), RoleName: aws.ToString(r.RoleName)})
+			}
+			b.InstanceProfiles = append(b.InstanceProfiles, ip)
+		}
+		if !out.IsTruncated {
+			break
+		}
+		ipTok = out.Marker
+	}
+
 	return json.Marshal(b)
 }
 
 type networkBundle struct {
-	Provider       string           `json:"provider"`
-	SecurityGroups []sgJSON         `json:"security_groups"`
-	Instances      []instJSON       `json:"instances"`
-	VPCPeerings    []peeringJSON    `json:"vpc_peerings"`
-	Subnets        []subnetJSON     `json:"subnets,omitempty"`
-	RouteTables    []routeTableJSON `json:"route_tables,omitempty"`
-	NetworkACLs    []naclJSON       `json:"network_acls,omitempty"`
+	Provider         string                `json:"provider"`
+	SecurityGroups   []sgJSON              `json:"security_groups"`
+	Instances        []instJSON            `json:"instances"`
+	VPCPeerings      []peeringJSON         `json:"vpc_peerings"`
+	Subnets          []subnetJSON          `json:"subnets,omitempty"`
+	RouteTables      []routeTableJSON      `json:"route_tables,omitempty"`
+	NetworkACLs      []naclJSON            `json:"network_acls,omitempty"`
+	InstanceProfiles []instanceProfileJSON `json:"instance_profiles,omitempty"`
+}
+
+// instanceProfileJSON mirrors iam list-instance-profiles: a profile and the role(s) it
+// carries, so an instance's profile ARN can be resolved to the role an attacker inherits.
+type instanceProfileJSON struct {
+	Arn   string            `json:"Arn"`
+	Roles []profileRoleJSON `json:"Roles"`
+}
+
+type profileRoleJSON struct {
+	Arn      string `json:"Arn"`
+	RoleName string `json:"RoleName"`
+}
+
+// profileRefJSON is the IamInstanceProfile block ec2 describe-instances returns: the
+// *profile* ARN (not the role's).
+type profileRefJSON struct {
+	Arn string `json:"Arn"`
+}
+
+// metadataOptsJSON carries the IMDS posture: HttpTokens "required" (IMDSv2 enforced) or
+// "optional" (IMDSv1 still answers).
+type metadataOptsJSON struct {
+	HTTPTokens string `json:"HttpTokens"`
 }
 
 type sgJSON struct {
@@ -290,10 +356,12 @@ type sgRefJSON struct {
 }
 
 type instJSON struct {
-	InstanceID     string      `json:"InstanceId"`
-	SubnetID       string      `json:"SubnetId,omitempty"`
-	SecurityGroups []sgRefJSON `json:"SecurityGroups"`
-	Tags           []tagJSON   `json:"Tags"`
+	InstanceID         string            `json:"InstanceId"`
+	SubnetID           string            `json:"SubnetId,omitempty"`
+	SecurityGroups     []sgRefJSON       `json:"SecurityGroups"`
+	Tags               []tagJSON         `json:"Tags"`
+	IamInstanceProfile *profileRefJSON   `json:"IamInstanceProfile,omitempty"`
+	MetadataOptions    *metadataOptsJSON `json:"MetadataOptions,omitempty"`
 }
 
 type subnetJSON struct {

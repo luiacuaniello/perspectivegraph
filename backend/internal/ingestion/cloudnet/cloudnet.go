@@ -5,6 +5,16 @@
 //	0.0.0.0/0 ingress     → the instance is internet_exposed (a path seed)
 //	SG-to-SG ingress rule → instances in the source SG ──CONNECTS_TO──▶ instances in the target SG
 //	VPC peering           → VPC ──CONNECTS_TO──▶ VPC
+//	IAM instance profile  → instance ──ASSUMES──▶ IAM_Role
+//
+// That last edge is the IMDS hop, and it is what joins the network half of the graph to
+// the identity half: without it "the internet reaches this box" and "this role owns the
+// account" stay in disconnected components, and the canonical AWS path (internet →
+// instance → IMDS → role → privilege escalation) cannot form. EC2 reports only the
+// *profile* ARN, so the bundle's optional `instance_profiles` (iam list-instance-profiles
+// shape) resolves it to the role, keyed by ARN to match the iam collector. The hop's
+// probability follows the instance's real IMDS posture: IMDSv2 required makes a blind SSRF
+// insufficient, IMDSv1 hands the credentials to a single GET.
 //
 // Reachability precision (opt-in, when the input carries it): a security group
 // open to 0.0.0.0/0 is *not* enough to reach an instance - the traffic also needs a
@@ -58,6 +68,14 @@ type bundle struct {
 			Key   string `json:"Key"`
 			Value string `json:"Value"`
 		} `json:"Tags"`
+		// The *profile* ARN ec2 reports (the role behind it lives in IAM), and the IMDS
+		// posture that decides how cheaply a foothold becomes that role's credentials.
+		IamInstanceProfile *struct {
+			Arn string `json:"Arn"`
+		} `json:"IamInstanceProfile"`
+		MetadataOptions *struct {
+			HTTPTokens string `json:"HttpTokens"`
+		} `json:"MetadataOptions"`
 	} `json:"instances"`
 	VPCPeerings []struct {
 		RequesterVpcInfo struct {
@@ -96,6 +114,30 @@ type bundle struct {
 			RuleAction string `json:"RuleAction"` // "allow" | "deny"
 		} `json:"Entries"`
 	} `json:"network_acls"`
+	// Optional (iam list-instance-profiles shape): resolves an instance's profile ARN to
+	// the role it carries. Absent → no instance --ASSUMES--> role edges.
+	InstanceProfiles []struct {
+		Arn   string `json:"Arn"`
+		Roles []struct {
+			Arn      string `json:"Arn"`
+			RoleName string `json:"RoleName"`
+		} `json:"Roles"`
+	} `json:"instance_profiles"`
+}
+
+// roleRef is the role an instance profile carries: the ARN keys the node (matching the
+// iam collector, which ids roles by ARN) and the name labels it.
+type roleRef struct{ arn, name string }
+
+// imdsAssumeProb is how likely a foothold on an instance becomes credentials for its
+// role. With IMDSv2 enforced (HttpTokens=required) a blind SSRF cannot mint the token, so
+// the attacker needs code execution first; with IMDSv1 still answering, one GET is enough.
+// Driven by the instance's real metadata configuration rather than a guessed constant.
+func imdsAssumeProb(httpTokens string) float64 {
+	if strings.EqualFold(httpTokens, "required") {
+		return 0.6
+	}
+	return 0.9
 }
 
 type Collector struct{}
@@ -185,6 +227,18 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 		}
 	}
 
+	// Instance profile ARN → the role it carries. EC2 reports only the profile; this is
+	// the join that turns "a box reachable on the network" into "an identity an attacker
+	// inherits" - the hop that connects the network half of the graph to the identity half.
+	// A profile carries at most one role in practice.
+	profileRoles := map[string]roleRef{}
+	for _, p := range b.InstanceProfiles {
+		if p.Arn == "" || len(p.Roles) == 0 || p.Roles[0].Arn == "" {
+			continue
+		}
+		profileRoles[p.Arn] = roleRef{arn: p.Roles[0].Arn, name: p.Roles[0].RoleName}
+	}
+
 	g := &builder{nodes: map[string]ontology.Node{}}
 	instancesBySG := map[string][]string{} // sg -> [instance node id…]
 
@@ -223,6 +277,22 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 			name = inst.InstanceID
 		}
 		g.upsert(ontology.Node{ID: id, Label: ontology.LabelVirtualMachine, Name: name, Properties: props})
+
+		// instance --ASSUMES--> its instance-profile role. Without this the network and
+		// identity halves never touch, and the canonical AWS path (internet → instance →
+		// IMDS → role → privilege escalation) cannot form at all. The role node is keyed by
+		// ARN to match the iam collector, so the two feeds converge on one node.
+		if ip := inst.IamInstanceProfile; ip != nil {
+			if r, ok := profileRoles[ip.Arn]; ok {
+				roleID := ontology.NewID(ontology.LabelIAMRole, r.arn)
+				g.upsert(ontology.Node{ID: roleID, Label: ontology.LabelIAMRole, Name: r.name})
+				tokens := ""
+				if inst.MetadataOptions != nil {
+					tokens = inst.MetadataOptions.HTTPTokens
+				}
+				g.edge(ontology.EdgeAssumes, id, roleID, imdsAssumeProb(tokens))
+			}
+		}
 	}
 
 	// SG-to-SG ingress → instances in the source SG can reach instances in the
