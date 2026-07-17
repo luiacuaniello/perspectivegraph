@@ -423,7 +423,7 @@ func getdur(key string, def time.Duration) time.Duration {
 // loadDotEnv is a tiny, dependency-free .env loader. It does not override
 // variables already present in the environment.
 func loadDotEnv(path string) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- operator-configured .env path, not attacker-controlled
 	if err != nil {
 		return
 	}

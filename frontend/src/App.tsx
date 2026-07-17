@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { exportUrl, fetchDashboard, fetchHistory, fetchStatus, type Dashboard, type History } from "./api/client";
 import Sidebar, { type View } from "./components/Sidebar";
 import PostureOverview from "./components/PostureOverview";
@@ -6,7 +6,9 @@ import AttackPathList from "./components/AttackPathList";
 import AttackPathDetail from "./components/AttackPathDetail";
 import RemediationPlan from "./components/RemediationPlan";
 import ViolationList from "./components/ViolationList";
-import GraphCanvas from "./components/GraphCanvas";
+// Code-split: GraphCanvas pulls in Cytoscape (the heaviest dependency), so it loads
+// lazily only when the Graph view is opened - keeping the initial bundle small.
+const GraphCanvas = lazy(() => import("./components/GraphCanvas"));
 import SearchView from "./components/SearchView";
 import AssistantView from "./components/AssistantView";
 import IntroBanner, { useIntroDismissed } from "./components/IntroBanner";
@@ -423,12 +425,14 @@ export default function App() {
                   </span>
                 </div>
                 <div className="min-h-0 flex-1">
-                  <GraphCanvas
-                    nodes={data.graph.nodes}
-                    edges={data.graph.edges}
-                    highlightNodes={highlightNodes}
-                    highlightEdges={highlightEdges}
-                  />
+                  <Suspense fallback={<div className="grid h-full place-items-center text-xs text-muted">Loading graph…</div>}>
+                    <GraphCanvas
+                      nodes={data.graph.nodes}
+                      edges={data.graph.edges}
+                      highlightNodes={highlightNodes}
+                      highlightEdges={highlightEdges}
+                    />
+                  </Suspense>
                 </div>
               </div>
             )}

@@ -92,7 +92,7 @@ func runGenload(args []string) error {
 // element's last_seen - which keeps the incremental (delta) snapshot path working
 // for genload-sourced data too.
 func genGraph(seeds, jewels, layers, width, fanout int, randSeed int64) ([]ontology.Node, []ontology.Edge) {
-	rng := rand.New(rand.NewSource(randSeed))
+	rng := rand.New(rand.NewSource(randSeed)) // #nosec G404 -- deterministic PRNG for synthetic-graph generation, not security-sensitive
 	id := func(layer, i int) string { return fmt.Sprintf("genload-%d-%d", layer, i) }
 
 	var nodes []ontology.Node

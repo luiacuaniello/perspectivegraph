@@ -125,7 +125,7 @@ func unifiedScorePosterior(id string, steps []Step, profiles []AttackerProfile, 
 	}
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(id))
-	rng := rand.New(rand.NewPCG(h.Sum64(), 0x243f6a8885a308d3))
+	rng := rand.New(rand.NewPCG(h.Sum64(), 0x243f6a8885a308d3)) // #nosec G404 -- deterministic PRNG for reproducible Beta sampling, not security-sensitive
 
 	ab := make([][2]float64, len(steps))
 	for i, st := range steps {

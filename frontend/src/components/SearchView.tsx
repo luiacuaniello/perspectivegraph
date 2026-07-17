@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { searchAssets, type SearchHit } from "../api/client";
-import { labelColor } from "./GraphCanvas";
+import { labelColor } from "./graphColors";
 import { SearchIcon } from "./icons";
 
 const DEBOUNCE_MS = 300;

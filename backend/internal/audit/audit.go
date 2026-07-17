@@ -89,7 +89,7 @@ func Open(path string, opts ...Option) (*Log, error) {
 	if err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600) // #nosec G304 -- operator-configured audit-log path, not attacker-controlled
 	if err != nil {
 		return nil, fmt.Errorf("open audit log: %w", err)
 	}
@@ -173,7 +173,7 @@ func hashRecord(r Record) string {
 
 // tail returns the last seq + hash in an existing log (0, "" if absent).
 func tail(path string, sealer cryptostore.Sealer) (int64, string, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) // #nosec G304 -- operator-configured audit-log path, not attacker-controlled
 	if os.IsNotExist(err) {
 		return 0, "", nil
 	}
@@ -208,7 +208,7 @@ func tail(path string, sealer cryptostore.Sealer) (int64, string, error) {
 // whose hash or back-link doesn't match - i.e. evidence of tampering.
 func Verify(path string, opts ...Option) (records int, err error) {
 	sealer := sealerFrom(opts)
-	f, err := os.Open(path)
+	f, err := os.Open(path) // #nosec G304 -- operator-configured audit-log path, not attacker-controlled
 	if os.IsNotExist(err) {
 		return 0, nil
 	}

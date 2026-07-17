@@ -71,8 +71,8 @@ type CalibrationSegment struct {
 // DetectionStats summarizes how often reachable (confirmed) paths were caught or
 // blocked - the evidence for the detection axis (#7).
 type DetectionStats struct {
-	Tested                 int     `json:"tested"`    // confirmed verdicts carrying a detection report
-	Detected               int     `json:"detected"`  // of those, how many were caught/blocked
+	Tested                 int     `json:"tested"`   // confirmed verdicts carrying a detection report
+	Detected               int     `json:"detected"` // of those, how many were caught/blocked
 	DetectionRate          float64 `json:"detection_rate"`
 	HighScoreTested        int     `json:"high_score_tested"`
 	HighScoreDetectionRate float64 `json:"high_score_detection_rate"`
@@ -253,7 +253,7 @@ func isotonicBrierCV(samples []calSample, k int) float64 {
 	for i := range idx {
 		idx[i] = i
 	}
-	rng := rand.New(rand.NewPCG(0x5eed, 0x1234))
+	rng := rand.New(rand.NewPCG(0x5eed, 0x1234)) // #nosec G404 -- deterministic PRNG for reproducible diagnostics, not security-sensitive
 	rng.Shuffle(n, func(i, j int) { idx[i], idx[j] = idx[j], idx[i] })
 	fold := make([]int, n)
 	for pos, i := range idx {
@@ -459,7 +459,7 @@ func plattByBasisBrierCV(samples []calSample, k int) float64 {
 	for i := range idx {
 		idx[i] = i
 	}
-	rng := rand.New(rand.NewPCG(0x5eed, 0x1234))
+	rng := rand.New(rand.NewPCG(0x5eed, 0x1234)) // #nosec G404 -- deterministic PRNG for reproducible diagnostics, not security-sensitive
 	rng.Shuffle(n, func(i, j int) { idx[i], idx[j] = idx[j], idx[i] })
 	fold := make([]int, n)
 	for pos, i := range idx {
