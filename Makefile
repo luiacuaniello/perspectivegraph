@@ -197,6 +197,10 @@ validate-harness:
 validate-harness-k8s:
 	@bash scripts/validate-harness-k8s.sh
 
+## validate-harness-aws: real-topology calibration on a LIVE AWS account using a CloudGoat scenario as independent ground truth. Briefly opens the scenario instance's SG to 0.0.0.0/0 so the engine sees a seed, snapshots the topology read-only, closes the window (an EXIT trap re-closes it even on failure), scores the path, and records your exploit's outcome (OUTCOME=confirmed|refuted). YOU deploy/destroy the scenario. Needs: CONFIRM=i-understand-internet-exposure, REGION, ROLE_ARN, an admin AWS_PROFILE, the stack up. See scripts/validate-harness-aws.sh.
+validate-harness-aws:
+	@bash scripts/validate-harness-aws.sh
+
 ## validate-aws: run the LIVE AWS connector against a REAL read-only account (describe-* only, no writes) and print what it discovered - the internet-exposed seeds vs the SG-open instances the route/NACL layer SUPPRESSED (naming why). The first-contact check for reachability precision on real data. AWS_REGION=<region> required; ROLE_ARN=<arn> assumes a cross-account read-only role; INGEST_URL=<url> also pushes into a running stack for full path scoring. Read-only grant: SecurityAudit or ViewOnlyAccess. Needs AWS creds in the environment.
 validate-aws:
 	@bash scripts/validate-aws-readonly.sh

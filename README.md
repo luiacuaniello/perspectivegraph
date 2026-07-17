@@ -44,12 +44,16 @@ PerspectiveGraph is **pre-1.0** and built in the open. Read this before you rely
   covered by tests. The public API contract (GraphQL, ingest events, config, CLI) is
   documented and the GraphQL schema is frozen + drift-guarded - see the
   [API stability policy](docs/API-STABILITY.md).
-- **Probabilities: calibrated on synthetic topology, not yet field-validated.** The
-  self-calibration flywheel has been exercised end-to-end against deliberately-vulnerable
-  targets (a log4shell app, a `kind` Kubernetes RBAC scenario) - not yet against a breadth
-  of real cloud/Kubernetes accounts. Treat the path scores as **directionally honest, not
-  production-validated**. The `make validate-aws` and `make validate-harness*` harnesses
-  are the path to changing that, on your own environment.
+- **Connector: validated against a real AWS account; scores: not yet field-calibrated.**
+  The live connector, its read-only grant (`SecurityAudit` covers every call), cross-account
+  `AssumeRole`, and the network↔identity join (`instance --ASSUMES--> role`) are **verified
+  against a real account** - that last edge was in fact a gap only real-account testing
+  exposed (the fixtures already contained edges AWS makes you derive). What is **not** yet
+  done is calibrating the path *scores* against real exploited outcomes: the self-calibration
+  flywheel has run end-to-end only on deliberately-vulnerable synthetic targets (a log4shell
+  app, a `kind` RBAC scenario). Treat the scores as **directionally honest, not
+  production-calibrated**. The `make validate-aws`, `make validate-harness-aws`, and
+  `make validate-harness*` harnesses are the path to closing that on your own environment.
 - **Deployment: demo-grade defaults.** The bundled `docker compose` / Helm setup is
   hardened for a demo (distroless, non-root, read-only rootfs, digest-pinned 0-CVE images,
   opt-in TLS). A production rollout still needs your own hardening: an external managed
