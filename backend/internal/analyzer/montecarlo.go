@@ -189,7 +189,7 @@ func SimulateRisk(snap graph.Snapshot, iterations int, seed uint64) RiskSimulati
 		return sim // nothing to reach, or nothing to reach from
 	}
 
-	rng := rand.New(rand.NewPCG(seed, 0x9e3779b97f4a7c15))
+	rng := rand.New(rand.NewPCG(seed, 0x9e3779b97f4a7c15)) // #nosec G404 -- deterministic PRNG for reproducible Monte Carlo, not security-sensitive
 	hits := make(map[string]int, len(jewels))
 	anyHits, totalCompromised := 0, 0
 	visited := make(map[string]bool, len(nodes))
@@ -258,8 +258,8 @@ func anyCompromiseCredibleBand(seeds, jewels []string, adj map[string][]probEdge
 	if len(seeds) == 0 || len(jewels) == 0 {
 		return 0, 0
 	}
-	outerRng := rand.New(rand.NewPCG(seed, 0xa5a5a5a5a5a5a5a5))
-	innerRng := rand.New(rand.NewPCG(seed^0x5bd1e995, 0x9e3779b97f4a7c15))
+	outerRng := rand.New(rand.NewPCG(seed, 0xa5a5a5a5a5a5a5a5))            // #nosec G404 -- deterministic PRNG for reproducible Monte Carlo, not security-sensitive
+	innerRng := rand.New(rand.NewPCG(seed^0x5bd1e995, 0x9e3779b97f4a7c15)) // #nosec G404 -- deterministic PRNG for reproducible Monte Carlo, not security-sensitive
 	visited := map[string]bool{}
 	// Sampled copy of the adjacency, refilled each outer draw (same shape, so no
 	// per-iteration allocation).
@@ -340,7 +340,7 @@ func mixtureCompromise(seeds, jewels []string, adj map[string][]probEdge, iterat
 				dst[i] = probEdge{to: e.to, p: conditionalProb(e.p, e.basis, c.Skill), cause: e.cause}
 			}
 		}
-		rng := rand.New(rand.NewPCG(seed^(uint64(pi)+1)*0x9e3779b97f4a7c15, 0xdeadbeefcafef00d))
+		rng := rand.New(rand.NewPCG(seed^(uint64(pi)+1)*0x9e3779b97f4a7c15, 0xdeadbeefcafef00d)) // #nosec G404 -- deterministic PRNG for reproducible Monte Carlo, not security-sensitive
 		present := comonotonicPresent(rng, causeU)
 		anyHits := 0
 		for it := 0; it < iterations; it++ {

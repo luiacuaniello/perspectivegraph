@@ -4,7 +4,7 @@
 package ontology
 
 import (
-	"crypto/sha1"
+	"crypto/sha1" // #nosec G505 -- sha1 for content-addressed node IDs (git-style), not a security primitive
 	"encoding/hex"
 	"strings"
 	"time"
@@ -60,7 +60,7 @@ type Event struct {
 //
 //	NewID(LabelContainer, "payments", "sha256:abc…")  // => "Container:9f8c…"
 func NewID(label Label, keyParts ...string) string {
-	h := sha1.New()
+	h := sha1.New() // #nosec G401 -- sha1 for content-addressed node IDs (git-style), not a security primitive
 	h.Write([]byte(strings.ToLower(strings.Join(keyParts, "|"))))
 	return string(label) + ":" + hex.EncodeToString(h.Sum(nil))[:16]
 }

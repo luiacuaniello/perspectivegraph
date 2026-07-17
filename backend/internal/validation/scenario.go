@@ -55,7 +55,7 @@ var groundTruths = map[string]func(p float64, correlated bool, basis string) flo
 		}
 		return p
 	},
-	"low-resolution": func(float64, bool, string) float64 { return 0.5 }, // no resolution
+	"low-resolution": func(float64, bool, string) float64 { return 0.5 },     // no resolution
 	"detection":      func(p float64, _ bool, _ string) float64 { return p }, // signal is in Detected
 	// per-basis: the SAME score means different things by evidence provenance - EPSS
 	// hops over-predict (run hot), heuristic hops under-predict (run cold). A single
@@ -79,7 +79,7 @@ func GenerateScenario(scenario string, count int, seed uint64) ([]SyntheticVerdi
 	if !ok {
 		return nil, false
 	}
-	rng := rand.New(rand.NewPCG(seed, 0x9e3779b97f4a7c15))
+	rng := rand.New(rand.NewPCG(seed, 0x9e3779b97f4a7c15)) // #nosec G404 -- deterministic PRNG for reproducible self-test scenarios, not security-sensitive
 	out := make([]SyntheticVerdict, 0, count)
 	for i := 0; i < count; i++ {
 		p := 0.05 + rng.Float64()*0.9 // predicted score in [0.05, 0.95]
