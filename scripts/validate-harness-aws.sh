@@ -46,6 +46,11 @@ die()  { printf '  \033[31mx\033[0m  %s\n' "$*" >&2; exit 1; }
 # ── Preconditions ────────────────────────────────────────────────────
 for b in aws jq curl "$GO"; do command -v "$b" >/dev/null 2>&1 || die "$b not found"; done
 [ -n "$REGION" ]   || die "set REGION (or AWS_REGION) to the scenario's region"
+# A common slip: passing an availability zone (us-east-1a) where a region (us-east-1) is
+# meant - CloudGoat prints the AZ. Strip a trailing zone letter so the SDK is happy.
+case "$REGION" in
+  *-[0-9][a-z]) NORM=${REGION%?}; warn "REGION '$REGION' looks like an availability zone; using region '$NORM'"; REGION=$NORM ;;
+esac
 [ -n "$ROLE_ARN" ] || die "set ROLE_ARN to your read-only role (the connector assumes it)"
 curl -sf "$API_URL/healthz" >/dev/null 2>&1 || die "stack unreachable at $API_URL (run: make up-full)"
 [ "${CONFIRM:-}" = "i-understand-internet-exposure" ] || die \
@@ -54,12 +59,32 @@ curl -sf "$API_URL/healthz" >/dev/null 2>&1 || die "stack unreachable at $API_UR
 # ── Find the scenario's security group (or take SG_ID) ───────────────
 say "1. locate the CloudGoat instance + its security group in $REGION"
 if [ -z "$SG_ID" ]; then
-  SG_ID=$(aws ec2 describe-instances --region "$REGION" \
-    --filters "Name=tag:Name,Values=cg-*" "Name=instance-state-name,Values=running" \
-    --query 'Reservations[].Instances[].SecurityGroups[].GroupId' --output text 2>/dev/null | tr '\t' '\n' | sort -u | head -1)
+  # CloudGoat scenarios tag instances inconsistently - some `cg-*`, some `CloudGoat*` - so
+  # match both. Capture stderr so a failed call (bad region, expired creds, missing grant)
+  # yields a clear message instead of set -e/pipefail killing the script with exit 255.
+  if ! insts=$(aws ec2 describe-instances --region "$REGION" \
+      --filters "Name=tag:Name,Values=cg-*,CloudGoat*" "Name=instance-state-name,Values=running" \
+      --query 'Reservations[].Instances[].SecurityGroups[].GroupId' --output text 2>&1); then
+    die "aws describe-instances failed in region '$REGION': $(printf '%s' "$insts" | head -1)"
+  fi
+  SG_ID=$(printf '%s' "$insts" | tr '\t' '\n' | grep -E '^sg-' | sort -u | head -1)
 fi
-[ -n "$SG_ID" ] || die "no cg-* instance/SG found in $REGION (deploy a scenario first, or pass SG_ID=sg-...)"
+if [ -z "$SG_ID" ]; then
+  warn "no CloudGoat instance auto-detected in $REGION. Running instances there:"
+  aws ec2 describe-instances --region "$REGION" --filters "Name=instance-state-name,Values=running" \
+    --query 'Reservations[].Instances[].{Name:Tags[?Key==`Name`].Value|[0],SG:SecurityGroups[0].GroupId}' --output text 2>/dev/null | sed 's/^/    /' || true
+  die "pass SG_ID=sg-... explicitly (from the list above or the CloudGoat output), or check the region"
+fi
 ok "security group: $SG_ID"
+
+# The engine ids the internet-exposed seed by the instance's Name tag, so capture it: it is
+# how step 4 tells THIS scenario's path from any pre-existing graph data (a shared stack may
+# already hold demo or other real topology). Empty is tolerated (step 4 falls back).
+INSTANCE_NAME=$(aws ec2 describe-instances --region "$REGION" \
+  --filters "Name=instance.group-id,Values=$SG_ID" "Name=instance-state-name,Values=running" \
+  --query 'Reservations[0].Instances[0].Tags[?Key==`Name`].Value|[0]' --output text 2>/dev/null)
+[ "$INSTANCE_NAME" = "None" ] && INSTANCE_NAME=""
+ok "scenario seed: ${INSTANCE_NAME:-<unnamed - will match any new internet seed>}"
 
 # ── Open the window, snapshot, and ALWAYS close it (trap) ────────────
 WINDOW_OPEN=""
@@ -86,20 +111,28 @@ $GO build -o "$TMP/pg" "$ROOT/backend/cmd/perspectivegraph" 2>/dev/null \
 close_window   # exposure ends here - the snapshot is in; the box is private again
 
 # ── Score: did a complete internet → sensitive-asset path form? ──────
-say "4. wait for the analyzer, then look for a scored path from the scenario"
+say "4. wait for the analyzer, then find THIS scenario's path (by its real seed name)"
 sleep "$ANALYZER_WAIT"
-PATHS=$(curl -s -X POST "$API_URL/graphql" -H 'Content-Type: application/json' \
-  -d '{"query":"{ attackPaths(limit:50){ id score priority nodes { name } } }"}' \
-  | jq -c '[.data.attackPaths[] | select(.nodes[0].name | test("^cg-|internet|edge-|lb"; "i")) | {id, score, priority, route: ([.nodes[].name] | join(" -> "))}]')
+# Match paths by the scenario instance's actual name, not a broad pattern - a shared stack
+# may already hold demo/other topology, and matching those would record a verdict against
+# the wrong path. limit is generous so a low-priority scenario path is not cut off.
+ALL=$(curl -s -X POST "$API_URL/graphql" -H 'Content-Type: application/json' \
+  -d '{"query":"{ attackPaths(limit:200){ id score priority nodes { name } } }"}')
+if [ -z "$INSTANCE_NAME" ]; then
+  die "no instance name to match on; cannot isolate the scenario's path from other graph data"
+fi
+PATHS=$(printf '%s' "$ALL" | jq -c --arg seed "$INSTANCE_NAME" \
+  '[.data.attackPaths[] | select(([.nodes[].name] | index($seed)) != null) | {id, score, priority, route: ([.nodes[].name] | join(" -> "))}]')
 n=$(printf '%s' "$PATHS" | jq 'length')
 if [ "${n:-0}" -eq 0 ]; then
-  warn "no internet-seeded path from the scenario formed."
-  warn "This is itself a real finding: CloudGoat models a leaked-credential attacker, so the"
-  warn "engine's internet-origin threat model may not reach the scenario's goal. Inspect the"
-  warn "raw graph:  (cd backend && go run ./cmd/perspectivegraph awscollect -region $REGION -role $ROLE_ARN -json) | jq ."
+  warn "no scored path from the scenario's instance ('$INSTANCE_NAME') reached a sensitive asset."
+  warn "That is a real finding, not a harness bug: the engine seeds from internet exposure, but"
+  warn "this scenario's escalation typically starts from leaked credentials (a different threat"
+  warn "model), and its goal may be an S3 bucket the connector does not read yet. Raw subgraph:"
+  warn "  (cd backend && go run ./cmd/perspectivegraph awscollect -region $REGION -role $ROLE_ARN -json) | jq ."
   exit 0
 fi
-ok "$n path(s) surfaced:"
+ok "$n path(s) from the scenario:"
 printf '%s' "$PATHS" | jq -r '.[] | "    [\(.priority)] score=\(.score)  \(.route)"'
 TOP_ID=$(printf '%s' "$PATHS" | jq -r 'sort_by(-.priority)[0].id')
 TOP_SCORE=$(printf '%s' "$PATHS" | jq -r 'sort_by(-.priority)[0].score')
