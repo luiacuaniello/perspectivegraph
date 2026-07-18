@@ -101,6 +101,11 @@ func IsValidEdgeType(t EdgeType) bool { return validEdgeTypes[t] }
 const (
 	// PropInternetExposed (bool) marks a node as a valid traversal *seed*.
 	PropInternetExposed = "internet_exposed"
+	// PropCredentialExposed (bool) marks a node as a traversal seed under the
+	// credential-origin threat model: an identity whose long-lived credentials could
+	// leak (phishing, keys in code). Distinct from internet_exposed so the two origins
+	// stay separable; only seeded when the operator opts in (SEED_IAM_USERS).
+	PropCredentialExposed = "credential_exposed" // #nosec G101 -- ontology property label, not a credential (name matches gosec's "cred" heuristic)
 	// PropCrownJewel (bool) marks a node as a valid traversal *target*.
 	PropCrownJewel = "crown_jewel"
 	// PropCrownJewelBasis (string) records WHY a node is a crown jewel - "tagged"

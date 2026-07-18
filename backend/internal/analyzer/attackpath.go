@@ -175,7 +175,9 @@ func FindCriticalPaths(snap graph.Snapshot) []AttackPath {
 
 	var seeds, jewels []string
 	for _, n := range snap.Nodes {
-		if n.Bool(ontology.PropInternetExposed) {
+		// A path may originate from internet exposure (the default) or, when the operator
+		// opts in, from a credential-origin seed (an identity whose creds could leak).
+		if n.Bool(ontology.PropInternetExposed) || n.Bool(ontology.PropCredentialExposed) {
 			seeds = append(seeds, n.ID)
 		}
 		if n.Bool(ontology.PropCrownJewel) {

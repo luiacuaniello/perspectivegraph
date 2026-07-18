@@ -47,6 +47,7 @@ data:
   ANALYZER_INCREMENTAL: {{ .Values.backend.analyzerIncremental | quote }}
   ATTACKER_PROFILE_PRIORS: {{ .Values.backend.attackerProfilePriors | quote }}
   EPSS_TRAVERSAL_GAMMA: {{ .Values.backend.epssTraversalGamma | quote }}
+  SEED_IAM_USERS: {{ .Values.backend.seedIamUsers | quote }}
   OPENSEARCH_URL: {{ .Values.opensearch.url | quote }}
   GITHUB_API_URL: {{ .Values.github.apiUrl | quote }}
   GITHUB_DRY_RUN: {{ .Values.github.dryRun | quote }}

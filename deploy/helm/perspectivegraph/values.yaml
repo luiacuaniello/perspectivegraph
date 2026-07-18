@@ -25,6 +25,10 @@ backend:
   # marginal 30-day rate, not the conditional a positioned attacker needs; gamma < 1
   # lifts it (e.g. 0.5), empty or 1 keeps EPSS as-is (default). Opt-in, not auto-fitted.
   epssTraversalGamma: ""
+  # Credential-origin threat model (opt-in). false (default) seeds paths only from internet
+  # exposure; true also treats IAM users as seeds (their long-lived creds could leak), so
+  # "if a credential leaks, what does it reach" surfaces alongside the internet-origin paths.
+  seedIamUsers: false
   # In-pod TLS for the API + ingest servers (HTTPS >= 1.2 directly, no proxy
   # needed). Off by default - usually TLS terminates at the ingress instead. When
   # enabled, secretName must reference a kubernetes.io/tls Secret (tls.crt/tls.key);
