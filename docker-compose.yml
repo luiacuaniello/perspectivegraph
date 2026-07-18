@@ -125,6 +125,8 @@ services:
       ATTACKER_PROFILE_PRIORS: ${ATTACKER_PROFILE_PRIORS:-}
       # EPSS -> conditional-traversal exponent p=EPSS^gamma; gamma<1 lifts, empty/1 = as-is.
       EPSS_TRAVERSAL_GAMMA: ${EPSS_TRAVERSAL_GAMMA:-}
+      # Opt-in credential-origin seeds (IAM users as leakable-credential seeds); off = internet-origin only.
+      SEED_IAM_USERS: ${SEED_IAM_USERS:-false}
       # Staleness pruning: nodes/edges not re-observed within GRAPH_TTL are
       # removed (leader-only) so departed assets can't produce phantom paths.
       # Empty/0 disables it (the default).

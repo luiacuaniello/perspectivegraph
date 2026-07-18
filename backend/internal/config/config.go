@@ -63,6 +63,12 @@ type Config struct {
 	// applied silently. See threatintel.EdgeProbability.
 	EPSSTraversalGamma float64
 
+	// SeedIAMUsers opts into the credential-origin threat model: when true, IAM users
+	// become traversal seeds (on the premise their long-lived credentials could leak),
+	// so "if a credential leaks, what does it reach" surfaces alongside the internet-
+	// origin paths. Off by default, keeping the headline the internet-origin attack path.
+	SeedIAMUsers bool
+
 	// GitHub PR commenter (action layer)
 	// AI-native layer. Anthropic (Claude) is the preferred backend; HuggingFace
 	// (HFToken, OpenAI-compatible) is the free/self-hosted alternative used when no
@@ -259,6 +265,7 @@ func Load() Config {
 		AnalyzerIncremental:   getbool("ANALYZER_INCREMENTAL", false),
 		AttackerProfilePriors: getenv("ATTACKER_PROFILE_PRIORS", ""),
 		EPSSTraversalGamma:    getfloat("EPSS_TRAVERSAL_GAMMA", 1.0),
+		SeedIAMUsers:          getbool("SEED_IAM_USERS", false),
 
 		AnthropicAPIKey:  getenv("ANTHROPIC_API_KEY", ""),
 		AnthropicModel:   getenv("ANTHROPIC_MODEL", ""),

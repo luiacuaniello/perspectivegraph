@@ -278,6 +278,8 @@ func run(ctx context.Context, cfg config.Config) error {
 	analyzer.SetAttackerProfilePriors(cfg.AttackerProfilePriors)
 	// EPSS -> conditional-traversal exponent (default 1.0 = identity = EPSS as-is).
 	threatintel.SetTraversalGamma(cfg.EPSSTraversalGamma)
+	// Opt-in credential-origin seeds: treat IAM users as leakable-credential seeds.
+	iam.SetSeedIAMUsers(cfg.SeedIAMUsers)
 
 	analyzerSvc := analyzer.NewService(manager, cfg.AnalyzerInterval, sinks).
 		WithPolicy(policy.NewEngine(policy.Builtins()...)).

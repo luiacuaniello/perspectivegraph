@@ -94,6 +94,15 @@ var primitives = []primitive{
 	{"iam:PassRole + ec2:RunInstances (launch an instance with a passed role)", func(a actionSet) bool { return a.Allows("iam:PassRole") && a.Allows("ec2:RunInstances") }},
 	{"iam:PassRole + cloudformation:CreateStack", func(a actionSet) bool { return a.Allows("iam:PassRole") && a.Allows("cloudformation:CreateStack") }},
 	{"iam:PassRole + glue:CreateDevEndpoint", func(a actionSet) bool { return a.Allows("iam:PassRole") && a.Allows("glue:CreateDevEndpoint") }},
+	{"iam:PassRole + sagemaker:CreateNotebookInstance", func(a actionSet) bool {
+		return a.Allows("iam:PassRole") && a.Allows("sagemaker:CreateNotebookInstance")
+	}},
+	{"iam:PassRole + datapipeline:CreatePipeline", func(a actionSet) bool { return a.Allows("iam:PassRole") && a.Allows("datapipeline:CreatePipeline") }},
+	{"iam:PassRole + codebuild:CreateProject", func(a actionSet) bool { return a.Allows("iam:PassRole") && a.Allows("codebuild:CreateProject") }},
+	{"iam:AddUserToGroup (add self to a privileged group)", func(a actionSet) bool { return a.Allows("iam:AddUserToGroup") }},
+	{"iam:AttachGroupPolicy (attach AdministratorAccess to your group)", func(a actionSet) bool { return a.Allows("iam:AttachGroupPolicy") }},
+	{"iam:PutGroupPolicy (inline an admin policy on your group)", func(a actionSet) bool { return a.Allows("iam:PutGroupPolicy") }},
+	{"iam:UpdateLoginProfile (reset a privileged user's console password)", func(a actionSet) bool { return a.Allows("iam:UpdateLoginProfile") }},
 }
 
 // detectPrivesc returns the names of every privesc primitive the principal's

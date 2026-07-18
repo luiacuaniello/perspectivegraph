@@ -26,11 +26,20 @@ import (
 	"io"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion"
 	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
 )
+
+// seedIAMUsers is the opt-in credential-origin toggle: when true, IAM users are marked
+// as traversal seeds (see the user loop). Set once at startup, read lock-free per parse.
+var seedIAMUsers atomic.Bool
+
+// SetSeedIAMUsers enables (or disables) treating IAM users as credential-origin seeds.
+// Off by default, so the engine's headline stays the internet-origin attack path.
+func SetSeedIAMUsers(on bool) { seedIAMUsers.Store(on) }
 
 type Collector struct{}
 
@@ -235,8 +244,18 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 		}
 		id := ontology.NewID(ontology.LabelUser, u.Arn)
 		arnToID[u.Arn] = id
-		g.upsert(ontology.Node{ID: id, Label: ontology.LabelUser, Name: u.UserName,
-			Properties: map[string]any{ontology.PropARN: u.Arn}})
+		props := map[string]any{ontology.PropARN: u.Arn}
+		// Credential-origin threat model (opt-in): treat an IAM user as a seed on the
+		// premise that its long-lived credentials could leak. Off by default so the
+		// engine's headline stays the internet-origin path; on, it surfaces "if a
+		// credential leaks, what does it reach" - which is how CloudGoat-style IAM
+		// privesc scenarios (a leaked user + AssumeRole/attach-policy to admin) become
+		// scored paths. Service-linked roles are excluded (they are not leakable creds).
+		if seedIAMUsers.Load() {
+			props[ontology.PropCredentialExposed] = true
+			props["seed_basis"] = "credential-exposed (IAM user; assumes a leaked credential)"
+		}
+		g.upsert(ontology.Node{ID: id, Label: ontology.LabelUser, Name: u.UserName, Properties: props})
 
 		var docs []policyDoc
 		for _, ip := range u.UserPolicyList {

@@ -96,6 +96,13 @@ Taking `-ln` turns this into an additive cost `w = -ln p`, so the **highest-prob
 shortest path** - found with Dijkstra from every internet-exposed seed, then surfaced as
 **Critical Attack Path** events.
 
+**Seed origin (two threat models).** By default the only seeds are *Internet-Exposed* nodes, so a path
+is the crisp "reachable from the internet -> sensitive asset" story. A second, opt-in lens
+(`SEED_IAM_USERS=true`) also treats IAM users as seeds, on the premise a long-lived credential could
+leak - which surfaces "if this credential leaks, what does it reach" (leaked key -> IAM privesc ->
+admin) as scored paths. The two origins stay separable: credential-origin seeds are marked
+`credential_exposed`, and the default stays internet-origin so the headline is not diluted.
+
 That product is only the *starting point*: it assumes the hops are independent and treats a heuristic
 guess like measured evidence. The engine is honest about all three gaps, and the layers are what make
 it a risk tool rather than a number generator (see [Honest probabilities](#honest-probabilities-provenance-not-false-precision)):
