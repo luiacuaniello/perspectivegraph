@@ -106,9 +106,11 @@ type AttackPath struct {
 	// MixtureScore is the deterministic plug-in of the attacker-capability mixture,
 	// Σ P(c)·∏ p(e|c) at the point probabilities - the fast closed form; PosteriorMean
 	// above is its sampled, epistemic-aware counterpart (the two are close). ProfileScores
-	// is the per-profile breakdown - the "72% vs an APT, 18% vs commodity" read - which
-	// is what a SOC actually triages on. The naive Score is kept as the independent
-	// baseline; these are the correlation-aware lens layered on top.
+	// is the per-profile breakdown - the "72% vs an APT, 18% vs commodity" read that says
+	// whether a path is trivial for an APT but stops a commodity actor. Both are an
+	// interpretive lens, NOT the triage axis: the ordering a team works through comes from
+	// Priority below, which blends the naive Score. The naive Score is kept as the
+	// independent baseline; these are the correlation-aware lens layered on top.
 	MixtureScore  float64        `json:"mixture_score,omitempty"`
 	ProfileScores []ProfileScore `json:"profile_scores,omitempty"`
 	// Priority is a composite triage score in [0,100] blending the signals an
