@@ -1902,10 +1902,16 @@ curl -sS -X POST "$INGEST_URL/ingest/iam" -H 'Content-Type: application/json' --
 ```
 
 > **Read-only & honest about scope.** The collector needs only the read-only
-> `iam:GetAccountAuthorizationDetails` permission. It intentionally ignores
-> Resource scoping, Condition keys and explicit Deny, so it **over-reports rather
-> than misses** an escalation - treat its findings as "worth confirming", the
-> same trade PMapper makes. See `backend/testdata/iam-sample.json` for the shape.
+> `iam:GetAccountAuthorizationDetails` permission. It evaluates the parts of AWS
+> policy logic that are unambiguous without request context: an **account-wide
+> explicit Deny beats any Allow** (so a guardrail-denied action stops producing a
+> phantom escalation), and a primitive held only on **specific literal resources**
+> yields a lower-probability edge (`resource_scoped`), since it lands only if those
+> targets are themselves privileged. Still not evaluated, by design: Condition keys,
+> `NotAction`/`NotResource`, permission boundaries, SCPs, and a Deny confined to
+> specific resources - so it still **over-reports rather than misses**. Treat its
+> findings as "worth confirming". See `backend/testdata/iam-sample.json` for the
+> shape, and `make bench-cloudgoat` for the precision regressions that pin this.
 
 #### SSO / IdP federation (Okta → cloud - the modern front door)
 

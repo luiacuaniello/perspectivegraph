@@ -51,6 +51,7 @@ runs), not from authoring fixtures. See the calibration section of the root READ
 | `ec2_ssrf` | internet-origin | SSRF → IMDS → instance role → admin (`iam:PassRole`+`lambda:CreateFunction`) |
 | `iam_privesc_by_attachment` | credential-origin | leaked user (`iam:AttachUserPolicy`) → admin; **and** zero paths with the lens off (the M1 finding) |
 | `ec2_private_subnet_no_path` | internet-origin | reachability precision: an SG open to `0.0.0.0/0` in a **private** subnet is not exposed → **no** path |
+| `iam_privesc_denied_by_guardrail` | credential-origin | policy-evaluation precision: an account-wide explicit **Deny** beats the Allow, so the privesc edge and the path are withheld → **no** path |
 
 ## Scenario format
 
