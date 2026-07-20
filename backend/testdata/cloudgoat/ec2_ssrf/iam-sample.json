@@ -1,0 +1,32 @@
+{
+  "_comment": "The instance-profile role for ec2_ssrf. iam:PassRole + lambda:CreateFunction is a well-known Rhino/PMapper privesc primitive (run code as a passed role), so the iam collector draws cg-ec2-ssrf-role --CAN_ESCALATE_TO--> account-admin. The role ARN matches the instance_profiles entry in cloudnet-sample.json.",
+  "UserDetailList": [],
+  "GroupDetailList": [],
+  "RoleDetailList": [
+    {
+      "RoleName": "cg-ec2-ssrf-role",
+      "Arn": "arn:aws:iam::111111111111:role/cg-ec2-ssrf-role",
+      "AssumeRolePolicyDocument": {
+        "Version": "2012-10-17",
+        "Statement": [
+          { "Effect": "Allow", "Principal": { "Service": "ec2.amazonaws.com" }, "Action": "sts:AssumeRole" }
+        ]
+      },
+      "AttachedManagedPolicies": [],
+      "RolePolicyList": [
+        {
+          "PolicyName": "cg-ec2-ssrf-inline",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              { "Effect": "Allow", "Action": ["iam:PassRole", "lambda:CreateFunction", "lambda:InvokeFunction"], "Resource": "*" },
+              { "Effect": "Allow", "Action": "s3:GetObject", "Resource": "*" }
+            ]
+          }
+        }
+      ],
+      "Tags": []
+    }
+  ],
+  "Policies": []
+}

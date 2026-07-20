@@ -1,0 +1,16 @@
+{
+  "name": "iam_privesc_by_attachment",
+  "rhino_scenario": "iam_privesc_by_attachment",
+  "description": "A leaked IAM user (kerrigan) with iam:AttachUserPolicy attaches AdministratorAccess to itself. Credential-origin: this path is invisible under the default internet-origin lens and forms only when SEED_IAM_USERS is on. This scenario pins the M1/CloudGoat finding that motivated the credential-origin seed.",
+  "seed_iam_users": true,
+  "credential_origin": true,
+  "exhaustive": true,
+  "expected_paths": [
+    {
+      "id": "attach-to-admin",
+      "source_name": "kerrigan",
+      "target_name": "account-admin (effective)",
+      "min_score": 0.5
+    }
+  ]
+}

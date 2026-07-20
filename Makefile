@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help up up-full demo up-search down logs run-backend build-backend test bench tidy run-frontend install-frontend seed seed-discovery seed-load clean
+.PHONY: help up up-full demo up-search down logs run-backend build-backend test bench bench-cloudgoat tidy run-frontend install-frontend seed seed-discovery seed-load clean
 
 # CGO is disabled so the Go binaries link statically (Go's pure-Go DNS resolver
 # instead of the system one). This also sidesteps a macOS system-linker bug on
@@ -71,6 +71,10 @@ test:
 ## bench: run the analyzer scaling benchmarks (pathfinding cost + parallel speedup)
 bench:
 	cd backend && $(GO) test ./internal/analyzer -run '^$$' -bench 'BenchmarkFindCriticalPaths|BenchmarkPathfindWorkers' -benchmem
+
+## bench-cloudgoat: grade the attack-path engine against CloudGoat-shaped ground-truth scenarios (precision/recall). Runs in CI under `make test`; this target prints the per-scenario table. Add scenarios under backend/testdata/cloudgoat (see its README).
+bench-cloudgoat:
+	cd backend && $(GO) test ./internal/benchmark -run TestCloudGoatBenchmark -v
 
 ## fuzz: fuzz the collector parse boundary (attacker-influenceable input) for panics/OOM. Runs every FuzzXxx briefly (FUZZTIME per target, default 20s). Deep run: cd backend && go test ./internal/ingestion/fuzz -run x -fuzz FuzzCloudnet -fuzztime 5m
 fuzz:

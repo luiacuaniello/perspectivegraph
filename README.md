@@ -54,6 +54,12 @@ PerspectiveGraph is **pre-1.0** and built in the open. Read this before you rely
   app, a `kind` RBAC scenario). Treat the scores as **directionally honest, not
   production-calibrated**. The `make validate-aws`, `make validate-harness-aws`, and
   `make validate-harness*` harnesses are the path to closing that on your own environment.
+  For an offline, CI-gated check that the engine actually finds the *right* paths, `make
+  bench-cloudgoat` grades it against a battery of [CloudGoat-shaped ground-truth
+  scenarios](backend/testdata/cloudgoat/README.md) (precision/recall) - including the
+  reachability-precision case (an open SG on a private-subnet box must **not** form a path)
+  and the credential-origin case (a leaked-key privesc is invisible until `SEED_IAM_USERS`
+  is on). It runs under `make test`, so a regression that loses or invents a path fails the build.
 - **Deployment: demo-grade defaults.** The bundled `docker compose` / Helm setup is
   hardened for a demo (distroless, non-root, read-only rootfs, digest-pinned 0-CVE images,
   opt-in TLS). A production rollout still needs your own hardening: an external managed

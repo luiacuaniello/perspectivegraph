@@ -1,0 +1,8 @@
+{
+  "name": "ec2_private_subnet_no_path",
+  "rhino_scenario": "ec2_ssrf (private-subnet variant)",
+  "description": "Reachability-precision regression. An SG open to 0.0.0.0/0 on an instance in a private subnet (NAT egress, no internet gateway) must NOT count as internet-exposed, so no path forms even though the instance role can escalate to admin. Guards against a regression to SG-only exposure.",
+  "seed_iam_users": false,
+  "exhaustive": true,
+  "expected_paths": []
+}

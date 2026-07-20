@@ -1,0 +1,25 @@
+{
+  "_comment": "Faithful model of Rhino CloudGoat 'iam_privesc_by_attachment'. The IAM user kerrigan holds iam:AttachUserPolicy, a Rhino privesc primitive: it lets the user attach AdministratorAccess to itself. The iam collector draws kerrigan --CAN_ESCALATE_TO--> account-admin. There is NO network in this scenario (no cloudnet-sample.json): the attacker starts from kerrigan's leaked credentials, so the path forms only under the credential-origin lens (SEED_IAM_USERS). This is the exact mismatch the M1 real-AWS run surfaced.",
+  "UserDetailList": [
+    {
+      "UserName": "kerrigan",
+      "Arn": "arn:aws:iam::111111111111:user/kerrigan",
+      "GroupList": [],
+      "AttachedManagedPolicies": [],
+      "UserPolicyList": [
+        {
+          "PolicyName": "kerrigan-inline",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              { "Effect": "Allow", "Action": ["iam:AttachUserPolicy", "iam:ListPolicies", "iam:ListAttachedUserPolicies"], "Resource": "*" }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "GroupDetailList": [],
+  "RoleDetailList": [],
+  "Policies": []
+}

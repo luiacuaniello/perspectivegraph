@@ -1,0 +1,31 @@
+{
+  "_comment": "The private instance's role CAN escalate to admin (iam:PassRole + lambda:CreateFunction) - deliberately, to prove the engine withholds the path on reachability grounds alone, not because the identity side is harmless. If reachability regressed to SG-only, this scenario would start producing a path and precision would drop below 1.0.",
+  "UserDetailList": [],
+  "GroupDetailList": [],
+  "RoleDetailList": [
+    {
+      "RoleName": "cg-private-role",
+      "Arn": "arn:aws:iam::111111111111:role/cg-private-role",
+      "AssumeRolePolicyDocument": {
+        "Version": "2012-10-17",
+        "Statement": [
+          { "Effect": "Allow", "Principal": { "Service": "ec2.amazonaws.com" }, "Action": "sts:AssumeRole" }
+        ]
+      },
+      "AttachedManagedPolicies": [],
+      "RolePolicyList": [
+        {
+          "PolicyName": "cg-private-inline",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              { "Effect": "Allow", "Action": ["iam:PassRole", "lambda:CreateFunction", "lambda:InvokeFunction"], "Resource": "*" }
+            ]
+          }
+        }
+      ],
+      "Tags": []
+    }
+  ],
+  "Policies": []
+}

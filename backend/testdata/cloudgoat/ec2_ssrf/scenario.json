@@ -1,0 +1,17 @@
+{
+  "name": "ec2_ssrf",
+  "rhino_scenario": "ec2_ssrf",
+  "description": "SSRF on an internet-facing EC2 reaches IMDS (IMDSv1), mints the instance role's credentials, and the role escalates to admin via iam:PassRole + lambda:CreateFunction. Internet-origin: the seed is the internet-exposed instance.",
+  "seed_iam_users": false,
+  "exhaustive": true,
+  "expected_paths": [
+    {
+      "id": "imds-to-admin",
+      "source_name": "cg-ec2-ssrf-app",
+      "target_name": "account-admin (effective)",
+      "must_traverse_names": ["cg-ec2-ssrf-role"],
+      "must_traverse_labels": ["VirtualMachine", "IAM_Role"],
+      "min_score": 0.5
+    }
+  ]
+}
