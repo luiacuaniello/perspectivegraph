@@ -17,8 +17,11 @@ package analyzer
 //
 // Marginalizing over c reintroduces the positive correlation the bare product drops
 // (the hops co-vary through the shared c), and the per-profile breakdown - "72% vs an
-// APT, 18% vs commodity" - is the read a SOC actually triages on. The naive Score is
-// left untouched as the independent baseline; this is an additional, sharper lens.
+// APT, 18% vs commodity" - tells a reader whether a path is trivial for an APT but
+// stops a commodity actor. It is an interpretive lens, NOT the triage axis: the
+// ordering a team works through comes from Priority (see priority.go), which blends
+// the naive Score with corroboration and target sensitivity. The naive Score is left
+// untouched as the independent baseline; this is an additional, sharper lens on top.
 
 import (
 	"math"
