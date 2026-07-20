@@ -159,13 +159,7 @@ func SimulateRisk(snap graph.Snapshot, iterations int, seed uint64) RiskSimulati
 
 	adj := make(map[string][]probEdge, len(snap.Edges))
 	for _, e := range snap.Edges {
-		p := e.ExploitProbability
-		if p <= 0 {
-			p = 0.01
-		}
-		if p > 1 {
-			p = 1
-		}
+		p := clampProb(e.ExploitProbability)
 		// Weight provenance (kev/runtime/epss/cvss/severity/heuristic): the confidence
 		// sets how much the credible band lets this edge move; the basis drives p(e|c)
 		// for the per-profile mixture - both shared with the per-path scoring.
