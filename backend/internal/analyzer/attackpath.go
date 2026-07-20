@@ -243,7 +243,7 @@ func pathsFromSeed(seed string, jewels []string, adj map[string][]outEdge, nodes
 		if !ok || math.IsInf(d, 1) {
 			continue // unreachable
 		}
-		out = append(out, reconstruct(seed, jewel, prev, adj, nodes))
+		out = append(out, reconstruct(seed, jewel, prev, nodes))
 	}
 	return out
 }
@@ -309,42 +309,66 @@ func attackPathFromRaw(rp graph.RawPath) (AttackPath, bool) {
 	if len(rp.Nodes) < 2 || len(rp.Edges) != len(rp.Nodes)-1 {
 		return AttackPath{}, false
 	}
-	score := 1.0
-	minP := 1.0 // weakest hop → the comonotonic (shared-cause) upper bound on the path
-	runtime := rp.Nodes[0].Bool(ontology.PropRuntimeAlert)
 	steps := make([]Step, 0, len(rp.Edges))
 	for i, e := range rp.Edges {
-		p := e.ExploitProbability
-		if p <= 0 {
-			p = 0.01
-		}
-		if p > 1 {
-			p = 1
-		}
+		p := clampProb(e.ExploitProbability)
 		method, conf := resolutionOf(e.Properties)
 		basis, basisConf, evid := weightBasisOf(e, rp.Nodes[i], rp.Nodes[i+1])
 		steps = append(steps, Step{EdgeType: e.Type, From: e.From, To: e.To, Probability: p, ResolutionMethod: method, ResolutionConfidence: conf, WeightBasis: basis, WeightConfidence: basisConf, EvidenceCount: evid})
-		score *= p
-		if p < minP {
-			minP = p
-		}
-		if rp.Nodes[i+1].Bool(ontology.PropRuntimeAlert) {
-			runtime = true
+	}
+	return assembleAttackPath(rp.Nodes, steps), true
+}
+
+// clampProb keeps an edge probability in the (0,1] the scoring assumes: a missing
+// or non-positive weight stays traversable but costly rather than making -ln(p)
+// infinite, and anything above 1 is a bad input, not a certainty.
+func clampProb(p float64) float64 {
+	if p <= 0 {
+		return 0.01
+	}
+	if p > 1 {
+		return 1
+	}
+	return p
+}
+
+// assembleAttackPath is the ONE place a scored AttackPath is built from its
+// ordered nodes and steps. Both entry points funnel through it - the in-process
+// Dijkstra (reconstruct) and the database pathfinder (attackPathFromRaw) - so the
+// score, the correlation bound, the confidence, the posterior and the mixture can
+// never silently drift apart between the two. Callers own only the shape-specific
+// work: turning their own representation into (nodes, steps).
+func assembleAttackPath(nodes []ontology.Node, steps []Step) AttackPath {
+	if len(nodes) == 0 {
+		return AttackPath{}
+	}
+	score := 1.0
+	minP := 1.0 // weakest hop → the comonotonic (shared-cause) upper bound on the path
+	for _, st := range steps {
+		score *= st.Probability
+		if st.Probability < minP {
+			minP = st.Probability
 		}
 	}
-	src, dst := rp.Nodes[0], rp.Nodes[len(rp.Nodes)-1]
-	pConf, pLabel := pathConfidence(steps)
-	id := fmt.Sprintf("ap-%s-%s", shortID(src.ID), shortID(dst.ID))
+	runtime := false
+	for _, n := range nodes {
+		if n.Bool(ontology.PropRuntimeAlert) {
+			runtime = true
+			break
+		}
+	}
+	conf, label := pathConfidence(steps)
+	id := fmt.Sprintf("ap-%s-%s", shortID(nodes[0].ID), shortID(nodes[len(nodes)-1].ID))
 	postMean, ciLo, ciHi := unifiedScorePosterior(id, steps, currentProfiles(), score)
 	mix, profs := attackerMixture(steps)
 	return AttackPath{
 		ID:               id,
 		Score:            score,
-		Nodes:            rp.Nodes,
+		Nodes:            nodes,
 		Steps:            steps,
 		RuntimeConfirmed: runtime,
-		Confidence:       pConf,
-		ConfidenceLabel:  pLabel,
+		Confidence:       conf,
+		ConfidenceLabel:  label,
 		ScoreUpperBound:  minP,
 		CorrelatedHops:   hopsCorrelated(steps),
 		PosteriorMean:    postMean,
@@ -352,7 +376,7 @@ func attackPathFromRaw(rp graph.RawPath) (AttackPath, bool) {
 		ScoreCIHigh:      ciHi,
 		MixtureScore:     mix,
 		ProfileScores:    profs,
-	}, true
+	}
 }
 
 // hopsCorrelated reports whether the path leans on a repeated weight basis - the
@@ -492,13 +516,7 @@ func pathConfidence(steps []Step) (float64, string) {
 func buildAdjacency(edges []ontology.Edge, nodes map[string]ontology.Node) map[string][]outEdge {
 	adj := make(map[string][]outEdge)
 	for _, e := range edges {
-		p := e.ExploitProbability
-		if p <= 0 {
-			p = 0.01 // unknown edges remain traversable but costly
-		}
-		if p > 1 {
-			p = 1
-		}
+		p := clampProb(e.ExploitProbability)
 		method, conf := resolutionOf(e.Properties)
 		basis, basisConf, evid := weightBasisOf(e, nodes[e.From], nodes[e.To])
 		adj[e.From] = append(adj[e.From], outEdge{
@@ -560,7 +578,7 @@ func dijkstra(src string, adj map[string][]outEdge) (dist map[string]float64, pr
 	return dist, prev
 }
 
-func reconstruct(seed, jewel string, prev map[string]Step, adj map[string][]outEdge, nodes map[string]ontology.Node) AttackPath {
+func reconstruct(seed, jewel string, prev map[string]Step, nodes map[string]ontology.Node) AttackPath {
 	var steps []Step
 	for at := jewel; at != seed; {
 		st := prev[at]
@@ -572,42 +590,12 @@ func reconstruct(seed, jewel string, prev map[string]Step, adj map[string][]outE
 		steps[i], steps[j] = steps[j], steps[i]
 	}
 
-	pathNodes := []ontology.Node{nodes[seed]}
-	score := 1.0
-	minP := 1.0 // weakest hop → the comonotonic (shared-cause) upper bound
-	runtimeConfirmed := nodes[seed].Bool(ontology.PropRuntimeAlert)
+	pathNodes := make([]ontology.Node, 0, len(steps)+1)
+	pathNodes = append(pathNodes, nodes[seed])
 	for _, st := range steps {
-		n := nodes[st.To]
-		pathNodes = append(pathNodes, n)
-		score *= st.Probability
-		if st.Probability < minP {
-			minP = st.Probability
-		}
-		if n.Bool(ontology.PropRuntimeAlert) {
-			runtimeConfirmed = true
-		}
+		pathNodes = append(pathNodes, nodes[st.To])
 	}
-
-	conf, label := pathConfidence(steps)
-	id := fmt.Sprintf("ap-%s-%s", shortID(seed), shortID(jewel))
-	postMean, ciLo, ciHi := unifiedScorePosterior(id, steps, currentProfiles(), score)
-	mix, profs := attackerMixture(steps)
-	return AttackPath{
-		ID:               id,
-		Score:            score,
-		Nodes:            pathNodes,
-		Steps:            steps,
-		RuntimeConfirmed: runtimeConfirmed,
-		Confidence:       conf,
-		ConfidenceLabel:  label,
-		ScoreUpperBound:  minP,
-		CorrelatedHops:   hopsCorrelated(steps),
-		PosteriorMean:    postMean,
-		ScoreCILow:       ciLo,
-		ScoreCIHigh:      ciHi,
-		MixtureScore:     mix,
-		ProfileScores:    profs,
-	}
+	return assembleAttackPath(pathNodes, steps)
 }
 
 func shortID(id string) string {

@@ -35,13 +35,7 @@ type wgraph struct {
 func newWGraph(snap graph.Snapshot) *wgraph {
 	g := &wgraph{adj: map[string]map[string]outEdge{}, nodes: snap.NodeByID()}
 	for _, e := range snap.Edges {
-		p := e.ExploitProbability
-		if p <= 0 {
-			p = 0.01
-		}
-		if p > 1 {
-			p = 1
-		}
+		p := clampProb(e.ExploitProbability)
 		basis, basisConf, evid := weightBasisOf(e, g.nodes[e.From], g.nodes[e.To])
 		oe := outEdge{to: e.To, typ: e.Type, weight: -math.Log(p), prob: p, basis: basis, basisConf: basisConf, evid: evid}
 		m := g.adj[e.From]
