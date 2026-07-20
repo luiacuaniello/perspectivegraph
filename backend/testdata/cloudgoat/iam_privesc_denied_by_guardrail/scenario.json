@@ -1,0 +1,8 @@
+{
+  "name": "iam_privesc_denied_by_guardrail",
+  "rhino_scenario": "iam_privesc_by_attachment (guardrail-Deny variant)",
+  "description": "Policy-evaluation precision regression. A seeded IAM user holds iam:AttachUserPolicy but an account-wide explicit Deny revokes it; in AWS an explicit Deny always beats an Allow, so no escalation edge and no path may form. The user IS seeded (credential lens on), so a regression to flat action-matching would immediately produce a path and drop precision below 1.0.",
+  "seed_iam_users": true,
+  "exhaustive": true,
+  "expected_paths": []
+}

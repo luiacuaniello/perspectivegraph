@@ -14,10 +14,16 @@
 // Combined with the network/topology collectors, a complete path emerges -
 // internet ─▶ instance ─▶ assumes role ─▶ CAN_ESCALATE_TO ─▶ account compromise.
 //
-// Honest simplifications (documented, not hidden): Resource scoping, Condition
-// keys, explicit Deny and NotAction are ignored, so an Allow is treated as
-// account-wide. Detection therefore over-reports rather than misses - the same
-// trade PMapper makes when it drops resource awareness for speed.
+// Policy evaluation covers the parts that are unambiguous without request
+// context: an account-wide explicit Deny beats any Allow (as AWS evaluates it),
+// and an Allow held only on specific literal resources yields a lower-probability
+// escalation edge than an account-wide one, since it depends on those targets
+// being privileged.
+//
+// Honest simplifications (documented, not hidden): Condition keys, NotAction /
+// NotResource, permission boundaries and SCPs are not evaluated, and a Deny
+// confined to specific resources is ignored. Detection therefore still errs
+// toward over-reporting rather than missing.
 package iam
 
 import (
@@ -127,6 +133,7 @@ func (d *policyDoc) UnmarshalJSON(b []byte) error {
 type statement struct {
 	Effect    string         `json:"Effect"`
 	Action    stringOrSlice  `json:"Action"`
+	Resource  stringOrSlice  `json:"Resource"`
 	Principal trustPrincipal `json:"Principal"`
 }
 
@@ -339,15 +346,47 @@ func allowedActions(docs []policyDoc) actionSet {
 	var a actionSet
 	for _, d := range docs {
 		for _, st := range d.Statement {
-			if !strings.EqualFold(st.Effect, "Allow") {
-				continue
-			}
-			for _, act := range st.Action {
-				a = a.add(act)
+			broad := resourceIsBroad(st.Resource)
+			switch {
+			case strings.EqualFold(st.Effect, "Allow"):
+				for _, act := range st.Action {
+					if broad {
+						a = a.add(act)
+					} else {
+						a = a.addScoped(act)
+					}
+				}
+			case strings.EqualFold(st.Effect, "Deny"):
+				// Only an account-wide Deny is unambiguous. A Deny confined to specific
+				// resources still leaves the action available elsewhere, so honoring it
+				// here could hide a real escalation: we keep the over-report bias.
+				if !broad {
+					continue
+				}
+				for _, act := range st.Action {
+					a = a.deny(act)
+				}
 			}
 		}
 	}
 	return a
+}
+
+// resourceIsBroad reports whether a statement's Resource covers the account at
+// large. A missing Resource is treated as broad, preserving the behaviour for
+// inputs that omit it. Any '*' wildcard counts as broad: it can still be narrower
+// than the whole account, but erring that way keeps detection over-reporting
+// rather than silently missing an escalation.
+func resourceIsBroad(rs stringOrSlice) bool {
+	if len(rs) == 0 {
+		return true
+	}
+	for _, r := range rs {
+		if strings.Contains(r, "*") {
+			return true
+		}
+	}
+	return false
 }
 
 // trustsEveryone reports whether any Allow statement lets "*" assume the role.
@@ -367,6 +406,17 @@ type builder struct {
 	edges []ontology.Edge
 }
 
+const (
+	// privescProb is the exploit probability of an escalation primitive granted
+	// account-wide: the technique is published and the permission is unrestricted.
+	privescProb = 0.9
+	// scopedPrivescProb applies when every matched primitive is held only on
+	// specific resources. The escalation is contingent on those targets being
+	// privileged, which the policy alone cannot tell us - so it stays on the graph
+	// at a materially lower probability instead of being asserted or dropped.
+	scopedPrivescProb = 0.5
+)
+
 // escalation draws the principal's edge to account-admin, if any: a direct edge
 // when it is already admin, or one labelled with the matched privesc primitives.
 func (b *builder) escalation(principalID string, actions actionSet, adminID string) {
@@ -378,10 +428,29 @@ func (b *builder) escalation(principalID string, actions actionSet, adminID stri
 			map[string]any{"reason": "already administrator-equivalent (Allow *:*)"})
 		return
 	}
-	if prims := detectPrivesc(actions); len(prims) > 0 {
-		b.edgeWith(ontology.EdgeCanEscalateTo, principalID, adminID, 0.9,
-			map[string]any{"primitives": strings.Join(prims, "; "), "primitive_count": len(prims)})
+	matches := detectPrivesc(actions)
+	if len(matches) == 0 {
+		return
 	}
+	names := make([]string, 0, len(matches))
+	scopedOnly := true
+	for _, m := range matches {
+		names = append(names, m.Name)
+		if !m.ScopedOnly {
+			scopedOnly = false
+		}
+	}
+	prob := privescProb
+	props := map[string]any{"primitives": strings.Join(names, "; "), "primitive_count": len(names)}
+	if scopedOnly {
+		// Every match rests on a resource-scoped grant, so the escalation lands only
+		// if those specific targets are themselves privileged. Report it - dropping it
+		// would miss real self-privesc - but at a probability that says so.
+		prob = scopedPrivescProb
+		props["resource_scoped"] = true
+		props["scope_note"] = "granted only on specific resources; escalation depends on those targets being privileged"
+	}
+	b.edgeWith(ontology.EdgeCanEscalateTo, principalID, adminID, prob, props)
 }
 
 func (b *builder) upsert(n ontology.Node) {

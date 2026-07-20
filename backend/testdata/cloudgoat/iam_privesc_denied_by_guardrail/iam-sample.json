@@ -1,0 +1,26 @@
+{
+  "_comment": "Policy-evaluation precision control. The user zeratul is seeded (credential-origin lens on) and holds iam:AttachUserPolicy - the exact primitive that makes iam_privesc_by_attachment escalate to admin. But an account-wide explicit Deny revokes it, and in AWS an explicit Deny always beats an Allow. The engine must therefore draw NO escalation edge and produce NO path. Drop the Deny statement and this scenario immediately yields a path, which is precisely the false positive flat action-matching produces.",
+  "UserDetailList": [
+    {
+      "UserName": "zeratul",
+      "Arn": "arn:aws:iam::111111111111:user/zeratul",
+      "GroupList": [],
+      "AttachedManagedPolicies": [],
+      "UserPolicyList": [
+        {
+          "PolicyName": "zeratul-inline",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              { "Effect": "Allow", "Action": ["iam:AttachUserPolicy", "iam:ListPolicies"], "Resource": "*" },
+              { "Effect": "Deny", "Action": "iam:AttachUserPolicy", "Resource": "*" }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "GroupDetailList": [],
+  "RoleDetailList": [],
+  "Policies": []
+}
