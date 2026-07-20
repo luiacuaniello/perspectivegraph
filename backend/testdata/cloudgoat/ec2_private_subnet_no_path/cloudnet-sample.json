@@ -1,0 +1,38 @@
+{
+  "_comment": "Reachability-precision control (a private-subnet variant of ec2_ssrf). The instance has an SG open to 0.0.0.0/0 AND an escalation-capable instance role - the exact ingredients a naive 'open SG = exposed' scanner flags as critical. But it sits in a PRIVATE subnet: its route table's default route egresses via a NAT gateway, not an internet gateway, so the internet cannot initiate a connection. The engine must therefore NOT mark it internet-exposed, and NO attack path should form. This is the classic false positive route/NACL-aware reachability eliminates.",
+  "provider": "aws",
+  "security_groups": [
+    {
+      "GroupId": "sg-private-app",
+      "GroupName": "cg-private-app-sg",
+      "IpPermissions": [
+        { "IpProtocol": "tcp", "FromPort": 80, "ToPort": 80, "IpRanges": [{ "CidrIp": "0.0.0.0/0" }] }
+      ]
+    }
+  ],
+  "instances": [
+    {
+      "InstanceId": "i-private-app",
+      "SubnetId": "subnet-private",
+      "SecurityGroups": [{ "GroupId": "sg-private-app" }],
+      "Tags": [{ "Key": "Name", "Value": "cg-private-app" }],
+      "IamInstanceProfile": { "Arn": "arn:aws:iam::111111111111:instance-profile/cg-private-profile" },
+      "MetadataOptions": { "HttpTokens": "optional" }
+    }
+  ],
+  "subnets": [
+    { "SubnetId": "subnet-private", "RouteTableId": "rtb-private", "NetworkAclId": "acl-private" }
+  ],
+  "route_tables": [
+    { "RouteTableId": "rtb-private", "Routes": [{ "DestinationCidrBlock": "0.0.0.0/0", "NatGatewayId": "nat-cg" }] }
+  ],
+  "network_acls": [
+    { "NetworkAclId": "acl-private", "Entries": [{ "RuleNumber": 100, "Egress": false, "CidrBlock": "0.0.0.0/0", "RuleAction": "allow" }] }
+  ],
+  "instance_profiles": [
+    {
+      "Arn": "arn:aws:iam::111111111111:instance-profile/cg-private-profile",
+      "Roles": [{ "Arn": "arn:aws:iam::111111111111:role/cg-private-role", "RoleName": "cg-private-role" }]
+    }
+  ]
+}

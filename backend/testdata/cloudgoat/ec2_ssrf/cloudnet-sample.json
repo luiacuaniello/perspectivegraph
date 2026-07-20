@@ -1,0 +1,38 @@
+{
+  "_comment": "Faithful model of Rhino CloudGoat 'ec2_ssrf'. An internet-facing EC2 app (SG open to 0.0.0.0/0, and reachability PROVEN: its subnet routes to an internet gateway and the NACL admits inbound) runs with IMDSv1 (HttpTokens=optional). Its instance-profile role can create/invoke Lambda while passing a role, so an SSRF that reaches IMDS mints the role's credentials and escalates to admin. The role's permissions live in iam-sample.json; the two feeds converge on the role node by ARN.",
+  "provider": "aws",
+  "security_groups": [
+    {
+      "GroupId": "sg-ssrf-app",
+      "GroupName": "cg-ssrf-app-sg",
+      "IpPermissions": [
+        { "IpProtocol": "tcp", "FromPort": 80, "ToPort": 80, "IpRanges": [{ "CidrIp": "0.0.0.0/0" }] }
+      ]
+    }
+  ],
+  "instances": [
+    {
+      "InstanceId": "i-ssrf-app",
+      "SubnetId": "subnet-public",
+      "SecurityGroups": [{ "GroupId": "sg-ssrf-app" }],
+      "Tags": [{ "Key": "Name", "Value": "cg-ec2-ssrf-app" }],
+      "IamInstanceProfile": { "Arn": "arn:aws:iam::111111111111:instance-profile/cg-ec2-ssrf-profile" },
+      "MetadataOptions": { "HttpTokens": "optional" }
+    }
+  ],
+  "subnets": [
+    { "SubnetId": "subnet-public", "RouteTableId": "rtb-public", "NetworkAclId": "acl-public" }
+  ],
+  "route_tables": [
+    { "RouteTableId": "rtb-public", "Routes": [{ "DestinationCidrBlock": "0.0.0.0/0", "GatewayId": "igw-cg" }] }
+  ],
+  "network_acls": [
+    { "NetworkAclId": "acl-public", "Entries": [{ "RuleNumber": 100, "Egress": false, "CidrBlock": "0.0.0.0/0", "RuleAction": "allow" }] }
+  ],
+  "instance_profiles": [
+    {
+      "Arn": "arn:aws:iam::111111111111:instance-profile/cg-ec2-ssrf-profile",
+      "Roles": [{ "Arn": "arn:aws:iam::111111111111:role/cg-ec2-ssrf-role", "RoleName": "cg-ec2-ssrf-role" }]
+    }
+  ]
+}
