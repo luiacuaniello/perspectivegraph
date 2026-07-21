@@ -793,6 +793,56 @@ external model is a deliberate opt-in: the feature is off until you set the key,
 and **every AI call is audited** (`ai.query` / `ai.summary` / `ai.explain`) into
 the same tamper-evident log as the rest of the read path.
 
+### MCP: let an agent query the engine
+
+The features above have the model *decorate* the engine's output. The more useful
+arrangement is the other way round - an agent that **calls** the engine - because a
+language model is weak at precisely what this engine is good at. It cannot
+enumerate fourteen thousand edges reliably, it does not run Dijkstra, and asked for
+"the attack paths in my account" it will produce plausible routes that do not
+exist. The engine is deterministic, exhaustive and reproducible.
+
+So the engine speaks [MCP](https://modelcontextprotocol.io) on stdio:
+
+```bash
+make mcp                                  # or: perspectivegraph mcp --api http://localhost:8080
+```
+
+Point any MCP client at it (Claude Desktop, Claude Code, your own agent):
+
+```json
+{"mcpServers": {"perspectivegraph": {
+  "command": "perspectivegraph",
+  "args": ["mcp", "--api", "http://localhost:8080"],
+  "env": {"API_TOKEN": "…"}}}}
+```
+
+Eight tools, ordered the way an agent should meet them - orient, enumerate,
+inspect, simulate:
+
+| tool | answers |
+|---|---|
+| `get_posture` | how many routes are open, what is runtime-confirmed, which sensitive assets are reachable |
+| `list_attack_paths` | the ranked routes, priority-first |
+| `explain_attack_path` | one route's full kill chain, per-hop probability, evidence provenance, ATT&CK technique |
+| `routes_to_target` | the k best ways to reach a named asset - and whether they share a choke point |
+| `list_fixes` | the fewest changes that remove the most risk |
+| `simulate_fix` | **what actually happens if these edges are cut** - a deterministic counterfactual, re-simulated over the real graph |
+| `search_assets` | resolve a human's word into node ids |
+| `get_score_trust` | how well the scores have matched reality, and whether they may be quoted as probabilities at all |
+
+`simulate_fix` is the one worth the integration: it settles "would this help" with a
+re-run of the whole simulation rather than an argument, which is exactly the claim a
+model should never be trusted to make up.
+
+Two deliberate constraints. The surface is **read-only** - nothing here suppresses a
+path, opens a PR or records a verdict, because an agent that can silently mark risks
+as accepted is a liability rather than a feature. And it is **honest by
+construction**: the tool descriptions tell the model, before it ever quotes a
+number, that the probabilities are expert estimates and that it should call
+`get_score_trust` first. A tool description is the one place a caveat actually
+propagates, because the model reads it every time.
+
 ### Honest probabilities: provenance, not false precision
 
 A CISO who asks "why 58%?" deserves better than "we multiplied some estimates".

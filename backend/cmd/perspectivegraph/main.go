@@ -144,6 +144,16 @@ func main() {
 		return
 	}
 
+	// MCP server: expose the engine as tools an AI agent can call (stdio JSON-RPC).
+	// stdout is the protocol channel, so this must return before any logging starts.
+	if len(os.Args) >= 2 && os.Args[1] == "mcp" {
+		if err := runMCP(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "mcp:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	// Container healthcheck: hit the API's /healthz and exit 0/1. Lets the
 	// distroless image (no shell, no curl) be probed with `perspectivegraph
 	// healthz` from a Docker HEALTHCHECK / compose healthcheck.
