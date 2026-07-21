@@ -38,6 +38,13 @@ demo: up-full
 	@echo ""
 	@echo "→ Open the dashboard: http://localhost:3000  (see the kill chain, then click 'Open fix PR')"
 	@echo "  Make the fix a REAL pull request: set GITHUB_TOKEN on a sandbox repo - see docs/MANUAL.md."
+	@echo ""
+	@echo "  The 'Trust' view reads 'insufficient data' on purpose: no outcomes have been"
+	@echo "  recorded, so the scores are estimates, and the page says so instead of inventing"
+	@echo "  a verdict. To watch the instrument work, 'make seed-validation' records SYNTHETIC"
+	@echo "  verdicts (derived from the scores, so the calibration it produces is a"
+	@echo "  demonstration, not evidence)."
+	@echo ""
 	@echo "  Tear down when done: make down"
 
 ## up-search: start infra plus the optional OpenSearch full-text index

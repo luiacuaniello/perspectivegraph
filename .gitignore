@@ -10,6 +10,8 @@ node_modules/
 /frontend/dist/
 /frontend/.vite/
 *.local
+# single-use working notes (e.g. launch drafts)
+*.local.md
 
 # TypeScript composite build outputs (emitted by `tsc -b`)
 *.tsbuildinfo
