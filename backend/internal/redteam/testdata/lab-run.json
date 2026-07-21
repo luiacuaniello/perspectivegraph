@@ -1,0 +1,8 @@
+{
+  "_comment": "Example captured lab run: the decisions a real AWS oracle recorded while attempting the paths a randomized lab produced. 'fallback' is what reality answered for any assertion not listed (here: allowed). Keys are Assertion.Key() = kind|principal|action|resource. The 'denied' entry is the honest signal - AWS blocked an escalation the engine surfaced (an SCP the engine does not evaluate), which becomes a refuted verdict in the calibration flywheel.",
+  "fallback": "allowed",
+  "decisions": {
+    "iam|role|iam:*|admin": { "decision": "denied", "evidence": "SimulatePrincipalPolicy: implicitDeny (SCP restricts iam:* in this OU)" },
+    "network|vm|tcp:connect|db": { "decision": "inconclusive", "evidence": "probe host not deployed in this lab" }
+  }
+}

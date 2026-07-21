@@ -341,6 +341,18 @@ means the score over-predicts *undetected* compromise → a detection axis (**#7
 `recalibrate-first | structural (#6) | detection-axis (#7) | low-resolution` - so you build #6/#7 only when
 real verdicts prove the simpler fixes won't do.
 
+Those real verdicts have to come from an authority *independent of the engine* - otherwise the loop is
+circular and the calibration only measures how well the engine agrees with itself. That authority is AWS.
+The red-team oracle ([`internal/redteam`](./backend/internal/redteam)) takes each surfaced path, turns
+every hop into an independently-checkable claim (`sts:AssumeRole`, `iam:SimulatePrincipalPolicy`, a TCP
+probe), and records what reality answers - so an escalation the engine surfaced but an SCP, permission
+boundary or condition key blocks comes back **refuted**, at a base rate the engine never chose. The
+harness (oracle contract + path→verdict runner + flywheel wiring) is proven end-to-end on fixtures; the
+live oracle is inert until wired to a **disposable lab account**, whose randomized environments are
+specified in [`deploy/redteam-lab`](./deploy/redteam-lab). This is the one piece of engineering that can
+move the scores from *directionally honest* to *empirically grounded* - and it needs real exploitation
+attempts, not more model code.
+
 ## Event contract
 
 Collectors emit a single normalized envelope (`ontology.Event`) onto NATS. This is the *only*
