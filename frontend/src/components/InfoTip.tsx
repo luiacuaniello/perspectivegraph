@@ -12,7 +12,7 @@ export default function InfoTip({ text, className }: Props) {
       <button
         type="button"
         aria-label={text}
-        className="grid h-3.5 w-3.5 cursor-help place-items-center rounded-full border border-slate-300 text-[8px] font-bold leading-none text-slate-400 transition hover:border-accent hover:text-accent focus:outline-none"
+        className="grid h-3.5 w-3.5 cursor-help place-items-center rounded-full border border-slate-300 text-[8px] font-bold leading-none text-slate-400 transition hover:border-accent hover:text-accent focus:outline-hidden"
       >
         i
       </button>

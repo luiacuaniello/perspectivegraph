@@ -58,7 +58,7 @@ export default function Legend() {
           </Row>
           <Row
             badge={
-              <span className="inline-flex items-center gap-1 rounded bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent">
+              <span className="inline-flex items-center gap-1 rounded-sm bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent">
                 <CrosshairIcon className="h-3 w-3" />
                 T1190 · Initial Access
               </span>

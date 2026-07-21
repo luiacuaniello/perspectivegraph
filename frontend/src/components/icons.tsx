@@ -1,6 +1,6 @@
 // Inline SVG icon set, Feather/Lucide style (ISC/MIT-licensed path data).
 // All icons inherit currentColor and size via className (e.g. "h-4 w-4").
-import type { ReactNode, SVGProps } from "react";
+import type { ReactElement, ReactNode, SVGProps } from "react";
 
 type IconProps = SVGProps<SVGSVGElement>;
 
@@ -282,7 +282,7 @@ export const WrenchIcon = make(
 );
 
 // AssetIcon renders the icon for an ontology node label.
-const ASSET_ICONS: Record<string, (props: IconProps) => JSX.Element> = {
+const ASSET_ICONS: Record<string, (props: IconProps) => ReactElement> = {
   LoadBalancer: NetworkIcon,
   VirtualMachine: ServerIcon,
   Container: BoxIcon,

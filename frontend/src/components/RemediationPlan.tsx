@@ -23,7 +23,7 @@ function FixRow({ fix, rank, cumulative }: { fix: Fix; rank: number; cumulative:
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="shrink-0 rounded border border-edge bg-ink px-2 py-0.5 font-mono text-[10px] text-slate-500">
+            <span className="shrink-0 rounded-sm border border-edge bg-ink px-2 py-0.5 font-mono text-[10px] text-slate-500">
               {fix.kind}
             </span>
             <span className="truncate text-sm font-medium text-slate-800">{fix.title}</span>
@@ -36,7 +36,7 @@ function FixRow({ fix, rank, cumulative }: { fix: Fix; rank: number; cumulative:
             {fix.verification &&
               (fix.verification.verified ? (
                 <span
-                  className="inline-flex items-center gap-1 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700"
+                  className="inline-flex items-center gap-1 rounded-sm bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700"
                   title="Independently simulated (what-if): removing this edge actually removes the paths and drops the risk."
                 >
                   <CheckIcon className="h-3 w-3" /> verified · removes {fix.verification.pathsEliminated} path
@@ -47,7 +47,7 @@ function FixRow({ fix, rank, cumulative }: { fix: Fix; rank: number; cumulative:
                 </span>
               ) : (
                 <span
-                  className="inline-flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-700"
+                  className="inline-flex items-center gap-1 rounded-sm bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-700"
                   title="Simulating this fix did not measurably reduce paths/risk - review before applying."
                 >
                   <AlertTriangleIcon className="h-3 w-3" /> unverified
@@ -101,7 +101,7 @@ export default function RemediationPlan({
 }) {
   if (pathCount === 0) {
     return (
-      <div className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/[0.06] p-5 text-sm text-emerald-700">
+      <div className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/6 p-5 text-sm text-emerald-700">
         <CheckIcon className="h-4 w-4 shrink-0" />
         No critical attack paths - nothing to remediate.
       </div>
@@ -155,7 +155,7 @@ export default function RemediationPlan({
       )}
 
       {plan.length === 0 && (
-        <div className="flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] p-4 text-xs text-amber-700">
+        <div className="flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/6 p-4 text-xs text-amber-700">
           <WrenchIcon className="h-4 w-4 shrink-0" />
           No automated remediation matched these paths - they need manual review.
         </div>

@@ -133,7 +133,7 @@ export default function LoginGate({ children }: { children: ReactNode }) {
           }}
           onKeyDown={(e) => e.key === "Enter" && submitToken()}
           placeholder="Bearer token"
-          className="mt-1 w-full rounded-lg border border-edge bg-ink px-3 py-2 text-sm text-slate-800 outline-none focus:border-accent"
+          className="mt-1 w-full rounded-lg border border-edge bg-ink px-3 py-2 text-sm text-slate-800 outline-hidden focus:border-accent"
           autoFocus={!ssoAvailable}
         />
         {error && <p className="mt-2 text-[12px] text-red-600">{error}</p>}

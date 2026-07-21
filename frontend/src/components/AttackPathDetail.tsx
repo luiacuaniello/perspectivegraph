@@ -58,7 +58,7 @@ const TTL_OPTIONS = [
 ];
 
 const fieldClass =
-  "rounded-md border border-edge bg-panel px-2 py-1.5 text-[12px] text-slate-700 outline-none focus:border-accent";
+  "rounded-md border border-edge bg-panel px-2 py-1.5 text-[12px] text-slate-700 outline-hidden focus:border-accent";
 
 // TriageControl is the suppression loop: record a triage decision (reason +
 // accountable owner + optional expiry) that takes this path off the active board,
@@ -520,7 +520,7 @@ function ArtifactCard({ r, tone = "emerald" }: { r: Artifact; tone?: "emerald" |
     <div className="overflow-hidden rounded-xl border border-edge bg-panel shadow-card">
       <div className="flex items-center justify-between gap-3 border-b border-edge px-4 py-2.5">
         <div className="flex min-w-0 items-center gap-2.5">
-          <span className={`shrink-0 rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${badge}`}>{r.kind}</span>
+          <span className={`shrink-0 rounded-sm px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${badge}`}>{r.kind}</span>
           <span className="truncate text-sm font-medium text-slate-800">{r.title}</span>
         </div>
         <Button variant="secondary" onClick={copy} icon={copied ? <CheckIcon className="h-3.5 w-3.5" /> : undefined}>
@@ -741,7 +741,7 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
         </h3>
 
         {whatIf && (
-          <div className="mb-3 rounded-lg border border-accent/30 bg-accent/[0.06] px-3.5 py-2.5 text-[12px] text-slate-700">
+          <div className="mb-3 rounded-lg border border-accent/30 bg-accent/6 px-3.5 py-2.5 text-[12px] text-slate-700">
             <div className="font-medium text-slate-800">
               What-if · cut <span className="font-mono text-[11px]">{whatIf.step.edgeType}</span> ({nameOf(whatIf.step.from)} → {nameOf(whatIf.step.to)})
             </div>
@@ -786,14 +786,14 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
               </div>
               {i < path.steps.length && (
                 <div className="group/step my-1 ml-4 flex items-center gap-2 border-l border-dashed border-edge py-1.5 pl-5">
-                  <span className="rounded bg-slate-500/10 px-2 py-0.5 font-mono text-[10px] text-slate-500">{path.steps[i].edgeType}</span>
+                  <span className="rounded-sm bg-slate-500/10 px-2 py-0.5 font-mono text-[10px] text-slate-500">{path.steps[i].edgeType}</span>
                   <span className="text-[10px] tabular-nums text-slate-400">p = {path.steps[i].probability.toFixed(2)}</span>
                   {path.steps[i].attack && (
                     <a
                       href={path.steps[i].attack!.url}
                       target="_blank"
                       rel="noreferrer"
-                      className="inline-flex items-center gap-1 rounded bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent transition hover:bg-accent/20"
+                      className="inline-flex items-center gap-1 rounded-sm bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent transition hover:bg-accent/20"
                       title={`MITRE ATT&CK ${path.steps[i].attack!.id} - ${path.steps[i].attack!.name} · tactic: ${path.steps[i].attack!.tactic}`}
                     >
                       <CrosshairIcon className="h-3 w-3" />
@@ -814,7 +814,7 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
                   <button
                     onClick={() => simulateCut(path.steps[i])}
                     disabled={cutting !== null}
-                    className="ml-1 inline-flex items-center gap-1 rounded border border-edge px-1.5 py-0.5 text-[10px] text-slate-400 opacity-0 transition hover:border-accent/50 hover:text-accent focus-visible:opacity-100 group-hover/step:opacity-100 disabled:opacity-40"
+                    className="ml-1 inline-flex items-center gap-1 rounded-sm border border-edge px-1.5 py-0.5 text-[10px] text-slate-400 opacity-0 transition hover:border-accent/50 hover:text-accent focus-visible:opacity-100 group-hover/step:opacity-100 disabled:opacity-40"
                     title="Simulate cutting this edge and see the residual risk"
                   >
                     {cutting === `${path.steps[i].from}->${path.steps[i].to}` ? (

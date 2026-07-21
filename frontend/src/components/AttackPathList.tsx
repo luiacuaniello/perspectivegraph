@@ -48,7 +48,7 @@ export default function AttackPathList({ paths, selectedId, onSelect }: Props) {
             onClick={() => onSelect(p)}
             className={`group rounded-xl border p-3.5 text-left transition ${
               selected
-                ? "border-accent/70 bg-accent/[0.06] shadow-lift"
+                ? "border-accent/70 bg-accent/6 shadow-lift"
                 : "border-edge bg-panel hover:border-accent/40 hover:shadow-card"
             } ${p.suppressed ? "opacity-60" : ""}`}
           >

@@ -85,7 +85,7 @@ export default function SearchView({ enabled = true }: { enabled?: boolean }) {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search assets & findings - try “log4j”, “PII”, “secret”, a CVE id…"
-          className="w-full rounded-xl border border-edge bg-panel shadow-card py-3 pl-10 pr-4 text-sm text-slate-800 placeholder:text-slate-400 outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/15"
+          className="w-full rounded-xl border border-edge bg-panel shadow-card py-3 pl-10 pr-4 text-sm text-slate-800 placeholder:text-slate-400 outline-hidden transition focus:border-accent focus:ring-2 focus:ring-accent/15"
         />
         {busy && (
           <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[11px] text-slate-500">
