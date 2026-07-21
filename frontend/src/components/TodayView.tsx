@@ -187,7 +187,6 @@ function FixRow({ fix, rank }: { fix: Fix; rank: number }) {
         <div className="truncate text-[13px] font-medium text-slate-900">{fix.title}</div>
         <div className="mt-0.5 truncate text-[11px] text-muted">
           {fix.kind} · cuts {fix.pathCount} route{fix.pathCount === 1 ? "" : "s"}
-          {fix.verification?.verified ? " · verified by simulation" : ""}
         </div>
       </div>
       <div className="shrink-0 text-right">
