@@ -265,7 +265,7 @@ export default function App() {
                     setApp(e.target.value);
                     setSelectedPathId(null);
                   }}
-                  className="rounded-lg border border-edge bg-panel shadow-card px-2.5 py-1.5 text-xs text-slate-700 outline-none focus:border-accent"
+                  className="rounded-lg border border-edge bg-panel shadow-card px-2.5 py-1.5 text-xs text-slate-700 outline-hidden focus:border-accent"
                 >
                   <option value="">All applications</option>
                   {data.applications.map((a) => (
@@ -318,7 +318,7 @@ export default function App() {
                 {data.remediationPlan.length > 0 && (
                   <button
                     onClick={() => setView("plan")}
-                    className="flex items-center justify-between rounded-xl border border-accent/30 bg-accent/[0.06] px-4 py-3 text-left transition hover:border-accent/60"
+                    className="flex items-center justify-between rounded-xl border border-accent/30 bg-accent/6 px-4 py-3 text-left transition hover:border-accent/60"
                   >
                     <span className="text-sm text-slate-700">
                       <span className="font-semibold text-accent">
@@ -411,7 +411,7 @@ export default function App() {
                     id="path-select"
                     value={selected?.id ?? ""}
                     onChange={(e) => setSelectedPathId(e.target.value || null)}
-                    className="w-full max-w-md rounded-lg border border-edge bg-panel shadow-card px-3 py-1.5 text-xs text-slate-700 outline-none focus:border-accent focus:ring-2 focus:ring-accent/15 sm:w-auto"
+                    className="w-full max-w-md rounded-lg border border-edge bg-panel shadow-card px-3 py-1.5 text-xs text-slate-700 outline-hidden focus:border-accent focus:ring-2 focus:ring-accent/15 sm:w-auto"
                   >
                     {data.attackPaths.map((p) => (
                       <option key={p.id} value={p.id}>

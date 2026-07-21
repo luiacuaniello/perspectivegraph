@@ -1,3 +1,4 @@
+import type { ReactElement } from "react";
 import { Logo, TargetIcon, XIcon } from "./icons";
 
 export type View = "overview" | "paths" | "plan" | "graph" | "violations" | "search" | "assistant";
@@ -5,7 +6,7 @@ export type View = "overview" | "paths" | "plan" | "graph" | "violations" | "sea
 interface Item {
   view: View;
   label: string;
-  icon: JSX.Element;
+  icon: ReactElement;
   badge?: number;
   badgeTone?: "danger" | "warn";
 }
@@ -150,7 +151,7 @@ export default function Sidebar({
               }}
               className={`group flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium transition ${
                 active
-                  ? "bg-accent-soft text-accent shadow-[inset_2px_0_0_0_theme(colors.accent)]"
+                  ? "bg-accent-soft text-accent shadow-[inset_2px_0_0_0_var(--color-accent)]"
                   : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"
               }`}
             >

@@ -309,7 +309,7 @@ export default function GraphCanvas({ nodes, edges, highlightNodes, highlightEdg
       />
 
       {/* Zoom / fit controls */}
-      <div className="absolute right-3 top-3 flex flex-col overflow-hidden rounded-lg border border-edge bg-panel/95 shadow-card backdrop-blur">
+      <div className="absolute right-3 top-3 flex flex-col overflow-hidden rounded-lg border border-edge bg-panel/95 shadow-card backdrop-blur-sm">
         <GraphControl onClick={() => zoomBy(1.25)} title="Zoom in" label="Zoom in">
           <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round">
             <path d="M10 5v10M5 10h10" />
@@ -326,7 +326,7 @@ export default function GraphCanvas({ nodes, edges, highlightNodes, highlightEdg
           </svg>
         </GraphControl>
       </div>
-      <div className="pointer-events-none absolute bottom-3 left-3 rounded-lg border border-edge bg-panel/90 px-2.5 py-2 text-[10px] text-slate-500 shadow-card backdrop-blur">
+      <div className="pointer-events-none absolute bottom-3 left-3 rounded-lg border border-edge bg-panel/90 px-2.5 py-2 text-[10px] text-slate-500 shadow-card backdrop-blur-sm">
         <div className="grid grid-cols-2 gap-x-3 gap-y-1">
           {(Object.keys(CATEGORY_STYLE) as Category[]).map((cat) => (
             <span key={cat} className="flex items-center gap-1.5">

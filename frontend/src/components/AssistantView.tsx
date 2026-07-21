@@ -76,7 +76,7 @@ export default function AssistantView() {
             onChange={(e) => setQuestion(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && ask()}
             placeholder="Ask a question about the graph…"
-            className="min-w-[16rem] flex-1 rounded-lg border border-edge bg-ink px-3 py-2 text-sm text-slate-800 outline-none focus:border-accent"
+            className="min-w-[16rem] flex-1 rounded-lg border border-edge bg-ink px-3 py-2 text-sm text-slate-800 outline-hidden focus:border-accent"
           />
           <button
             onClick={ask}

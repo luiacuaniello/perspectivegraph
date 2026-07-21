@@ -53,7 +53,7 @@ function FlowChip({
 
 export default function IntroBanner({ onDismiss }: { onDismiss: () => void }) {
   return (
-    <section className="relative shrink-0 rounded-xl border border-accent/25 bg-gradient-to-br from-accent/[0.07] to-accent/[0.02] p-5">
+    <section className="relative shrink-0 rounded-xl border border-accent/25 bg-linear-to-br from-accent/[0.07] to-accent/2 p-5">
       <button
         onClick={onDismiss}
         aria-label="Dismiss"
