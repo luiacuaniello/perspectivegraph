@@ -1,11 +1,10 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { exportUrl, fetchDashboard, fetchHistory, fetchStatus, type Dashboard, type History } from "./api/client";
 import Sidebar, { type View } from "./components/Sidebar";
-import PostureOverview from "./components/PostureOverview";
 import AttackPathList from "./components/AttackPathList";
+import TodayView from "./components/TodayView";
+import TrustView from "./components/TrustView";
 import AttackPathDetail from "./components/AttackPathDetail";
-import RemediationPlan from "./components/RemediationPlan";
-import ViolationList from "./components/ViolationList";
 // Code-split: GraphCanvas pulls in Cytoscape (the heaviest dependency), so it loads
 // lazily only when the Graph view is opened - keeping the initial bundle small.
 const GraphCanvas = lazy(() => import("./components/GraphCanvas"));
@@ -13,7 +12,6 @@ import SearchView from "./components/SearchView";
 import AssistantView from "./components/AssistantView";
 import IntroBanner, { useIntroDismissed } from "./components/IntroBanner";
 import EmptyState from "./components/EmptyState";
-import Legend from "./components/Legend";
 import Button from "./components/ui/Button";
 import DashboardSkeleton from "./components/DashboardSkeleton";
 import ThemeToggle from "./components/ThemeToggle";
@@ -22,38 +20,36 @@ import { hasRuntimeToken, signOut } from "./api/client";
 
 const POLL_MS = 5000;
 
-const VIEWS: View[] = ["overview", "paths", "plan", "graph", "violations", "search", "assistant"];
+const VIEWS: View[] = ["today", "paths", "trust", "assistant"];
 
-// Deep-linkable views: #paths, #graph, … open the app on that section.
+// Deep-linkable views: #paths, #trust, … open the app on that section. The old
+// hashes still resolve so existing links and bookmarks don't break.
+const LEGACY_VIEWS: Record<string, View> = {
+  overview: "today",
+  plan: "today",
+  violations: "today",
+  graph: "paths",
+  search: "paths",
+};
+
 function viewFromHash(): View {
-  const h = window.location.hash.slice(1) as View;
-  return VIEWS.includes(h) ? h : "overview";
+  const h = window.location.hash.slice(1);
+  if (VIEWS.includes(h as View)) return h as View;
+  return LEGACY_VIEWS[h] ?? "today";
 }
 
 const VIEW_META: Record<View, { title: string; subtitle: string }> = {
-  overview: {
-    title: "Security posture",
-    subtitle: "Reachable routes from internet exposure to your sensitive assets.",
+  today: {
+    title: "Today",
+    subtitle: "What is exploitable right now, and the fewest changes that fix it.",
   },
   paths: {
     title: "Attack paths",
     subtitle: "Ranked end-to-end routes from internet exposure to sensitive assets.",
   },
-  plan: {
-    title: "Remediation plan",
-    subtitle: "The fewest fixes that eliminate the most critical-path risk - choke points first.",
-  },
-  graph: {
-    title: "Environment graph",
-    subtitle: "Every asset, identity and finding as one connected map.",
-  },
-  violations: {
-    title: "Policy violations",
-    subtitle: "Architectural invariants the current environment breaks.",
-  },
-  search: {
-    title: "Search",
-    subtitle: "Full-text search across every indexed asset and finding (OpenSearch).",
+  trust: {
+    title: "Trust",
+    subtitle: "How well the engine's probabilities match what actually happened.",
   },
   assistant: {
     title: "AI assistant",
@@ -72,6 +68,10 @@ export default function App() {
   const [pruned, setPruned] = useState<{ nodes: number; edges: number } | null>(null);
   const [history, setHistory] = useState<History | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Search is a palette, not a page; the graph is a lens on the selected path,
+  // not a destination you navigate away to.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [graphOpen, setGraphOpen] = useState(false);
   // Triage: hide suppressed paths by default; bump reloadKey to refetch after a
   // suppress / un-suppress so the board reflects the decision immediately.
   const [showSuppressed, setShowSuppressed] = useState(false);
@@ -83,6 +83,22 @@ export default function App() {
     setViewState(v);
     window.location.hash = v;
   };
+
+  // Command palette shortcuts. Search moved off the nav and onto the keyboard, so
+  // it has to answer to the chord people already try (⌘K / Ctrl-K) and close on
+  // escape like every other palette they use.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearchOpen((v) => !v);
+      } else if (e.key === "Escape") {
+        setSearchOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -175,8 +191,8 @@ export default function App() {
       <Sidebar
         view={view}
         onNavigate={setView}
-        pathCount={data?.attackPaths.length ?? 0}
-        violationCount={data?.posture.policyViolations ?? 0}
+        pathCount={data?.posture.activePaths ?? 0}
+        onOpenSearch={data?.searchEnabled ? () => setSearchOpen(true) : undefined}
         live={!error}
         analyzedAt={analyzedAt}
         pruned={pruned}
@@ -224,7 +240,7 @@ export default function App() {
                 Sign out
               </Button>
             )}
-            {view === "overview" && intro.dismissed && (
+            {view === "today" && intro.dismissed && (
               <Button variant="secondary" size="md" onClick={intro.reopen} icon={<InfoIcon className="h-4 w-4" />}>
                 How to read this
               </Button>
@@ -293,71 +309,21 @@ export default function App() {
 
         {data && data.posture.nodes > 0 && (
           <div className="min-h-0 flex-1 px-4 pb-6 sm:px-8">
-            {view === "overview" && (
+            {view === "today" && (
               <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto pr-1">
                 {!intro.dismissed && <IntroBanner onDismiss={intro.dismiss} />}
-                <PostureOverview posture={data.posture} risk={data.riskSimulation} history={history ?? undefined} validation={data.validation} calibration={data.calibration} calibrationTrend={data.calibrationTrend} />
-
-                {data.invariantViolations.length > 0 && (
-                  <button
-                    onClick={() => setView("violations")}
-                    className="flex items-center justify-between rounded-xl border border-amber-500/30 bg-amber-500/[0.07] px-4 py-3 text-left transition hover:border-amber-500/60"
-                  >
-                    <span className="text-sm text-amber-700">
-                      <span className="font-semibold">{data.invariantViolations.length} policy invariant
-                      {data.invariantViolations.length === 1 ? "" : "s"} violated</span>
-                      <span className="text-amber-700/70">
-                        {" "}
-                        - {[...new Set(data.invariantViolations.map((v) => v.invariantId))].join(", ")}
-                      </span>
-                    </span>
-                    <span className="text-xs text-amber-700/80">review →</span>
-                  </button>
-                )}
-
-                {data.remediationPlan.length > 0 && (
-                  <button
-                    onClick={() => setView("plan")}
-                    className="flex items-center justify-between rounded-xl border border-accent/30 bg-accent/6 px-4 py-3 text-left transition hover:border-accent/60"
-                  >
-                    <span className="text-sm text-slate-700">
-                      <span className="font-semibold text-accent">
-                        {data.remediationPlan.length} fix
-                        {data.remediationPlan.length === 1 ? "" : "es"}
-                      </span>{" "}
-                      eliminate{" "}
-                      <span className="font-semibold">
-                        {(
-                          data.remediationPlan.reduce((a, f) => a + f.coveragePct, 0) * 100
-                        ).toFixed(0)}
-                        %
-                      </span>{" "}
-                      of critical-path risk
-                    </span>
-                    <span className="text-xs text-slate-500">see plan →</span>
-                  </button>
-                )}
-
-                <section>
-                  <div className="mb-2 flex items-baseline justify-between">
-                    <h2 className="text-[13px] font-medium text-slate-700">
-                      Top attack paths
-                    </h2>
-                    <button
-                      onClick={() => setView("paths")}
-                      className="text-xs text-slate-500 transition hover:text-slate-600"
-                    >
-                      view all ({data.attackPaths.length}) →
-                    </button>
-                  </div>
-                  <AttackPathList
-                    paths={data.attackPaths.slice(0, 3)}
-                    selectedId={null}
-                    onSelect={(p) => openPath(p.id)}
-                  />
-                </section>
-
-                <Legend />
+                <TodayView
+                  posture={data.posture}
+                  risk={data.riskSimulation}
+                  paths={data.attackPaths}
+                  plan={data.remediationPlan}
+                  violations={data.invariantViolations}
+                  calibration={data.calibration}
+                  history={history ?? undefined}
+                  onOpenPath={openPath}
+                  onSeeAllPaths={() => setView("paths")}
+                  onOpenTrust={() => setView("trust")}
+                />
               </div>
             )}
 
@@ -384,10 +350,33 @@ export default function App() {
                   />
                 </div>
                 <div className="min-h-0 lg:col-span-8 lg:overflow-y-auto lg:pr-1">
-                  {selected ? (
+                  {selected && graphOpen ? (
+                    // The graph earns its weight only as a lens on a route you have
+                    // already chosen - never as a hairball you land on.
+                    <div className="flex h-full min-h-0 flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <span className="truncate text-[12px] text-muted">
+                          {selected.nodes[0]?.name} → {selected.nodes[selected.nodes.length - 1]?.name} in context
+                        </span>
+                        <Button variant="secondary" size="sm" onClick={() => setGraphOpen(false)}>
+                          Back to detail
+                        </Button>
+                      </div>
+                      <div className="min-h-[24rem] flex-1">
+                        <Suspense fallback={<div className="grid h-full place-items-center text-xs text-muted">Loading graph…</div>}>
+                          <GraphCanvas
+                            nodes={data.graph.nodes}
+                            edges={data.graph.edges}
+                            highlightNodes={highlightNodes}
+                            highlightEdges={highlightEdges}
+                          />
+                        </Suspense>
+                      </div>
+                    </div>
+                  ) : selected ? (
                     <AttackPathDetail
                       path={selected}
-                      onShowInGraph={() => setView("graph")}
+                      onShowInGraph={() => setGraphOpen(true)}
                       onTriaged={reload}
                       aiEnabled={data.aiEnabled}
                     />
@@ -401,59 +390,39 @@ export default function App() {
               </div>
             )}
 
-            {view === "graph" && (
-              <div className="flex h-full min-h-0 flex-col gap-3">
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-                  <label className="text-xs font-medium text-muted" htmlFor="path-select">
-                    Highlight path
-                  </label>
-                  <select
-                    id="path-select"
-                    value={selected?.id ?? ""}
-                    onChange={(e) => setSelectedPathId(e.target.value || null)}
-                    className="w-full max-w-md rounded-lg border border-edge bg-panel shadow-card px-3 py-1.5 text-xs text-slate-700 outline-hidden focus:border-accent focus:ring-2 focus:ring-accent/15 sm:w-auto"
-                  >
-                    {data.attackPaths.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.nodes[0]?.name} → {p.nodes[p.nodes.length - 1]?.name} (
-                        {(p.score * 100).toFixed(0)}%{p.runtimeConfirmed ? " · runtime" : ""})
-                      </option>
-                    ))}
-                  </select>
-                  <span className="text-[11px] text-slate-400">
-                    The graph centers on the selected route · use the controls (top-right) to zoom &amp; fit.
-                  </span>
-                </div>
-                <div className="min-h-0 flex-1">
-                  <Suspense fallback={<div className="grid h-full place-items-center text-xs text-muted">Loading graph…</div>}>
-                    <GraphCanvas
-                      nodes={data.graph.nodes}
-                      edges={data.graph.edges}
-                      highlightNodes={highlightNodes}
-                      highlightEdges={highlightEdges}
-                    />
-                  </Suspense>
-                </div>
-              </div>
-            )}
-
-            {view === "plan" && (
+            {view === "trust" && (
               <div className="h-full min-h-0 overflow-y-auto pr-1">
-                <RemediationPlan plan={data.remediationPlan} pathCount={data.attackPaths.length} />
+                <TrustView
+                  calibration={data.calibration}
+                  trend={data.calibrationTrend}
+                  validation={data.validation}
+                  risk={data.riskSimulation}
+                />
               </div>
             )}
 
-            {view === "violations" && (
-              <div className="h-full min-h-0 overflow-y-auto pr-1">
-                <ViolationList violations={data.invariantViolations} />
-              </div>
-            )}
-
-            {view === "search" && <SearchView enabled={data.searchEnabled} />}
             {view === "assistant" && <AssistantView />}
           </div>
         )}
       </main>
+
+      {searchOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 px-4 pt-[12vh]"
+          onClick={() => setSearchOpen(false)}
+        >
+          <div
+            className="w-full max-w-2xl rounded-2xl border border-edge bg-panel p-4 shadow-lift"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <span className="text-[12px] text-muted">Search assets and findings</span>
+              <kbd className="rounded border border-edge px-1.5 py-0.5 text-[10px] text-slate-400">esc</kbd>
+            </div>
+            <SearchView enabled={data?.searchEnabled ?? false} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

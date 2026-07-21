@@ -1,7 +1,19 @@
 import type { ReactElement } from "react";
-import { Logo, TargetIcon, XIcon } from "./icons";
+import { Logo, XIcon } from "./icons";
 
-export type View = "overview" | "paths" | "plan" | "graph" | "violations" | "search" | "assistant";
+// The dashboard has three destinations, not seven. The old nav mirrored the
+// engine's modules (overview / paths / plan / graph / violations / search), which
+// made the reader assemble the story themselves. These three follow the actual
+// job: decide what to do, inspect the evidence, judge whether to trust it.
+//
+//   today - the decision surface: what is being exploited, what to fix, what moved
+//   paths - the evidence: every route, searchable and inspectable
+//   trust - the differentiator: calibration, validation, how honest the scores are
+//
+// Remediation and violations fold into `today` as the actions and signals they
+// are; the graph is reached from a path (where it has context) rather than as a
+// destination; search is the command palette.
+export type View = "today" | "paths" | "trust" | "assistant";
 
 interface Item {
   view: View;
@@ -15,7 +27,8 @@ interface Props {
   view: View;
   onNavigate: (v: View) => void;
   pathCount: number;
-  violationCount: number;
+  // Opens the command palette (search is no longer a destination).
+  onOpenSearch?: () => void;
   live: boolean;
   analyzedAt?: string | null;
   // Staleness pruning totals (omitted/zero when GRAPH_TTL pruning is off).
@@ -50,12 +63,15 @@ const stroke = {
 } as const;
 
 const icons = {
-  overview: (
+  today: (
     <svg viewBox="0 0 20 20" className="h-4 w-4" {...stroke}>
-      <rect x="3" y="3" width="6" height="6" rx="1" />
-      <rect x="11" y="3" width="6" height="6" rx="1" />
-      <rect x="3" y="11" width="6" height="6" rx="1" />
-      <rect x="11" y="11" width="6" height="6" rx="1" />
+      <path d="M3 10.5 L7 10.5 L9 5.5 L11.5 14.5 L13.5 10.5 L17 10.5" />
+    </svg>
+  ),
+  trust: (
+    <svg viewBox="0 0 20 20" className="h-4 w-4" {...stroke}>
+      <path d="M10 2.5 L16.5 5 V10 C16.5 14 13.5 16.5 10 17.5 C6.5 16.5 3.5 14 3.5 10 V5 Z" />
+      <path d="M7.2 10 L9.2 12 L13 8" />
     </svg>
   ),
   paths: (
@@ -63,20 +79,6 @@ const icons = {
       <circle cx="4.5" cy="15.5" r="1.8" />
       <circle cx="15.5" cy="4.5" r="1.8" />
       <path d="M6 14.2 C 10 11, 10 9, 14.2 5.8" />
-    </svg>
-  ),
-  graph: (
-    <svg viewBox="0 0 20 20" className="h-4 w-4" {...stroke}>
-      <circle cx="10" cy="4" r="1.8" />
-      <circle cx="4.5" cy="14" r="1.8" />
-      <circle cx="15.5" cy="14" r="1.8" />
-      <path d="M9 5.5 L5.5 12.5 M11 5.5 L14.5 12.5 M6.5 14 L13.5 14" />
-    </svg>
-  ),
-  violations: (
-    <svg viewBox="0 0 20 20" className="h-4 w-4" {...stroke}>
-      <path d="M10 2.5 L16.5 5 V10 C16.5 14 13.5 16.5 10 17.5 C6.5 16.5 3.5 14 3.5 10 V5 Z" />
-      <path d="M10 7 V11 M10 13.5 V13.6" />
     </svg>
   ),
   search: (
@@ -97,7 +99,7 @@ export default function Sidebar({
   view,
   onNavigate,
   pathCount,
-  violationCount,
+  onOpenSearch,
   live,
   analyzedAt,
   pruned,
@@ -107,12 +109,9 @@ export default function Sidebar({
   showPlayground = true,
 }: Props) {
   const items: Item[] = [
-    { view: "overview", label: "Overview", icon: icons.overview },
+    { view: "today", label: "Today", icon: icons.today },
     { view: "paths", label: "Attack paths", icon: icons.paths, badge: pathCount, badgeTone: "danger" },
-    { view: "plan", label: "Remediation", icon: <TargetIcon className="h-4 w-4" /> },
-    { view: "graph", label: "Graph", icon: icons.graph },
-    { view: "violations", label: "Violations", icon: icons.violations, badge: violationCount, badgeTone: "warn" },
-    { view: "search", label: "Search", icon: icons.search },
+    { view: "trust", label: "Trust", icon: icons.trust },
     ...(aiEnabled ? [{ view: "assistant" as const, label: "AI assistant", icon: icons.assistant }] : []),
   ];
 
@@ -174,6 +173,25 @@ export default function Sidebar({
           );
         })}
       </nav>
+
+      {onOpenSearch && (
+        // Search is a verb, not a place: it belongs on the keyboard, next to
+        // whatever you are already looking at, rather than as a destination you
+        // navigate away to.
+        <div className="px-3 pt-3">
+          <button
+            onClick={() => {
+              onOpenSearch();
+              onClose?.();
+            }}
+            className="flex w-full items-center gap-2.5 rounded-lg border border-edge px-3 py-2 text-[12px] text-slate-500 transition hover:border-accent/50 hover:text-slate-700"
+          >
+            <span className="text-slate-400">{icons.search}</span>
+            <span className="flex-1 text-left">Search assets</span>
+            <kbd className="rounded border border-edge px-1.5 py-0.5 text-[10px] tabular-nums text-slate-400">⌘K</kbd>
+          </button>
+        </div>
+      )}
 
       <div className="mt-auto px-5 pb-5">
         {showPlayground && (
