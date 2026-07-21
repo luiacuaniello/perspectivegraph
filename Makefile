@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help up up-full demo up-search down logs run-backend build-backend test bench bench-cloudgoat tidy run-frontend install-frontend seed seed-discovery seed-load clean
+.PHONY: help up up-full demo up-search down logs run-backend build-backend test bench bench-cloudgoat mcp tidy run-frontend install-frontend seed seed-discovery seed-load clean
 
 # CGO is disabled so the Go binaries link statically (Go's pure-Go DNS resolver
 # instead of the system one). This also sidesteps a macOS system-linker bug on
@@ -71,6 +71,10 @@ test:
 ## bench: run the analyzer scaling benchmarks (pathfinding cost + parallel speedup)
 bench:
 	cd backend && $(GO) test ./internal/analyzer -run '^$$' -bench 'BenchmarkFindCriticalPaths|BenchmarkPathfindWorkers' -benchmem
+
+## mcp: serve the engine as MCP tools on stdio, so an AI agent can query it (point an MCP client at this command). Needs the stack up.
+mcp:
+	cd backend && $(GO) run ./cmd/perspectivegraph mcp --api $(or $(API),http://localhost:8080)
 
 ## bench-cloudgoat: grade the attack-path engine against CloudGoat-shaped ground-truth scenarios (precision/recall). Runs in CI under `make test`; this target prints the per-scenario table. Add scenarios under backend/testdata/cloudgoat (see its README).
 bench-cloudgoat:
