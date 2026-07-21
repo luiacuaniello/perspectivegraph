@@ -8,13 +8,17 @@ on:
   push:
     branches: [main]
 
-permissions:
-  contents: write
-  pull-requests: write
+# No ambient permissions: a job gets exactly what it needs and nothing else, so a
+# compromised action in one step cannot reach the token rights of another. This
+# mirrors publish-images.yml, which already starts from nothing.
+permissions: {}
 
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release commit and tag
+      pull-requests: write # open and update the release PR
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}

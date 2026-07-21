@@ -124,10 +124,12 @@ jobs:
         run: |
           docker build -t perspectivegraph-backend:ci backend
           docker build -t perspectivegraph-dashboard:ci frontend
-      - name: Install Trivy
-        run: |
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-            | sh -s -- -b /usr/local/bin
+      # Installed from a SHA-pinned action rather than curling an install script off
+      # a moving branch and piping it to a shell. The old form re-fetched whatever
+      # `main` happened to contain at that moment and executed it in CI: a scanner
+      # this repo trusts to gate its own releases was also the one dependency it
+      # pulled unpinned. Everything else here is pinned; this now matches.
+      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
       # Fail on fixable HIGH/CRITICAL in the image layers (unfixable OS CVEs
       # don't block - there's nothing to do about them until a base rebuild).
       - name: Scan images
