@@ -37,7 +37,7 @@ demo: up-full
 	  | jq '.data.attackPaths[0]'
 	@echo ""
 	@echo "→ Open the dashboard: http://localhost:3000  (see the kill chain, then click 'Open fix PR')"
-	@echo "  Make the fix a REAL pull request: set GITHUB_TOKEN on a sandbox repo - see DEMO.md."
+	@echo "  Make the fix a REAL pull request: set GITHUB_TOKEN on a sandbox repo - see docs/MANUAL.md."
 	@echo "  Tear down when done: make down"
 
 ## up-search: start infra plus the optional OpenSearch full-text index
