@@ -86,6 +86,18 @@ export default function App() {
     window.location.hash = v;
   };
 
+  // The view lives in the URL hash, so the browser's own back and forward buttons
+  // have to move between views. Reading the hash only at mount made deep links work
+  // on a cold load while back silently did nothing - which reads as a broken page,
+  // because every other tab in the browser honours that button. setViewState (not
+  // setView) is deliberate: the hash is already what changed, and writing it back
+  // would push a duplicate entry and trap the reader in their own history.
+  useEffect(() => {
+    const onHashChange = () => setViewState(viewFromHash());
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
   // Command palette shortcuts. Search moved off the nav and onto the keyboard, so
   // it has to answer to the chord people already try (⌘K / Ctrl-K) and close on
   // escape like every other palette they use.

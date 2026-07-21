@@ -2,21 +2,35 @@ import { useState } from "react";
 import { CheckIcon, GemIcon, GlobeIcon, LayersIcon, XIcon, ZapIcon } from "./icons";
 import Button from "./ui/Button";
 
-// First-run explainer: a newcomer to attack-path tooling needs the mental model
-// before the numbers mean anything. Dismissible, remembered in localStorage, and
-// re-openable from the header "How to read this" button.
+// Explainer for the mental model behind attack-path tooling, available from the
+// header's "How to read this" button.
+//
+// It is CLOSED by default. It used to open on first run and take the whole first
+// screen, which was a symptom rather than a service: the page it was explaining led
+// with a saturated percentage and buried the answer six cards down. Today opens on
+// the decision instead - what is being exploited, the fewest changes that fix it -
+// and a screen that needs a manual in front of it has not earned the reader's first
+// impression. The explainer stays one click away for whoever wants the theory.
 const KEY = "pg_intro_dismissed_v1";
+// OPEN_VALUE is the stored flag for "the reader asked to see this", the inverse of
+// the old dismissed flag. A new key would have been equivalent; reusing this one
+// with inverted meaning would silently re-open the banner for everyone who had
+// dismissed it, so the name changes with the semantics.
+const OPEN_KEY = "pg_intro_open_v1";
 
 export function useIntroDismissed() {
   const [dismissed, setDismissed] = useState<boolean>(() => {
     try {
-      return localStorage.getItem(KEY) === "1";
+      // Closed unless explicitly opened. The legacy key is still honoured so a
+      // reader who dismissed the old banner is never shown it again either way.
+      return localStorage.getItem(OPEN_KEY) !== "1" || localStorage.getItem(KEY) === "1";
     } catch {
-      return false;
+      return true;
     }
   });
   const dismiss = () => {
     try {
+      localStorage.removeItem(OPEN_KEY);
       localStorage.setItem(KEY, "1");
     } catch {
       /* ignore */
@@ -25,6 +39,7 @@ export function useIntroDismissed() {
   };
   const reopen = () => {
     try {
+      localStorage.setItem(OPEN_KEY, "1");
       localStorage.removeItem(KEY);
     } catch {
       /* ignore */
