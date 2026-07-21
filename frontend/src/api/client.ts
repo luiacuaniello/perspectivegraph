@@ -377,11 +377,28 @@ export interface WhatIfResult {
 
 const NODE_FIELDS = `id label name internetExposed crownJewel crownJewelBasis classification secretsScrubbed runtimeAlert severity cvss kev epss resolutionMethod resolutionConfidence resolutionAlias signed slsaLevel sbomComponents`;
 
+// PATH_LIMIT bounds how many attack paths the dashboard pulls per refresh. The
+// analyzer returns them priority-first, so this is the Top-N a human can actually
+// work through - not a truncation of the answer. Everything that must reflect the
+// FULL environment (counts, risk, the remediation plan) is computed server-side and
+// arrives whole, so the bound never distorts a headline number.
+export const PATH_LIMIT = 100;
+
 // The graph is environment-wide; passing an app scopes attack paths and the
 // graph view to one application (repo slug or cloud `app` tag). Posture and
 // violations stay global on purpose - they are the whole-environment summary.
 const dashboardQuery = (app?: string) => {
   const scope = app ? `(app: ${JSON.stringify(app)})` : "";
+  // Attack paths are the one unbounded collection here, and each carries a deep
+  // object graph (nodes, steps with ATT&CK enrichment, remediations, detections).
+  // Fetching every one is what made a real environment collapse the dashboard: a
+  // thousand paths is ~3.6 MB and times the proxy out, so the UI renders nothing at
+  // all. The analyzer already returns them priority-first, so a bounded Top-N is the
+  // same answer for a third of a percent of the payload. `pathLimit` is the ceiling
+  // the UI works with; the total still comes from posture.criticalPaths.
+  const pathScope = app
+    ? `(app: ${JSON.stringify(app)}, limit: ${PATH_LIMIT})`
+    : `(limit: ${PATH_LIMIT})`;
   return `
   query Dashboard {
     posture { criticalPaths activePaths suppressedPaths runtimeConfirmed kevOnPaths policyViolations nodes edges }
@@ -395,7 +412,7 @@ const dashboardQuery = (app?: string) => {
     searchEnabled
     aiEnabled
     applications
-    attackPaths${scope} {
+    attackPaths${pathScope} {
       id
       score
       runtimeConfirmed

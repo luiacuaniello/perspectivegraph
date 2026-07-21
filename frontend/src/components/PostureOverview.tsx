@@ -112,7 +112,10 @@ function diagTone(d: string): string {
 // predicted path scores actually match observed red-team/BAS outcomes, so an
 // operator can defend "55%" as a probability rather than a label. Hidden entirely
 // until at least one tested verdict carries a predicted score.
-function CalibrationPanel({ calibration, trend }: { calibration: Calibration; trend?: CalibrationTrendPoint[] }) {
+// Exported so the Trust view can host it as its own page: the calibration report
+// is the product's differentiator, and it earns more than a card at the bottom of
+// a scroll.
+export function CalibrationPanel({ calibration, trend }: { calibration: Calibration; trend?: CalibrationTrendPoint[] }) {
   if (!calibration?.hasData) return null;
   const v = VERDICT_STYLE[calibration.verdict] ?? VERDICT_STYLE["insufficient-data"];
   const pct = (n: number) => `${Math.round(n * 100)}%`;
