@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
-import { exportUrl, fetchDashboard, fetchHistory, fetchStatus, type Dashboard, type History } from "./api/client";
+import { exportUrl, fetchDashboard, fetchGraph, fetchHistory, fetchStatus, type Dashboard, type GraphData, type History } from "./api/client";
 import Sidebar, { type View } from "./components/Sidebar";
 import AttackPathList from "./components/AttackPathList";
 import TodayView from "./components/TodayView";
@@ -72,6 +72,8 @@ export default function App() {
   // not a destination you navigate away to.
   const [searchOpen, setSearchOpen] = useState(false);
   const [graphOpen, setGraphOpen] = useState(false);
+  const [graphData, setGraphData] = useState<GraphData | null>(null);
+  const [graphLoading, setGraphLoading] = useState(false);
   // Triage: hide suppressed paths by default; bump reloadKey to refetch after a
   // suppress / un-suppress so the board reflects the decision immediately.
   const [showSuppressed, setShowSuppressed] = useState(false);
@@ -178,6 +180,43 @@ export default function App() {
     selected?.steps.forEach((s) => e.add(`${s.from}->${s.to}`));
     return { highlightNodes: n, highlightEdges: e };
   }, [selected]);
+
+  // The graph is a lens on the selected route, so it renders that route's
+  // NEIGHBOURHOOD - its nodes plus everything one hop away - rather than the whole
+  // environment. Handing Cytoscape a real estate (thousands of nodes) does not
+  // produce a picture: the layout collapses into an unreadable smear and the tab
+  // stalls. One hop keeps the answer legible and bounded no matter how big the
+  // estate grows, which is the point of showing it beside a path at all.
+  const pathNeighbourhood = useMemo(() => {
+    if (!graphData || !selected) return { nodes: [], edges: [] };
+    const core = new Set(selected.nodes.map((n) => n.id));
+    const keep = new Set(core);
+    for (const e of graphData.edges) {
+      if (core.has(e.from)) keep.add(e.to);
+      if (core.has(e.to)) keep.add(e.from);
+    }
+    return {
+      nodes: graphData.nodes.filter((n) => keep.has(n.id)),
+      edges: graphData.edges.filter((e) => keep.has(e.from) && keep.has(e.to)),
+    };
+  }, [graphData, selected]);
+
+  // The environment graph is fetched only when someone opens it on a route, and
+  // kept afterwards so toggling back is instant. Pulling it on every dashboard
+  // poll is what made a real estate (thousands of nodes) time the request out.
+  useEffect(() => {
+    if (!graphOpen || graphData || graphLoading) return;
+    setGraphLoading(true);
+    fetchGraph(app || undefined)
+      .then(setGraphData)
+      .catch((e) => setError(String(e.message ?? e)))
+      .finally(() => setGraphLoading(false));
+  }, [graphOpen, graphData, graphLoading, app]);
+
+  // A different application scope is a different graph.
+  useEffect(() => {
+    setGraphData(null);
+  }, [app]);
 
   const openPath = (id: string) => {
     setSelectedPathId(id);
@@ -357,6 +396,11 @@ export default function App() {
                       <div className="flex items-center justify-between">
                         <span className="truncate text-[12px] text-muted">
                           {selected.nodes[0]?.name} → {selected.nodes[selected.nodes.length - 1]?.name} in context
+                          {pathNeighbourhood.nodes.length > 0 && (
+                            <span className="text-slate-500">
+                              {" "}· {pathNeighbourhood.nodes.length} of {graphData?.nodes.length ?? 0} assets, one hop out
+                            </span>
+                          )}
                         </span>
                         <Button variant="secondary" size="sm" onClick={() => setGraphOpen(false)}>
                           Back to detail
@@ -364,9 +408,12 @@ export default function App() {
                       </div>
                       <div className="min-h-[24rem] flex-1">
                         <Suspense fallback={<div className="grid h-full place-items-center text-xs text-muted">Loading graph…</div>}>
+                          {graphLoading && !graphData && (
+                            <div className="grid h-full place-items-center text-xs text-muted">Loading the environment graph…</div>
+                          )}
                           <GraphCanvas
-                            nodes={data.graph.nodes}
-                            edges={data.graph.edges}
+                            nodes={pathNeighbourhood.nodes}
+                            edges={pathNeighbourhood.edges}
                             highlightNodes={highlightNodes}
                             highlightEdges={highlightEdges}
                           />

@@ -358,7 +358,13 @@ export interface Dashboard {
   validation: ValidationMetrics;
   calibration: Calibration;
   calibrationTrend: CalibrationTrendPoint[];
-  graph: { nodes: Node[]; edges: Edge[] };
+}
+
+// GraphData is the full environment map, fetched separately via fetchGraph so the
+// dashboard poll stays small.
+export interface GraphData {
+  nodes: Node[];
+  edges: Edge[];
 }
 
 export interface EdgeCut {
@@ -439,7 +445,6 @@ const dashboardQuery = (app?: string) => {
     }
     remediationPlan${scope} {
       title kind filename rationale content pathCount riskCovered coveragePct
-      verification { removedEdges pathsBefore pathsAfter pathsEliminated riskReductionPct verified }
     }
     invariantViolations {
       invariantId
@@ -457,12 +462,44 @@ const dashboardQuery = (app?: string) => {
       detection { tested detected detectionRate highScoreTested highScoreDetectionRate }
     }
     calibrationTrend { at brier ece samples }
+  }
+`;
+};
+
+// The whole environment graph is the other unbounded collection, and the heaviest:
+// a mid-size estate is thousands of nodes and edges (~4 MB, seconds to serialize),
+// which is what kept the dashboard timing out even after attack paths were bounded.
+// It is now fetched on demand instead of on every poll - which matches how the graph
+// is actually used: a lens on a route you already picked, not a landing surface. The
+// dashboard no longer carries it at all.
+// A fix's `verification` is a what-if PROOF: it removes the fix's edges and re-runs
+// the whole simulation to show the paths really disappear. That is one full-graph
+// simulation per fix, so asking for it across the plan on every 5s poll is what
+// pinned the dashboard at nginx's 60s timeout on a mid-size estate - the plan alone
+// answers in 0.5s, the plan with verification does not finish in two minutes. It is
+// now fetched for a single fix, on demand, when someone asks to see the proof.
+export const verifyFix = (title: string, app?: string) => {
+  const args = app ? `(app: ${JSON.stringify(app)})` : "";
+  return gql<{ remediationPlan: Fix[] }>(`
+  {
+    remediationPlan${args} {
+      title
+      verification { removedEdges pathsBefore pathsAfter pathsEliminated riskReductionPct verified }
+    }
+  }
+`).then((d) => d.remediationPlan.find((f) => f.title === title)?.verification ?? null);
+};
+
+export const fetchGraph = (app?: string) => {
+  const scope = app ? `(app: ${JSON.stringify(app)})` : "";
+  return gql<{ graph: GraphData }>(`
+  {
     graph${scope} {
       nodes { ${NODE_FIELDS} }
       edges { type from to probability attack { id tactic } }
     }
   }
-`;
+`).then((d) => d.graph);
 };
 
 // Auth credential. A runtime token set via the login gate (stored in
