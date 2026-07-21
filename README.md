@@ -122,6 +122,13 @@ PerspectiveGraph is **pre-1.0** and built in the open. Read this before you rely
 - **Scope.** It answers the reachable attack-path question in the developer workflow. It is
   not a scanner, a CNAPP, or a compliance product, and it does not replace them.
 
+- **How it is written.** Developed by a human working with Claude (Anthropic): the design
+  decisions and what ships are the maintainer's, a large share of the implementation and its
+  tests came out of that collaboration. Said plainly for the same reason the engine reports its
+  own calibration - a claim you can check beats one you have to accept. Check it:
+  `make test`, `make bench-cloudgoat`, `govulncheck ./...`, `gosec ./...`. See
+  [CONTRIBUTING](CONTRIBUTING.md).
+
 Issues and PRs are welcome. Nothing here is claimed beyond what the tests and the listed
 validation cover.
 

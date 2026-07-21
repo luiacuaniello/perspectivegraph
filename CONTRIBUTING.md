@@ -98,6 +98,26 @@ Collectors must produce **stable node IDs** (`ontology.NewID`) so the graph
 deduplicates instead of creating parallel nodes. That is what lets findings from
 different tools correlate onto the same asset.
 
+## How this project is written
+
+PerspectiveGraph is developed by a human working with Claude (Anthropic). Design
+decisions, the threat model and what ships are the maintainer's; a large share of
+the implementation and its tests were written in that collaboration.
+
+That is stated here for the same reason the engine reports its own calibration:
+you should not have to take a claim on trust when it can be checked. Every gate is
+reproducible on your machine, and they are what the project actually asks to be
+judged on:
+
+```bash
+make test              # backend + frontend suites
+make bench-cloudgoat   # precision/recall against known-vulnerable scenarios
+cd backend && go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+cd backend && go run github.com/securego/gosec/v2/cmd/gosec@latest -quiet -exclude=G104 ./...
+```
+
+Contributions written the same way are welcome; hold them to the same gates.
+
 ## Conventions
 
 - **Go:** `gofmt`, `go vet`, **`gosec`** clean. Justify an unavoidable gosec
@@ -106,10 +126,11 @@ different tools correlate onto the same asset.
 - **Frontend:** must pass `tsc`, `build`, and `vitest`. Use the inline SVG icon
   set (`components/icons.tsx`) - **no emoji in the UI**; colors come from the
   CSS-variable design tokens (so light/dark both work), not hardcoded hex.
-- **Docs + Postman:** every user-facing feature updates `README.md` (the single
-  source of truth: architecture, onboarding runbook, deploy) and `.env.example`
-  **and** the Postman collection
-  (`docs/perspectivegraph.postman_collection.json`).
+- **Docs + Postman:** every user-facing feature updates the docs and
+  `.env.example` **and** the Postman collection
+  (`docs/perspectivegraph.postman_collection.json`). `README.md` is the landing
+  page - keep it short; the depth (architecture, scoring, deploy, onboarding
+  runbook) lives in [`docs/MANUAL.md`](docs/MANUAL.md).
 - **Security:** this tool is a map of how to attack the org, so don't weaken its
   own controls (ingest HMAC, API auth/RBAC, audit log, at-rest encryption,
   export signing). Never commit secrets - the gitleaks gate enforces it. Found a
