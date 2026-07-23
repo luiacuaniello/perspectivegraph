@@ -90,7 +90,9 @@ to call `get_score_trust` before quoting one as a probability.
 
 ## Project status & maturity
 
-PerspectiveGraph is **pre-1.0** and built in the open. Read this before you rely on it:
+PerspectiveGraph is **0.x, in active development** - the version number means the API
+can still change - and built in the open. What's next is in the [roadmap](ROADMAP.md);
+read this before you rely on it:
 
 - **Engine: feature-complete.** The correlation engine, agentless connectors, triage,
   SSO, the PR merge-gate, the AI assistant, and the scale work are all implemented and
@@ -140,6 +142,7 @@ integration, deployment, hardening and the runbook for pointing it at your own
 environment.
 
 - [Manual](docs/MANUAL.md) - architecture, scoring, quick start, deploy, operate
+- [Roadmap](ROADMAP.md) - what's next, and what it deliberately isn't becoming
 - [Threat model](docs/THREAT-MODEL.md) · [Operations](docs/OPERATIONS.md) · [API stability](docs/API-STABILITY.md) · [Scale](docs/SCALE.md)
 - [Attack-path benchmark](backend/testdata/cloudgoat/README.md) - the CI-gated precision/recall battery
 
