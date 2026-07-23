@@ -4,6 +4,47 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0](https://github.com/luiacuaniello/perspectivegraph/compare/v0.3.0...v0.4.0) (2026-07-23)
+
+
+### Features
+
+* API stability policy with a frozen, drift-guarded GraphQL schema ([7d2255b](https://github.com/luiacuaniello/perspectivegraph/commit/7d2255be1f453c80018bc19f9b9b7970f01913b0))
+* API stability policy with a frozen, drift-guarded GraphQL schema ([a88d105](https://github.com/luiacuaniello/perspectivegraph/commit/a88d1057491f178f657bafb45e176dc412f4b29b))
+* CloudGoat attack-path calibration harness for real AWS ([136b40f](https://github.com/luiacuaniello/perspectivegraph/commit/136b40fe1b3e5887d6e3ad032e371a8eb01449ec))
+* CloudGoat attack-path calibration harness for real AWS ([6cc6912](https://github.com/luiacuaniello/perspectivegraph/commit/6cc691275c877230f3fc7b0ad8db4748a7f345ec))
+* CodeQL analysis and fuzzing of the ingest parse boundary ([9cb3b50](https://github.com/luiacuaniello/perspectivegraph/commit/9cb3b50e2d0c11801f121fde3fb188c5995aa78e))
+* CodeQL analysis and fuzzing of the ingest parse boundary ([8eecb58](https://github.com/luiacuaniello/perspectivegraph/commit/8eecb589a43640376093ee586a35c7d4eb5478c8))
+* **dashboard:** restructure around the decision, not the engine's mo… ([aaaf698](https://github.com/luiacuaniello/perspectivegraph/commit/aaaf6987db8aff3febee0e21cccb3084dd27b9e7))
+* **dashboard:** restructure around the decision, not the engine's modules ([5c02813](https://github.com/luiacuaniello/perspectivegraph/commit/5c028139013857b7663ac3250a48220371ac7b78))
+* **iam:** honor explicit Deny and resource scoping in privesc detection ([a0c1c33](https://github.com/luiacuaniello/perspectivegraph/commit/a0c1c33f3d39cc0c44893a1da866aa46da4b68c9))
+* **iam:** honor explicit Deny and resource scoping in privesc detection ([1caab9f](https://github.com/luiacuaniello/perspectivegraph/commit/1caab9fccd06cbd057a17e2b8ca897696bd90f6b))
+* link EC2 instances to their instance-profile role (the IMDS hop) ([f30ee16](https://github.com/luiacuaniello/perspectivegraph/commit/f30ee1676c72b7e862a93b7dacea06345fe49914))
+* link EC2 instances to their instance-profile role (the IMDS hop) ([8c569a4](https://github.com/luiacuaniello/perspectivegraph/commit/8c569a43cacc57e263c6adabc6ae85086e18d3b2))
+* **mcp:** serve the engine as tools an AI agent can call ([499b42c](https://github.com/luiacuaniello/perspectivegraph/commit/499b42cb939a948e920c06277a83e1a83c92c78a))
+* **mcp:** serve the engine as tools an AI agent can call ([8aac837](https://github.com/luiacuaniello/perspectivegraph/commit/8aac837c09c9373ed31aa6eda1560f6a0d5f7e1c))
+* observability dashboard + alerts and a scale-test harness ([cda5cd9](https://github.com/luiacuaniello/perspectivegraph/commit/cda5cd9a806f9393dec5e6102cabe992881b5047))
+* observability dashboard + alerts and a scale-test harness ([ec499f1](https://github.com/luiacuaniello/perspectivegraph/commit/ec499f17945f1177d9d281c899290d1afd6d4ee0))
+* **redteam:** AWS-oracle harness that generates independent calibrat… ([17b7fc1](https://github.com/luiacuaniello/perspectivegraph/commit/17b7fc12f1c7aa24df944939c971741103aadc9c))
+* **redteam:** AWS-oracle harness that generates independent calibration verdicts ([7b5c5df](https://github.com/luiacuaniello/perspectivegraph/commit/7b5c5df1b5db7bf306d773f7186026c5de7b82c1))
+* secure-by-default production deployment profile ([9b4b1ac](https://github.com/luiacuaniello/perspectivegraph/commit/9b4b1acdb28d1a3fc3085f974e86f1b8dae9adbe))
+* secure-by-default production deployment profile ([9219870](https://github.com/luiacuaniello/perspectivegraph/commit/9219870209cdc26334249d51b7b6af0432464558))
+
+
+### Bug Fixes
+
+* **ci:** stop piping an unpinned install script into sh, drop ambient token permissions ([9d138b5](https://github.com/luiacuaniello/perspectivegraph/commit/9d138b5f50662e831e6e5bcd1722ac5a3f26d568))
+* **ci:** stop piping an unpinned install script into sh, drop ambient… ([d4307c0](https://github.com/luiacuaniello/perspectivegraph/commit/d4307c09c17a194babf6c8184fa326da3ee60fd5))
+* **dashboard:** stop polling two unbounded collections and one full s… ([3ed6202](https://github.com/luiacuaniello/perspectivegraph/commit/3ed620213c87606459d6d980924b37d1ad95b314))
+* **dashboard:** stop polling two unbounded collections and one full simulation ([18c31c4](https://github.com/luiacuaniello/perspectivegraph/commit/18c31c42f0ba222b700df4742b7af2acb0515eb9))
+* harden the AWS harness against real-scenario quirks ([0e05e98](https://github.com/luiacuaniello/perspectivegraph/commit/0e05e98dc405ff0b2284d12b9ec9382b37780b98))
+* harden the AWS harness against real-scenario quirks ([f831964](https://github.com/luiacuaniello/perspectivegraph/commit/f831964250b03d456db75216344b1fb7c502d4de))
+* harden the AWS harness against real-scenario quirks ([d008658](https://github.com/luiacuaniello/perspectivegraph/commit/d008658c955235144d5a5ee0a9d354ac17599d2e))
+* harden the AWS harness against real-scenario quirks ([b13ed63](https://github.com/luiacuaniello/perspectivegraph/commit/b13ed635e123198802bd30c1132d6a20aed9a3f6))
+* **sast:** suppress gosec G101 false positive on credential_exposed label ([a53229b](https://github.com/luiacuaniello/perspectivegraph/commit/a53229b679eb59af4b12cba53ddc2885f34f3501))
+* **ui:** close the explainer by default, honour browser back, disclos… ([85bc9a6](https://github.com/luiacuaniello/perspectivegraph/commit/85bc9a6b9cbade720360dd1e7e6931675cd2f813))
+* **ui:** close the explainer by default, honour browser back, disclose how this is built ([293e98c](https://github.com/luiacuaniello/perspectivegraph/commit/293e98c6a2c8e6aa4033ddf0bd5d2b610f976ed2))
+
 ## [0.3.0](https://github.com/luiacuaniello/perspectivegraph/compare/v0.2.0...v0.3.0) (2026-07-11)
 
 
