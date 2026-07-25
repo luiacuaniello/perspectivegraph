@@ -48,6 +48,8 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
+      # QEMU emulates arm64 on the amd64 runner, so one job builds both platforms.
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
@@ -69,6 +71,11 @@ jobs:
         with:
           context: ${{ matrix.context }}
           push: true
+          # arm64 as well as amd64: most engineers evaluating this are on Apple
+          # Silicon, and an amd64-only image runs there under emulation - slow
+          # enough to read as "this tool is slow" rather than "this is qemu".
+          # arm64 servers (Graviton, Ampere) are the same story in production.
+          platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           provenance: false # a portable SLSA attestation is attached below instead

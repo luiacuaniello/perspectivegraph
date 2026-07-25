@@ -38,6 +38,23 @@ IAM / SSO output, waits for the analyzer, and prints the top attack path with it
 generated fix. Dashboard on **http://localhost:3000**. Needs Docker, `jq` and `curl`;
 first run takes a couple of minutes to build the images. Tear down with `make down`.
 
+Prefer not to build? The release images are published to GHCR:
+
+```bash
+docker pull ghcr.io/luiacuaniello/perspectivegraph:v0.3.0
+docker pull ghcr.io/luiacuaniello/perspectivegraph-dashboard:v0.3.0
+```
+
+They are signed with cosign keyless and carry an SPDX SBOM plus a SLSA build
+provenance attestation - verify before you run, rather than taking the supply chain
+on trust:
+
+```bash
+cosign verify ghcr.io/luiacuaniello/perspectivegraph:v0.3.0 \
+  --certificate-identity-regexp 'https://github.com/luiacuaniello/perspectivegraph/.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
 The dashboard opens on the decision, not the inventory: what is being exploited right
 now, the fewest changes that remove the most risk, and how much the numbers can be
 trusted.
