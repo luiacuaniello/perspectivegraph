@@ -27,6 +27,13 @@ type Config struct {
 	NATSTLSCertFile string
 	NATSTLSKeyFile  string
 
+	// Env names the deployment profile. "demo" (the default) keeps the frictionless
+	// path `make demo` relies on: no credentials configured means an open API, with
+	// a loud warning. "production" turns that warning into a refusal to start - see
+	// the fail-closed check in main. It only ever makes startup *stricter*, so an
+	// unset or unknown value can never weaken anything.
+	Env string
+
 	// HTTP servers
 	APIAddr    string
 	IngestAddr string
@@ -253,6 +260,7 @@ func Load() Config {
 		NATSTLSCertFile: getenv("NATS_TLS_CERT", ""),
 		NATSTLSKeyFile:  getenv("NATS_TLS_KEY", ""),
 
+		Env:         getenv("PG_ENV", "demo"),
 		APIAddr:     getenv("API_ADDR", ":8080"),
 		IngestAddr:  getenv("INGEST_ADDR", ":8081"),
 		TLSCertFile: getenv("TLS_CERT_FILE", ""),

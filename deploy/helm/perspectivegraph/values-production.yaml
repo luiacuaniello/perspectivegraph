@@ -13,6 +13,8 @@
 # `secrets.existingSecret: ""` and pass each value with --set (never commit them).
 
 backend:
+  # Refuse to start unless both the API and ingest are authenticated.
+  env: production
   replicas: 1 # keep 1 while persistence is on (the governance stores are single-writer)
   logLevel: info
   resources:

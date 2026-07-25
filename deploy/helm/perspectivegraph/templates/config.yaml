@@ -54,6 +54,7 @@ data:
   GITLAB_API_URL: {{ .Values.gitlab.apiUrl | quote }}
   GITLAB_DRY_RUN: {{ .Values.gitlab.dryRun | quote }}
   LOG_LEVEL: {{ .Values.backend.logLevel | quote }}
+  PG_ENV: {{ .Values.backend.env | quote }}
   API_RATE_RPS: {{ .Values.auth.apiRateRps | quote }}
   INGEST_RATE_RPS: {{ .Values.auth.ingestRateRps | quote }}
   GRAPH_TTL: {{ .Values.graph.ttl | quote }}

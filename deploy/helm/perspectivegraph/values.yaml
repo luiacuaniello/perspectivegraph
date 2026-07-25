@@ -7,6 +7,9 @@ backend:
     pullPolicy: IfNotPresent
   replicas: 1
   resources: {}
+  # Deployment profile. "production" makes the backend refuse to start unless both
+  # the API and ingest are authenticated; "demo" keeps the permissive default.
+  env: demo
   logLevel: info
   analyzerInterval: 30s
   # Scale knobs. analyzerWorkers bounds the per-seed pathfinding parallelism

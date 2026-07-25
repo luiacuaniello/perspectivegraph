@@ -135,6 +135,8 @@ services:
       OPENSEARCH_URL: ${OPENSEARCH_URL:-}
       THREATINTEL: ${THREATINTEL:-off}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # demo by default; PG_ENV=production refuses to start without auth on both sides.
+      PG_ENV: ${PG_ENV:-demo}
       # Auth (optional) - pass through when set; open with a loud warning otherwise.
       INGEST_HMAC_SECRET: ${INGEST_HMAC_SECRET:-}
       API_TOKENS: ${API_TOKENS:-}
