@@ -178,7 +178,53 @@ func main() {
 	slog.Info("shutdown complete")
 }
 
+// isProduction reports whether the operator has declared a production deployment.
+// The comparison is deliberately narrow: only the exact string "production" (any
+// case, trimmed) opts in. An empty, misspelled or unknown value keeps the permissive
+// demo behaviour, so a typo can never silently *enable* a stricter mode the operator
+// did not ask for - and, more importantly, this flag can only ever add checks, never
+// remove them.
+func isProduction(env string) bool {
+	return strings.EqualFold(strings.TrimSpace(env), "production")
+}
+
+// checkProductionConfig enforces the fail-closed rules for a declared production
+// deployment. It is pure configuration validation, deliberately run before the
+// process connects to anything: a misconfiguration should fail on its own terms,
+// not hide behind whichever dependency happens to be unreachable first.
+//
+// The demo profile stays permissive on purpose - that is what makes `make demo` one
+// command - which means the insecure mode is the one you get by doing nothing.
+// Declaring the environment turns that into a refusal to start, so the failure is a
+// startup error someone reads rather than a warning scrolling past in a log.
+func checkProductionConfig(cfg config.Config) error {
+	if !isProduction(cfg.Env) {
+		return nil
+	}
+	// The GraphQL endpoint serves the organisation's own attack map - the shortest
+	// route from the internet to everything worth stealing - so an open one is a
+	// briefing document for whoever finds it.
+	if cfg.APITokens == "" && cfg.OIDCJWKSURL == "" {
+		return errors.New("PG_ENV=production but no API credential is configured: refusing to start with an open " +
+			"GraphQL endpoint, which would publish this environment's attack paths to anyone who can reach it. " +
+			"Set API_TOKENS (static bearer tokens) or OIDC_JWKS_URL + OIDC_ISSUER + OIDC_AUDIENCE (SSO)")
+	}
+	// Ingest is the write side: an open one lets anyone inject nodes and edges, which
+	// fabricates attack paths that do not exist or buries ones that do.
+	if cfg.IngestHMACSecret == "" && cfg.IngestHMACSecrets == "" {
+		return errors.New("PG_ENV=production but ingest authentication is disabled: refusing to start with open " +
+			"ingest endpoints, which would let anyone forge the graph this tool reasons over. Set " +
+			"INGEST_HMAC_SECRET (or INGEST_HMAC_SECRETS for per-tenant keys)")
+	}
+	return nil
+}
+
 func run(ctx context.Context, cfg config.Config) error {
+	// Validate the deployment profile before touching any dependency.
+	if err := checkProductionConfig(cfg); err != nil {
+		return err
+	}
+
 	// ── Graph core ──────────────────────────────────────────────────
 	// One isolated store (Apache AGE graph, or in-memory) per tenant, created
 	// lazily by the manager. The default tenant is created eagerly.
