@@ -125,15 +125,22 @@ func (o *AWSOracle) checkAction(ctx context.Context, a Assertion) (Result, error
 	if strings.HasPrefix(a.Resource, "arn:") {
 		in.ResourceArns = []string{a.Resource}
 	}
-	decisions, err := o.simulate(ctx, in)
+	evals, err := o.simulate(ctx, in)
 	if err != nil {
 		return Result{Decision: Inconclusive, Evidence: err.Error()}, nil
 	}
-	if decisions[a.Action] == string(iamtypes.PolicyEvaluationDecisionTypeAllowed) {
+	e := evals[a.Action]
+	switch {
+	case e.allowed():
 		return Result{Decision: Allowed, Evidence: "SimulatePrincipalPolicy: " + a.Action + " allowed"}, nil
+	case e.conditional():
+		return Result{Decision: Inconclusive,
+			Evidence: fmt.Sprintf("SimulatePrincipalPolicy: %s turns on request context not supplied (%s), so neither permitted nor refused",
+				a.Action, strings.Join(e.missing, ", "))}, nil
+	default:
+		return Result{Decision: Denied,
+			Evidence: fmt.Sprintf("SimulatePrincipalPolicy: %s %s", a.Action, orUnknown(e.decision))}, nil
 	}
-	return Result{Decision: Denied,
-		Evidence: fmt.Sprintf("SimulatePrincipalPolicy: %s %s", a.Action, orUnknown(decisions[a.Action]))}, nil
 }
 
 // checkEscalation settles "this principal holds SOME privilege-escalation primitive".
@@ -163,7 +170,7 @@ func (o *AWSOracle) checkEscalation(ctx context.Context, a Assertion) (Result, e
 	}
 	sort.Strings(actions) // deterministic request, so evidence is reproducible
 
-	decisions, err := o.simulate(ctx, &iam.SimulatePrincipalPolicyInput{
+	evals, err := o.simulate(ctx, &iam.SimulatePrincipalPolicyInput{
 		PolicySourceArn: &a.Principal,
 		ActionNames:     actions,
 	})
@@ -171,16 +178,17 @@ func (o *AWSOracle) checkEscalation(ctx context.Context, a Assertion) (Result, e
 		return Result{Decision: Inconclusive, Evidence: err.Error()}, nil
 	}
 
-	allowed := func(act string) bool {
-		return decisions[act] == string(iamtypes.PolicyEvaluationDecisionTypeAllowed)
-	}
-	// Collect every primitive that holds, not just the first: which ones they are is
-	// the actionable part of the finding, and it costs nothing once the decisions are in.
+	// Collect every primitive that holds outright. An unconditional grant is reported
+	// cleanly even when other statements on the principal carry Conditions - verified
+	// against the real API - so a genuine permit is never lost to the guard below.
 	var holding []string
 	for _, p := range prims {
-		holds := len(p.Actions) > 0
+		if len(p.Actions) == 0 {
+			continue
+		}
+		holds := true
 		for _, act := range p.Actions {
-			if !allowed(act) {
+			if !evals[act].allowed() {
 				holds = false
 				break
 			}
@@ -193,24 +201,81 @@ func (o *AWSOracle) checkEscalation(ctx context.Context, a Assertion) (Result, e
 		return Result{Decision: Allowed,
 			Evidence: fmt.Sprintf("SimulatePrincipalPolicy: holds %s", strings.Join(holding, "; "))}, nil
 	}
+
+	// Nothing held outright. Before calling that a refutation, check whether AWS could
+	// actually evaluate the question: when a Condition applies and the simulation was
+	// given no value for its key, AWS answers `implicitDeny` AND reports the key in
+	// MissingContextValues. Reading only the decision turns "I could not evaluate this"
+	// into "reality refuses" - a fabricated refutation, and if the condition were an
+	// `aws:SourceIp` the attacker actually matches, the engine's claim would have been
+	// right all along.
+	//
+	// The keys cannot be attributed to particular primitives: AWS reports them on every
+	// action in the simulation, including actions the policies never grant, so
+	// "not granted at all" and "granted under a condition" are indistinguishable here.
+	// Naming which primitives are gated would be a guess, so this names only the keys.
+	missingKeys := map[string]bool{}
+	for _, act := range actions {
+		for _, k := range evals[act].missing {
+			missingKeys[k] = true
+		}
+	}
+	if len(missingKeys) > 0 {
+		return Result{Decision: Inconclusive,
+			Evidence: fmt.Sprintf("SimulatePrincipalPolicy: cannot settle - this principal's policies turn on request context the simulation was not given (%s), so AWS's implicitDeny means \"unevaluated\", not \"refused\". The engine reads an Allow as unconditional and claims the escalation; whether reality grants it depends on whether the attacker satisfies the condition.",
+				namedKeys(missingKeys))}, nil
+	}
+
 	return Result{Decision: Denied,
 		Evidence: fmt.Sprintf("SimulatePrincipalPolicy: none of the %d escalation primitives are permitted (%d actions evaluated)",
 			len(prims), len(actions))}, nil
 }
 
-// simulate runs one simulation and flattens it to action -> decision.
-func (o *AWSOracle) simulate(ctx context.Context, in *iam.SimulatePrincipalPolicyInput) (map[string]string, error) {
+// evaluation is one action's simulated outcome, plus the request-context keys the
+// policy's Condition blocks needed and the simulation could not supply.
+type evaluation struct {
+	decision string
+	// missing are the condition keys AWS reported as MissingContextValues. When this is
+	// non-empty the decision is NOT a finding: AWS is saying "a Condition applies and I
+	// was not given the value", which reads as implicitDeny but means "unknown".
+	missing []string
+}
+
+// allowed reports a conclusive permit: allowed, with no unevaluated Condition.
+func (e evaluation) allowed() bool {
+	return e.decision == string(iamtypes.PolicyEvaluationDecisionTypeAllowed) && len(e.missing) == 0
+}
+
+// conditional reports that the outcome turns on request context the simulation lacked,
+// so it is neither a permit nor a refusal.
+func (e evaluation) conditional() bool { return len(e.missing) > 0 }
+
+// simulate runs one simulation and flattens it to action -> evaluation.
+func (o *AWSOracle) simulate(ctx context.Context, in *iam.SimulatePrincipalPolicyInput) (map[string]evaluation, error) {
 	out, err := o.iam.SimulatePrincipalPolicy(ctx, in)
 	if err != nil {
 		return nil, fmt.Errorf("SimulatePrincipalPolicy failed: %w", err)
 	}
-	decisions := make(map[string]string, len(out.EvaluationResults))
+	evals := make(map[string]evaluation, len(out.EvaluationResults))
 	for _, r := range out.EvaluationResults {
 		if r.EvalActionName != nil {
-			decisions[*r.EvalActionName] = string(r.EvalDecision)
+			evals[*r.EvalActionName] = evaluation{
+				decision: string(r.EvalDecision),
+				missing:  append([]string(nil), r.MissingContextValues...),
+			}
 		}
 	}
-	return decisions, nil
+	return evals, nil
+}
+
+// namedKeys renders a deduplicated, ordered key list for evidence.
+func namedKeys(keys map[string]bool) string {
+	out := make([]string, 0, len(keys))
+	for k := range keys {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return strings.Join(out, ", ")
 }
 
 func orUnknown(s string) string {
