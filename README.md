@@ -42,8 +42,8 @@ Prefer not to build? The release images are published to GHCR (`latest` also tra
 newest release; the pinned tag is the one to use if you care about reproducibility):
 
 ```bash
-docker pull ghcr.io/luiacuaniello/perspectivegraph:v0.3.0
-docker pull ghcr.io/luiacuaniello/perspectivegraph-dashboard:v0.3.0
+docker pull ghcr.io/luiacuaniello/perspectivegraph:v0.3.0 # x-release-please-version
+docker pull ghcr.io/luiacuaniello/perspectivegraph-dashboard:v0.3.0 # x-release-please-version
 ```
 
 They are signed with cosign keyless and carry an SPDX SBOM plus a SLSA build
@@ -51,7 +51,7 @@ provenance attestation - verify before you run, rather than taking the supply ch
 on trust:
 
 ```bash
-cosign verify ghcr.io/luiacuaniello/perspectivegraph:v0.3.0 \
+cosign verify ghcr.io/luiacuaniello/perspectivegraph:v0.3.0 \ # x-release-please-version
   --certificate-identity-regexp 'https://github.com/luiacuaniello/perspectivegraph/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
