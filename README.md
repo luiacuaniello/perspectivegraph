@@ -42,8 +42,8 @@ Prefer not to build? The release images are published to GHCR (`latest` also tra
 newest release; the pinned tag is the one to use if you care about reproducibility):
 
 ```bash
-docker pull ghcr.io/luiacuaniello/perspectivegraph:v0.3.0 # x-release-please-version
-docker pull ghcr.io/luiacuaniello/perspectivegraph-dashboard:v0.3.0 # x-release-please-version
+docker pull ghcr.io/luiacuaniello/perspectivegraph:v0.4.0 # x-release-please-version
+docker pull ghcr.io/luiacuaniello/perspectivegraph-dashboard:v0.4.0 # x-release-please-version
 ```
 
 They are signed with cosign keyless and carry an SPDX SBOM plus a SLSA build
@@ -54,7 +54,7 @@ on trust:
 cosign verify \
   --certificate-identity-regexp 'https://github.com/luiacuaniello/perspectivegraph/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  ghcr.io/luiacuaniello/perspectivegraph:v0.3.0 # x-release-please-version
+  ghcr.io/luiacuaniello/perspectivegraph:v0.4.0 # x-release-please-version
 ```
 
 The dashboard opens on the decision, not the inventory: what is being exploited right

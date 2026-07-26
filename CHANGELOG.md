@@ -4,6 +4,36 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0](https://github.com/luiacuaniello/perspectivegraph/compare/v0.3.0...v0.4.0) (2026-07-26)
+
+
+### Features
+
+* API stability policy with a frozen, drift-guarded GraphQL schema ([7d2255b](https://github.com/luiacuaniello/perspectivegraph/commit/7d2255be1f453c80018bc19f9b9b7970f01913b0))
+* CloudGoat attack-path calibration harness for real AWS ([136b40f](https://github.com/luiacuaniello/perspectivegraph/commit/136b40fe1b3e5887d6e3ad032e371a8eb01449ec))
+* CodeQL analysis and fuzzing of the ingest parse boundary ([9cb3b50](https://github.com/luiacuaniello/perspectivegraph/commit/9cb3b50e2d0c11801f121fde3fb188c5995aa78e))
+* **dashboard:** restructure around the decision, not the engine's modules ([5c02813](https://github.com/luiacuaniello/perspectivegraph/commit/5c028139013857b7663ac3250a48220371ac7b78))
+* **iam:** grade escalation claims against AWS and honour boundaries ([64d4909](https://github.com/luiacuaniello/perspectivegraph/commit/64d4909a17510f4f39991ff1be1a81d5daf35cdc))
+* **iam:** honor explicit Deny and resource scoping in privesc detection ([a0c1c33](https://github.com/luiacuaniello/perspectivegraph/commit/a0c1c33f3d39cc0c44893a1da866aa46da4b68c9))
+* link EC2 instances to their instance-profile role (the IMDS hop) ([f30ee16](https://github.com/luiacuaniello/perspectivegraph/commit/f30ee1676c72b7e862a93b7dacea06345fe49914))
+* **mcp:** serve the engine as tools an AI agent can call ([499b42c](https://github.com/luiacuaniello/perspectivegraph/commit/499b42cb939a948e920c06277a83e1a83c92c78a))
+* observability dashboard + alerts and a scale-test harness ([cda5cd9](https://github.com/luiacuaniello/perspectivegraph/commit/cda5cd9a806f9393dec5e6102cabe992881b5047))
+* **redteam:** AWS-oracle harness that generates independent calibration verdicts ([7b5c5df](https://github.com/luiacuaniello/perspectivegraph/commit/7b5c5df1b5db7bf306d773f7186026c5de7b82c1))
+* secure-by-default production deployment profile ([9b4b1ac](https://github.com/luiacuaniello/perspectivegraph/commit/9b4b1acdb28d1a3fc3085f974e86f1b8dae9adbe))
+* **security:** refuse to start unauthenticated when PG_ENV=production ([60ebcfa](https://github.com/luiacuaniello/perspectivegraph/commit/60ebcfa2b01ea4c6ec37a260b1ea241140a1ca26))
+
+
+### Bug Fixes
+
+* **ci:** stop piping an unpinned install script into sh, drop ambient token permissions ([9d138b5](https://github.com/luiacuaniello/perspectivegraph/commit/9d138b5f50662e831e6e5bcd1722ac5a3f26d568))
+* **dashboard:** stop polling two unbounded collections and one full simulation ([18c31c4](https://github.com/luiacuaniello/perspectivegraph/commit/18c31c42f0ba222b700df4742b7af2acb0515eb9))
+* **deps:** bump brace-expansion to 5.0.8 (GHSA-mh99-v99m-4gvg) ([e28ca15](https://github.com/luiacuaniello/perspectivegraph/commit/e28ca1534127cb6ee498b0f23a224225d847a030))
+* **docs:** keep the cosign example runnable next to the version annotation ([#54](https://github.com/luiacuaniello/perspectivegraph/issues/54)) ([9935e39](https://github.com/luiacuaniello/perspectivegraph/commit/9935e39851faa1eab9a57f604520d33ad016b3ac))
+* harden the AWS harness against real-scenario quirks ([0e05e98](https://github.com/luiacuaniello/perspectivegraph/commit/0e05e98dc405ff0b2284d12b9ec9382b37780b98))
+* **release:** build images for arm64 too, and tell people they exist ([1a71212](https://github.com/luiacuaniello/perspectivegraph/commit/1a71212368d3ff2dd7beef76ed70e8ceb57d020e))
+* **sast:** suppress gosec G101 false positive on credential_exposed label ([a53229b](https://github.com/luiacuaniello/perspectivegraph/commit/a53229b679eb59af4b12cba53ddc2885f34f3501))
+* **ui:** close the explainer by default, honour browser back, disclose how this is built ([293e98c](https://github.com/luiacuaniello/perspectivegraph/commit/293e98c6a2c8e6aa4033ddf0bd5d2b610f976ed2))
+
 ## [0.3.0](https://github.com/luiacuaniello/perspectivegraph/compare/v0.2.0...v0.3.0) (2026-07-11)
 
 
