@@ -417,8 +417,35 @@ Two further details, both established by probing the live API rather than assume
   no missing context even when other statements on the same principal carry conditions, so a real
   escalation is still confirmed.
 
-Resource-scoped grants remain the cheapest unclaimed check of this kind: `SimulatePrincipalPolicy` accepts
-`--resource-arns`, so the `resource_scoped` downgrade can be graded against AWS for free too.
+#### Resource scope: what an unscoped question can and cannot refute
+
+The same trap appears one layer down. A simulation that names no resource is evaluated by AWS against `*`,
+so it asks an **account-wide** question. Measured on the real API, a grant confined to a single user:
+
+```
+simulated with no resource        -> implicitDeny
+simulated on the granted ARN      -> allowed
+simulated on a different ARN      -> implicitDeny
+```
+
+The first line is indistinguishable from holding no grant at all - and the engine *does* surface such
+grants, scored down as `resource_scoped`. So a plain denial refutes the account-wide claim only; treating
+it as "this principal cannot escalate" would fail the engine for a narrower question than it answered.
+
+Three things follow, all of them in the code:
+
+- A denial says so: *"no escalation primitive is permitted account-wide … a grant scoped to specific
+  resources would not appear here"*.
+- `perspectivegraph redteam -principal <arn> -resource <resource-arn>` settles a scoped claim by naming
+  the resource the grant covers.
+- `-compare` reports a principal whose engine claim is `resource_scoped` as **unsettled** rather than a
+  disagreement, since the two sides are not answering the same question. Settling it means re-running
+  with `-resource`.
+
+The engine's policy reader records only *whether* a grant was account-wide, not which resources it names,
+so the oracle cannot discover the scoped resource on its own - you supply it. That is a deliberate line:
+having the oracle parse policies to find its own answer is how a supposedly independent check quietly
+becomes a second opinion from the same source.
 
 ## Event contract
 

@@ -119,11 +119,33 @@ const escalationAction = "privesc:any"
 // The claim is untestable, and so never settled, unless the ARN names an IAM user,
 // group or role - the only things AWS accepts as a simulation source.
 func EscalationClaim(principalARN string) Assertion {
+	return EscalationClaimOn(principalARN, "")
+}
+
+// EscalationClaimOn narrows the claim to a single resource: "could this principal
+// escalate *by acting on this thing*".
+//
+// It exists because the unscoped question is account-wide. AWS evaluates a simulation
+// with no resource named against `*`, so a grant confined to specific resources answers
+// `implicitDeny` there - indistinguishable from holding no grant at all. The engine does
+// surface those grants (scored down as `resource_scoped`), so settling one means naming
+// the resource it covers.
+//
+// Pass the ARN of the thing the grant is scoped to - the user a policy could be attached
+// to, the role that could be passed. An empty or non-ARN resource leaves the claim
+// account-wide.
+func EscalationClaimOn(principalARN, resourceARN string) Assertion {
+	resource := "account-admin"
+	note := "hold at least one privilege-escalation primitive"
+	if strings.HasPrefix(resourceARN, "arn:") {
+		resource = resourceARN
+		note = "hold at least one privilege-escalation primitive over " + resourceARN
+	}
 	return Assertion{
 		Kind: KindIAM, Action: escalationAction,
-		Principal: principalARN, Resource: "account-admin",
+		Principal: principalARN, Resource: resource,
 		Testable: isIAMPrincipal(principalARN),
-		Note:     "hold at least one privilege-escalation primitive",
+		Note:     note,
 	}
 }
 

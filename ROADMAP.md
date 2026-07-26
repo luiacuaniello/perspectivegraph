@@ -86,9 +86,14 @@ attacked - from an authority independent of the engine.
   actually holds needs the attacker's context (an `aws:SourceIp` inside the VPC probably
   matches; MFA on a machine identity never does), which is a judgement the oracle should
   not make for you. *(done - see `internal/redteam`)*
-- **Resource-scoped grants.** `SimulatePrincipalPolicy` takes `--resource-arns`, so the
-  `resource_scoped` downgrade can be graded against AWS for free, the same way. Still the
-  cheapest unclaimed check in this area. *(not started)*
+- **Resource-scoped grants: the oracle no longer refutes what it did not ask.** A
+  simulation with no resource named is evaluated by AWS against `*`, so a grant confined
+  to specific resources answers `implicitDeny` - indistinguishable from holding no grant
+  at all. The oracle used to record that as a refutation, while the engine legitimately
+  surfaces such grants (scored down as `resource_scoped`). Denials now state that they
+  settle only the *account-wide* claim, `redteam -resource <arn>` settles a scoped one,
+  and `-compare` reports a scoped claim as unsettled instead of failing the engine for a
+  question nobody asked it. *(done - see `internal/redteam`)*
 - **Per-basis recalibration transfer.** The base rate of exploitability is a property
   of the environment and doesn't transfer between them; a per-provenance bias
   ("heuristic hops are systematically overstated by X") is a property of the model and

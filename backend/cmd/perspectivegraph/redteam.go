@@ -51,6 +51,7 @@ func runRedteam(args []string) error {
 	allRoles := fs.Bool("roles", false, "enumerate every role in the account and settle each")
 	compare := fs.Bool("compare", false, "also run the engine over the account and report where it disagrees with AWS (non-zero exit on disagreement)")
 	limit := fs.Int("limit", 200, "with -roles, stop after this many roles")
+	resource := fs.String("resource", "", "settle the claim over this resource ARN instead of account-wide, which is what reveals a grant scoped to specific resources")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -90,7 +91,7 @@ func runRedteam(args []string) error {
 
 	var held, blocked, unsettled int
 	for _, arn := range principals {
-		res, err := oracle.Check(ctx, redteam.EscalationClaim(arn))
+		res, err := oracle.Check(ctx, redteam.EscalationClaimOn(arn, *resource))
 		if err != nil {
 			return fmt.Errorf("check %s: %w", arn, err)
 		}
@@ -136,7 +137,7 @@ func compareEngineToAWS(ctx context.Context, oracle *redteam.AWSOracle, region, 
 		// is the one this needs, so a network-feed failure must not stop the comparison.
 		fmt.Fprintf(os.Stderr, "redteam: partial collect: %v\n", err)
 	}
-	escalates, collected := engineEscalations(events)
+	escalates, scoped, collected := engineEscalations(events)
 
 	fmt.Printf("\n  %-42s %-12s %-12s\n", "principal", "engine", "AWS")
 	fmt.Printf("  %s\n", strings.Repeat("-", 74))
@@ -165,6 +166,13 @@ func compareEngineToAWS(ctx context.Context, oracle *redteam.AWSOracle, region, 
 		case res.Decision == redteam.Inconclusive:
 			unsettled++
 			mark = "unsettled"
+		case scoped[arn] && res.Decision == redteam.Denied:
+			// The engine qualified this claim as resource-scoped and the oracle asked
+			// the account-wide question, so the two are not answering the same thing.
+			// Calling it a disagreement would fail the engine for a question nobody
+			// asked it; settling it means re-running with -resource <arn>.
+			unsettled++
+			engineSays, mark = "scoped", "unsettled (scoped)"
 		case escalates[arn] == (res.Decision == redteam.Allowed):
 			agree++
 			mark = "agree"
@@ -190,8 +198,16 @@ func compareEngineToAWS(ctx context.Context, oracle *redteam.AWSOracle, region, 
 //
 // The two are separate on purpose. A principal absent from the graph produced no claim,
 // and scoring that as "the engine says no" would turn a coverage gap into fake agreement.
-func engineEscalations(events []ontology.Event) (escalates, collected map[string]bool) {
-	escalates, collected = map[string]bool{}, map[string]bool{}
+// engineEscalations reads the engine's escalation claims out of collected events, keyed
+// by principal ARN.
+//
+// `scoped` marks the claims the engine itself qualified as resource-scoped: the
+// permission is held only over specific resources, never account-wide. That matters for
+// the comparison, because the oracle's unscoped question is account-wide - AWS evaluates
+// an unnamed resource as `*` - so a scoped grant answers implicitDeny there. Grading
+// that as a disagreement would fail the engine for a question nobody asked it.
+func engineEscalations(events []ontology.Event) (escalates, scoped, collected map[string]bool) {
+	escalates, scoped, collected = map[string]bool{}, map[string]bool{}, map[string]bool{}
 	arnByID := map[string]string{}
 	for _, ev := range events {
 		for _, n := range ev.Nodes {
@@ -203,14 +219,24 @@ func engineEscalations(events []ontology.Event) (escalates, collected map[string
 	}
 	for _, ev := range events {
 		for _, e := range ev.Edges {
-			if e.Type == ontology.EdgeCanEscalateTo {
-				if arn := arnByID[e.From]; arn != "" {
-					escalates[arn] = true
-				}
+			if e.Type != ontology.EdgeCanEscalateTo {
+				continue
+			}
+			arn := arnByID[e.From]
+			if arn == "" {
+				continue
+			}
+			escalates[arn] = true
+			if s, ok := e.Properties["resource_scoped"].(bool); ok && s {
+				scoped[arn] = true
+			} else {
+				// An account-wide claim on the same principal outranks a scoped one:
+				// that one IS comparable to what the oracle asked.
+				scoped[arn] = false
 			}
 		}
 	}
-	return escalates, collected
+	return escalates, scoped, collected
 }
 
 func verdict(escalates bool) string {
