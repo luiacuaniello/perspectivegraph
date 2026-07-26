@@ -38,7 +38,8 @@ IAM / SSO output, waits for the analyzer, and prints the top attack path with it
 generated fix. Dashboard on **http://localhost:3000**. Needs Docker, `jq` and `curl`;
 first run takes a couple of minutes to build the images. Tear down with `make down`.
 
-Prefer not to build? The release images are published to GHCR:
+Prefer not to build? The release images are published to GHCR (`latest` also tracks the
+newest release; the pinned tag is the one to use if you care about reproducibility):
 
 ```bash
 docker pull ghcr.io/luiacuaniello/perspectivegraph:v0.3.0
@@ -132,12 +133,17 @@ read this before you rely on it:
   reachability-precision case (an open SG on a private-subnet box must **not** form a path)
   and the credential-origin case (a leaked-key privesc is invisible until `SEED_IAM_USERS`
   is on). It runs under `make test`, so a regression that loses or invents a path fails the build.
-- **Deployment: demo-grade defaults.** The bundled `docker compose` / Helm setup is
-  hardened for a demo (distroless, non-root, read-only rootfs, digest-pinned 0-CVE images,
-  opt-in TLS). A production rollout still needs your own hardening: an external managed
-  PostgreSQL+AGE, secrets in a manager (not env vars), TLS on by default, backups, and HA
-  for the leader-gated scheduler. See the [operations & hardening runbook](docs/OPERATIONS.md),
-  [`SECURITY.md`](SECURITY.md), and the [threat model](docs/THREAT-MODEL.md).
+- **Deployment: demo-grade defaults, with a production switch.** The bundled `docker
+  compose` / Helm setup is hardened for a demo (distroless, non-root, read-only rootfs,
+  digest-pinned 0-CVE images, opt-in TLS) and is deliberately open so `make demo` is one
+  command. Set **`PG_ENV=production`** and the backend **refuses to start** unless both the
+  API and ingest are authenticated - the permissive default cannot be reached by forgetting
+  to configure it. A production rollout still needs your own hardening beyond that: an
+  external managed PostgreSQL+AGE, secrets in a manager (not env vars), TLS on by default,
+  backups, and HA for the leader-gated scheduler. For people use OIDC, so revoking access is
+  your IdP's job rather than a token rotation - see the
+  [operations & hardening runbook](docs/OPERATIONS.md), [`SECURITY.md`](SECURITY.md), and the
+  [threat model](docs/THREAT-MODEL.md).
 - **Scope.** It answers the reachable attack-path question in the developer workflow. It is
   not a scanner, a CNAPP, or a compliance product, and it does not replace them.
 
