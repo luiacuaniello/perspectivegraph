@@ -184,7 +184,7 @@ func TestEscalationDeniedByAWSIsARefutation(t *testing.T) {
 	if res.Decision != Denied {
 		t.Fatalf("no permitted primitive must refute the claim, got %s", res.Decision)
 	}
-	if !strings.Contains(res.Evidence, "none of the") {
+	if !strings.Contains(res.Evidence, "no escalation primitive is permitted") {
 		t.Errorf("evidence should say nothing was permitted, got %q", res.Evidence)
 	}
 }
@@ -231,6 +231,73 @@ func TestConditionGatedEscalationIsNotARefutation(t *testing.T) {
 	if strings.Contains(res.Evidence, "would hold") {
 		t.Errorf("evidence must not attribute gating to specific primitives, got %q", res.Evidence)
 	}
+}
+
+// ── resource scope ──────────────────────────────────────────────────────────
+
+// Measured on the real API: a grant confined to `user/target-user` answers implicitDeny
+// when simulated with no resource named (AWS evaluates that against `*`) and `allowed`
+// when the ARN is supplied. So settling a scoped grant means sending the resource, and
+// this asserts it actually reaches the request rather than being dropped.
+func TestScopedClaimSendsTheResourceToAWS(t *testing.T) {
+	const target = "arn:aws:iam::111111111111:user/target-user"
+	f := &recordingIAM{fakeIAM: *allow("iam:AttachUserPolicy")}
+
+	res, err := NewAWSOracle(f).Check(context.Background(), EscalationClaimOn(roleARN, target))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.resources) != 1 || f.resources[0] != target {
+		t.Fatalf("resource ARNs sent = %v, want [%s]", f.resources, target)
+	}
+	if res.Decision != Allowed {
+		t.Fatalf("decision = %s, want allowed", res.Decision)
+	}
+	if !strings.Contains(res.Evidence, target) {
+		t.Errorf("evidence should say the permit is over that resource, got %q", res.Evidence)
+	}
+}
+
+// The account-wide question must not be reported as if it settled everything: a grant
+// scoped to specific resources answers implicitDeny to it and is indistinguishable from
+// holding no grant at all, so the evidence has to say what was actually established.
+func TestAccountWideDenialNamesItsOwnLimit(t *testing.T) {
+	res, err := NewAWSOracle(allow()).Check(context.Background(), EscalationClaim(roleARN))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Decision != Denied {
+		t.Fatalf("decision = %s, want denied", res.Decision)
+	}
+	if !strings.Contains(res.Evidence, "account-wide") {
+		t.Errorf("evidence must scope its own claim, got %q", res.Evidence)
+	}
+	if !strings.Contains(res.Evidence, "scoped to specific resources") {
+		t.Errorf("evidence must say a scoped grant would not appear, got %q", res.Evidence)
+	}
+}
+
+// A non-ARN resource (the synthetic account-admin target the path assembler produces)
+// must leave the question account-wide rather than being sent to AWS as a resource.
+func TestSyntheticTargetIsNotSentAsAResource(t *testing.T) {
+	f := &recordingIAM{fakeIAM: *allow("iam:AttachUserPolicy")}
+	if _, err := NewAWSOracle(f).Check(context.Background(), assertionsFor(ssrfPath())[1]); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.resources) != 0 {
+		t.Errorf("a graph id must never be sent to AWS as a resource ARN, got %v", f.resources)
+	}
+}
+
+// recordingIAM captures the resource ARNs each simulation carried.
+type recordingIAM struct {
+	fakeIAM
+	resources []string
+}
+
+func (r *recordingIAM) SimulatePrincipalPolicy(ctx context.Context, in *iam.SimulatePrincipalPolicyInput, opts ...func(*iam.Options)) (*iam.SimulatePrincipalPolicyOutput, error) {
+	r.resources = append(r.resources, in.ResourceArns...)
+	return r.fakeIAM.SimulatePrincipalPolicy(ctx, in, opts...)
 }
 
 // An unconditional grant must survive the guard: AWS reports it as allowed with no

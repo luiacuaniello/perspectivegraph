@@ -170,10 +170,20 @@ func (o *AWSOracle) checkEscalation(ctx context.Context, a Assertion) (Result, e
 	}
 	sort.Strings(actions) // deterministic request, so evidence is reproducible
 
-	evals, err := o.simulate(ctx, &iam.SimulatePrincipalPolicyInput{
+	in := &iam.SimulatePrincipalPolicyInput{
 		PolicySourceArn: &a.Principal,
 		ActionNames:     actions,
-	})
+	}
+	// Naming a resource narrows the question from "account-wide" to "over this thing".
+	// AWS evaluates an unnamed resource as `*`, so without this a grant confined to
+	// specific resources is invisible - see the denial evidence below.
+	scope := "account-wide"
+	if strings.HasPrefix(a.Resource, "arn:") {
+		in.ResourceArns = []string{a.Resource}
+		scope = "over " + a.Resource
+	}
+
+	evals, err := o.simulate(ctx, in)
 	if err != nil {
 		return Result{Decision: Inconclusive, Evidence: err.Error()}, nil
 	}
@@ -199,7 +209,7 @@ func (o *AWSOracle) checkEscalation(ctx context.Context, a Assertion) (Result, e
 	}
 	if len(holding) > 0 {
 		return Result{Decision: Allowed,
-			Evidence: fmt.Sprintf("SimulatePrincipalPolicy: holds %s", strings.Join(holding, "; "))}, nil
+			Evidence: fmt.Sprintf("SimulatePrincipalPolicy: holds %s (%s)", strings.Join(holding, "; "), scope)}, nil
 	}
 
 	// Nothing held outright. Before calling that a refutation, check whether AWS could
@@ -226,9 +236,20 @@ func (o *AWSOracle) checkEscalation(ctx context.Context, a Assertion) (Result, e
 				namedKeys(missingKeys))}, nil
 	}
 
+	// Be precise about what was established. With no resource named, AWS evaluated the
+	// question against `*`, so this refutes an ACCOUNT-WIDE escalation and nothing more:
+	// a grant confined to specific resources answers implicitDeny here and is
+	// indistinguishable from holding no grant at all. The engine does surface those,
+	// scored down as `resource_scoped`, so settling one means re-asking with the
+	// resource named (EscalationClaimOn).
+	if scope == "account-wide" {
+		return Result{Decision: Denied,
+			Evidence: fmt.Sprintf("SimulatePrincipalPolicy: no escalation primitive is permitted account-wide (%d actions evaluated over `*`). A grant scoped to specific resources would not appear here - name the resource to settle one.",
+				len(actions))}, nil
+	}
 	return Result{Decision: Denied,
-		Evidence: fmt.Sprintf("SimulatePrincipalPolicy: none of the %d escalation primitives are permitted (%d actions evaluated)",
-			len(prims), len(actions))}, nil
+		Evidence: fmt.Sprintf("SimulatePrincipalPolicy: no escalation primitive is permitted %s (%d actions evaluated)",
+			scope, len(actions))}, nil
 }
 
 // evaluation is one action's simulated outcome, plus the request-context keys the
