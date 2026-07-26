@@ -27,6 +27,8 @@ pull request.**
 
 ![PerspectiveGraph - the day's decision surface](docs/screenshot-overview.png)
 
+*`make demo`, with sample scanner output and seeded verdicts - not a real environment.*
+
 ## See it in 90 seconds
 
 ```bash
@@ -64,7 +66,14 @@ trusted.
 | | |
 |---|---|
 | ![Attack path detail](docs/screenshot-paths.png) | ![Score calibration](docs/screenshot-trust.png) |
-| Every hop, its probability, where that probability came from, and the ATT&CK technique. | Whether the engine's own scores have matched reality. |
+| Every hop, its probability, where that probability came from, and the ATT&CK technique. | Whether the engine's own scores held up against recorded outcomes. |
+
+*Every screenshot on this page is `make demo`: sample scanner output and **seeded**
+verdicts, not a real environment. That is why the calibration panel reads
+"overconfident" at 2% precision - those outcomes were generated to exercise the
+instrument, and they are deliberately unkind to it. On a fresh install the same page
+reads **"insufficient data"** and withholds a verdict until real outcomes exist, because
+a risk score you cannot check is worth less than an honest blank.*
 
 ## Why?
 
