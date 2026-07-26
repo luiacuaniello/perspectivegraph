@@ -102,10 +102,11 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      # `npm install` (not `npm ci`): the lockfile pins platform-specific native
-      # deps (rolldown/esbuild), and a lock generated on a different OS lacks this
-      # runner's variants - `npm ci` would fail on a known npm bug (npm/cli#4828).
-      - run: npm install --no-audit --no-fund
+      # `npm ci`, never `npm install`: it installs exactly what the lockfile pins and
+      # fails instead of resolving anything new, so CI tests the same dependency tree
+      # the release image ships. It also means a pull request cannot silently pull in a
+      # package that was never reviewed.
+      - run: npm ci --no-audit --no-fund
       - name: Lint (ESLint)
         run: npm run lint
       - run: npm run build

@@ -7,11 +7,18 @@
 FROM node:22-alpine@sha256:9385cd9f3001dfc3431e8ead12c43e9e1f87cc1b9b5c6cfd0f73865d405b27c4 AS build
 WORKDIR /app
 COPY package*.json ./
-# `npm install` (not `npm ci`) on purpose: the lockfile pins platform-specific
-# native deps (rolldown/esbuild bindings), and a lock generated on macOS lacks
-# the Linux variants - which would make `npm ci` here fail and silently ship a
-# stale image. `install` resolves correctly regardless of where the lock was made.
-RUN npm install --no-audit --no-fund
+# `npm ci`, never `npm install`: it installs exactly what package-lock.json pins and
+# fails rather than resolving anything new, so this image is reproducible and the SBOM
+# and SLSA provenance attached to it describe what is actually inside. `npm install`
+# would quietly resolve unpinned transitives at build time, which is not a supply chain
+# a consumer can verify.
+#
+# The lockfile must therefore be complete for linux/amd64 and linux/arm64. npm only
+# records the transitive dependencies of optional platform packages for the platform it
+# runs on, so a lockfile regenerated on macOS drops entries this build needs and `npm
+# ci` fails here loudly. Regenerate it with `make lockfile`, which runs npm in this same
+# image rather than on the developer's machine.
+RUN npm ci --no-audit --no-fund
 COPY . .
 RUN npm run build
 
