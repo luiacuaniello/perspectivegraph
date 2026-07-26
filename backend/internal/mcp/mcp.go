@@ -31,6 +31,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"runtime/debug"
 	"sync"
 )
 
@@ -71,13 +73,37 @@ const (
 	codeInternalError  = -32603
 )
 
+// ToolAnnotations are MCP's machine-readable behaviour hints. They matter here because
+// this surface being read-only is the reason it is safe to give an agent at all, and a
+// property stated only in prose is one a client cannot enforce: a host that
+// auto-approves reads and prompts for writes has to be told which is which.
+//
+// All four fields are emitted explicitly rather than omitted when false. The spec
+// defaults `destructiveHint` and `openWorldHint` to TRUE, so leaving them out would
+// declare the opposite of what is meant.
+type ToolAnnotations struct {
+	// Title is a human-readable name a host can show instead of the wire name.
+	Title string `json:"title,omitempty"`
+	// ReadOnlyHint: the tool does not modify anything.
+	ReadOnlyHint bool `json:"readOnlyHint"`
+	// DestructiveHint: the tool may perform destructive updates. Meaningful only when
+	// ReadOnlyHint is false.
+	DestructiveHint bool `json:"destructiveHint"`
+	// IdempotentHint: repeating the call with the same arguments changes nothing extra.
+	IdempotentHint bool `json:"idempotentHint"`
+	// OpenWorldHint: the tool reaches an open-ended external world (a web search) rather
+	// than a closed, known set of data.
+	OpenWorldHint bool `json:"openWorldHint"`
+}
+
 // Tool is one callable capability. InputSchema is JSON Schema: it is the contract
 // the agent plans against, so it carries the real constraints (bounds, enums)
 // rather than accepting anything and failing at call time.
 type Tool struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	InputSchema map[string]any `json:"inputSchema"`
+	Name        string           `json:"name"`
+	Description string           `json:"description"`
+	InputSchema map[string]any   `json:"inputSchema"`
+	Annotations *ToolAnnotations `json:"annotations,omitempty"`
 
 	// Call runs the tool. The returned string is what the model reads, so it should
 	// be compact and self-describing - JSON the model can quote back, not prose.
@@ -192,11 +218,31 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) map[strin
 	if !ok {
 		return toolResult(fmt.Sprintf("no such tool %q", p.Name), true)
 	}
-	out, err := tool.Call(ctx, p.Arguments)
+	out, err := call(ctx, tool, p.Arguments)
 	if err != nil {
 		return toolResult(err.Error(), true)
 	}
 	return toolResult(out, false)
+}
+
+// call runs a tool and converts a panic into an error.
+//
+// Without this, a panic anywhere in a handler unwinds through the read loop and kills
+// the process - and since the transport is this process's stdio, that takes the agent's
+// whole session with it, mid-conversation, with nothing on the wire to explain why. The
+// blast radius is wildly out of proportion to the cause, which is usually one bad
+// assumption about a value the model supplied.
+//
+// The stack goes to stderr, never stdout: stdout is the protocol channel, and one stray
+// byte there corrupts the JSON stream for good.
+func call(ctx context.Context, t Tool, args map[string]any) (out string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "mcp: tool %s panicked: %v\n%s\n", t.Name, r, debug.Stack())
+			err = fmt.Errorf("tool %s failed unexpectedly and was contained; the session is still usable", t.Name)
+		}
+	}()
+	return t.Call(ctx, args)
 }
 
 func toolResult(text string, isError bool) map[string]any {

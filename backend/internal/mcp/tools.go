@@ -80,15 +80,38 @@ func (a *API) query(ctx context.Context, q string, out any) error {
 // orient, then enumerate, then inspect, then simulate.
 func Tools(api *API) []Tool {
 	return []Tool{
-		posture(api),
-		listPaths(api),
-		explainPath(api),
-		routesToTarget(api),
-		listFixes(api),
-		simulateFix(api),
-		searchAssets(api),
-		scoreTrust(api),
+		readOnly(posture(api), "Posture overview"),
+		readOnly(listPaths(api), "List attack paths"),
+		readOnly(explainPath(api), "Explain an attack path"),
+		readOnly(routesToTarget(api), "Routes to a target"),
+		readOnly(listFixes(api), "List remediations"),
+		readOnly(simulateFix(api), "Simulate cutting edges"),
+		readOnly(searchAssets(api), "Search assets"),
+		readOnly(scoreTrust(api), "Score calibration"),
 	}
+}
+
+// readOnly stamps a tool with the annotations that make this surface's central property
+// machine-readable: nothing here suppresses a path, opens a pull request or records a
+// verdict, because an agent that can silently accept a risk is a liability rather than a
+// feature.
+//
+// It is applied at the assembly point on purpose. Every tool passes through here, so a
+// tool added later cannot quietly join the surface without a decision being made about
+// it - and `TestEveryToolDeclaresItselfReadOnly` fails if one does.
+//
+// Idempotent: every tool is a query, including simulate_fix, which asks the engine for a
+// counterfactual rather than applying one. Not open-world: they read this deployment's
+// own graph, a closed and known set, not the internet.
+func readOnly(t Tool, title string) Tool {
+	t.Annotations = &ToolAnnotations{
+		Title:           title,
+		ReadOnlyHint:    true,
+		DestructiveHint: false,
+		IdempotentHint:  true,
+		OpenWorldHint:   false,
+	}
+	return t
 }
 
 func obj(props map[string]any, required ...string) map[string]any {
