@@ -126,6 +126,14 @@ Contributions written the same way are welcome; hold them to the same gates.
 - **Frontend:** must pass `tsc`, `build`, and `vitest`. Use the inline SVG icon
   set (`components/icons.tsx`) - **no emoji in the UI**; colors come from the
   CSS-variable design tokens (so light/dark both work), not hardcoded hex.
+- **Frontend dependencies:** install with `npm ci` (`make install-frontend`), and to
+  add or update one, edit `package.json` and run **`make lockfile`** - never a bare
+  `npm install`. CI and the release image both use `npm ci`, so the build is
+  reproducible and the SBOM and SLSA provenance describe what is actually shipped.
+  `make lockfile` regenerates the lockfile inside the same Linux image the release
+  build uses, because npm records the transitive dependencies of optional
+  platform-specific packages only for the platform it runs on: regenerating on macOS
+  silently drops entries the Linux build needs, and `npm ci` then fails in CI.
 - **Docs + Postman:** every user-facing feature updates the docs and
   `.env.example` **and** the Postman collection
   (`docs/perspectivegraph.postman_collection.json`). `README.md` is the landing

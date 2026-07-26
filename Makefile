@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help up up-full demo up-search down logs run-backend build-backend test bench bench-cloudgoat mcp reachability-lab-aws redteam-aws boundary-lab-aws tidy run-frontend install-frontend seed seed-discovery seed-load clean
+.PHONY: help up up-full demo up-search down logs run-backend build-backend test bench bench-cloudgoat mcp reachability-lab-aws redteam-aws boundary-lab-aws tidy run-frontend install-frontend lockfile seed seed-discovery seed-load clean
 
 # CGO is disabled so the Go binaries link statically (Go's pure-Go DNS resolver
 # instead of the system one). This also sidesteps a macOS system-linker bug on
@@ -104,9 +104,17 @@ fuzz:
 	  echo "== $$t =="; $(GO) test ./internal/ingestion/fuzz -run x -fuzz $$t -fuzztime $(or $(FUZZTIME),20s) || exit 1; \
 	done
 
-## install-frontend: install dashboard dependencies
+## install-frontend: install dashboard dependencies exactly as the lockfile pins them
 install-frontend:
-	cd frontend && npm install
+	cd frontend && npm ci
+
+## lockfile: regenerate frontend/package-lock.json after changing package.json. Runs npm INSIDE the same Linux image the release build uses, because npm only records the transitive deps of optional platform packages for the platform it runs on - regenerating on macOS drops entries the Linux build needs and breaks `npm ci` in CI. Never run a bare `npm install` in frontend/ to add a dependency; edit package.json, then run this.
+lockfile:
+	docker run --rm -v "$(CURDIR)/frontend":/app -w /app node:22-alpine \
+	  npm install --package-lock-only --no-audit --no-fund
+	@echo ""
+	@echo "→ regenerated frontend/package-lock.json on linux. Verify before committing:"
+	@echo "    git diff --stat frontend/package-lock.json"
 
 ## run-frontend: start the Vite dev server
 run-frontend:
