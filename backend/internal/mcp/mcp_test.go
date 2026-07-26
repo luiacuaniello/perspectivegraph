@@ -215,3 +215,90 @@ func TestJSONStringEscapesModelInput(t *testing.T) {
 		t.Errorf("jsonString = %s", got)
 	}
 }
+
+// ── annotations ─────────────────────────────────────────────────────────────
+
+// The README's claim for this integration is that the surface is read-only. MCP has a
+// machine-readable field for exactly that, and a host uses it to decide what to
+// auto-approve - so the property has to be on the wire, not only in prose. This fails if
+// a tool is ever added to the surface without that decision being made about it.
+func TestEveryToolDeclaresItselfReadOnly(t *testing.T) {
+	tools := Tools(NewAPI("http://localhost:8080", ""))
+	if len(tools) == 0 {
+		t.Fatal("no tools to check")
+	}
+	for _, tool := range tools {
+		a := tool.Annotations
+		if a == nil {
+			t.Errorf("%s: no annotations - a host cannot tell whether it is safe to call unattended", tool.Name)
+			continue
+		}
+		if !a.ReadOnlyHint {
+			t.Errorf("%s: readOnlyHint is false, but this surface is documented as read-only", tool.Name)
+		}
+		if a.DestructiveHint {
+			t.Errorf("%s: destructiveHint is true on a read-only surface", tool.Name)
+		}
+		if a.Title == "" {
+			t.Errorf("%s: no human-readable title", tool.Name)
+		}
+	}
+}
+
+// The spec defaults destructiveHint and openWorldHint to TRUE, so omitting them would
+// advertise the opposite of what is meant. They must appear on the wire even as false.
+func TestAnnotationsAreExplicitOnTheWire(t *testing.T) {
+	srv := testServer(readOnly(echoTool(), "Echo"))
+	var out strings.Builder
+	if err := srv.Serve(context.Background(),
+		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`+"\n"), &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"readOnlyHint":true`, `"destructiveHint":false`, `"openWorldHint":false`} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("tools/list must carry %s, got %s", want, truncate(out.String(), 400))
+		}
+	}
+}
+
+// ── panic containment ───────────────────────────────────────────────────────
+
+// A panic in a handler used to unwind through the read loop and kill the process - and
+// since the transport is this process's stdio, that ends the agent's session mid
+// conversation with nothing on the wire to explain it. It must come back as a tool error
+// the model can read, and the server must still answer the next request.
+func TestPanickingToolDoesNotKillTheSession(t *testing.T) {
+	boom := Tool{
+		Name: "boom", Description: "panics", InputSchema: map[string]any{"type": "object"},
+		Call: func(context.Context, map[string]any) (string, error) { panic("held together with hope") },
+	}
+	srv := NewServer("test", "0", []Tool{boom})
+
+	in := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"boom","arguments":{}}}` + "\n" +
+		`{"jsonrpc":"2.0","id":2,"method":"ping"}` + "\n")
+	var out strings.Builder
+	if err := srv.Serve(context.Background(), in, &out); err != nil {
+		t.Fatalf("serve returned %v - the panic escaped the guard", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected a reply to both messages, got %d: %s", len(lines), out.String())
+	}
+	if !strings.Contains(lines[0], `"isError":true`) {
+		t.Errorf("the panic must surface as a tool error, got %s", lines[0])
+	}
+	if strings.Contains(lines[0], "held together with hope") {
+		t.Errorf("the panic value must not be handed to the model verbatim, got %s", lines[0])
+	}
+	if !strings.Contains(lines[1], `"id":2`) {
+		t.Errorf("the server must still answer after a panic, got %s", lines[1])
+	}
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
+}

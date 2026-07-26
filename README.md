@@ -113,8 +113,10 @@ whole simulation with the given edges cut and reports what actually changes, set
 
 The surface is **read-only**: nothing suppresses a path, opens a PR or records a
 verdict, because an agent that can silently accept a risk is a liability rather than a
-feature. And the tool descriptions tell the model the scores are expert estimates and
-to call `get_score_trust` before quoting one as a probability.
+feature. Every tool declares that on the wire (`readOnlyHint`), so a host can decide what
+to run unattended without taking this paragraph's word for it - and a test fails if a
+tool is ever added without that decision. The descriptions also tell the model the scores
+are expert estimates, and to call `get_score_trust` before quoting one as a probability.
 
 ## Project status & maturity
 
