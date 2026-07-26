@@ -2,6 +2,7 @@ package aws
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"strings"
 	"testing"
@@ -83,11 +84,47 @@ func (fakeEC2) DescribeSubnets(context.Context, *ec2.DescribeSubnetsInput, ...fu
 	}}, nil
 }
 
-// fakeIAM returns one role with a URL-encoded trust + inline policy - exactly how
+// fakeIAM returns two roles with a URL-encoded trust + inline policy - exactly how
 // the real GetAccountAuthorizationDetails encodes documents - to prove the iam
 // parser unescapes what our mapping emits. Its ListInstanceProfiles resolves i-web's
-// profile to that SAME role, which is what joins the network graph to the identity graph.
+// profile to the `deployer` role, which is what joins the network graph to the
+// identity graph.
+//
+// The second role, `bounded-deployer`, carries the SAME admin inline policy behind a
+// permissions boundary, and the boundary's document is served only by
+// GetPolicy/GetPolicyVersion - never in the bundle's Policies list. That is the real
+// account's shape: a boundary policy attached to nothing else need not come back with
+// the authorization details, so a connector that does not fetch it cannot intersect it.
 type fakeIAM struct{}
+
+const (
+	fakeBoundaryARN = "arn:aws:iam::123456789012:policy/read-only-boundary"
+	// The boundary omits every iam: action, so the intersection strips the admin
+	// grant - no explicit Deny, which is how boundaries are actually used.
+	fakeBoundaryDoc = `{"Statement":[{"Effect":"Allow","Action":["s3:Get*","ec2:Describe*"],"Resource":"*"}]}`
+)
+
+func (fakeIAM) GetPolicy(_ context.Context, in *iam.GetPolicyInput, _ ...func(*iam.Options)) (*iam.GetPolicyOutput, error) {
+	if aws.ToString(in.PolicyArn) != fakeBoundaryARN {
+		return nil, fmt.Errorf("unexpected policy arn %q", aws.ToString(in.PolicyArn))
+	}
+	return &iam.GetPolicyOutput{Policy: &iamtypes.Policy{
+		Arn:              aws.String(fakeBoundaryARN),
+		PolicyName:       aws.String("read-only-boundary"),
+		DefaultVersionId: aws.String("v1"),
+	}}, nil
+}
+
+func (fakeIAM) GetPolicyVersion(_ context.Context, in *iam.GetPolicyVersionInput, _ ...func(*iam.Options)) (*iam.GetPolicyVersionOutput, error) {
+	if aws.ToString(in.PolicyArn) != fakeBoundaryARN {
+		return nil, fmt.Errorf("unexpected policy arn %q", aws.ToString(in.PolicyArn))
+	}
+	return &iam.GetPolicyVersionOutput{PolicyVersion: &iamtypes.PolicyVersion{
+		VersionId:        aws.String("v1"),
+		IsDefaultVersion: true,
+		Document:         aws.String(url.QueryEscape(fakeBoundaryDoc)),
+	}}, nil
+}
 
 func (fakeIAM) ListInstanceProfiles(context.Context, *iam.ListInstanceProfilesInput, ...func(*iam.Options)) (*iam.ListInstanceProfilesOutput, error) {
 	return &iam.ListInstanceProfilesOutput{InstanceProfiles: []iamtypes.InstanceProfile{{
@@ -108,6 +145,15 @@ func (fakeIAM) GetAccountAuthorizationDetails(context.Context, *iam.GetAccountAu
 			Arn:                      aws.String("arn:aws:iam::123456789012:role/deployer"),
 			AssumeRolePolicyDocument: aws.String(trust),
 			RolePolicyList:           []iamtypes.PolicyDetail{{PolicyName: aws.String("inline"), PolicyDocument: aws.String(inline)}},
+		}, {
+			RoleName:                 aws.String("bounded-deployer"),
+			Arn:                      aws.String("arn:aws:iam::123456789012:role/bounded-deployer"),
+			AssumeRolePolicyDocument: aws.String(trust),
+			RolePolicyList:           []iamtypes.PolicyDetail{{PolicyName: aws.String("inline"), PolicyDocument: aws.String(inline)}},
+			PermissionsBoundary: &iamtypes.AttachedPermissionsBoundary{
+				PermissionsBoundaryType: iamtypes.PermissionsBoundaryAttachmentTypePolicy,
+				PermissionsBoundaryArn:  aws.String(fakeBoundaryARN),
+			},
 		}},
 		IsTruncated: false,
 	}, nil
@@ -194,6 +240,53 @@ func TestSDKInstanceProfileJoinsNetworkAndIdentity(t *testing.T) {
 	}
 	if !fromIAM {
 		t.Error("the iam collector did not produce the same role node id - the halves would not fuse")
+	}
+}
+
+// TestSDKCarriesPermissionsBoundary closes the false positive the boundary lab
+// demonstrated on a live account (231016596764): two roles with a byte-identical
+// admin grant, differing only in a permissions boundary, were reported as equally
+// able to reach account-admin because `GetAccountAuthorizationDetails` returns the
+// boundary and the connector's role struct dropped it before ingestion.
+//
+// The whole chain is under test here: the SDK mapping keeps `PermissionsBoundary`,
+// the transport fetches the boundary document that the bundle did not carry, and the
+// iam collector intersects it - so only the unbounded role keeps the escalation edge.
+func TestSDKCarriesPermissionsBoundary(t *testing.T) {
+	events, err := New(&sdkTransport{ec2: fakeEC2{}, iam: fakeIAM{}}).Collect(context.Background())
+	if err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+
+	var (
+		unbounded = ontology.NewID(ontology.LabelIAMRole, "arn:aws:iam::123456789012:role/deployer")
+		bounded   = ontology.NewID(ontology.LabelIAMRole, "arn:aws:iam::123456789012:role/bounded-deployer")
+	)
+	escalates := map[string]bool{}
+	nodesByID := map[string]ontology.Node{}
+	for _, ev := range events {
+		for _, n := range ev.Nodes {
+			nodesByID[n.ID] = n
+		}
+		for _, e := range ev.Edges {
+			if e.Type == ontology.EdgeCanEscalateTo {
+				escalates[e.From] = true
+			}
+		}
+	}
+
+	if !escalates[unbounded] {
+		t.Error("the unbounded role holds Allow *:* and must still reach account-admin - the control, without which a fix that simply drops every escalation would pass")
+	}
+	if escalates[bounded] {
+		t.Error("the bounded role's boundary permits no iam: action, so the intersection cannot escalate: this is the demonstrated false positive")
+	}
+	// The boundary must reach the graph as evidence, not just silently change a verdict.
+	if got := nodesByID[bounded].Properties["permissions_boundary"]; got != fakeBoundaryARN {
+		t.Errorf("bounded role permissions_boundary = %v, want %s", got, fakeBoundaryARN)
+	}
+	if nodesByID[bounded].Properties["permissions_boundary_unresolved"] == true {
+		t.Error("the transport fetched the boundary document, so it must not be reported unresolved")
 	}
 }
 

@@ -27,13 +27,14 @@ randomized lab  ─▶  ingest  ─▶  engine scores paths  ─▶  oracle atte
 ## Randomization dimensions
 
 The point is variety the engine cannot anticipate, concentrated on the axes the
-engine deliberately does **not** evaluate (so refutations arise naturally):
+engine does **not** evaluate (so refutations arise naturally) plus the ones it
+recently learned to, where the lab now guards against a regression:
 
 | Dimension | Values | Which engine assumption it stresses |
 |---|---|---|
 | IMDS posture | `v1-optional` / `v2-required` | the ASSUMES hop probability (0.9 vs 0.6) |
 | SCP on the OU | none / `deny iam:*` / `deny outside region` | privesc edges the engine can't see |
-| Permission boundary | none / caps to read-only | escalation the engine over-reports |
+| Permission boundary | none / caps to read-only | the intersection the engine now evaluates - a regression guard, not a known gap |
 | Condition keys | none / `aws:SourceIp` / `aws:MultiFactorAuthPresent` | Allow treated as unconditional |
 | Resource scoping | `*` / single-resource | the `resource_scoped` lower-probability edge |
 | Subnet placement | public (igw) / private (nat) | reachability precision |

@@ -144,6 +144,17 @@ func main() {
 		return
 	}
 
+	// Red-team oracle: ask AWS's own policy evaluator whether the privilege-escalation
+	// claims are real, applying the SCPs, boundaries and conditions the engine skips.
+	// Read-only dry runs; creates nothing. See runRedteam. Exits when done.
+	if len(os.Args) >= 2 && os.Args[1] == "redteam" {
+		if err := runRedteam(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "redteam:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	// MCP server: expose the engine as tools an AI agent can call (stdio JSON-RPC).
 	// stdout is the protocol channel, so this must return before any logging starts.
 	if len(os.Args) >= 2 && os.Args[1] == "mcp" {

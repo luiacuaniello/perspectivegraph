@@ -4,13 +4,25 @@ import "strings"
 
 // actionSet is a principal's effective permissions: the Allow'd action patterns
 // (e.g. "iam:AttachRolePolicy", "iam:*", "*"), each tagged with how widely it was
-// granted, minus the account-wide explicit Denies. It applies the parts of AWS
-// policy evaluation that are unambiguous without request context - an explicit
-// Deny always beats an Allow - while leaving Condition keys and NotAction out, so
-// detection still errs toward over-reporting rather than missing.
+// granted, minus the account-wide explicit Denies, and capped by the permissions
+// boundary when one is attached. It applies the parts of AWS policy evaluation that
+// are unambiguous without request context - an explicit Deny always beats an Allow,
+// a boundary caps to the intersection - while leaving Condition keys and NotAction
+// out, so detection still errs toward over-reporting rather than missing.
 type actionSet struct {
 	grants []grant
 	denies []string // account-wide Deny patterns
+	// boundary is the permissions boundary's own action set, or nil when no boundary
+	// applies. It never grants anything on its own: AWS evaluates a boundary purely as
+	// a cap, so effective permission is the INTERSECTION of the identity policies and
+	// the boundary, and a boundary alone leaves a principal able to do nothing.
+	boundary *actionSet
+	// boundaryUnresolved records that a boundary IS attached but its document was not
+	// in the input, so the cap cannot be computed. The set then evaluates as if
+	// uncapped - a boundary of AdministratorAccess is a common no-op, and dropping the
+	// permission would miss it - and the caller scores the claim down instead of
+	// passing it off as verified.
+	boundaryUnresolved bool
 }
 
 // grant is one Allow'd action pattern plus whether it was granted account-wide
@@ -38,11 +50,35 @@ func (a actionSet) deny(p string) actionSet {
 	return a
 }
 
+// cappedBy applies a permissions boundary: the principal's effective permissions
+// become the intersection of what its identity policies allow and what the boundary
+// allows. No explicit Deny is involved - a boundary that simply omits an action
+// removes it - which is how boundaries are used in practice and exactly the case a
+// reader of identity policies alone gets wrong.
+//
+// The boundary is stored stripped of any boundary of its own: a boundary policy is
+// an ordinary managed policy and is not itself bounded.
+func (a actionSet) cappedBy(boundary actionSet) actionSet {
+	boundary.boundary, boundary.boundaryUnresolved = nil, false
+	a.boundary, a.boundaryUnresolved = &boundary, false
+	return a
+}
+
+// cappedByUnknown records a boundary whose policy document the input did not carry.
+// We know the principal is capped but not by how much, so the set keeps evaluating
+// uncapped (the over-report bias) and flags itself, letting the caller report the
+// escalation as unverified rather than as established.
+func (a actionSet) cappedByUnknown() actionSet {
+	a.boundary, a.boundaryUnresolved = nil, true
+	return a
+}
+
 // Allows reports whether the principal may perform the action: some Allow pattern
-// matches and no account-wide Deny does, honoring IAM '*' wildcards
-// (case-insensitive). Explicit Deny wins, exactly as AWS evaluates it.
+// matches, no account-wide Deny does, and the permissions boundary (if any) also
+// permits it - honoring IAM '*' wildcards (case-insensitive). Explicit Deny wins and
+// a boundary caps, exactly as AWS evaluates them.
 func (a actionSet) Allows(action string) bool {
-	if a.denied(action) {
+	if a.denied(action) || !a.boundaryAllows(action) {
 		return false
 	}
 	for _, g := range a.grants {
@@ -54,9 +90,11 @@ func (a actionSet) Allows(action string) bool {
 }
 
 // BroadlyAllows is Allows restricted to account-wide grants: it excludes actions
-// the principal holds only on specific resources.
+// the principal holds only on specific resources. A boundary that permits the action
+// only on specific resources narrows it the same way, so the result is broad only if
+// both sides of the intersection are.
 func (a actionSet) BroadlyAllows(action string) bool {
-	if a.denied(action) {
+	if a.denied(action) || !a.boundaryBroadlyAllows(action) {
 		return false
 	}
 	for _, g := range a.grants {
@@ -65,6 +103,17 @@ func (a actionSet) BroadlyAllows(action string) bool {
 		}
 	}
 	return false
+}
+
+// boundaryAllows reports whether the permissions boundary lets the action through.
+// No boundary (including one we could not resolve) caps nothing.
+func (a actionSet) boundaryAllows(action string) bool {
+	return a.boundary == nil || a.boundary.Allows(action)
+}
+
+// boundaryBroadlyAllows is boundaryAllows restricted to account-wide boundary grants.
+func (a actionSet) boundaryBroadlyAllows(action string) bool {
+	return a.boundary == nil || a.boundary.BroadlyAllows(action)
 }
 
 // denied reports whether an account-wide explicit Deny covers the action.
@@ -79,9 +128,14 @@ func (a actionSet) denied(action string) bool {
 
 // IsAdmin reports effective admin: an account-wide Allow on every action. Only a
 // blanket Deny revokes it - a narrow guardrail Deny leaves a principal that can
-// still do essentially everything, which is what matters for risk.
+// still do essentially everything, which is what matters for risk. A permissions
+// boundary that is not itself admin-equivalent does revoke it: the intersection is
+// then strictly smaller than the account, however broad the identity policy reads.
 func (a actionSet) IsAdmin() bool {
 	if a.denied("*") {
+		return false
+	}
+	if a.boundary != nil && !a.boundary.IsAdmin() {
 		return false
 	}
 	for _, g := range a.grants {
@@ -166,6 +220,27 @@ type privescMatch struct {
 	// is contingent on those resources being privileged - materially less certain
 	// than an account-wide grant, so the caller scores it lower.
 	ScopedOnly bool
+}
+
+// PrivescPrimitive is one escalation technique exposed for callers that must check
+// the SAME techniques against an external authority - notably the red-team oracle,
+// which asks AWS whether a principal really holds them. Exported so there is one
+// list rather than two: a second copy would drift, and a drifted copy would grade
+// the engine against techniques the engine does not actually detect.
+type PrivescPrimitive struct {
+	Name string
+	// Actions are ALL required: a principal holds this primitive only if every one
+	// of them is permitted.
+	Actions []string
+}
+
+// PrivescPrimitives returns the detection table as data.
+func PrivescPrimitives() []PrivescPrimitive {
+	out := make([]PrivescPrimitive, 0, len(primitives))
+	for _, p := range primitives {
+		out = append(out, PrivescPrimitive{Name: p.name, Actions: append([]string(nil), p.actions...)})
+	}
+	return out
 }
 
 // detectPrivesc returns every privesc primitive the principal's permissions
