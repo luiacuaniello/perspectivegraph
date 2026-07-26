@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help up up-full demo up-search down logs run-backend build-backend test bench bench-cloudgoat mcp tidy run-frontend install-frontend seed seed-discovery seed-load clean
+.PHONY: help up up-full demo up-search down logs run-backend build-backend test bench bench-cloudgoat mcp reachability-lab-aws tidy run-frontend install-frontend seed seed-discovery seed-load clean
 
 # CGO is disabled so the Go binaries link statically (Go's pure-Go DNS resolver
 # instead of the system one). This also sidesteps a macOS system-linker bug on
@@ -82,6 +82,13 @@ bench:
 ## mcp: serve the engine as MCP tools on stdio, so an AI agent can query it (point an MCP client at this command). Needs the stack up.
 mcp:
 	cd backend && $(GO) run ./cmd/perspectivegraph mcp --api $(or $(API),http://localhost:8080)
+
+## reachability-lab-aws: prove the reachability claim on a REAL AWS account - two instances behind the SAME open security group, one routed to an internet gateway and one not; only the first may be flagged exposed. Free-tier sized, no NAT gateway, tears itself down. Needs an AWS profile (PROFILE=, REGION=).
+reachability-lab-aws:
+	KEEP=1 ./scripts/reachability-lab-aws.sh
+	@echo ""
+	@echo "→ now collect:  cd backend && AWS_PROFILE=$(or $(PROFILE),pg-admin) $(GO) run ./cmd/perspectivegraph awscollect -region $(or $(REGION),eu-north-1)"
+	@echo "→ then tear down: ./scripts/reachability-lab-aws.sh --teardown"
 
 ## bench-cloudgoat: grade the attack-path engine against CloudGoat-shaped ground-truth scenarios (precision/recall). Runs in CI under `make test`; this target prints the per-scenario table. Add scenarios under backend/testdata/cloudgoat (see its README).
 bench-cloudgoat:
