@@ -1137,6 +1137,48 @@ AUDIT_LOG_PATH=./audit.log \
   make run-backend
 ```
 
+In production, set `PG_ENV=production`: the backend then **refuses to start** unless
+both the API and ingest are authenticated, so the permissive default cannot be
+reached by forgetting to configure it. Same idea as the OIDC check - a
+misconfiguration should be a startup error someone reads, not a warning scrolling
+past in a log.
+
+#### Choosing between SSO and static tokens
+
+The two credential types are not interchangeable, and the difference that matters is
+**how you take access away**.
+
+**For people, use OIDC.** Revocation is your IdP's, which is where it belongs:
+disable the account in Okta/Entra, their tokens expire on their own `exp` and no new
+ones are issued. Nothing to redistribute, nothing to restart, and the audit trail
+already records `jwt:<sub>` per request. This is the path to use for a team.
+
+```bash
+OIDC_JWKS_URL=https://your-idp/.well-known/jwks.json \
+OIDC_ISSUER=https://your-idp/ \
+OIDC_AUDIENCE=perspectivegraph \
+  make run-backend
+```
+
+Issuer and audience are mandatory when JWKS is set - the backend refuses to start
+without them, because a verifier that skips `iss`/`aud` accepts any RS256 token the
+IdP ever minted, including ones meant for a different relying party.
+
+**For machines, use static tokens** - CI jobs, an ingest sender, a scripted
+integration. Give each one its own entry so it can be withdrawn alone, always set an
+expiry, and store the hash rather than the value:
+
+```bash
+# token : role : tenant : expiry : apps      (sha256$… stores only the digest)
+API_TOKENS='sha256$9f2b…:operator:acme:2026-12-31,sha256$41ac…:viewer:acme'
+```
+
+The honest limit: `API_TOKENS` is read **once at startup**. Withdrawing a static
+token before its expiry means restarting the process (a rolling restart on
+Kubernetes). That is acceptable for machine credentials on a scheduled rotation, and
+it is the reason people should be on OIDC - where revocation is immediate and does
+not involve this service at all.
+
 ### Developer feedback on the PR
 
 When a scan is fed with PR context (the `make seed` demo passes
