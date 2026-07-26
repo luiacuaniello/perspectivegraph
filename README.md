@@ -121,7 +121,12 @@ read this before you rely on it:
   The live connector, its read-only grant (`SecurityAudit` covers every call), cross-account
   `AssumeRole`, and the network↔identity join (`instance --ASSUMES--> role`) are **verified
   against a real account** - that last edge was in fact a gap only real-account testing
-  exposed (the fixtures already contained edges AWS makes you derive). What is **not** yet
+  exposed (the fixtures already contained edges AWS makes you derive). The
+  reachability-precision claim is verified there too: `make reachability-lab-aws` stands up
+  two instances behind **the same wide-open security group**, one in a subnet routed to an
+  internet gateway and one in a subnet with no default route, and the engine marks only the
+  first as exposed - suppressing the second with the reason, on real AWS rather than
+  fixtures. What is **not** yet
   done is calibrating the path *scores* against real exploited outcomes: the self-calibration
   flywheel has run end-to-end only on deliberately-vulnerable synthetic targets (a log4shell
   app, a `kind` RBAC scenario). Treat the scores as **directionally honest, not
