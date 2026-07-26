@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0](https://github.com/luiacuaniello/perspectivegraph/compare/v0.4.0...v0.5.0) (2026-07-26)
+
+
+### Features
+
+* **mcp:** declare the read-only surface on the wire, and contain tool panics ([#62](https://github.com/luiacuaniello/perspectivegraph/issues/62)) ([39ba517](https://github.com/luiacuaniello/perspectivegraph/commit/39ba5174e795e3b6eca53c0fe8e47387b4883338))
+
+
+### Bug Fixes
+
+* **build:** install the frontend from the lockfile, reproducibly ([#55](https://github.com/luiacuaniello/perspectivegraph/issues/55)) ([bd73533](https://github.com/luiacuaniello/perspectivegraph/commit/bd73533c3b56933b77068717d5ae50e3f750e8fd))
+* **redteam:** a denial with no resource named refutes only the account-wide claim ([#61](https://github.com/luiacuaniello/perspectivegraph/issues/61)) ([f86aff3](https://github.com/luiacuaniello/perspectivegraph/commit/f86aff3bd5b63095d893d8ffd7bf41c443e03dab))
+* **redteam:** stop reading an unevaluated Condition as a refusal ([#60](https://github.com/luiacuaniello/perspectivegraph/issues/60)) ([061fce2](https://github.com/luiacuaniello/perspectivegraph/commit/061fce214d690c0e6d8527caef69d2de3c552590))
+
 ## [0.4.0](https://github.com/luiacuaniello/perspectivegraph/compare/v0.3.0...v0.4.0) (2026-07-26)
 
 
