@@ -77,13 +77,18 @@ attacked - from an authority independent of the engine.
   account, because the unsettleable hop is "did the attacker get code execution" and no
   API answers that. `deploy/redteam-lab` specifies that environment; it is a written
   specification, not runnable Terraform. *(specified, not built - see `deploy/redteam-lab`)*
-- **Two refutations still available for free.** `iam:SimulatePrincipalPolicy` takes
-  `--resource-arns` and `--context-entries`, so two more engine assumptions can be graded
-  without creating anything: resource-scoped grants (the `resource_scoped` downgrade) and
-  **condition keys**, which the engine treats as unconditional Allows. A binding
-  `aws:SourceIp` or MFA condition is a genuine false positive the oracle can already
-  reach. Both extend `internal/redteam` and can be checked the way the permission-boundary
-  fix was - engine and AWS side by side, non-zero exit on disagreement. *(not started)*
+- **Condition keys: the oracle no longer mistakes them for refusals.** The engine reads an
+  `Allow` as unconditional, so it claims escalations that only apply under `aws:SourceIp`
+  or with MFA. AWS answers those with `implicitDeny` **and** a `MissingContextValues` key,
+  and the oracle used to read only the decision - recording a refutation whenever it had
+  merely failed to evaluate the condition. It now reports those as unsettled, naming the
+  keys, and they are excluded from the calibration set. Deciding whether such a grant
+  actually holds needs the attacker's context (an `aws:SourceIp` inside the VPC probably
+  matches; MFA on a machine identity never does), which is a judgement the oracle should
+  not make for you. *(done - see `internal/redteam`)*
+- **Resource-scoped grants.** `SimulatePrincipalPolicy` takes `--resource-arns`, so the
+  `resource_scoped` downgrade can be graded against AWS for free, the same way. Still the
+  cheapest unclaimed check in this area. *(not started)*
 - **Per-basis recalibration transfer.** The base rate of exploitability is a property
   of the environment and doesn't transfer between them; a per-provenance bias
   ("heuristic hops are systematically overstated by X") is a property of the model and

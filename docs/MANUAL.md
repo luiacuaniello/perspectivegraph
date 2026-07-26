@@ -387,12 +387,38 @@ API answers. [`deploy/redteam-lab`](../deploy/redteam-lab) specifies that enviro
 specification, not runnable Terraform. That remains the one piece of engineering that can move the scores
 from *directionally honest* to *empirically grounded*, and it needs real exploits, not more model code.
 
-Two refutations, though, are still available for free and need no lab at all:
-`SimulatePrincipalPolicy` accepts `--resource-arns` and `--context-entries`, so resource-scoped grants and
-**condition keys** can both be put to AWS as they are. The second is the more interesting: the engine
-treats an `Allow` as unconditional, so a grant that only applies under `aws:SourceIp` or with MFA present
-is an escalation the engine reports and reality refuses - the same shape of finding as the permission
-boundary, obtainable at zero cost.
+#### Condition keys, and why they are not refutations
+
+The engine treats an `Allow` as unconditional - `Condition` is documented as deliberately out of scope, so
+detection errs toward over-reporting. That means it claims escalations that in reality only apply under
+`aws:SourceIp`, or with MFA present.
+
+Asking AWS about one is subtler than it looks, and getting it wrong quietly corrupts the calibration set.
+Measured against the real API, a grant carrying an unevaluated `Condition` comes back as:
+
+```
+decision: implicitDeny        MissingContextValues: ["aws:MultiFactorAuthPresent"]
+```
+
+Read the decision alone and that is a refutation. It is not: AWS is saying *"a Condition applies and you
+gave me no value for it"*. Whether the claim is actually refuted depends on the attacker - an
+`aws:SourceIp` restriction the attacker matches from inside the VPC leaves the escalation entirely real,
+while MFA on a machine identity never holds. The oracle cannot know which, so it reports these
+**unsettled**, names the keys, and [`CalibrationGrade`](../backend/internal/redteam) keeps them out of the
+dataset.
+
+Two further details, both established by probing the live API rather than assumed:
+
+- **The keys cannot be attributed to a particular permission.** AWS reports `MissingContextValues` on
+  *every* action in the simulation, including actions the policies never grant - so "not granted at all"
+  and "granted under a condition" are indistinguishable from a context-free simulation. The evidence
+  therefore names the keys and stops there, rather than guessing which escalation was gated.
+- **A genuine permit is not lost to the caution.** An unconditional grant still comes back `allowed` with
+  no missing context even when other statements on the same principal carry conditions, so a real
+  escalation is still confirmed.
+
+Resource-scoped grants remain the cheapest unclaimed check of this kind: `SimulatePrincipalPolicy` accepts
+`--resource-arns`, so the `resource_scoped` downgrade can be graded against AWS for free too.
 
 ## Event contract
 

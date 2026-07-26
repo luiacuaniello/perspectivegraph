@@ -52,8 +52,12 @@ func ssrfPathFor(arn string) analyzer.AttackPath {
 // exercised without an AWS account.
 type fakeIAM struct {
 	decisions map[string]iamtypes.PolicyEvaluationDecisionType
-	asked     []string
-	err       error
+	// missing mirrors AWS's MissingContextValues: the condition keys a policy needed and
+	// the simulation was not given. AWS returns implicitDeny alongside them, which is
+	// what makes the naive reading dangerous.
+	missing map[string][]string
+	asked   []string
+	err     error
 }
 
 func (f *fakeIAM) SimulatePrincipalPolicy(_ context.Context, in *iam.SimulatePrincipalPolicyInput, _ ...func(*iam.Options)) (*iam.SimulatePrincipalPolicyOutput, error) {
@@ -69,6 +73,7 @@ func (f *fakeIAM) SimulatePrincipalPolicy(_ context.Context, in *iam.SimulatePri
 		}
 		out.EvaluationResults = append(out.EvaluationResults, iamtypes.EvaluationResult{
 			EvalActionName: aws.String(act), EvalDecision: d,
+			MissingContextValues: f.missing[act],
 		})
 	}
 	return out, nil
@@ -181,6 +186,109 @@ func TestEscalationDeniedByAWSIsARefutation(t *testing.T) {
 	}
 	if !strings.Contains(res.Evidence, "none of the") {
 		t.Errorf("evidence should say nothing was permitted, got %q", res.Evidence)
+	}
+}
+
+// conditionGated mirrors what AWS actually returns for a grant carrying a Condition the
+// simulation was not given a value for: implicitDeny, plus the key in
+// MissingContextValues. Verified against the real API - a role granted
+// iam:AttachUserPolicy under aws:MultiFactorAuthPresent answers exactly this.
+func conditionGated(key string, actions ...string) *fakeIAM {
+	f := &fakeIAM{
+		decisions: map[string]iamtypes.PolicyEvaluationDecisionType{},
+		missing:   map[string][]string{},
+	}
+	for _, a := range actions {
+		f.decisions[a] = iamtypes.PolicyEvaluationDecisionTypeImplicitDeny
+		f.missing[a] = []string{key}
+	}
+	return f
+}
+
+// The regression this whole change exists for. AWS answers a condition-gated grant with
+// implicitDeny AND MissingContextValues; reading only the decision turns "I could not
+// evaluate the Condition" into "reality refuses", which is a fabricated refutation. If
+// the condition were an aws:SourceIp the attacker actually matches, the engine's claim
+// would have been right and the oracle would have recorded it as wrong.
+func TestConditionGatedEscalationIsNotARefutation(t *testing.T) {
+	f := conditionGated("aws:MultiFactorAuthPresent", "iam:AttachUserPolicy")
+	res, err := NewAWSOracle(f).Check(context.Background(), assertionsFor(ssrfPath())[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Decision == Denied {
+		t.Fatal("a grant blocked only by unevaluated request context must not be reported as refused")
+	}
+	if res.Decision != Inconclusive {
+		t.Fatalf("decision = %s, want inconclusive", res.Decision)
+	}
+	if !strings.Contains(res.Evidence, "aws:MultiFactorAuthPresent") {
+		t.Errorf("evidence must name the condition key that gated it, got %q", res.Evidence)
+	}
+	// AWS reports the missing key on every action in the simulation, including ones the
+	// policies never grant, so naming which primitives are gated would be a guess. The
+	// evidence must not pretend to know.
+	if strings.Contains(res.Evidence, "would hold") {
+		t.Errorf("evidence must not attribute gating to specific primitives, got %q", res.Evidence)
+	}
+}
+
+// An unconditional grant must survive the guard: AWS reports it as allowed with no
+// missing context even when other statements on the same principal carry Conditions, so
+// a real escalation is still confirmed rather than lost to caution.
+func TestUnconditionalGrantStillConfirmsAlongsideConditionalOnes(t *testing.T) {
+	f := allow("iam:PutUserPolicy")
+	f.missing = map[string][]string{"iam:AttachUserPolicy": {"aws:MultiFactorAuthPresent"}}
+	res, err := NewAWSOracle(f).Check(context.Background(), assertionsFor(ssrfPath())[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Decision != Allowed {
+		t.Fatalf("an unconditional privesc grant must still confirm; got %s (%s)", res.Decision, res.Evidence)
+	}
+}
+
+// The guard must not be a blanket amnesty: a principal that simply lacks the permission
+// still gets refuted, because there is no Condition involved and AWS answered plainly.
+func TestPlainDenialIsStillARefutation(t *testing.T) {
+	res, err := NewAWSOracle(allow()).Check(context.Background(), assertionsFor(ssrfPath())[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Decision != Denied {
+		t.Fatalf("an unconditional implicitDeny is a real refusal; got %s", res.Decision)
+	}
+}
+
+// "allowed" alongside missing context is not a permit either - a Deny whose Condition
+// could not be evaluated would read that way, and treating it as allowed would confirm
+// a path reality might block.
+func TestAllowedWithMissingContextIsNotAPermit(t *testing.T) {
+	f := allow("iam:AttachUserPolicy")
+	f.missing = map[string][]string{"iam:AttachUserPolicy": {"aws:SourceIp"}}
+	res, err := NewAWSOracle(f).Check(context.Background(), assertionsFor(ssrfPath())[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Decision == Allowed {
+		t.Fatal("an allow that turns on unevaluated context must not be reported as permitted")
+	}
+}
+
+// And the consequence that matters: a condition-gated verdict never reaches the
+// calibration dataset, so the engine is not graded on a question the oracle failed to
+// ask. Without the fix this path scored a refutation - the label 0.
+func TestConditionGatedVerdictStaysOutOfCalibration(t *testing.T) {
+	f := conditionGated("aws:SourceIp", "iam:AttachUserPolicy")
+	rec, err := Attempt(context.Background(), NewAWSOracle(f), ssrfPath(), "t1", clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Outcome == validation.Refuted {
+		t.Fatal("a condition-gated escalation must not be recorded as refuted")
+	}
+	if CalibrationGrade(rec) {
+		t.Errorf("outcome %s must not be admissible as calibration evidence", rec.Outcome)
 	}
 }
 
