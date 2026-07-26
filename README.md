@@ -51,9 +51,10 @@ provenance attestation - verify before you run, rather than taking the supply ch
 on trust:
 
 ```bash
-cosign verify ghcr.io/luiacuaniello/perspectivegraph:v0.3.0 \ # x-release-please-version
+cosign verify \
   --certificate-identity-regexp 'https://github.com/luiacuaniello/perspectivegraph/.*' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/luiacuaniello/perspectivegraph:v0.3.0 # x-release-please-version
 ```
 
 The dashboard opens on the decision, not the inventory: what is being exploited right
