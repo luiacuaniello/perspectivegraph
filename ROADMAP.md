@@ -74,8 +74,16 @@ attacked - from an authority independent of the engine.
   those verdicts are one-sided and a calibration set built from them is censored. What
   the oracle measures honestly is escalation *precision*, where both outcomes are
   observable. Rescaling the path scores needs real exploitation against a disposable lab
-  account; the randomized lab is a Terraform scaffold.
-  *(scaffolded - see `deploy/redteam-lab`)*
+  account, because the unsettleable hop is "did the attacker get code execution" and no
+  API answers that. `deploy/redteam-lab` specifies that environment; it is a written
+  specification, not runnable Terraform. *(specified, not built - see `deploy/redteam-lab`)*
+- **Two refutations still available for free.** `iam:SimulatePrincipalPolicy` takes
+  `--resource-arns` and `--context-entries`, so two more engine assumptions can be graded
+  without creating anything: resource-scoped grants (the `resource_scoped` downgrade) and
+  **condition keys**, which the engine treats as unconditional Allows. A binding
+  `aws:SourceIp` or MFA condition is a genuine false positive the oracle can already
+  reach. Both extend `internal/redteam` and can be checked the way the permission-boundary
+  fix was - engine and AWS side by side, non-zero exit on disagreement. *(not started)*
 - **Per-basis recalibration transfer.** The base rate of exploitability is a property
   of the environment and doesn't transfer between them; a per-provenance bias
   ("heuristic hops are systematically overstated by X") is a property of the model and

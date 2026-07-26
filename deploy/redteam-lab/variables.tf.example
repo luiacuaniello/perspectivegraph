@@ -1,10 +1,14 @@
-# Red-team calibration lab - randomization knobs (scaffold).
+# Red-team calibration lab - randomization knobs (SPECIFICATION, not runnable).
 #
-# These variables parameterize the (uncommitted) main.tf that stands up one labelled
-# environment per apply. They are the axes the engine deliberately does NOT evaluate,
-# so a lab that sets them will naturally produce paths the engine surfaces but reality
-# refutes - the calibration signal. See README.md. This file declares intent; it
-# provisions nothing on its own.
+# The `.example` extension is deliberate: there is no main.tf for these to parameterize,
+# and this file provisions nothing. It declares the axes a lab would randomize.
+#
+# Most of them no longer need a lab at all. `iam:SimulatePrincipalPolicy` settles
+# subnet placement, permission boundaries, privesc primitives, resource scoping and
+# condition keys for free, as a dry run, with nothing exploitable standing up anywhere -
+# see the status table in README.md for what is already covered and by which target.
+# The one axis that genuinely requires this lab is imds_posture, because no API can
+# settle whether an attacker obtained code execution on the host.
 
 variable "seed" {
   description = "Randomization seed; a fresh seed yields a different labelled environment."
