@@ -16,14 +16,15 @@
 //
 // Policy evaluation covers the parts that are unambiguous without request
 // context: an account-wide explicit Deny beats any Allow (as AWS evaluates it),
-// and an Allow held only on specific literal resources yields a lower-probability
-// escalation edge than an account-wide one, since it depends on those targets
-// being privileged.
+// a permissions boundary caps effective permission to the intersection of itself
+// and the identity policies, and an Allow held only on specific literal resources
+// yields a lower-probability escalation edge than an account-wide one, since it
+// depends on those targets being privileged.
 //
 // Honest simplifications (documented, not hidden): Condition keys, NotAction /
-// NotResource, permission boundaries and SCPs are not evaluated, and a Deny
-// confined to specific resources is ignored. Detection therefore still errs
-// toward over-reporting rather than missing.
+// NotResource and SCPs are not evaluated, and a Deny confined to specific
+// resources is ignored. Detection therefore still errs toward over-reporting
+// rather than missing.
 package iam
 
 import (
@@ -56,11 +57,12 @@ func (*Collector) Source() string { return "iam" }
 
 type authDetails struct {
 	UserDetailList []struct {
-		UserName                string         `json:"UserName"`
-		Arn                     string         `json:"Arn"`
-		GroupList               []string       `json:"GroupList"`
-		AttachedManagedPolicies []attachedRef  `json:"AttachedManagedPolicies"`
-		UserPolicyList          []inlinePolicy `json:"UserPolicyList"`
+		UserName                string               `json:"UserName"`
+		Arn                     string               `json:"Arn"`
+		GroupList               []string             `json:"GroupList"`
+		AttachedManagedPolicies []attachedRef        `json:"AttachedManagedPolicies"`
+		UserPolicyList          []inlinePolicy       `json:"UserPolicyList"`
+		PermissionsBoundary     *permissionsBoundary `json:"PermissionsBoundary"`
 	} `json:"UserDetailList"`
 	GroupDetailList []struct {
 		GroupName               string         `json:"GroupName"`
@@ -69,12 +71,13 @@ type authDetails struct {
 		GroupPolicyList         []inlinePolicy `json:"GroupPolicyList"`
 	} `json:"GroupDetailList"`
 	RoleDetailList []struct {
-		RoleName                 string         `json:"RoleName"`
-		Arn                      string         `json:"Arn"`
-		AssumeRolePolicyDocument policyDoc      `json:"AssumeRolePolicyDocument"`
-		AttachedManagedPolicies  []attachedRef  `json:"AttachedManagedPolicies"`
-		RolePolicyList           []inlinePolicy `json:"RolePolicyList"`
-		Tags                     []awsTag       `json:"Tags"`
+		RoleName                 string               `json:"RoleName"`
+		Arn                      string               `json:"Arn"`
+		AssumeRolePolicyDocument policyDoc            `json:"AssumeRolePolicyDocument"`
+		AttachedManagedPolicies  []attachedRef        `json:"AttachedManagedPolicies"`
+		RolePolicyList           []inlinePolicy       `json:"RolePolicyList"`
+		Tags                     []awsTag             `json:"Tags"`
+		PermissionsBoundary      *permissionsBoundary `json:"PermissionsBoundary"`
 	} `json:"RoleDetailList"`
 	Policies []struct {
 		PolicyName        string `json:"PolicyName"`
@@ -101,6 +104,16 @@ type inlinePolicy struct {
 type awsTag struct {
 	Key   string `json:"Key"`
 	Value string `json:"Value"`
+}
+
+// permissionsBoundary names the managed policy that caps a principal's effective
+// permissions. get-account-authorization-details returns it per user and per role,
+// by ARN - the document itself arrives (if at all) in the Policies list, which is
+// why an unresolvable boundary is a case the evaluator has to handle rather than
+// assume away.
+type permissionsBoundary struct {
+	Type string `json:"PermissionsBoundaryType"`
+	Arn  string `json:"PermissionsBoundaryArn"`
 }
 
 // policyDoc is an IAM policy document. The IAM API returns it URL-encoded as a
@@ -262,7 +275,6 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 			props[ontology.PropCredentialExposed] = true
 			props["seed_basis"] = "credential-exposed (IAM user; assumes a leaked credential)"
 		}
-		g.upsert(ontology.Node{ID: id, Label: ontology.LabelUser, Name: u.UserName, Properties: props})
 
 		var docs []policyDoc
 		for _, ip := range u.UserPolicyList {
@@ -276,7 +288,10 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 		for _, grp := range u.GroupList {
 			docs = append(docs, groupDocs[grp]...)
 		}
-		g.escalation(id, allowedActions(docs), adminID)
+		effective := capByBoundary(allowedActions(docs), u.PermissionsBoundary, managed, props)
+
+		g.upsert(ontology.Node{ID: id, Label: ontology.LabelUser, Name: u.UserName, Properties: props})
+		g.escalation(id, effective, adminID)
 	}
 
 	// Roles.
@@ -299,7 +314,6 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 			props[ontology.PropInternetExposed] = true
 			props["public_trust"] = true
 		}
-		g.upsert(ontology.Node{ID: id, Label: ontology.LabelIAMRole, Name: ro.RoleName, Properties: props})
 
 		var docs []policyDoc
 		for _, ip := range ro.RolePolicyList {
@@ -310,7 +324,10 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 				docs = append(docs, doc)
 			}
 		}
-		g.escalation(id, allowedActions(docs), adminID)
+		effective := capByBoundary(allowedActions(docs), ro.PermissionsBoundary, managed, props)
+
+		g.upsert(ontology.Node{ID: id, Label: ontology.LabelIAMRole, Name: ro.RoleName, Properties: props})
+		g.escalation(id, effective, adminID)
 	}
 
 	// Second pass: role chaining - a principal the trust policy names can assume
@@ -372,6 +389,39 @@ func allowedActions(docs []policyDoc) actionSet {
 	return a
 }
 
+// Node and edge property keys for the boundary evidence, so the graph carries why a
+// principal was (or was not) capped rather than only the verdict.
+const (
+	propPermissionsBoundary = "permissions_boundary"
+	propBoundaryUnresolved  = "permissions_boundary_unresolved"
+)
+
+// capByBoundary applies a principal's permissions boundary to what its identity
+// policies allow, and records on the node what was applied.
+//
+// A boundary caps effective permission to the INTERSECTION of itself and the
+// identity policies - it grants nothing of its own, and needs no explicit Deny to
+// take a permission away. That is precisely the case a reader of identity policies
+// alone gets wrong: two principals with a byte-identical privesc policy, one of them
+// bounded, are not equally dangerous, and only one of them can actually escalate.
+//
+// The boundary's own document has to be in the input to be intersected. When it is
+// not, we know a cap exists but not what it permits: the escalation is still
+// reported, since a boundary of AdministratorAccess is a common no-op and dropping
+// the edge would miss it, but it is flagged so the caller can score it as unverified.
+func capByBoundary(identity actionSet, pb *permissionsBoundary, managed map[string]policyDoc, props map[string]any) actionSet {
+	if pb == nil || pb.Arn == "" {
+		return identity
+	}
+	props[propPermissionsBoundary] = pb.Arn
+	doc, ok := managed[pb.Arn]
+	if !ok {
+		props[propBoundaryUnresolved] = true
+		return identity.cappedByUnknown()
+	}
+	return identity.cappedBy(allowedActions([]policyDoc{doc}))
+}
+
 // resourceIsBroad reports whether a statement's Resource covers the account at
 // large. A missing Resource is treated as broad, preserving the behaviour for
 // inputs that omit it. Any '*' wildcard counts as broad: it can still be narrower
@@ -415,6 +465,13 @@ const (
 	// privileged, which the policy alone cannot tell us - so it stays on the graph
 	// at a materially lower probability instead of being asserted or dropped.
 	scopedPrivescProb = 0.5
+	// unresolvedBoundaryProb caps the score when a permissions boundary is attached
+	// but its document was not in the input, so the intersection cannot be computed.
+	// The claim is reported (an AdministratorAccess boundary is a common no-op, and
+	// dropping the edge would miss it) at a probability that says it is unverified.
+	unresolvedBoundaryProb = 0.5
+	// adminProb is an already-admin principal: nothing has to be exploited at all.
+	adminProb = 0.99
 )
 
 // escalation draws the principal's edge to account-admin, if any: a direct edge
@@ -424,8 +481,9 @@ func (b *builder) escalation(principalID string, actions actionSet, adminID stri
 		return
 	}
 	if actions.IsAdmin() {
-		b.edgeWith(ontology.EdgeCanEscalateTo, principalID, adminID, 0.99,
-			map[string]any{"reason": "already administrator-equivalent (Allow *:*)"})
+		props := map[string]any{"reason": "already administrator-equivalent (Allow *:*)"}
+		prob := noteBoundary(props, actions, adminProb)
+		b.edgeWith(ontology.EdgeCanEscalateTo, principalID, adminID, prob, props)
 		return
 	}
 	matches := detectPrivesc(actions)
@@ -450,7 +508,30 @@ func (b *builder) escalation(principalID string, actions actionSet, adminID stri
 		props["resource_scoped"] = true
 		props["scope_note"] = "granted only on specific resources; escalation depends on those targets being privileged"
 	}
+	prob = noteBoundary(props, actions, prob)
 	b.edgeWith(ontology.EdgeCanEscalateTo, principalID, adminID, prob, props)
+}
+
+// noteBoundary records what the permissions boundary contributed to a surviving
+// escalation edge, and returns the probability to score it at.
+//
+// An edge only reaches here if the boundary did not stop the primitives, so there
+// are two cases worth distinguishing on the graph: the boundary was read and does
+// not cap this escalation (evidence the claim survived a real check), or the
+// boundary could not be read at all, in which case the claim is unverified and
+// capped accordingly.
+func noteBoundary(props map[string]any, actions actionSet, prob float64) float64 {
+	switch {
+	case actions.boundaryUnresolved:
+		props[propBoundaryUnresolved] = true
+		props["boundary_note"] = "a permissions boundary is attached but its policy document was not in the input; " +
+			"the cap could not be computed, so this escalation is reported unverified"
+		return min(prob, unresolvedBoundaryProb)
+	case actions.boundary != nil:
+		props["boundary_evaluated"] = true
+		props["boundary_note"] = "a permissions boundary is attached and was intersected; it does not cap the matched primitives"
+	}
+	return prob
 }
 
 func (b *builder) upsert(n ontology.Node) {

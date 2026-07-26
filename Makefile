@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help up up-full demo up-search down logs run-backend build-backend test bench bench-cloudgoat mcp reachability-lab-aws tidy run-frontend install-frontend seed seed-discovery seed-load clean
+.PHONY: help up up-full demo up-search down logs run-backend build-backend test bench bench-cloudgoat mcp reachability-lab-aws redteam-aws boundary-lab-aws tidy run-frontend install-frontend seed seed-discovery seed-load clean
 
 # CGO is disabled so the Go binaries link statically (Go's pure-Go DNS resolver
 # instead of the system one). This also sidesteps a macOS system-linker bug on
@@ -89,6 +89,10 @@ reachability-lab-aws:
 	@echo ""
 	@echo "→ now collect:  cd backend && AWS_PROFILE=$(or $(PROFILE),pg-admin) $(GO) run ./cmd/perspectivegraph awscollect -region $(or $(REGION),eu-north-1)"
 	@echo "→ then tear down: ./scripts/reachability-lab-aws.sh --teardown"
+
+## boundary-lab-aws: prove the permission-boundary false positive stays closed, on a REAL account. Stands up two roles with the SAME privesc policy differing only in a permissions boundary, runs BOTH the engine and AWS's own evaluator over them, and FAILS if they disagree - the bounded role must not escalate, the unbounded control must. This is the lab that found the bug (the connector used to drop the boundary). Costs NOTHING on any account (IAM entities are free, no compute), creates no vulnerable infrastructure, and tears itself down on exit. KEEP=1 leaves it up; --teardown cleans a leaked lab. Needs an AWS profile (PROFILE=, REGION=).
+boundary-lab-aws:
+	./scripts/boundary-lab-aws.sh
 
 ## bench-cloudgoat: grade the attack-path engine against CloudGoat-shaped ground-truth scenarios (precision/recall). Runs in CI under `make test`; this target prints the per-scenario table. Add scenarios under backend/testdata/cloudgoat (see its README).
 bench-cloudgoat:
@@ -226,6 +230,12 @@ validate-harness-aws:
 ## validate-aws: run the LIVE AWS connector against a REAL read-only account (describe-* only, no writes) and print what it discovered - the internet-exposed seeds vs the SG-open instances the route/NACL layer SUPPRESSED (naming why). The first-contact check for reachability precision on real data. AWS_REGION=<region> required; ROLE_ARN=<arn> assumes a cross-account read-only role; INGEST_URL=<url> also pushes into a running stack for full path scoring. Read-only grant: SecurityAudit or ViewOnlyAccess. Needs AWS creds in the environment.
 validate-aws:
 	@bash scripts/validate-aws-readonly.sh
+
+## redteam-aws: grade the engine's privilege-escalation claims against AWS's OWN policy evaluator (iam:SimulatePrincipalPolicy) - the one authority independent of the engine that produced the scores. FREE and READ-ONLY: every check is a dry run, nothing is created, and no vulnerable infrastructure is needed. Unlike the engine's own policy reader, the simulation applies service control policies, permission boundaries and condition keys - so a principal the engine calls escalating but a boundary actually stops comes back DENIED, a genuine false positive found without exploiting anything. PRINCIPAL=<arn> settles one (comma-separated for several); default enumerates every role in the account. COMPARE=1 also runs the ENGINE over the same account and exits non-zero wherever the two disagree - each disagreement is a false positive or a miss. ROLE_ARN=<arn> assumes a read-only role first. Needs AWS creds and iam:SimulatePrincipalPolicy (+ iam:ListRoles for the sweep, and the connector's read-only grant for COMPARE).
+redteam-aws:
+	cd backend && AWS_PROFILE=$(or $(PROFILE),pg-admin) $(GO) run ./cmd/perspectivegraph redteam \
+	  -region $(or $(REGION),$(AWS_REGION),eu-north-1) \
+	  $(if $(PRINCIPAL),-principal $(PRINCIPAL),-roles) $(if $(ROLE_ARN),-role $(ROLE_ARN),) $(if $(COMPARE),-compare,)
 
 ## ingest-real: zero-cost REAL ingest - Trivy-scan a genuinely vulnerable image (IMAGE=<image>, e.g. the running vulhub log4shell image) and wire the minimal topology so the real CVE sits on an internet->sensitive-asset path (real CVSS; real KEV/EPSS with THREATINTEL=on). REPORT=<trivy.json> uses a saved report instead of running trivy. Then exploit for real and `make import-verdicts`.
 ingest-real:

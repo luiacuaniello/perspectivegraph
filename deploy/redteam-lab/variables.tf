@@ -32,7 +32,7 @@ variable "scp" {
 }
 
 variable "permission_boundary" {
-  description = "Permission boundary on the escalation principal: none or read-only (caps an otherwise-admin escalation the engine over-reports)."
+  description = "Permission boundary on the escalation principal: none or read-only (the engine intersects it, so read-only must suppress the escalation the unbounded control keeps)."
   type        = string
   default     = "none"
   validation {

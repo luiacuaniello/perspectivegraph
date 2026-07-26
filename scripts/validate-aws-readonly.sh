@@ -12,10 +12,11 @@
 #   AWS_REGION=eu-west-1 INGEST_URL=http://localhost:8081 make validate-aws   # + push to a running stack
 #
 # Credentials come from the standard AWS chain (env vars / `aws configure` profile /
-# SSO / instance role). Read-only grant: the AWS-managed SecurityAudit (or
-# ViewOnlyAccess) policy is enough - it covers ec2:Describe* and
-# iam:GetAccountAuthorizationDetails. ROLE_ARN optionally assumes a cross-account
-# read-only role first (the "customer grants you a role" agentless model).
+# SSO / instance role). Read-only grant: the AWS-managed SecurityAudit policy is
+# enough - it covers ec2:Describe*, iam:GetAccountAuthorizationDetails, and the
+# iam:GetPolicy/iam:GetPolicyVersion used to resolve permissions-boundary documents.
+# ROLE_ARN optionally assumes a cross-account read-only role first (the "customer
+# grants you a role" agentless model).
 set -euo pipefail
 
 REGION=${AWS_REGION:-${REGION:-}}

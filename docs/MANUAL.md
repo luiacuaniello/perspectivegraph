@@ -279,15 +279,112 @@ real verdicts prove the simpler fixes won't do.
 
 Those real verdicts have to come from an authority *independent of the engine* - otherwise the loop is
 circular and the calibration only measures how well the engine agrees with itself. That authority is AWS.
-The red-team oracle ([`internal/redteam`](../backend/internal/redteam)) takes each surfaced path, turns
-every hop into an independently-checkable claim (`sts:AssumeRole`, `iam:SimulatePrincipalPolicy`, a TCP
-probe), and records what reality answers - so an escalation the engine surfaced but an SCP, permission
-boundary or condition key blocks comes back **refuted**, at a base rate the engine never chose. The
-harness (oracle contract + path→verdict runner + flywheel wiring) is proven end-to-end on fixtures; the
-live oracle is inert until wired to a **disposable lab account**, whose randomized environments are
-specified in [`deploy/redteam-lab`](../deploy/redteam-lab). This is the one piece of engineering that can
-move the scores from *directionally honest* to *empirically grounded* - and it needs real exploitation
-attempts, not more model code.
+
+The red-team oracle ([`internal/redteam`](../backend/internal/redteam)) turns each hop into an
+independently-checkable claim and asks AWS's own policy evaluator, `iam:SimulatePrincipalPolicy`, to settle
+it. That call is a **dry run**: it answers "would this be allowed" without performing anything, costs
+nothing, and needs no vulnerable infrastructure to point at. And it applies what the engine's own
+policy reader deliberately skips - **service control policies and condition keys**. So a principal the
+engine reports as able to escalate, but that reality stops, comes back **denied**: a real false positive,
+found without exploiting anything.
+
+```bash
+make redteam-aws                                                   # every role in the account
+make redteam-aws PRINCIPAL=arn:aws:iam::123456789012:role/app      # one principal
+make redteam-aws COMPARE=1                                         # engine vs AWS; non-zero exit on disagreement
+```
+
+`COMPARE=1` is the closed loop: it also runs the **engine** over the same account and prints the two
+verdicts side by side, failing on any disagreement. A disagreement is a finding in either direction - the
+engine over-reporting (a false positive) or missing a real escalation - so it is a check something can
+fail, not a number to read.
+
+Verified live on a real account: an administrator user comes back holding **all 20** escalation primitives
+(each named), and a `SecurityAudit` read-only role comes back holding **none**. Both answers, for free,
+with nothing created.
+
+#### The engine's first demonstrated false positive - found, then closed
+
+`make boundary-lab-aws` settles the question the fixtures cannot: does the oracle catch a mistake the
+engine genuinely makes? The lab is one variable wide - two roles with a **byte-identical** inline policy
+granting `iam:AttachUserPolicy`, `iam:PutUserPolicy` and `iam:CreateAccessKey` on `*`, differing only in
+whether a permissions boundary is attached. The boundary allows just `s3:Get*` and `ec2:Describe*`, so the
+intersection strips the privesc grant - no explicit `Deny` needed, which is how boundaries are actually
+used and precisely the case a policy reader that ignores them gets wrong.
+
+Measured on a real account (231016596764), it caught one:
+
+| | engine, before the fix | AWS (`redteam`) | |
+|---|---|---|---|
+| `…-unbounded` (control) | `CAN_ESCALATE_TO account-admin` | **ESCALATES** - 3 primitives named | agree |
+| `…-bounded` | `CAN_ESCALATE_TO account-admin` | **no privesc** | **refuted** |
+
+The engine emitted the escalation edge for *both*, because
+[`GetAccountAuthorizationDetails`](../backend/internal/connector/aws/sdk.go) returns the boundary and the
+connector's `iamRole`/`iamUser` structs dropped it before ingestion ever saw it. The control matters as
+much as the finding: without a role the oracle *allows*, an oracle that simply always answered "denied"
+would look equally convincing.
+
+**That false positive is now closed**, in the two places the data was lost and then unused:
+
+1. **Carried through.** The connector maps `PermissionsBoundary` onto users and roles. A boundary is named
+   by ARN and its document travels separately, so the transport also fetches any boundary policy the
+   bundle did not include (`iam:GetPolicy` + `iam:GetPolicyVersion`, both read-only and both inside the
+   same `SecurityAudit` grant). Failing to read one is not fatal - an unreadable policy must not sink the
+   whole IAM feed.
+2. **Applied.** [`actionSet`](../backend/internal/ingestion/iam/privesc.go) now carries the boundary and
+   intersects it: `Allows` and `BroadlyAllows` require *both* sides, and `IsAdmin` is false whenever the
+   boundary is not itself admin-equivalent. A boundary **never grants** - it only subtracts - so a
+   permissive boundary over an empty identity policy still yields nothing.
+
+Two behaviours are worth stating because they are the honest, non-obvious half:
+
+- A boundary of `AdministratorAccess` is a common **no-op**, so "has a boundary" is not "is safe". The
+  intersection is computed; the escalation survives it, and the edge records `boundary_evaluated` so
+  "checked and still escalates" is distinguishable from "never checked".
+- A boundary whose document is **not in the input** (an uploaded dump that names it by ARN only) leaves
+  the cap uncomputable. The edge is kept - dropping it would turn this false positive into a *miss* on
+  every no-op boundary - but marked `permissions_boundary_unresolved` and scored down to `0.5`, so an
+  unverified claim cannot be quoted as an established one.
+
+The lab is now the **regression test**. It runs the engine over the account for real (`redteam -compare`
+drives the live connector) alongside `SimulatePrincipalPolicy`, prints the two verdicts side by side, and
+exits non-zero on any disagreement - in either direction, since a miss is as much a finding as an
+over-report. The unit test in
+[`boundary_test.go`](../backend/internal/ingestion/iam/boundary_test.go) pins the same fixture under
+`make test`, so the regression is caught without an AWS account at all.
+
+All of it at zero cost, with nothing exploitable standing up anywhere. The lab creates only IAM entities -
+free on every account, not merely free-tier - and an `EXIT` trap tears it down even if the script dies.
+
+**What this can and cannot calibrate** - the distinction matters more than the feature:
+
+- **It cannot rescale `S(P)`.** Every internet-origin path contains a hop no API can settle: whether an
+  attacker obtains code execution on the exposed host. Such a path can be *refuted* but never *confirmed*,
+  so a calibration set built from these verdicts is **censored** - it can only ever contain the outcome 0,
+  the observed rate collapses toward zero, and rescaling on it would drive every score to the floor. That
+  is an artefact of what the instrument can see, not a measurement. Worse, the verdict store scores a
+  `partial` as the label **0.5**, so admitting the unsettleable paths would enter *the oracle's inability
+  to ask* as a half-true observation and manufacture an "overconfident" reading out of ignorance.
+  `redteam.CalibrationGrade` is the guard: only `confirmed` and `refuted` are admissible, and callers must
+  gate `store.Put` on it. A test measures what admitting them would have cost.
+- **It can measure escalation precision.** "This principal holds a privilege-escalation primitive" is a
+  claim AWS answers *both* ways, on demand, for free. The sample is uncensored, so
+  `redteam.AuditEscalations` yields a real number - reported with its **coverage**, since a precision of
+  1.00 over 5% coverage says almost nothing.
+
+One implementation note worth knowing, because getting it wrong silently corrupts the dataset: the oracle
+never asks AWS about `iam:*`. AWS reads that as "may perform *every* IAM action", so a principal holding
+one genuine privesc permission would come back denied - a false refutation. Instead the claim carries an
+internal sentinel that the oracle expands into the concrete actions of every primitive in
+[the shared detection table](../backend/internal/ingestion/iam/privesc.go), and the claim holds when any
+single primitive has **all** of its actions allowed - the same all-of rule the detector applies, from the
+same list, so the grader cannot drift from what is being graded.
+
+Full path-score calibration still needs real exploitation attempts against a **disposable lab account**,
+whose randomized environments are specified in [`deploy/redteam-lab`](../deploy/redteam-lab). That remains
+the one piece of engineering that can move the scores from *directionally honest* to *empirically
+grounded*, and it needs real exploits, not more model code.
 
 ## Event contract
 
@@ -466,7 +563,8 @@ curl -s localhost:8081/connectors | jq   # per-connector health: last run, last 
 # Live (read-only): assume a cross-account role and pull EC2 + IAM
 CONNECTORS_ENABLED=aws AWS_CONNECTOR_MODE=sdk AWS_REGION=us-east-1 \
   AWS_ROLE_ARN=arn:aws:iam::<account>:role/perspectivegraph-readonly
-# grant only: ec2:Describe*, iam:GetAccountAuthorizationDetails, iam:ListInstanceProfiles
+# grant only: ec2:Describe*, iam:GetAccountAuthorizationDetails, iam:ListInstanceProfiles,
+# iam:GetPolicy + iam:GetPolicyVersion (to resolve permissions-boundary documents)
 # (all covered by the AWS-managed SecurityAudit policy - verified against a live account)
 
 # See what the live connector discovers before wiring it in (describe-* only):
@@ -973,8 +1071,9 @@ genuinely private" is the honest test of reachability precision on data you didn
 Credentials come from the standard AWS chain; `AWS_REGION=<region>` is required,
 `ROLE_ARN=<arn>` assumes a cross-account read-only role first (the "customer grants you a
 role" model), and `INGEST_URL=<url>` also pushes the discovered events into a running
-stack for full attack-path scoring. Read-only grant: the AWS-managed **SecurityAudit** or
-**ViewOnlyAccess** policy (covers `ec2:Describe*` + `iam:GetAccountAuthorizationDetails`).
+stack for full attack-path scoring. Read-only grant: the AWS-managed **SecurityAudit**
+policy (covers `ec2:Describe*`, `iam:GetAccountAuthorizationDetails`, and the
+`iam:GetPolicy`/`iam:GetPolicyVersion` used to resolve permissions boundaries).
 `scripts/validate-aws-readonly.sh`; the same thing standalone is
 `perspectivegraph awscollect -region <r> [-role <arn>] [-json] [-ingest <url>]`.
 
@@ -1793,16 +1892,22 @@ curl -sS -X POST "$INGEST_URL/ingest/iam" -H 'Content-Type: application/json' --
 ```
 
 > **Read-only & honest about scope.** The collector needs only the read-only
-> `iam:GetAccountAuthorizationDetails` permission. It evaluates the parts of AWS
+> `iam:GetAccountAuthorizationDetails` permission (the live connector adds
+> `iam:GetPolicy` and `iam:GetPolicyVersion` to resolve permissions-boundary
+> documents; all three are in `SecurityAudit`). It evaluates the parts of AWS
 > policy logic that are unambiguous without request context: an **account-wide
 > explicit Deny beats any Allow** (so a guardrail-denied action stops producing a
-> phantom escalation), and a primitive held only on **specific literal resources**
-> yields a lower-probability edge (`resource_scoped`), since it lands only if those
-> targets are themselves privileged. Still not evaluated, by design: Condition keys,
-> `NotAction`/`NotResource`, permission boundaries, SCPs, and a Deny confined to
-> specific resources - so it still **over-reports rather than misses**. Treat its
-> findings as "worth confirming". See `backend/testdata/iam-sample.json` for the
-> shape, and `make bench-cloudgoat` for the precision regressions that pin this.
+> phantom escalation), a **permissions boundary caps to the intersection** of itself
+> and the identity policies (so a bounded principal is no longer confused with an
+> unbounded one holding the same policy - see [the boundary
+> lab](#the-engines-first-demonstrated-false-positive---found-then-closed)), and a
+> primitive held only on **specific literal resources** yields a lower-probability
+> edge (`resource_scoped`), since it lands only if those targets are themselves
+> privileged. Still not evaluated, by design: Condition keys,
+> `NotAction`/`NotResource`, SCPs, and a Deny confined to specific resources - so it
+> still **over-reports rather than misses**. Treat its findings as "worth
+> confirming". See `backend/testdata/iam-sample.json` for the shape, and `make
+> bench-cloudgoat` for the precision regressions that pin this.
 
 #### SSO / IdP federation (Okta → cloud - the modern front door)
 

@@ -130,7 +130,18 @@ read this before you rely on it:
   done is calibrating the path *scores* against real exploited outcomes: the self-calibration
   flywheel has run end-to-end only on deliberately-vulnerable synthetic targets (a log4shell
   app, a `kind` RBAC scenario). Treat the scores as **directionally honest, not
-  production-calibrated**. The `make validate-aws`, `make validate-harness-aws`, and
+  production-calibrated**. One half of that gap is now closed against real AWS for free:
+  `make redteam-aws` grades the engine's privilege-escalation claims with AWS's own policy
+  evaluator - a read-only dry run that creates nothing and applies the SCPs and condition keys
+  the engine's policy reader skips. That grading has already paid for itself: `make
+  boundary-lab-aws` stands up two roles with an identical privesc policy that differ only in a
+  permissions boundary, and it caught the engine calling both escalating where AWS allowed one
+  and denied the other. **That false positive is now fixed** - the connector carries the
+  boundary through and the evaluator intersects it - and the lab is the regression test,
+  running the engine and AWS side by side on a real account and failing if they disagree.
+  It deliberately does **not** rescale the path scores, and
+  [the manual explains why it cannot](docs/MANUAL.md#closing-the-loop-calibration-against-observed-outcomes):
+  those verdicts are one-sided, and a censored sample is not a measurement. The `make validate-aws`, `make validate-harness-aws`, and
   `make validate-harness*` harnesses are the path to closing that on your own environment.
   For an offline, CI-gated check that the engine actually finds the *right* paths, `make
   bench-cloudgoat` grades it against a battery of [CloudGoat-shaped ground-truth

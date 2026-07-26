@@ -33,10 +33,21 @@ adding one is a bounded piece of work, not a rewrite.
 The identity half is where cloud attack paths actually live, and it's where the most
 precision is left on the table.
 
-- **Permission boundaries.** Not evaluated today, so a boundary that caps an
-  otherwise-admin principal is missed. The `get-account-authorization-details` bundle
-  already carries the data; this is a bounded addition modelled on the existing
-  resource-scoping logic. *(not started, but the data is already ingested)*
+- **Permission boundaries.** Evaluated. A boundary caps effective permission to the
+  intersection of itself and the identity policies - no explicit `Deny` needed - so a
+  boundary that strips a privesc primitive now removes the escalation edge instead of
+  being invisible. This one was found the honest way rather than reasoned about: `make
+  boundary-lab-aws` stands up two roles with a byte-identical privesc policy differing
+  only in a boundary, and on a real account the engine reported *both* as escalating
+  while AWS denied one. `GetAccountAuthorizationDetails` returned the boundary and the
+  connector's role/user structs discarded it. The fix carries `PermissionsBoundary`
+  through the connector (fetching the boundary's document when the bundle omits it) and
+  intersects it in the evaluator, alongside the existing resource-scoping logic. A
+  boundary whose document cannot be read is reported but scored as *unverified*, since
+  an `AdministratorAccess` boundary is a common no-op and dropping the edge would turn a
+  false positive into a miss. The lab is now the regression test: it runs the engine and
+  AWS side by side and fails on any disagreement. *(done - the oracle measured it, and
+  measures it still)*
 - **SCP evaluation.** Service Control Policies can deny what an identity policy
   allows, and the engine doesn't see them - so it can surface an escalation an SCP
   blocks. Needs Organizations data (see above), which gates it. *(not started)*
@@ -51,11 +62,20 @@ The scores are expert estimates, not field-calibrated numbers. Closing that need
 genuine `refuted` verdicts - paths the engine surfaces that fail when actually
 attacked - from an authority independent of the engine.
 
-- **Wire the red-team oracle to live AWS.** The harness exists and is proven on
-  fixtures: it turns each path hop into an independently-checkable claim and grades it
-  against `iam:SimulatePrincipalPolicy`, `sts:AssumeRole` and a network probe. The
-  live oracle is inert until wired to a disposable lab account, and the randomized lab
-  is a Terraform scaffold. *(scaffolded - see `internal/redteam` and `deploy/redteam-lab`)*
+- **The IAM half is wired and verified against live AWS.** `make redteam-aws` settles
+  the engine's privilege-escalation claims against AWS's own policy evaluator - a free,
+  read-only dry run that applies the SCPs and condition keys the engine's policy reader
+  skips. It creates nothing and needs no vulnerable infrastructure, and it has already
+  earned its keep: the permission-boundary false positive above was found this way and
+  then fixed. *(done - see `internal/redteam`)*
+- **Exploited outcomes, for the path scores themselves.** The IAM oracle deliberately
+  does **not** rescale `S(P)`, and cannot: every internet-origin path contains a hop no
+  API can settle - whether an attacker gets code execution on the exposed host - so
+  those verdicts are one-sided and a calibration set built from them is censored. What
+  the oracle measures honestly is escalation *precision*, where both outcomes are
+  observable. Rescaling the path scores needs real exploitation against a disposable lab
+  account; the randomized lab is a Terraform scaffold.
+  *(scaffolded - see `deploy/redteam-lab`)*
 - **Per-basis recalibration transfer.** The base rate of exploitability is a property
   of the environment and doesn't transfer between them; a per-provenance bias
   ("heuristic hops are systematically overstated by X") is a property of the model and

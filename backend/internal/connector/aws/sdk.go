@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -36,6 +37,14 @@ type iamAPI interface {
 	// carries - the link that joins the network half of the graph to the identity half.
 	// EC2 reports only the *profile* ARN; the role behind it lives in IAM.
 	ListInstanceProfiles(context.Context, *iam.ListInstanceProfilesInput, ...func(*iam.Options)) (*iam.ListInstanceProfilesOutput, error)
+	// GetPolicy and GetPolicyVersion fetch a permissions-boundary policy document the
+	// authorization-details bundle referenced by ARN but did not include. Without the
+	// document the boundary can be seen but not intersected, and the escalation
+	// detector has to fall back to over-reporting - which is the false positive the
+	// boundary lab demonstrates. Both are read-only and inside the same SecurityAudit
+	// grant the connector already asks for.
+	GetPolicy(context.Context, *iam.GetPolicyInput, ...func(*iam.Options)) (*iam.GetPolicyOutput, error)
+	GetPolicyVersion(context.Context, *iam.GetPolicyVersionInput, ...func(*iam.Options)) (*iam.GetPolicyVersionOutput, error)
 }
 
 // sdkTransport pulls live AWS state and renders it as the exact describe-* JSON
@@ -427,6 +436,7 @@ func (t *sdkTransport) fetchIAM(ctx context.Context) ([]byte, error) {
 				GroupList:               u.GroupList,
 				AttachedManagedPolicies: mapAttached(u.AttachedManagedPolicies),
 				UserPolicyList:          mapInline(u.UserPolicyList),
+				PermissionsBoundary:     mapBoundary(u.PermissionsBoundary),
 			})
 		}
 		for _, g := range out.GroupDetailList {
@@ -445,6 +455,7 @@ func (t *sdkTransport) fetchIAM(ctx context.Context) ([]byte, error) {
 				AttachedManagedPolicies:  mapAttached(r.AttachedManagedPolicies),
 				RolePolicyList:           mapInline(r.RolePolicyList),
 				Tags:                     mapTags(r.Tags),
+				PermissionsBoundary:      mapBoundary(r.PermissionsBoundary),
 			})
 		}
 		for _, p := range out.Policies {
@@ -467,7 +478,73 @@ func (t *sdkTransport) fetchIAM(ctx context.Context) ([]byte, error) {
 		}
 		marker = out.Marker
 	}
+	t.resolveBoundaryPolicies(ctx, &b)
 	return json.Marshal(b)
+}
+
+// resolveBoundaryPolicies fills in permissions-boundary documents the
+// authorization-details bundle referenced by ARN but did not carry.
+//
+// A boundary policy that is set as a boundary and attached to nothing else need not
+// appear in the bundle's Policies list, and a boundary whose document we cannot read
+// can be seen but not intersected - leaving the evaluator to over-report exactly the
+// escalation the boundary blocks. Two read-only calls per missing boundary close
+// that, and only for boundaries actually in use.
+//
+// Failures are deliberately not fatal: one unreadable policy must not sink the whole
+// IAM feed. The ingestion side already handles a boundary it cannot resolve honestly
+// - it keeps the escalation but marks and scores it as unverified - so degrading to
+// that is strictly better than dropping every principal in the account.
+func (t *sdkTransport) resolveBoundaryPolicies(ctx context.Context, b *iamBundle) {
+	have := make(map[string]bool, len(b.Policies))
+	for _, p := range b.Policies {
+		have[p.Arn] = true
+	}
+	missing := map[string]bool{}
+	note := func(pb *iamBoundary) {
+		if pb != nil && pb.PermissionsBoundaryArn != "" && !have[pb.PermissionsBoundaryArn] {
+			missing[pb.PermissionsBoundaryArn] = true
+		}
+	}
+	for _, u := range b.UserDetailList {
+		note(u.PermissionsBoundary)
+	}
+	for _, r := range b.RoleDetailList {
+		note(r.PermissionsBoundary)
+	}
+	if len(missing) == 0 {
+		return
+	}
+	// Sorted so the emitted bundle is deterministic - the fixtures path and the live
+	// path have to converge on identical downstream code, byte order included.
+	arns := make([]string, 0, len(missing))
+	for arn := range missing {
+		arns = append(arns, arn)
+	}
+	sort.Strings(arns)
+
+	for _, arn := range arns {
+		pol, err := t.iam.GetPolicy(ctx, &iam.GetPolicyInput{PolicyArn: aws.String(arn)})
+		if err != nil || pol.Policy == nil || pol.Policy.DefaultVersionId == nil {
+			continue
+		}
+		ver, err := t.iam.GetPolicyVersion(ctx, &iam.GetPolicyVersionInput{
+			PolicyArn: aws.String(arn), VersionId: pol.Policy.DefaultVersionId,
+		})
+		if err != nil || ver.PolicyVersion == nil {
+			continue
+		}
+		b.Policies = append(b.Policies, iamPolicy{
+			PolicyName:       aws.ToString(pol.Policy.PolicyName),
+			Arn:              arn,
+			DefaultVersionID: aws.ToString(pol.Policy.DefaultVersionId),
+			PolicyVersionList: []iamPolicyVersion{{
+				Document:         aws.ToString(ver.PolicyVersion.Document),
+				VersionID:        aws.ToString(ver.PolicyVersion.VersionId),
+				IsDefaultVersion: true,
+			}},
+		})
+	}
 }
 
 type iamBundle struct {
@@ -483,6 +560,7 @@ type iamUser struct {
 	GroupList               []string      `json:"GroupList,omitempty"`
 	AttachedManagedPolicies []iamAttached `json:"AttachedManagedPolicies,omitempty"`
 	UserPolicyList          []iamInline   `json:"UserPolicyList,omitempty"`
+	PermissionsBoundary     *iamBoundary  `json:"PermissionsBoundary,omitempty"` // caps effective permissions to the intersection
 }
 
 type iamGroup struct {
@@ -499,6 +577,16 @@ type iamRole struct {
 	AttachedManagedPolicies  []iamAttached `json:"AttachedManagedPolicies,omitempty"`
 	RolePolicyList           []iamInline   `json:"RolePolicyList,omitempty"`
 	Tags                     []iamTag      `json:"Tags,omitempty"`
+	PermissionsBoundary      *iamBoundary  `json:"PermissionsBoundary,omitempty"` // caps effective permissions to the intersection
+}
+
+// iamBoundary is the permissions boundary GetAccountAuthorizationDetails reports on a
+// user or role. It names a managed policy by ARN; the document itself travels in the
+// bundle's Policies list (see resolveBoundaryPolicies). Dropping this field is what
+// made the engine call a bounded and an unbounded principal equally dangerous.
+type iamBoundary struct {
+	PermissionsBoundaryType string `json:"PermissionsBoundaryType,omitempty"`
+	PermissionsBoundaryArn  string `json:"PermissionsBoundaryArn,omitempty"`
 }
 
 type iamPolicy struct {
@@ -543,6 +631,16 @@ func mapInline(in []iamtypes.PolicyDetail) []iamInline {
 		out = append(out, iamInline{PolicyName: aws.ToString(p.PolicyName), PolicyDocument: aws.ToString(p.PolicyDocument)})
 	}
 	return out
+}
+
+func mapBoundary(in *iamtypes.AttachedPermissionsBoundary) *iamBoundary {
+	if in == nil || aws.ToString(in.PermissionsBoundaryArn) == "" {
+		return nil
+	}
+	return &iamBoundary{
+		PermissionsBoundaryType: string(in.PermissionsBoundaryType),
+		PermissionsBoundaryArn:  aws.ToString(in.PermissionsBoundaryArn),
+	}
 }
 
 func mapTags(in []iamtypes.Tag) []iamTag {

@@ -15,13 +15,18 @@ import (
 const Source = "redteam-oracle"
 
 // Attempt walks a path hop by hop, asking the oracle to settle each hop's assertion,
-// and returns the verdict as a validation.Record ready for the calibration flywheel.
-// The aggregation is deliberately strict, so the resulting calibration is trustworthy:
+// and returns the verdict as a validation.Record. The aggregation is deliberately
+// strict, so the resulting calibration is trustworthy:
 //
 //	any hop Denied                         -> Refuted  (surfaced, but reality blocks it)
 //	every hop Testable and Allowed         -> Confirmed (proven end-to-end)
 //	otherwise (an untestable/inconclusive
 //	           hop, with no denial)         -> Partial  (could not prove or disprove)
+//
+// CALLERS MUST gate `store.Put` on [CalibrationGrade]. A Partial verdict from this
+// harness is an audit trail, not evidence: the store scores Partial as the label 0.5,
+// so feeding it one would enter the oracle's *inability to ask* into the dataset as a
+// half-true observation and manufacture an "overconfident" reading out of ignorance.
 //
 // PredictedScore is captured from the path itself (its S(P)), so the verdict pairs the
 // model's prediction with reality's outcome - the pairing that makes it calibration
@@ -81,6 +86,24 @@ func Attempt(ctx context.Context, o Oracle, p analyzer.AttackPath, tenant string
 		WeightBasis:    weakestBasis(p),
 		TestedAt:       now,
 	}, nil
+}
+
+// CalibrationGrade reports whether an oracle verdict is admissible as calibration
+// evidence - that is, whether reality actually answered. Only Confirmed ("reality
+// permitted every hop") and Refuted ("reality blocked a hop") qualify.
+//
+// This is the guard that keeps the flywheel honest. The most common path shape - an
+// internet-facing instance that assumes a role and escalates - contains a hop no API
+// oracle can settle: whether an attacker obtains code execution on the box. Such a
+// path comes back Partial, and the store would score Partial as 0.5. Ten of them would
+// pull the observed rate to 0.30 and report the engine as wildly overconfident, purely
+// because the oracle could not ask. An unmeasured outcome must be excluded from a
+// calibration set, never imputed - so this returns false and the verdict stays an
+// audit record.
+//
+// Derived from the outcome rather than tracked alongside it, so the two cannot drift.
+func CalibrationGrade(r validation.Record) bool {
+	return r.Outcome == validation.Confirmed || r.Outcome == validation.Refuted
 }
 
 // aggregate applies the verdict rule. A path with no testable hops at all cannot be
