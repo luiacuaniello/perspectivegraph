@@ -382,9 +382,17 @@ single primitive has **all** of its actions allowed - the same all-of rule the d
 same list, so the grader cannot drift from what is being graded.
 
 Full path-score calibration still needs real exploitation attempts against a **disposable lab account**,
-whose randomized environments are specified in [`deploy/redteam-lab`](../deploy/redteam-lab). That remains
-the one piece of engineering that can move the scores from *directionally honest* to *empirically
-grounded*, and it needs real exploits, not more model code.
+because the hop it turns on - did the attacker obtain code execution on the exposed host - is the one no
+API answers. [`deploy/redteam-lab`](../deploy/redteam-lab) specifies that environment; it is a written
+specification, not runnable Terraform. That remains the one piece of engineering that can move the scores
+from *directionally honest* to *empirically grounded*, and it needs real exploits, not more model code.
+
+Two refutations, though, are still available for free and need no lab at all:
+`SimulatePrincipalPolicy` accepts `--resource-arns` and `--context-entries`, so resource-scoped grants and
+**condition keys** can both be put to AWS as they are. The second is the more interesting: the engine
+treats an `Allow` as unconditional, so a grant that only applies under `aws:SourceIp` or with MFA present
+is an escalation the engine reports and reality refuses - the same shape of finding as the permission
+boundary, obtainable at zero cost.
 
 ## Event contract
 

@@ -18,9 +18,11 @@
 // into evidence rather than a restatement of the model.
 //
 // This file defines the oracle contract. The path->verdict runner (runner.go) and the
-// deterministic fixture oracle (fixture_oracle.go) make the whole harness testable
-// with no AWS account; the live oracle (aws_oracle.go) is inert until wired, and the
-// randomized lab that feeds it lives in deploy/redteam-lab. Nothing here touches AWS.
+// deterministic fixture oracle (fixture_oracle.go) make the whole harness testable with
+// no AWS account; the live oracle (aws_oracle.go) settles IAM claims against AWS itself
+// with a free, read-only dry run that creates nothing. The one question it cannot reach
+// - whether an attacker obtained code execution on a host - is what deploy/redteam-lab
+// specifies, and why path scores stay uncalibrated. Nothing in this file touches AWS.
 package redteam
 
 import "context"
