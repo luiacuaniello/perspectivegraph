@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0](https://github.com/luiacuaniello/perspectivegraph/compare/v0.5.0...v0.6.0) (2026-07-27)
+
+
+### Features
+
+* **ai:** every answer names the model that wrote it ([#65](https://github.com/luiacuaniello/perspectivegraph/issues/65)) ([70967ac](https://github.com/luiacuaniello/perspectivegraph/commit/70967aca6a88ffb2afe53d4cd2a1baa7ebd6db0e))
+
+
+### Bug Fixes
+
+* **ai:** tell the model the scores are estimates, and pin the current Opus ([#63](https://github.com/luiacuaniello/perspectivegraph/issues/63)) ([243fd92](https://github.com/luiacuaniello/perspectivegraph/commit/243fd9202b0bd46999eb11a96fc5c32d8ebe9bf8))
+
 ## [0.5.0](https://github.com/luiacuaniello/perspectivegraph/compare/v0.4.0...v0.5.0) (2026-07-26)
 
 
