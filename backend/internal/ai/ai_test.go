@@ -36,8 +36,27 @@ func TestComplete(t *testing.T) {
 		if err := json.Unmarshal(body, &req); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		if req.Model != "claude-opus-4-8" || len(req.Messages) != 1 || req.Messages[0].Content != "hello" {
+		if req.Model != defaultModel || len(req.Messages) != 1 || req.Messages[0].Content != "hello" {
 			t.Errorf("unexpected request body: %+v", req)
+		}
+		// Thinking must be sent explicitly, not left to the model's default. On the
+		// current Opus, omitting it enables adaptive thinking, and max_tokens caps
+		// thinking and response text together - so a budget sized for prose alone
+		// starts truncating answers. Enabling it is a decision with a bill attached,
+		// not something a model-id bump should make on the operator's behalf.
+		if req.Thinking.Type != "disabled" {
+			t.Errorf("thinking must be sent explicitly as disabled, got %q", req.Thinking.Type)
+		}
+		// Sampling parameters are rejected outright by the current Opus models. The
+		// hand-rolled body has never carried them; this fails if one is ever added.
+		var raw map[string]any
+		if err := json.Unmarshal(body, &raw); err != nil {
+			t.Fatal(err)
+		}
+		for _, banned := range []string{"temperature", "top_p", "top_k"} {
+			if _, present := raw[banned]; present {
+				t.Errorf("%s is rejected by current Opus models and must not be sent", banned)
+			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"content":[{"type":"thinking","text":""},{"type":"text","text":"the answer"}],"stop_reason":"end_turn"}`)

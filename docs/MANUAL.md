@@ -762,7 +762,7 @@ lateral-movement** edge (`CONNECTS_TO`) yields a security-group segmentation rul
 ### Ask your attack surface (AI-native - Claude or HuggingFace)
 
 Set `ANTHROPIC_API_KEY` and the dashboard grows an **AI assistant** powered by
-Claude (`claude-opus-4-8`):
+Claude (`claude-opus-5`):
 
 - **Natural-language Q&A** - *"which internet-exposed path reaches customer PII
   fastest?"* - answered from the live graph.
