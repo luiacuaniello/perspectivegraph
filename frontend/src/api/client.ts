@@ -735,18 +735,21 @@ export const openRemediationPR = (pathId: string) =>
     body: JSON.stringify({ pathId }),
   });
 
-// AI-native layer (Claude). All require ANTHROPIC_API_KEY on the backend (else 503).
-export const aiSummary = () => rest<{ answer: string }>("/ai/summary").then((r) => r.answer);
+// AI-native layer. Requires ANTHROPIC_API_KEY (or HF_TOKEN) on the backend, else 503.
+//
+// Every answer carries the model that wrote it. The two supported backends are not
+// interchangeable - the free path can be a small self-hosted model writing a risk
+// briefing - and prose reads with the same authority either way, so the reader is shown
+// which one they are reading rather than left to assume.
+export type AIAnswer = { answer: string; provider: string; model: string };
+
+export const aiSummary = () => rest<AIAnswer>("/ai/summary");
 
 export const aiQuery = (question: string) =>
-  rest<{ answer: string }>("/ai/query", { method: "POST", body: JSON.stringify({ question }) }).then(
-    (r) => r.answer,
-  );
+  rest<AIAnswer>("/ai/query", { method: "POST", body: JSON.stringify({ question }) });
 
 export const aiExplain = (pathId: string) =>
-  rest<{ answer: string }>("/ai/explain", { method: "POST", body: JSON.stringify({ pathId }) }).then(
-    (r) => r.answer,
-  );
+  rest<AIAnswer>("/ai/explain", { method: "POST", body: JSON.stringify({ pathId }) });
 
 export const closeTicket = (id: string) =>
   rest<Ticket>(`/tickets/${encodeURIComponent(id)}/close`, { method: "POST" });
