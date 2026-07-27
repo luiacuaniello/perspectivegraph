@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,6 +17,8 @@ type fakeAI struct {
 }
 
 func (f *fakeAI) Enabled() bool { return f.enabled }
+
+func (f *fakeAI) Describe() (string, string) { return "anthropic", "test-model" }
 func (f *fakeAI) Complete(_ context.Context, system, user string) (string, error) {
 	f.calls++
 	f.gotSys, f.gotUser = system, user
@@ -106,5 +109,34 @@ func TestEveryAIPromptCarriesTheScoreCaveat(t *testing.T) {
 		if !strings.Contains(prompt, "Never state one as a measured fact") {
 			t.Errorf("system prompt does not forbid stating a score as fact: %q", prompt)
 		}
+	}
+}
+
+// An answer has to name the model that wrote it. The two supported backends are not
+// interchangeable - the free path can be a small model writing a risk briefing - and
+// prose reads with the same authority either way, so the reader needs to know which one
+// they are reading.
+func TestAIAnswerNamesTheModelThatWroteIt(t *testing.T) {
+	a, _ := testAPI(t)
+	a.WithAI(&fakeAI{enabled: true})
+	rec := httptest.NewRecorder()
+	a.handleAISummary(rec, httptest.NewRequest(http.MethodGet, "/ai/summary", nil).WithContext(viewerCtx()))
+
+	var got struct {
+		Answer   string `json:"answer"`
+		Provider string `json:"provider"`
+		Model    string `json:"model"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v (body %s)", err, rec.Body.String())
+	}
+	if got.Answer == "" {
+		t.Fatal("no answer returned")
+	}
+	if got.Provider != "anthropic" || got.Model != "test-model" {
+		t.Errorf("provider/model = %q/%q, want anthropic/test-model", got.Provider, got.Model)
+	}
+	if strings.Contains(rec.Body.String(), "test-key") {
+		t.Error("the credential must never appear in the response")
 	}
 }

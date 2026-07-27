@@ -1178,7 +1178,7 @@
 								"summary"
 							]
 						},
-						"description": "Board-level brief of the current posture, grounded in the live attack paths. Provider is server-configured: Anthropic (Claude, ANTHROPIC_API_KEY) by default, or HuggingFace / any OpenAI-compatible endpoint (HF_TOKEN) when no Anthropic key is set. 503 when neither is configured (aiEnabled=false). Viewer role when auth is enabled. Audited as ai.summary."
+						"description": "Board-level brief of the current posture, grounded in the live attack paths. Provider is server-configured: Anthropic (Claude, ANTHROPIC_API_KEY) by default, or HuggingFace / any OpenAI-compatible endpoint (HF_TOKEN) when no Anthropic key is set. 503 when neither is configured (aiEnabled=false). Viewer role when auth is enabled. Audited as ai.summary. Every answer also carries `provider` and `model` - the backend that actually wrote it - so a reader can weigh prose from a small self-hosted model differently from Opus."
 					}
 				},
 				{
@@ -1210,7 +1210,7 @@
 								"query"
 							]
 						},
-						"description": "Ask a question about your attack surface; answered from the tenant's real, capped attack-path context (the model summarizes your data, it doesn't invent assets). Audited as ai.query."
+						"description": "Ask a question about your attack surface; answered from the tenant's real, capped attack-path context (the model summarizes your data, it doesn't invent assets). Audited as ai.query. Every answer also carries `provider` and `model` - the backend that actually wrote it - so a reader can weigh prose from a small self-hosted model differently from Opus."
 					}
 				},
 				{
@@ -1242,7 +1242,7 @@
 								"explain"
 							]
 						},
-						"description": "Plain-English walk-through of one attack path and the most effective remediation. pathId = attackPaths { id }. Audited as ai.explain."
+						"description": "Plain-English walk-through of one attack path and the most effective remediation. pathId = attackPaths { id }. Audited as ai.explain. Every answer also carries `provider` and `model` - the backend that actually wrote it - so a reader can weigh prose from a small self-hosted model differently from Opus."
 					}
 				}
 			]

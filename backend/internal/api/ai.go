@@ -118,8 +118,17 @@ func (a *API) runAI(w http.ResponseWriter, r *http.Request, action, system, user
 		return
 	}
 	p := auth.PrincipalFromContext(r.Context())
-	a.audit.Record(action, p.Subject, p.Role.String(), p.Tenant, map[string]any{"answer_chars": len(answer)})
-	writeJSON(w, http.StatusOK, map[string]any{"answer": answer})
+	provider, model := a.ai.Describe()
+	a.audit.Record(action, p.Subject, p.Role.String(), p.Tenant,
+		map[string]any{"answer_chars": len(answer), "provider": provider, "model": model})
+
+	// The answer says which model wrote it. Prose reads with the same authority
+	// whichever backend produced it, and the two supported backends are not
+	// interchangeable - the free/self-hosted path can be a small model writing a risk
+	// briefing. Naming it lets the reader weigh the text; withholding it would be the
+	// same false confidence the score caveat above exists to prevent. Provider and
+	// model id are not secrets; the credential never leaves the client.
+	writeJSON(w, http.StatusOK, map[string]any{"answer": answer, "provider": provider, "model": model})
 }
 
 // pathContext renders the tenant's top attack paths as a compact, grounded

@@ -47,6 +47,11 @@ const (
 type Client interface {
 	Enabled() bool
 	Complete(ctx context.Context, system, user string) (string, error)
+	// Describe names the backend that answers, as ("anthropic"|"huggingface"|"none",
+	// model id). It is part of the interface rather than read from config at the call
+	// site so the answer names the client that actually produced it - and never the
+	// credential, which stays inside the client.
+	Describe() (provider, model string)
 }
 
 // Config configures the AI layer. Anthropic (APIKey) takes precedence; if it is
@@ -113,7 +118,8 @@ func Provider(cfg Config) (provider, model string) {
 
 type nop struct{}
 
-func (nop) Enabled() bool { return false }
+func (nop) Enabled() bool              { return false }
+func (nop) Describe() (string, string) { return "none", "" }
 func (nop) Complete(context.Context, string, string) (string, error) {
 	return "", errors.New("AI features are not configured (set ANTHROPIC_API_KEY, or HF_TOKEN for HuggingFace)")
 }
@@ -124,6 +130,8 @@ type claude struct {
 }
 
 func (c *claude) Enabled() bool { return true }
+
+func (c *claude) Describe() (string, string) { return "anthropic", c.cfg.Model }
 
 type message struct {
 	Role    string `json:"role"`
@@ -207,6 +215,8 @@ type openAICompat struct {
 }
 
 func (o *openAICompat) Enabled() bool { return true }
+
+func (o *openAICompat) Describe() (string, string) { return "huggingface", o.cfg.HFModel }
 
 type chatMessage struct {
 	Role    string `json:"role"`

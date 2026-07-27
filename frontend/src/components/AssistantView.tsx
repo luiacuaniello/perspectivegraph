@@ -1,16 +1,17 @@
 import { useState } from "react";
-import { aiQuery, aiSummary } from "../api/client";
+import { aiQuery, aiSummary, type AIAnswer } from "../api/client";
+import { ModelAttribution } from "./ModelAttribution";
 
 // AssistantView is the AI-native surface: a board-level executive summary and a
 // natural-language Q&A over the current attack-path graph. Both are answered by
 // Claude, grounded in the live data the backend already has - nothing is invented.
 export default function AssistantView() {
-  const [summary, setSummary] = useState<string | null>(null);
+  const [summary, setSummary] = useState<AIAnswer | null>(null);
   const [summaryBusy, setSummaryBusy] = useState(false);
   const [summaryErr, setSummaryErr] = useState<string | null>(null);
 
   const [question, setQuestion] = useState("");
-  const [answer, setAnswer] = useState<string | null>(null);
+  const [answer, setAnswer] = useState<AIAnswer | null>(null);
   const [answerBusy, setAnswerBusy] = useState(false);
   const [answerErr, setAnswerErr] = useState<string | null>(null);
 
@@ -60,7 +61,10 @@ export default function AssistantView() {
         <p className="mt-1 text-[12px] text-slate-500">A board-ready brief of the current posture.</p>
         {summaryErr && <p className="mt-3 text-[13px] text-red-600">{summaryErr}</p>}
         {summary && (
-          <p className="mt-3 whitespace-pre-wrap text-[14px] leading-relaxed text-slate-700">{summary}</p>
+          <>
+            <p className="mt-3 whitespace-pre-wrap text-[14px] leading-relaxed text-slate-700">{summary.answer}</p>
+            <ModelAttribution answer={summary} />
+          </>
         )}
       </section>
 
@@ -88,7 +92,10 @@ export default function AssistantView() {
         </div>
         {answerErr && <p className="mt-3 text-[13px] text-red-600">{answerErr}</p>}
         {answer && (
-          <p className="mt-3 whitespace-pre-wrap text-[14px] leading-relaxed text-slate-700">{answer}</p>
+          <>
+            <p className="mt-3 whitespace-pre-wrap text-[14px] leading-relaxed text-slate-700">{answer.answer}</p>
+            <ModelAttribution answer={answer} />
+          </>
         )}
       </section>
     </div>

@@ -784,6 +784,17 @@ and point `HF_BASE_URL` at any OpenAI-compatible endpoint (Together, Groq, a loc
 Ollama, …) to use those. Anthropic takes precedence when both are set; everything
 else (grounding, audit, the dashboard UI) is identical.
 
+**Every answer names the model that wrote it.** The `/ai/*` responses carry `provider`
+and `model` alongside `answer`, and the dashboard prints them under the text. This is
+not decoration: prose reads with the same authority whichever backend produced it, and
+these two are not interchangeable — an 8B model writing a board-level risk brief is a
+different thing from Opus writing one, and only the reader can decide what that is worth
+to them. Withholding it would be the same false confidence the engine refuses to produce
+for a score it cannot back up. For the same reason the model is told, in every system
+prompt, that the probabilities in its context are the engine's own estimates rather than
+measurements — the caveat the MCP tool descriptions already give an agent, said here to
+the layer that writes for humans.
+
 Because the graph *is* the org's attack map, sending a compacted view of it to an
 external model is a deliberate opt-in: the feature is off until you set the key,
 and **every AI call is audited** (`ai.query` / `ai.summary` / `ai.explain`) into

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   aiExplain,
+  type AIAnswer,
   closeTicket,
   createSuppression,
   createTicket,
@@ -31,6 +32,7 @@ import {
 import InfoTip from "./InfoTip";
 import Button from "./ui/Button";
 import Badge, { type Tone } from "./ui/Badge";
+import { ModelAttribution } from "./ModelAttribution";
 
 interface Props {
   path: AttackPath;
@@ -264,7 +266,7 @@ function TicketControl({ path, onChanged }: { path: AttackPath; onChanged?: () =
 // button plus a full-width answer block that wraps onto its own line.
 function AiExplainControl({ path }: { path: AttackPath }) {
   const [busy, setBusy] = useState(false);
-  const [text, setText] = useState<string | null>(null);
+  const [text, setText] = useState<AIAnswer | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   const explain = () => {
@@ -283,9 +285,10 @@ function AiExplainControl({ path }: { path: AttackPath }) {
       </Button>
       {err && <span className="text-[12px] text-red-600">{err}</span>}
       {text && (
-        <p className="basis-full whitespace-pre-wrap rounded-lg border border-edge bg-ink px-3 py-2 text-[13px] leading-relaxed text-slate-700">
-          {text}
-        </p>
+        <div className="basis-full rounded-lg border border-edge bg-ink px-3 py-2">
+          <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-slate-700">{text.answer}</p>
+          <ModelAttribution answer={text} />
+        </div>
       )}
     </>
   );
