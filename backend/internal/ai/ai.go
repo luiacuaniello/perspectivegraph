@@ -30,8 +30,8 @@ import (
 )
 
 const (
-	// defaultModel pins the latest, most capable Claude model.
-	defaultModel   = "claude-opus-4-8"
+	// defaultModel pins the current Claude Opus. Override with ANTHROPIC_MODEL.
+	defaultModel   = "claude-opus-5"
 	defaultBaseURL = "https://api.anthropic.com"
 	defaultMaxTok  = 4096
 	anthropicVer   = "2023-06-01"
@@ -54,7 +54,7 @@ type Client interface {
 type Config struct {
 	// Anthropic (Claude) - preferred when set.
 	APIKey    string
-	Model     string // default claude-opus-4-8
+	Model     string // default claude-opus-5
 	BaseURL   string // default https://api.anthropic.com (override for a proxy)
 	MaxTokens int    // default 4096; shared by both providers
 
@@ -135,6 +135,20 @@ type request struct {
 	MaxTokens int       `json:"max_tokens"`
 	System    string    `json:"system,omitempty"`
 	Messages  []message `json:"messages"`
+	// Thinking is sent explicitly because omitting it is not neutral: on the current
+	// Opus the default is adaptive thinking, and max_tokens caps thinking AND response
+	// text together - so a 4096 budget sized for prose alone would start truncating
+	// answers mid-sentence the moment the model id moved forward. These three calls
+	// summarise data they are handed rather than reason their way to it, so thinking
+	// buys little here; disabling it keeps behaviour and cost exactly as before.
+	//
+	// Turning it on is a deliberate, and billable, choice: raise AI_MAX_TOKENS well
+	// past the prose budget first, or the same truncation returns.
+	Thinking thinking `json:"thinking"`
+}
+
+type thinking struct {
+	Type string `json:"type"`
 }
 
 type contentBlock struct {
@@ -156,6 +170,7 @@ func (c *claude) Complete(ctx context.Context, system, user string) (string, err
 		MaxTokens: c.cfg.MaxTokens,
 		System:    system,
 		Messages:  []message{{Role: "user", Content: user}},
+		Thinking:  thinking{Type: "disabled"},
 	})
 	if err != nil {
 		return "", err

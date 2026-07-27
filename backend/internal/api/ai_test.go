@@ -89,3 +89,22 @@ func TestAIExplain(t *testing.T) {
 		t.Errorf("explain did not pass the path to the model: %q", fa.gotUser)
 	}
 }
+
+// The MCP tool descriptions tell an agent the scores are expert estimates and to call
+// get_score_trust before quoting one. The prose the AI layer writes goes to executives,
+// who have no such recourse - so the same caveat has to reach the model here too. This
+// fails if a fourth prompt is ever added without it.
+func TestEveryAIPromptCarriesTheScoreCaveat(t *testing.T) {
+	for _, prompt := range []string{
+		aiSystem("You are a principal security analyst briefing executives."),
+		aiSystem("You answer questions about an organization's attack-path graph."),
+		aiSystem("You explain a single attack path to an engineer in plain English."),
+	} {
+		if !strings.Contains(prompt, "expert estimates") {
+			t.Errorf("system prompt does not say the scores are estimates: %q", prompt)
+		}
+		if !strings.Contains(prompt, "Never state one as a measured fact") {
+			t.Errorf("system prompt does not forbid stating a score as fact: %q", prompt)
+		}
+	}
+}

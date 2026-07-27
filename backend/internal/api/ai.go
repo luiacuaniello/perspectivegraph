@@ -13,6 +13,24 @@ import (
 	remediationpkg "github.com/luiacuaniello/perspectivegraph/internal/remediation"
 )
 
+// scoreCaveat says to the model what the MCP tool descriptions already say to an agent:
+// the probabilities are the engine's own estimates, not measurements.
+//
+// It matters more here than there, and in the opposite direction from where you would
+// expect the care to be needed. An agent reading an MCP tool description was also told
+// to call get_score_trust before quoting a number. The executive reading /ai/summary has
+// no such recourse - and "a 90% chance of compromise", stated flatly in prose, is
+// precisely the false precision the rest of this engine refuses to produce.
+//
+// Prepended to every system prompt by [aiSystem] rather than pasted into each one, so a
+// prompt added later cannot quietly omit it.
+const scoreCaveat = "The probabilities, scores and percentages in the data are the engine's own " +
+	"expert estimates, not field-calibrated measurements. Never state one as a measured fact: " +
+	"either name it as an estimate, or compare paths by their rank instead of quoting a number. "
+
+// aiSystem builds a system prompt with the caveat in front of it.
+func aiSystem(prompt string) string { return scoreCaveat + prompt }
+
 // WithAI attaches the AI-native layer (NL query / exec summary / path
 // explanation). A nil or Nop client disables the /ai/* endpoints. Returns the
 // API for chaining.
@@ -29,9 +47,9 @@ func (a *API) handleAISummary(w http.ResponseWriter, r *http.Request) {
 	if !a.requireAI(w) {
 		return
 	}
-	system := "You are a principal security analyst briefing executives. Be factual, concise, and non-alarmist. " +
+	system := aiSystem("You are a principal security analyst briefing executives. Be factual, concise, and non-alarmist. " +
 		"Ground every statement in the data provided - do not invent assets or numbers. Respond with 4–6 plain sentences " +
-		"(no markdown headings, no bullet lists): the headline risk, what is actively exploited, and the single most important fix."
+		"(no markdown headings, no bullet lists): the headline risk, what is actively exploited, and the single most important fix.")
 	user := "Current attack-path data for the environment:\n\n" + a.pathContext(r.Context(), 15) + "\n\nWrite the executive summary."
 	a.runAI(w, r, "ai.summary", system, user)
 }
@@ -53,8 +71,8 @@ func (a *API) handleAIQuery(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "question is required")
 		return
 	}
-	system := "You answer questions about an organization's attack-path graph using ONLY the data provided below. " +
-		"If the data does not contain the answer, say so plainly rather than guessing. Be concise and specific, and cite path numbers when relevant."
+	system := aiSystem("You answer questions about an organization's attack-path graph using ONLY the data provided below. " +
+		"If the data does not contain the answer, say so plainly rather than guessing. Be concise and specific, and cite path numbers when relevant.")
 	user := a.pathContext(r.Context(), 20) + "\n\nQuestion: " + strings.TrimSpace(req.Question)
 	a.runAI(w, r, "ai.query", system, user)
 }
@@ -77,8 +95,8 @@ func (a *API) handleAIExplain(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusNotFound, "attack path not found (or out of your scope)")
 		return
 	}
-	system := "You explain a single attack path to an engineer in plain English: how an attacker would walk it step by step, " +
-		"why it matters (what sits at the end), and the single most effective fix to break it. Be concise and concrete, no preamble."
+	system := aiSystem("You explain a single attack path to an engineer in plain English: how an attacker would walk it step by step, " +
+		"why it matters (what sits at the end), and the single most effective fix to break it. Be concise and concrete, no preamble.")
 	a.runAI(w, r, "ai.explain", system, "Attack path:\n"+pathDetail(path))
 }
 
