@@ -178,9 +178,7 @@ func (b *builder) ec2(r map[string]any) {
 		props["app"] = app
 		b.appOf[nodeID] = app
 	}
-	if ingestion.CrownJewelFromTags(tg) {
-		props[ontology.PropCrownJewel] = true
-	}
+	ingestion.MarkCrownJewelFromTags(props, tg)
 	b.upsert(ontology.Node{ID: nodeID, Label: ontology.LabelVirtualMachine, Name: nameFrom(tg, id), Properties: props})
 	b.vms = append(b.vms, nodeID)
 
@@ -219,9 +217,7 @@ func (b *builder) bucket(r map[string]any) {
 	if app := tg["app"]; app != "" {
 		props["app"] = app
 	}
-	if ingestion.CrownJewelFromTags(tg) {
-		props[ontology.PropCrownJewel] = true
-	}
+	ingestion.MarkCrownJewelFromTags(props, tg)
 	b.upsert(ontology.Node{ID: ontology.NewID(ontology.LabelBucket, name), Label: ontology.LabelBucket, Name: name, Properties: props})
 }
 
@@ -238,9 +234,7 @@ func (b *builder) database(r map[string]any) {
 	if app := tg["app"]; app != "" {
 		props["app"] = app
 	}
-	if ingestion.CrownJewelFromTags(tg) {
-		props[ontology.PropCrownJewel] = true
-	}
+	ingestion.MarkCrownJewelFromTags(props, tg)
 	b.upsert(ontology.Node{ID: ontology.NewID(ontology.LabelDatabase, id), Label: ontology.LabelDatabase, Name: id, Properties: props})
 }
 

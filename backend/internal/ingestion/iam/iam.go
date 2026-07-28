@@ -306,9 +306,7 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 		for _, t := range ro.Tags {
 			tags[t.Key] = t.Value
 		}
-		if ingestion.CrownJewelFromTags(tags) {
-			props[ontology.PropCrownJewel] = true
-		}
+		ingestion.MarkCrownJewelFromTags(props, tags)
 		// A role anyone can assume is, in effect, internet-reachable.
 		if trustsEveryone(ro.AssumeRolePolicyDocument) {
 			props[ontology.PropInternetExposed] = true

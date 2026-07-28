@@ -269,9 +269,7 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 				props["net_reachability"] = note
 			}
 		}
-		if ingestion.CrownJewelFromTags(tags) {
-			props[ontology.PropCrownJewel] = true
-		}
+		ingestion.MarkCrownJewelFromTags(props, tags)
 		name := tags["Name"]
 		if name == "" {
 			name = inst.InstanceID

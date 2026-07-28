@@ -1,6 +1,10 @@
 package ingestion
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
+)
 
 // SeverityProbability is the single severity → exploit-probability scale every
 // collector maps onto. Tools normalize their native levels to
@@ -39,6 +43,30 @@ var (
 
 // CrownJewelFromTags applies the classification rules to a resource tag map
 // (keys lowercased by the caller or matched case-insensitively here).
+// MarkCrownJewelFromTags applies the tag rules and, when they fire, records BOTH the
+// flag and where it came from.
+//
+// The provenance is not decoration. A tag is the one crown-jewel signal an attacker can
+// forge - `ec2:CreateTags` is granted freely because tagging looks harmless - and the
+// analyzer deliberately ranks a tag-derived target below one an authoritative classifier
+// vouched for. That ranking reads crown_jewel_basis, so a flag written without the basis
+// silently claims authority the engine never observed.
+//
+// It exists as one helper because six ingestion sites mark crown jewels from tags, and
+// six copies of "set the flag, remember to set the basis" is five chances to forget.
+func MarkCrownJewelFromTags(props map[string]any, tags map[string]string) bool {
+	if !CrownJewelFromTags(tags) {
+		return false
+	}
+	props[ontology.PropCrownJewel] = true
+	// An authoritative classifier may already have spoken for this node; a tag must
+	// never demote what a real classifier established.
+	if _, ok := props[ontology.PropCrownJewelBasis]; !ok {
+		props[ontology.PropCrownJewelBasis] = ontology.CrownJewelBasisTagged
+	}
+	return true
+}
+
 func CrownJewelFromTags(tags map[string]string) bool {
 	get := func(key string) string {
 		for k, v := range tags {

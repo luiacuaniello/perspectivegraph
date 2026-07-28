@@ -114,6 +114,12 @@ const (
 	// engine guessed from a strong signal, e.g. a PII-named data store). So reliance
 	// on perfect hand-tagging is reduced *and* the reason is always auditable.
 	PropCrownJewelBasis = "crown_jewel_basis"
+
+	// CrownJewelBasisTagged is the provenance of a crown jewel established by a
+	// resource tag - the one crown-jewel signal an attacker with tagging rights can
+	// forge, and therefore the one the analyzer must be able to rank below an
+	// authoritative classification.
+	CrownJewelBasisTagged = "tagged"
 	// PropClassification (string) is an asset's data classification from a real
 	// classifier (Macie/DLP/tag policy): pii | phi | pci | financial | secret | … -
 	// authoritative evidence that the asset holds something worth stealing.
