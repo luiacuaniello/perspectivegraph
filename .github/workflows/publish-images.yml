@@ -76,13 +76,38 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # `latest` has to mean the newest release, so it is moved only when the tag being
+      # built IS the newest release - not merely because this job ran. Re-publishing an
+      # older tag by hand is the whole reason workflow_dispatch exists, and with `latest`
+      # applied unconditionally that repair would drag `latest` backwards: every `docker
+      # pull` without a tag, including the one in the README's quickstart, would silently
+      # land on an older image. Asking GitHub which release is newest gets all three cases
+      # right - the automatic release, a repair of the current release, and a repair of an
+      # old one - where keying off the trigger would get the middle case wrong.
+      - id: newest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          # No argument means "the latest release", which the API defines as excluding
+          # drafts and prereleases - so a prerelease correctly never claims `latest`.
+          newest="$(gh release view --repo "${GITHUB_REPOSITORY}" --json tagName --jq .tagName)"
+          if [ "${newest}" = "${TAG}" ]; then
+            echo "${TAG} is the newest release: it will also be tagged latest"
+            echo "is_newest=true" >>"${GITHUB_OUTPUT}"
+          else
+            echo "newest release is ${newest}, building ${TAG}: leaving latest alone"
+            echo "is_newest=false" >>"${GITHUB_OUTPUT}"
+          fi
+
       - id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ env.IMAGE }}
           tags: |
             type=raw,value=${{ inputs.tag }}
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ steps.newest.outputs.is_newest == 'true' }}
 
       - id: build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
