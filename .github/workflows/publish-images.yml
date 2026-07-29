@@ -111,3 +111,79 @@ jobs:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
+
+  # Prebuilt CLI binaries. The engine needs a deployment; `perspectivegraph redteam`
+  # does not - it is one static, read-only binary that answers "which of my roles can
+  # reach admin, according to AWS itself" in about thirty seconds. That only helps
+  # someone if they do not first have to install Go and build it, so the release ships
+  # the artifact rather than the instructions.
+  #
+  # Signed and attested exactly like the images: a downloaded binary that cannot be
+  # verified would be the weakest link in a supply chain the rest of this pipeline
+  # takes seriously.
+  binaries:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # attach the archives to the GitHub release
+      id-token: write # cosign keyless (Sigstore OIDC)
+      attestations: write # SLSA build provenance
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.25.12"
+          cache-dependency-path: backend/go.sum
+
+      # CGO off so each binary is static and runs on any host of its platform - no
+      # glibc version to match, nothing to install alongside it.
+      - name: Build every platform
+        working-directory: ./backend
+        env:
+          CGO_ENABLED: "0"
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p ../dist
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            os="${target%/*}"; arch="${target#*/}"
+            out="perspectivegraph"; [ "$os" = "windows" ] && out="perspectivegraph.exe"
+            GOOS="$os" GOARCH="$arch" go build \
+              -trimpath \
+              -ldflags "-s -w -X main.releaseVersion=${TAG}" \
+              -o "../dist/${out}" ./cmd/perspectivegraph
+            # No version in the archive name, on purpose: it keeps
+            # releases/latest/download/<name> a stable URL, so the one-line install in
+            # the README never rots. The binary reports its own version.
+            base="perspectivegraph_${os}_${arch}"
+            if [ "$os" = "windows" ]; then
+              (cd ../dist && zip -q "${base}.zip" "${out}" && rm "${out}")
+            else
+              (cd ../dist && tar -czf "${base}.tar.gz" "${out}" && rm "${out}")
+            fi
+          done
+          # One checksum file over every archive: signing it signs all of them, and a
+          # verifier needs one signature check rather than five.
+          (cd ../dist && sha256sum * > SHA256SUMS)
+          ls -l ../dist
+
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+
+      - name: Sign the checksums (cosign keyless)
+        run: |
+          cosign sign-blob --yes \
+            --output-signature dist/SHA256SUMS.sig \
+            --output-certificate dist/SHA256SUMS.pem \
+            dist/SHA256SUMS
+
+      - name: SLSA build provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: dist/perspectivegraph_*
+
+      - name: Attach the binaries to the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ inputs.tag }}" dist/* --clobber
