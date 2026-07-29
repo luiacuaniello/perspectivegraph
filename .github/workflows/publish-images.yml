@@ -28,6 +28,12 @@ permissions: {}
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # A hung build must cost minutes, not the 6-hour default. `npm ci` under QEMU/arm64
+    # once died with SIGILL and left buildx waiting on a dead process for three hours,
+    # which silently produced a release with no dashboard image. Both build stages are now
+    # pinned to the native platform so this should not recur - but a ceiling turns the next
+    # unknown hang into a visible failure instead of a slowly-rotting release.
+    timeout-minutes: 30
     permissions:
       contents: write # attach SBOMs to the GitHub release
       packages: write # push images + signatures + attestations to GHCR
@@ -75,6 +81,14 @@ jobs:
           # Silicon, and an amd64-only image runs there under emulation - slow
           # enough to read as "this tool is slow" rather than "this is qemu".
           # arm64 servers (Graviton, Ampere) are the same story in production.
+          #
+          # Publishing for arm64 does NOT mean building under emulation. Both
+          # Dockerfiles pin their build stage to $BUILDPLATFORM, so the compiler and
+          # the Node toolchain run native and only the thin final stages (an `apk
+          # upgrade`, a COPY) touch QEMU. That distinction is load-bearing: `npm ci`
+          # emulated on arm64 died with SIGILL and left this job hung for three hours,
+          # shipping a release with no dashboard image. Do not remove those
+          # --platform flags to "simplify" the Dockerfiles.
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -123,6 +137,7 @@ jobs:
   # takes seriously.
   binaries:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write # attach the archives to the GitHub release
       id-token: write # cosign keyless (Sigstore OIDC)
