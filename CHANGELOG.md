@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0](https://github.com/luiacuaniello/perspectivegraph/compare/v0.6.0...v0.7.0) (2026-07-29)
+
+
+### Features
+
+* **ai:** contain hostile environment strings in the prompt, and prove it ([#68](https://github.com/luiacuaniello/perspectivegraph/issues/68)) ([a18d86b](https://github.com/luiacuaniello/perspectivegraph/commit/a18d86bca8361a7fd432b794b1c8d55d43a17ed3))
+* **release:** publish signed CLI binaries, so the 30-second path exists ([#71](https://github.com/luiacuaniello/perspectivegraph/issues/71)) ([0c9d448](https://github.com/luiacuaniello/perspectivegraph/commit/0c9d44847861b985104ef1c4d450a67ba3e293ed))
+
+
+### Bug Fixes
+
+* **ingest:** record that a crown jewel came from a tag, so ranking can see it ([#70](https://github.com/luiacuaniello/perspectivegraph/issues/70)) ([f72b5ab](https://github.com/luiacuaniello/perspectivegraph/commit/f72b5ab4bd281b1ca99bc6db17f6b3bccaee6bfa))
+
 ## [0.6.0](https://github.com/luiacuaniello/perspectivegraph/compare/v0.5.0...v0.6.0) (2026-07-27)
 
 
