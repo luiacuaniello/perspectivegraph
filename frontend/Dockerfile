@@ -4,7 +4,12 @@
 # runs standalone under docker compose; in Kubernetes the Helm chart mounts its
 # own config over it.
 
-FROM node:22-alpine@sha256:9385cd9f3001dfc3431e8ead12c43e9e1f87cc1b9b5c6cfd0f73865d405b27c4 AS build
+# --platform=$BUILDPLATFORM pins this stage to the RUNNER's architecture, not the
+# target's. The output of `npm run build` is JavaScript, CSS and HTML - it has no
+# architecture - so emulating the whole Node toolchain under QEMU to produce arm64
+# assets buys nothing and costs hours: vite/rolldown are native Rust binaries, and
+# emulated they crawl. Only the nginx stage below varies per target.
+FROM --platform=$BUILDPLATFORM node:22-alpine@sha256:9385cd9f3001dfc3431e8ead12c43e9e1f87cc1b9b5c6cfd0f73865d405b27c4 AS build
 WORKDIR /app
 COPY package*.json ./
 # `npm ci`, never `npm install`: it installs exactly what package-lock.json pins and
