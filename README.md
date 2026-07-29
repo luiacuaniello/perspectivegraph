@@ -29,7 +29,32 @@ pull request.**
 
 *`make demo`, with sample scanner output and seeded verdicts - not a real environment.*
 
-## See it in 90 seconds
+## Check your own account in 30 seconds
+
+No deployment, no Docker, nothing ingested. One static binary asks **AWS's own policy
+evaluator** which of your roles can reach administrator - applying the service control
+policies, permission boundaries and condition keys that a policy reader on its own does
+not see:
+
+```bash
+# macOS (Apple silicon); swap darwin_arm64 for linux_amd64, linux_arm64 or darwin_amd64
+curl -sSL https://github.com/luiacuaniello/perspectivegraph/releases/latest/download/perspectivegraph_darwin_arm64.tar.gz | tar xz
+./perspectivegraph redteam -roles -region eu-west-1
+```
+
+It is **read-only and free**: every check is one `iam:SimulatePrincipalPolicy` call, a
+dry run that evaluates policy without performing anything, so it creates nothing and
+costs nothing. It needs `iam:SimulatePrincipalPolicy` and `iam:ListRoles` - both inside
+`SecurityAudit`. Binaries for linux/macOS (amd64, arm64) and Windows are on the
+[releases page](https://github.com/luiacuaniello/perspectivegraph/releases/latest),
+signed with cosign and carrying SLSA build provenance.
+
+Add `-compare` and it also runs the engine over the same account and **exits non-zero
+where the two disagree** - each disagreement is a false positive or a miss, in the
+engine or in your assumptions. That check is how the permission-boundary bug described
+in the [manual](docs/MANUAL.md) was found, and how it stays closed.
+
+## See the whole engine in 90 seconds
 
 ```bash
 make demo

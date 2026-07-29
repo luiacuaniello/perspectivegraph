@@ -54,11 +54,20 @@ func runMCP(args []string) error {
 	return nil
 }
 
-// buildVersion reports the version stamped into the binary by the Go toolchain
-// (module version, or the VCS revision for a local build). Nothing injects a
-// version at link time here, so reading build info keeps this honest rather than
-// hardcoding a number that drifts from reality.
+// releaseVersion is set at link time for published binaries
+// (-ldflags "-X main.releaseVersion=v1.2.3"). It is empty for every other build,
+// which is the point: a binary someone downloaded must be able to say which release
+// it is, while a local build must not claim to be one.
+var releaseVersion string
+
+// buildVersion reports what this binary actually is: the release tag when one was
+// stamped in, otherwise whatever the Go toolchain recorded (module version, or the
+// VCS revision for a local build). Everything here is observed rather than hardcoded,
+// so the answer cannot drift from the artifact.
 func buildVersion() string {
+	if releaseVersion != "" {
+		return releaseVersion
+	}
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
 		return "dev"
