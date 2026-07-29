@@ -52,7 +52,19 @@ jobs:
     env:
       IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
     steps:
+      # Build from the tag, not from whatever branch this run was dispatched on. Without
+      # the ref, a manual re-publish of an older tag builds what main holds today and
+      # pushes it under that tag - and the SBOM and provenance attached below would then
+      # describe a commit no consumer asked for. A version has to mean one thing.
+      #
+      # What this deliberately does NOT pin: workflow_dispatch always loads the workflow
+      # definition from the branch you pick, so the steps come from that branch while the
+      # source comes from the tag. So a fix to the build plumbing cannot be retrofitted
+      # onto a tag that predates it. That is the intended trade: when a release build is
+      # broken, cut a patch release rather than quietly changing what a tag builds.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.tag }}
 
       # QEMU emulates arm64 on the amd64 runner, so one job builds both platforms.
       - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
