@@ -94,11 +94,11 @@ trusted.
 | Every hop, its probability, where that probability came from, and the ATT&CK technique. | Whether the engine's own scores held up against recorded outcomes. |
 
 *Every screenshot on this page is `make demo`: sample scanner output and **seeded**
-verdicts, not a real environment. That is why the calibration panel reads
-"overconfident" at 2% precision - those outcomes were generated to exercise the
-instrument, and they are deliberately unkind to it. On a fresh install the same page
-reads **"insufficient data"** and withholds a verdict until real outcomes exist, because
-a risk score you cannot check is worth less than an honest blank.*
+verdicts, not a real environment. That is why the calibration panel returns a verdict of
+"underconfident" - across 14 seeded outcomes the engine predicted 60% where 71% held up.
+Those outcomes were generated to exercise the instrument, not to flatter it. On a fresh
+install the same page reads **"insufficient data"** and withholds a verdict until real
+outcomes exist, because a risk score you cannot check is worth less than an honest blank.*
 
 ## Why?
 

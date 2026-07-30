@@ -13,10 +13,25 @@ function scoreTone(score: number): string {
   return "bg-slate-500/15 text-slate-600";
 }
 
-function priorityTone(label?: string | null): string {
-  if (label === "P1") return "bg-red-600 text-white";
-  if (label === "P2") return "bg-amber-500/20 text-amber-700";
-  return "bg-slate-500/15 text-slate-600";
+// The list arrives sorted by composite priority, not by exploit score. Those two
+// disagree often (a 90% score can sit below a 55% one, because priority also weighs
+// blast radius, runtime confirmation and exposure) - so showing only the score next
+// to a rank number made a correctly-ordered list look broken. These give priority
+// the row's visual weight instead, and the score keeps its place one line down,
+// labelled for what it is.
+// The -700 shades, not -600: at 15px semibold on the light canvas, amber-600 lands
+// at 3.2:1 and fails WCAG AA, while amber-700 clears 4.5:1. Dark mode is unaffected -
+// index.css already remaps the -700 text shades to light ones on dark surfaces.
+function priorityText(label?: string | null): string {
+  if (label === "P1") return "text-red-700";
+  if (label === "P2") return "text-amber-700";
+  return "text-slate-600";
+}
+
+function priorityBar(label?: string | null): string {
+  if (label === "P1") return "bg-red-500/70";
+  if (label === "P2") return "bg-amber-500/70";
+  return "bg-slate-400/60";
 }
 
 // In the truncating list, strip the entry's trailing parenthetical (e.g. the
@@ -60,30 +75,19 @@ export default function AttackPathList({ paths, selectedId, onSelect }: Props) {
               >
                 {rank + 1}
               </span>
-              <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-[13px] font-medium text-slate-800">
+              {/* The target is the crown jewel - the part of the route that must survive
+                  truncation - so the entry gives up space three times faster. */}
+              <span className="flex min-w-0 flex-1 items-center gap-1.5 text-[13px] font-medium text-slate-800">
                 {p.runtimeConfirmed && (
                   <ZapIcon
                     className="h-3.5 w-3.5 shrink-0 text-red-600"
                     aria-label="Runtime-confirmed by Falco"
                   />
                 )}
-                <span className="truncate">
-                  {shortEntry(entry?.name)} <span className="text-slate-500">→</span> {target?.name}
-                </span>
+                <span className="min-w-[3.75rem] truncate [flex-shrink:3]">{shortEntry(entry?.name)}</span>
+                <span className="shrink-0 text-slate-500">→</span>
+                <span className="min-w-[5rem] truncate [flex-shrink:1]">{target?.name}</span>
               </span>
-              {p.priorityLabel && (
-                <span
-                  className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${priorityTone(p.priorityLabel)}`}
-                  title={
-                    `Triage priority ${p.priority?.toFixed(0)}/100` +
-                    (p.priorityFactors && p.priorityFactors.length
-                      ? ` - ${p.priorityFactors.join(" · ")}`
-                      : "")
-                  }
-                >
-                  {p.priorityLabel}
-                </span>
-              )}
               {p.suppressed && (
                 <span
                   className="shrink-0 rounded-md bg-slate-500/15 px-1.5 py-0.5 text-[10px] font-medium text-slate-500"
@@ -96,14 +100,51 @@ export default function AttackPathList({ paths, selectedId, onSelect }: Props) {
                   suppressed
                 </span>
               )}
-              <span
-                className={`shrink-0 rounded-md px-2 py-0.5 text-xs font-semibold tabular-nums ${scoreTone(p.score)}`}
-              >
-                {(p.score * 100).toFixed(0)}%
-              </span>
+              {p.priority != null ? (
+                <span
+                  className="shrink-0 text-right"
+                  title={
+                    `Triage priority ${p.priority.toFixed(0)}/100 - this is what ranks the list` +
+                    (p.priorityFactors && p.priorityFactors.length
+                      ? `: ${p.priorityFactors.join(" · ")}`
+                      : "")
+                  }
+                >
+                  <span className={`block text-[15px] font-semibold leading-none tabular-nums ${priorityText(p.priorityLabel)}`}>
+                    {p.priority.toFixed(0)}
+                  </span>
+                  <span className="mt-0.5 block text-[9px] font-semibold uppercase tracking-[0.08em] text-muted">
+                    {p.priorityLabel ?? "priority"}
+                  </span>
+                </span>
+              ) : (
+                // No composite priority (older backend): the score is what orders the
+                // list, so it keeps the headline slot.
+                <span className={`shrink-0 rounded-md px-2 py-0.5 text-xs font-semibold tabular-nums ${scoreTone(p.score)}`}>
+                  {(p.score * 100).toFixed(0)}%
+                </span>
+              )}
             </div>
+            {/* Priority as a bar: why row 3 sits below row 1 becomes visible without
+                opening either of them. */}
+            {p.priority != null && (
+              <div className="mt-2 ml-[34px] h-[3px] overflow-hidden rounded-full bg-panel-2">
+                <div
+                  className={`h-full rounded-full ${priorityBar(p.priorityLabel)}`}
+                  style={{ width: `${Math.max(2, Math.min(100, p.priority))}%` }}
+                />
+              </div>
+            )}
             <div className="mt-1.5 truncate pl-[34px] text-[11px] text-slate-500">
-              {p.steps.length} hops · {p.nodes.map((n) => n.label).join(" → ")}
+              {p.steps.length} hops
+              {p.priority != null && (
+                <>
+                  {" · "}
+                  <span className={p.score >= 0.3 ? "text-red-600" : ""}>exploit {(p.score * 100).toFixed(0)}%</span>
+                </>
+              )}
+              {" · "}
+              {p.nodes.map((n) => n.label).join(" → ")}
             </div>
           </button>
         );

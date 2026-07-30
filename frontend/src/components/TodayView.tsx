@@ -48,8 +48,11 @@ export default function TodayView({
   const live = paths.filter((p) => p.runtimeConfirmed);
   const prev = history?.trend?.length ? history.trend[history.trend.length - 2] : undefined;
 
+  // The scroll container is the wrapper App renders around this view (it also holds
+  // the intro banner); repeating `overflow-y-auto h-full` here nested a second
+  // scroller inside the first for no gain.
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto pr-1">
+    <div className="flex flex-col gap-4">
       {live.length > 0 && <LiveStrip paths={live} onOpenPath={onOpenPath} />}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -112,7 +115,10 @@ export default function TodayView({
 
       <section>
         <div className="mb-2 flex items-baseline justify-between">
-          <h2 className="text-[13px] font-medium text-slate-700">Highest-priority routes</h2>
+          <h2 className="flex items-center gap-1 text-[13px] font-medium text-slate-700">
+            Highest-priority routes
+            <InfoTip text="Ranked by composite triage priority, not by exploit score: priority also weighs what the route reaches, whether runtime confirmed it, and how exposed the entry is. So a lower-scoring route can outrank a higher-scoring one." />
+          </h2>
           <button onClick={onSeeAllPaths} className="text-xs text-slate-500 transition hover:text-slate-700">
             inspect all ({posture.activePaths}) →
           </button>
@@ -179,9 +185,13 @@ function Metric({
   );
 }
 
+// On a wide screen the title sat far left and the percentage far right with dead
+// space between, which made 31% / 20% / 11% hard to weigh against each other. The
+// gutter now carries the comparison itself.
 function FixRow({ fix, rank }: { fix: Fix; rank: number }) {
+  const pct = Math.round(fix.coveragePct * 100);
   return (
-    <li className="flex items-center gap-3 rounded-xl border border-edge bg-panel px-4 py-3 transition hover:border-accent/50">
+    <li className="flex items-center gap-3 rounded-xl border border-edge bg-panel px-4 py-3 transition hover:border-accent/50 sm:gap-5">
       <span className="w-4 shrink-0 text-[11px] tabular-nums text-muted">{rank}</span>
       <div className="min-w-0 flex-1">
         <div className="truncate text-[13px] font-medium text-slate-900">{fix.title}</div>
@@ -189,19 +199,29 @@ function FixRow({ fix, rank }: { fix: Fix; rank: number }) {
           {fix.kind} · cuts {fix.pathCount} route{fix.pathCount === 1 ? "" : "s"}
         </div>
       </div>
-      <div className="shrink-0 text-right">
-        <div className="text-[15px] font-semibold tabular-nums text-accent">
-          {Math.round(fix.coveragePct * 100)}%
+      <div className="hidden w-[34%] shrink-0 md:block" aria-hidden="true">
+        <div className="h-1.5 overflow-hidden rounded-full bg-panel-2">
+          <div className="h-full rounded-full bg-accent/70" style={{ width: `${Math.max(2, pct)}%` }} />
         </div>
+      </div>
+      <div className="w-14 shrink-0 text-right">
+        <div className="text-[15px] font-semibold tabular-nums text-accent">{pct}%</div>
         <div className="text-[10px] text-muted">risk cut</div>
       </div>
     </li>
   );
 }
 
+// The section is titled "Highest-priority routes", so the number it shows has to be
+// the priority - leading with the exploit score put a 90% below a 55% and made the
+// ordering look arbitrary. The score stays, one step quieter and named.
 function PathRow({ path, onOpen }: { path: AttackPath; onOpen: () => void }) {
   const from = path.nodes[0]?.name ?? "?";
   const to = path.nodes[path.nodes.length - 1]?.name ?? "?";
+  // -700 shades: amber-600 at this size measures 3.2:1 on the light canvas and fails
+  // WCAG AA. index.css re-lightens the -700 text shades for dark mode.
+  const band =
+    path.priorityLabel === "P1" ? "text-red-700" : path.priorityLabel === "P2" ? "text-amber-700" : "text-slate-600";
   return (
     <li>
       <button
@@ -209,17 +229,24 @@ function PathRow({ path, onOpen }: { path: AttackPath; onOpen: () => void }) {
         className="flex w-full items-center gap-3 rounded-xl border border-edge bg-panel px-4 py-2.5 text-left transition hover:border-accent/50"
       >
         {path.runtimeConfirmed && <ZapIcon className="h-3.5 w-3.5 shrink-0 text-red-600" />}
-        <span className="min-w-0 flex-1 truncate text-[12.5px] text-slate-800">
-          {from} <span className="text-muted">→</span> {to}
+        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-[12.5px] text-slate-800">
+          <span className="min-w-[3.75rem] truncate [flex-shrink:3]">{from}</span>
+          <span className="shrink-0 text-muted">→</span>
+          <span className="min-w-[5rem] truncate [flex-shrink:1]">{to}</span>
         </span>
-        {path.priorityLabel && (
-          <span className="shrink-0 rounded-md bg-slate-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">
-            {path.priorityLabel}
+        <span className="shrink-0 text-[11px] tabular-nums text-muted">exploit {Math.round(path.score * 100)}%</span>
+        {path.priority != null ? (
+          <span
+            className={`shrink-0 text-[13px] font-semibold tabular-nums ${band}`}
+            title={`Triage priority ${path.priority.toFixed(0)}/100 (${path.priorityLabel ?? "unbanded"}) - this is what ranks the list`}
+          >
+            {path.priority.toFixed(0)}
+          </span>
+        ) : (
+          <span className="shrink-0 text-[12px] font-semibold tabular-nums text-red-600">
+            {Math.round(path.score * 100)}%
           </span>
         )}
-        <span className="shrink-0 text-[12px] font-semibold tabular-nums text-red-600">
-          {Math.round(path.score * 100)}%
-        </span>
       </button>
     </li>
   );
