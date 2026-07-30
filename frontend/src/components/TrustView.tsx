@@ -1,5 +1,5 @@
 import type { Calibration, CalibrationTrendPoint, RiskSimulation, ValidationMetrics } from "../api/client";
-import { CalibrationPanel } from "./PostureOverview";
+import { CalibrationPanel } from "./CalibrationPanel";
 import InfoTip from "./InfoTip";
 
 // Trust is the case for believing the numbers, given its own page.

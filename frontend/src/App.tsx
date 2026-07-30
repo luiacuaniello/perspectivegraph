@@ -278,28 +278,42 @@ export default function App() {
               <p className="mt-0.5 text-[13px] text-muted">{meta.subtitle}</p>
             </div>
           </div>
+          {/* Ordered by consequence, not by convenience. The application scope changes
+              what every number on the page means, so it leads; exports and help follow;
+              appearance and session are utilities and sit past a divider. */}
           <div className="flex flex-wrap items-center gap-2">
-            <ThemeToggle />
-            {hasRuntimeToken() && (
-              <Button
-                variant="secondary"
-                size="md"
-                onClick={() => {
-                  void signOut();
-                }}
-              >
-                Sign out
-              </Button>
+            {error && (
+              <span className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700">
+                backend unreachable: {error}
+              </span>
+            )}
+            {data && data.applications.length > 0 && (
+              <label className="flex items-center gap-2 text-xs text-muted">
+                <span className="sr-only sm:not-sr-only">Scope</span>
+                <select
+                  value={app}
+                  onChange={(e) => {
+                    setApp(e.target.value);
+                    setSelectedPathId(null);
+                  }}
+                  aria-label="Scope the dashboard to one application"
+                  className={`rounded-lg border bg-panel shadow-card px-2.5 py-1.5 text-xs outline-hidden focus:border-accent ${
+                    app ? "border-accent/60 text-slate-900" : "border-edge text-slate-700"
+                  }`}
+                >
+                  <option value="">All applications</option>
+                  {data.applications.map((a) => (
+                    <option key={a} value={a}>
+                      {a}
+                    </option>
+                  ))}
+                </select>
+              </label>
             )}
             {view === "today" && intro.dismissed && (
               <Button variant="secondary" size="md" onClick={intro.reopen} icon={<InfoIcon className="h-4 w-4" />}>
                 How to read this
               </Button>
-            )}
-            {error && (
-              <span className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700">
-                backend unreachable: {error}
-              </span>
             )}
             {data && data.posture.nodes > 0 && (
               <div className="flex items-center gap-1.5">
@@ -323,25 +337,18 @@ export default function App() {
                 </Button>
               </div>
             )}
-            {data && data.applications.length > 0 && (
-              <label className="flex items-center gap-2 text-xs text-muted">
-                Application
-                <select
-                  value={app}
-                  onChange={(e) => {
-                    setApp(e.target.value);
-                    setSelectedPathId(null);
-                  }}
-                  className="rounded-lg border border-edge bg-panel shadow-card px-2.5 py-1.5 text-xs text-slate-700 outline-hidden focus:border-accent"
-                >
-                  <option value="">All applications</option>
-                  {data.applications.map((a) => (
-                    <option key={a} value={a}>
-                      {a}
-                    </option>
-                  ))}
-                </select>
-              </label>
+            <span className="mx-0.5 hidden h-5 w-px bg-edge sm:block" aria-hidden="true" />
+            <ThemeToggle />
+            {hasRuntimeToken() && (
+              <Button
+                variant="secondary"
+                size="md"
+                onClick={() => {
+                  void signOut();
+                }}
+              >
+                Sign out
+              </Button>
             )}
           </div>
         </header>
