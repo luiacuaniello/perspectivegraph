@@ -768,6 +768,23 @@ func (a *API) Schema() (graphql.Schema, error) {
 		}),
 	})
 
+	// The edge-scoped track: sealed per-CVE forecasts graded a window later against
+	// whether that CVE entered CISA's KEV catalogue (internal/kevholdout). A third
+	// quantity again - the per-hop input the other two are built from - so it gets its
+	// own track for the same reason target does. It deliberately carries no
+	// recommendedScale or diagnosis: the graded event is narrower than the modelled one,
+	// so its level offset must not be read as advice to move the engine.
+	calibrationType.AddFieldConfig("edge", &graphql.Field{
+		Type:        calibrationType,
+		Description: "Edge-scoped calibration: a per-CVE hop probability, sealed before the outcome existed and graded against whether that CVE later became known-exploited. Builds itself from public feeds with no red team. Null until the first forecast window closes; carries no recommendedScale, because the graded event (the CVE is catalogued) is narrower than the modelled one (an attacker traverses this hop).",
+		Resolve: field[validation.Calibration](func(c validation.Calibration) any {
+			if c.Edge == nil {
+				return nil
+			}
+			return *c.Edge
+		}),
+	})
+
 	calibrationTrendPointType := graphql.NewObject(graphql.ObjectConfig{
 		Name:        "CalibrationTrendPoint",
 		Description: "One sample of the calibration trend - the headline calibration numbers at a point in time, so the evidence accumulating over a calibration program is visible.",

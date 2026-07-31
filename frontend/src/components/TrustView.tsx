@@ -56,6 +56,8 @@ export default function TrustView({ calibration, trend, validation, risk }: Prop
 
       {calibration && <CalibrationPanel calibration={calibration} trend={trend} />}
 
+      {calibration?.edge?.hasData && <EdgeTrack edge={calibration.edge} />}
+
       {risk && (
         <section className="rounded-2xl border border-edge bg-panel px-5 py-4">
           <div className="mb-2 flex items-center gap-1 text-[11px] text-muted">
@@ -109,6 +111,39 @@ function plainVerdict(c?: Calibration): string {
     return `Across ${c.samples} tested routes the engine predicted ${predicted} on average but ${observed} held up. Reality is harsher than the model expects, so the scores understate what an attacker achieves.`;
   }
   return `Only ${c.samples} tested route${c.samples === 1 ? "" : "s"} so far - too few to judge the scores. Record more outcomes before reading the numbers as probabilities.`;
+}
+
+// EdgeTrack is the calibration that needs no red team: the engine forecasts, for each
+// CVE it can see, whether that CVE will become known-exploited, and is graded a window
+// later against what actually happened. Kept visually separate from the panels above
+// because it grades a different quantity - the per-hop input, not a path's score - and
+// it leads with what the number does NOT license, since the graded event is narrower
+// than the modelled one and the level will look pessimistic for that reason alone.
+function EdgeTrack({ edge }: { edge: Calibration }) {
+  const hit = Math.round(edge.observedRate * 100);
+  const said = Math.round(edge.meanPredicted * 100);
+  return (
+    <section className="rounded-2xl border border-edge bg-panel px-5 py-4">
+      <div className="mb-3 flex items-center gap-1 text-[11px] text-muted">
+        Per-CVE forecasts, graded after the fact
+        <InfoTip text="Sealed before the outcome existed: for each CVE that was not yet known-exploited, the engine recorded what it predicted from that day's evidence, and was graded a window later against whether the CVE entered CISA's KEV catalogue. No red team needed - it builds itself from public feeds." />
+      </div>
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <Figure label="Forecasts graded" value={String(edge.samples)} />
+        <Figure label="Said on average" value={`${said}%`} />
+        <Figure label="Actually happened" value={`${hit}%`} tone="text-accent" />
+        <Figure label="Brier" value={edge.brier.toFixed(3)} />
+      </div>
+      <p className="mt-3 max-w-[70ch] text-[12px] leading-relaxed text-muted">
+        Read this as <span className="font-medium text-slate-700">ranking evidence, not a score to copy</span>:
+        it grades whether a CVE gets catalogued as exploited, which is rarer and slower than the
+        thing the engine models - an attacker actually traversing that hop. So the level will look
+        pessimistic here even when the ordering is right, and this track deliberately publishes no
+        rescale. What it does tell you is whether higher-scored CVEs really do turn out exploited
+        more often than lower-scored ones.
+      </p>
+    </section>
+  );
 }
 
 function Figure({ label, value, tone = "text-slate-800" }: { label: string; value: string; tone?: string }) {

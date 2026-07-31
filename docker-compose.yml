@@ -134,6 +134,9 @@ services:
       # Set to http://opensearch:9200 when running with --profile search.
       OPENSEARCH_URL: ${OPENSEARCH_URL:-}
       THREATINTEL: ${THREATINTEL:-off}
+      KEV_HOLDOUT: ${KEV_HOLDOUT:-off}
+      KEV_HOLDOUT_PATH: ${KEV_HOLDOUT_PATH:-}
+      KEV_HOLDOUT_WINDOW: ${KEV_HOLDOUT_WINDOW:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       # demo by default; PG_ENV=production refuses to start without auth on both sides.
       PG_ENV: ${PG_ENV:-demo}

@@ -47,6 +47,7 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/sso"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/supplychain"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/trivy"
+	"github.com/luiacuaniello/perspectivegraph/internal/kevholdout"
 	"github.com/luiacuaniello/perspectivegraph/internal/leader"
 	"github.com/luiacuaniello/perspectivegraph/internal/normalization"
 	"github.com/luiacuaniello/perspectivegraph/internal/notify"
@@ -58,6 +59,7 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/threatintel"
 	"github.com/luiacuaniello/perspectivegraph/internal/ticket"
 	"github.com/luiacuaniello/perspectivegraph/internal/validation"
+	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
 )
 
 func main() {
@@ -473,6 +475,28 @@ func run(ctx context.Context, cfg config.Config) error {
 	if !validationStore.Persistent() {
 		slog.Warn("validation store: in-memory only - red-team/BAS verdicts (and the calibration dataset built from them) reset on restart; set VALIDATIONS_PATH to persist for a real calibration program")
 	}
+
+	// ── KEV holdout: a calibration dataset that builds itself ────────
+	// Seals a per-CVE forecast today and grades it one window later against whether
+	// that CVE entered KEV meanwhile. Opt-in, and only meaningful with threat intel on
+	// (the forecast is derived from EPSS).
+	if cfg.KEVHoldoutEnabled {
+		switch {
+		case !intel.Enabled():
+			slog.Warn("kev holdout: ignored - it forecasts from EPSS, so it needs THREATINTEL=true")
+		default:
+			hstore, err := kevholdout.NewStore(cfg.KEVHoldoutPath)
+			if err != nil {
+				return fmt.Errorf("kev holdout store: %w", err)
+			}
+			if cfg.KEVHoldoutPath == "" {
+				slog.Warn("kev holdout: in-memory only - a window outlives most uptimes, so no forecast will ever mature; set KEV_HOLDOUT_PATH")
+			}
+			runner := kevholdout.NewRunner(intel, hstore, validationStore, cfg.KEVHoldoutWindow, slog.Default())
+			go runKEVHoldout(ctx, runner, manager, cfg.KEVHoldoutWindow)
+			slog.Info("kev holdout enabled", "window", cfg.KEVHoldoutWindow, "persistent", cfg.KEVHoldoutPath != "")
+		}
+	}
 	// Sample the calibration trend each analyzer pass, so the dashboard can show the
 	// evidence accumulating over a calibration program (Brier/ECE/samples over time).
 	analyzerSvc.WithCalibrator(func(tenant string) (float64, float64, int) {
@@ -767,4 +791,53 @@ func setupLogging(level string) {
 		lvl = slog.LevelInfo
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: lvl})))
+}
+
+// runKEVHoldout drives the holdout on its own slow ticker: one pass per day is ample
+// for a 30-day window, and it keeps the KEV/EPSS fetch off the analyzer's hot path.
+// The first pass runs immediately so a fresh install starts sealing forecasts at once
+// rather than a day late.
+func runKEVHoldout(ctx context.Context, runner *kevholdout.Runner, manager *graph.Manager, window time.Duration) {
+	// A pass a day, but never coarser than the window itself (a short test window must
+	// still get several passes).
+	every := 24 * time.Hour
+	if window/6 < every {
+		every = max(window/6, time.Minute)
+	}
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		for _, tenant := range manager.Tenants() {
+			store, err := manager.For(ctx, tenant)
+			if err != nil {
+				slog.Warn("kev holdout: graph unavailable", "tenant", tenant, "err", err)
+				continue
+			}
+			snap, err := store.Snapshot(ctx)
+			if err != nil {
+				slog.Warn("kev holdout: snapshot failed", "tenant", tenant, "err", err)
+				continue
+			}
+			cves := make([]string, 0, 64)
+			for _, n := range snap.Nodes {
+				if n.Label == ontology.LabelCVE && n.Name != "" {
+					cves = append(cves, n.Name)
+				}
+			}
+			res, err := runner.Run(ctx, tenant, cves)
+			if err != nil {
+				slog.Warn("kev holdout: pass failed", "tenant", tenant, "err", err)
+				continue
+			}
+			if res.Sealed > 0 || res.Graded > 0 {
+				slog.Info("kev holdout pass", "tenant", tenant,
+					"sealed", res.Sealed, "graded", res.Graded, "entered_kev", res.Exploited, "cves", len(cves))
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
 }

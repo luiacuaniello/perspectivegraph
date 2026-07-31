@@ -1270,6 +1270,51 @@ THREATINTEL=on make run-backend   # fetches live from CISA + FIRST (cached)
 Disabled by default (zero network); the `AFFECTS` edge then keeps its
 severity-derived weight.
 
+### KEV holdout: a calibration dataset that builds itself (optional)
+
+Calibration normally needs verdicts, and verdicts normally need a red team. Most
+installations have neither, so the Trust page reads *"insufficient data"* forever. The
+KEV holdout fills part of that gap from public feeds alone.
+
+The obvious version of this idea does not work, and it is worth being precise about why.
+The engine derives a CVE hop's probability *from* KEV and EPSS: a CVE in KEV is assigned
+0.95 by that very formula. Grading today's score against today's KEV membership would
+therefore score the formula against its own input and report an excellent Brier that
+means nothing.
+
+The holdout breaks the circle with **time**:
+
+1. Each pass **seals** a forecast for every CVE in the graph that is *not yet* in KEV,
+   recording what the engine predicted from that day's evidence.
+2. One window later (30 days by default - what EPSS itself forecasts over) the forecast
+   is **graded** against an event that had not happened when it was sealed: did this CVE
+   enter KEV in the meantime?
+
+That is a genuine out-of-sample prediction, and it is the construction FIRST uses to
+evaluate EPSS. A CVE already in KEV is never sealed - there is no forecast left to make,
+and sealing it is exactly how the circularity would return.
+
+```bash
+THREATINTEL=on KEV_HOLDOUT=on KEV_HOLDOUT_PATH=/var/lib/pg/holdout.json make run-backend
+```
+
+Two things to expect, both structural:
+
+- **Nothing appears for a window.** A forecast must be sealed before its outcome exists,
+  so the dataset cannot be built retroactively. Without `KEV_HOLDOUT_PATH` it never
+  matures at all, because a 30-day window outlives most uptimes; the backend warns when
+  that path is unset.
+- **The level will look pessimistic, and that is not the engine being wrong.** The graded
+  event (CISA confirms and catalogues the CVE) is *narrower* than the modelled one (an
+  attacker traverses this hop). So this track publishes **no recommended scale and no
+  diagnosis** - applying its offset to the engine would be fitting a different question.
+  What survives the mismatch, and what the track is for, is **discrimination**: whether
+  higher-scored CVEs really do turn out exploited more often than lower-scored ones.
+
+It appears as its own section on the Trust page and as `calibration.edge` in GraphQL,
+never merged into the headline verdict - the same separation the `path` and `target`
+scopes already enforce, for the same reason.
+
 ### Auth, multi-tenancy & audit (optional, but do it before production)
 
 Every door is open by default for zero-config local dev - and the backend
