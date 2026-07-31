@@ -107,6 +107,16 @@ type Calibration struct {
 	// report. The top-level fields are the path-scoped track (S(P) vs a specific path).
 	// Nil when there are no target-scoped verdicts; its own Target is always nil.
 	Target *Calibration `json:"target,omitempty"`
+	// Edge is the edge-scoped track: sealed per-CVE forecasts graded against whether
+	// that CVE later entered CISA's KEV catalogue (see internal/kevholdout). It is
+	// reported beside the others, never merged into them, and deliberately carries no
+	// RecommendedScale: the graded event (CISA catalogues the CVE within the window)
+	// is NARROWER than the event the score models (an attacker exploits this hop), so
+	// the level offset is dominated by that mismatch and rescaling the engine to it
+	// would be fitting a different question. Its discrimination - whether higher-scored
+	// CVEs really do enter KEV more often - is the read that survives, and is why the
+	// track is worth keeping.
+	Edge *Calibration `json:"edge,omitempty"`
 	// Persistent reports whether the verdict store survives a restart (VALIDATIONS_PATH
 	// set). When false, the calibration dataset is in-memory and is lost on restart -
 	// fine for a demo, but for a real engagement that accumulates verdicts over weeks it
@@ -155,15 +165,23 @@ func (s *Store) Calibration(tenant string) Calibration {
 	detection := detectionStats(records)
 	pathSamples := make([]calSample, 0, len(records))
 	targetSamples := make([]calSample, 0, len(records))
+	edgeSamples := make([]calSample, 0)
 	for _, r := range records {
 		y, isSample := observedOutcome(r.Outcome)
 		if !isSample {
 			continue
 		}
-		if scopeOrDefault(r.Scope) == ScopeTarget {
+		switch scopeOrDefault(r.Scope) {
+		case ScopeTarget:
 			if r.PredictedCompromise > 0 {
 				targetSamples = append(targetSamples,
 					calSample{p: clampTop(r.PredictedCompromise), y: y, correlated: r.CorrelatedHops, hops: r.Hops, basis: r.WeightBasis})
+			}
+			continue
+		case ScopeEdge:
+			if r.PredictedScore > 0 {
+				edgeSamples = append(edgeSamples,
+					calSample{p: clampTop(r.PredictedScore), y: y, basis: r.WeightBasis})
 			}
 			continue
 		}
@@ -180,6 +198,21 @@ func (s *Store) Calibration(tenant string) Calibration {
 	if len(targetSamples) > 0 {
 		tcal := computeCalibration(targetSamples, detection, persistent)
 		cal.Target = &tcal
+	}
+	if len(edgeSamples) > 0 {
+		ecal := computeCalibration(edgeSamples, nil, persistent)
+		// Withhold every calibrated read that implies "move the engine to match this".
+		// The event graded here is narrower than the event scored (see Calibration.Edge),
+		// so the offset is mostly event mismatch; publishing a scale would invite someone
+		// to apply it. Brier, ECE and the reliability diagram stay - they are the
+		// discrimination evidence, which the mismatch does not invalidate.
+		ecal.RecommendedScale = 0
+		ecal.RecalibrationMap = nil
+		ecal.BrierRecalibrated = 0
+		ecal.RecalibrationByBasis = nil
+		ecal.BrierRecalibratedByBasis = 0
+		ecal.Diagnosis = ""
+		cal.Edge = &ecal
 	}
 	return cal
 }

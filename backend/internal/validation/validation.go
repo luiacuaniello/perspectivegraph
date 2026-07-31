@@ -56,9 +56,15 @@ type Scope string
 const (
 	ScopePath   Scope = "path"   // validated one specific surfaced path (grades S(P))
 	ScopeTarget Scope = "target" // validated that a crown jewel was reached at all (grades compromise probability)
+	// ScopeEdge grades a single CVE hop's traversal probability against whether that
+	// CVE later became known-exploited, on a sealed forecast (see internal/kevholdout).
+	// It is a third quantity again: not S(P), not per-target compromise, but the
+	// per-edge input those are built from - so it gets its own track for the same
+	// reason path and target do.
+	ScopeEdge Scope = "edge"
 )
 
-var validScopes = map[Scope]bool{ScopePath: true, ScopeTarget: true}
+var validScopes = map[Scope]bool{ScopePath: true, ScopeTarget: true, ScopeEdge: true}
 
 // ValidScope reports whether s is empty (⇒ path) or one of the allowed scopes.
 func ValidScope(s Scope) bool { return s == "" || validScopes[s] }
@@ -203,7 +209,9 @@ func (s *Store) Put(r Record) (Record, error) {
 	if r.Source == "" {
 		return Record{}, ErrMissingSource
 	}
-	if r.Outcome != Missed && r.PathID == "" {
+	// Edge-scoped verdicts grade a CVE hop, not a surfaced path, so there is no path to
+	// reference; the CVE travels in Route.
+	if r.Outcome != Missed && r.PathID == "" && scopeOrDefault(r.Scope) != ScopeEdge {
 		return Record{}, ErrMissingPathID
 	}
 	r.Tenant = tenantKey(r.Tenant)
@@ -216,7 +224,11 @@ func (s *Store) Put(r Record) (Record, error) {
 
 	s.mu.Lock()
 	list := s.byTenant[r.Tenant]
-	if r.Outcome != Missed {
+	// Edge-scoped verdicts accumulate like "missed" does, and for the same reason: each
+	// one closes a separate sealed forecast over its own window, so the same CVE
+	// forecast again next month is an independent sample. Replacing by key would keep
+	// one row per CVE and discard almost the whole calibration dataset.
+	if r.Outcome != Missed && scopeOrDefault(r.Scope) != ScopeEdge {
 		// One current verdict per (surfaced path, scope): a path may legitimately carry
 		// both a path-scoped verdict (this exact path works) and a target-scoped one (the
 		// jewel was reached at all) - they validate different events - so the replacement

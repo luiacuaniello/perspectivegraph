@@ -63,6 +63,7 @@ type Calibration {
   detection: DetectionStats
   diagnosis: String
   ece: Float
+  edge: Calibration
   hasData: Boolean
   logLoss: Float
   meanPredicted: Float

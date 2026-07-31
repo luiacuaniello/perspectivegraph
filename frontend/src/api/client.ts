@@ -190,6 +190,13 @@ export interface Calibration {
   // Whether the verdict store survives a restart (VALIDATIONS_PATH set). False ⇒ the
   // calibration dataset is in-memory and lost on restart.
   persistent?: boolean | null;
+  // The edge-scoped track: per-CVE hop probabilities, sealed before the outcome existed
+  // and graded a window later against whether that CVE became known-exploited. It builds
+  // itself from public feeds, so it can carry evidence on an install that has no red
+  // team. Null until the first window closes. It deliberately has no recommendedScale:
+  // the graded event (CISA catalogues the CVE) is narrower than the modelled one (an
+  // attacker traverses this hop), so its level must not be read as advice.
+  edge?: Calibration | null;
 }
 
 // One sample of the calibration trend: the headline numbers at a point in time, so a
@@ -460,6 +467,8 @@ const dashboardQuery = (app?: string) => {
       brierRecalibrated diagnosis persistent
       segments { name samples brier ece meanPredicted observedRate verdict }
       detection { tested detected detectionRate highScoreTested highScoreDetectionRate }
+      edge { samples brier ece meanPredicted observedRate verdict hasData
+             bins { low high count meanPredicted observedRate } }
     }
     calibrationTrend { at brier ece samples }
   }

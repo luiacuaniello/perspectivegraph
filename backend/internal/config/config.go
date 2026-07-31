@@ -113,6 +113,15 @@ type Config struct {
 	KEVFeedURL         string
 	EPSSAPIURL         string
 
+	// KEV holdout (optional; needs THREATINTEL). Seals a per-CVE forecast and grades it
+	// one window later against whether that CVE entered KEV in the meantime - a
+	// calibration dataset that builds itself, with no red team. Requires
+	// KEV_HOLDOUT_PATH to survive restarts, since a window outlives most uptimes.
+	// See internal/kevholdout for why the grading must be out-of-sample.
+	KEVHoldoutEnabled bool
+	KEVHoldoutPath    string
+	KEVHoldoutWindow  time.Duration
+
 	// Auth (optional; open with a warning when unset)
 	IngestHMACSecret  string // HMAC secret for the default tenant
 	IngestHMACSecrets string // per-tenant secrets: "tenant:secret,tenant2:secret2"
@@ -297,6 +306,13 @@ func Load() Config {
 		ThreatIntelEnabled: getbool("THREATINTEL", false),
 		KEVFeedURL:         getenv("KEV_FEED_URL", ""),
 		EPSSAPIURL:         getenv("EPSS_API_URL", ""),
+
+		KEVHoldoutEnabled: getbool("KEV_HOLDOUT", false),
+		KEVHoldoutPath:    getenv("KEV_HOLDOUT_PATH", ""),
+		// 30 days: the horizon EPSS forecasts over, so the sealed prediction and the
+		// graded question cover the same span. Kept literal rather than imported from
+		// kevholdout - config imports no feature package.
+		KEVHoldoutWindow: getdur("KEV_HOLDOUT_WINDOW", 30*24*time.Hour),
 
 		IngestHMACSecret:  getenv("INGEST_HMAC_SECRET", ""),
 		IngestHMACSecrets: getenv("INGEST_HMAC_SECRETS", ""),
