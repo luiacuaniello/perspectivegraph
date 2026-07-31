@@ -2,6 +2,13 @@
 
 Thanks for your interest! PerspectiveGraph is Apache-2.0 and built to be extended.
 
+**Looking for somewhere to start?** The
+[`good first issue`](https://github.com/luiacuaniello/perspectivegraph/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+label marks work that is scoped, self-contained and does not need any prior knowledge of
+the engine — each one says what "done" looks like. For anything on the
+[roadmap](ROADMAP.md), open an issue first so we can agree on the shape before you write
+code.
+
 ## Layout
 
 ```
