@@ -83,7 +83,7 @@ func NewStore(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return nil, fmt.Errorf("kevholdout: create dir: %w", err)
 	}
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(path) // #nosec G304 -- operator-configured KEV_HOLDOUT_PATH, not attacker-controlled
 	if errors.Is(err, os.ErrNotExist) {
 		return s, nil
 	}
