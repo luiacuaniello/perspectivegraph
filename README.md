@@ -25,9 +25,11 @@ runtime confirmation, an AI summary, and always-current architecture maps. **But
 pull request.**
 
 
-![PerspectiveGraph - the day's decision surface](docs/screenshot-overview.png)
+![PerspectiveGraph: from the day's exploitable routes to a generated fix](docs/demo.gif)
 
-*`make demo`, with sample scanner output and seeded verdicts - not a real environment.*
+*Twenty seconds of `make demo`: what is exploitable now → the ranked routes → one route's
+kill chain and its generated Terraform fix → whether the scores can be trusted. Sample
+scanner output and seeded verdicts, not a real environment.*
 
 ## Check your own account in 30 seconds
 
@@ -88,6 +90,12 @@ The dashboard opens on the decision, not the inventory: what is being exploited 
 now, the fewest changes that remove the most risk, and how much the numbers can be
 trusted.
 
+![The day's decision surface](docs/screenshot-overview.png)
+
+Routes are ranked by a composite triage priority - what the route reaches, whether
+runtime confirmed it, how exposed the entry is - not by raw exploit score, so a
+lower-scoring route can and does outrank a higher-scoring one.
+
 | | |
 |---|---|
 | ![Attack path detail](docs/screenshot-paths.png) | ![Score calibration](docs/screenshot-trust.png) |
@@ -145,9 +153,32 @@ are expert estimates, and to call `get_score_trust` before quoting one as a prob
 
 ## Project status & maturity
 
-PerspectiveGraph is **0.x, in active development** - the version number means the API
-can still change - and built in the open. What's next is in the [roadmap](ROADMAP.md);
-read this before you rely on it:
+**The short version, if you read nothing else.** The engine and its public API are
+complete, documented and tested. The AWS connector is verified against a real account.
+The path *scores* are **not** calibrated against real exploited outcomes yet - read them
+as a ranking, not as probabilities. So: use it to find and cut routes, and don't put its
+risk percentage in front of a board. What is and isn't claimed is spelled out in
+[positioning](docs/POSITIONING.md). It collects **no telemetry**: out of the box it opens
+no outbound connection at all - GitHub, the AI assistant and the KEV/EPSS feeds each stay
+dark until you set a key or flag (`THREATINTEL` is `off` by default).
+
+**The benchmark, as of v0.7.0.** <!-- x-release-please-version --> `make bench-cloudgoat`
+runs four CloudGoat-shaped scenarios in CI and grades the engine on each:
+
+| Scenario | Expects | Result |
+|---|---|---|
+| `ec2_ssrf` | a path | found it, invented none |
+| `iam_privesc_by_attachment` | a path (leaked-credential origin) | found it, invented none |
+| `ec2_private_subnet_no_path` | **no** path (open SG, private subnet) | produced none |
+| `iam_privesc_denied_by_guardrail` | **no** path (explicit Deny wins) | produced none |
+
+Precision and recall are 1.00 on all four. Read that for what it is: four scenarios, two
+of them negative controls - a regression gate against known shapes, not a measurement of
+field accuracy on your estate.
+
+The long version follows. PerspectiveGraph is **0.x, in active development** - the version
+number means the API can still change - and built in the open. What's next is in the
+[roadmap](ROADMAP.md); read this before you rely on it:
 
 - **Engine: feature-complete.** The correlation engine, agentless connectors, triage,
   SSO, the PR merge-gate, the AI assistant, and the scale work are all implemented and
@@ -218,6 +249,7 @@ integration, deployment, hardening and the runbook for pointing it at your own
 environment.
 
 - [Manual](docs/MANUAL.md) - architecture, scoring, quick start, deploy, operate
+- [Positioning](docs/POSITIONING.md) - what is claimed, what is **not**, and how to check
 - [Roadmap](ROADMAP.md) - what's next, and what it deliberately isn't becoming
 - [Threat model](docs/THREAT-MODEL.md) · [Operations](docs/OPERATIONS.md) · [API stability](docs/API-STABILITY.md) · [Scale](docs/SCALE.md)
 - [Attack-path benchmark](backend/testdata/cloudgoat/README.md) - the CI-gated precision/recall battery
