@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0](https://github.com/luiacuaniello/perspectivegraph/compare/v0.7.0...v0.8.0) (2026-07-31)
+
+
+### Features
+
+* **dashboard:** rank by the number that actually ranks, and refresh the frontend deps ([#76](https://github.com/luiacuaniello/perspectivegraph/issues/76)) ([f5dd296](https://github.com/luiacuaniello/perspectivegraph/commit/f5dd296c29bd8ac7d78cc86621990d13a691d3e5))
+
+
+### Bug Fixes
+
+* **ci:** build each image stage natively, so a release cannot hang on QEMU ([#72](https://github.com/luiacuaniello/perspectivegraph/issues/72)) ([322e46e](https://github.com/luiacuaniello/perspectivegraph/commit/322e46ee76f8fd043ecd5713bf1e30ea9c145859))
+* **ci:** build the tag a release names, not the branch it was dispatched from ([#74](https://github.com/luiacuaniello/perspectivegraph/issues/74)) ([d086962](https://github.com/luiacuaniello/perspectivegraph/commit/d0869625c54790e2e19f43e8bfd6cb4356f3abec))
+* **ci:** move `latest` only when the tag being built is the newest release ([#75](https://github.com/luiacuaniello/perspectivegraph/issues/75)) ([3c9813a](https://github.com/luiacuaniello/perspectivegraph/commit/3c9813a2866dfc5f10323b63c2f84cf8cb7fcba9))
+
 ## [0.7.0](https://github.com/luiacuaniello/perspectivegraph/compare/v0.6.0...v0.7.0) (2026-07-29)
 
 
