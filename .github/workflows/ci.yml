@@ -37,6 +37,14 @@ jobs:
       # fail. Only G104 (unchecked cleanup Close() errors) stays globally excluded.
       - name: gosec (SAST)
         run: go run github.com/securego/gosec/v2/cmd/gosec@latest -quiet -exclude=G104 ./...
+      # Correctness gate, orthogonal to the three above: vet catches a fixed set of
+      # suspicious constructs, gosec looks for security patterns and govulncheck for
+      # known-vulnerable dependencies - none of them find dead code, redundant
+      # conditions or misused stdlib. staticcheck does, and on introduction it found a
+      # real one: a body-size constant left unused while the literal it was meant to
+      # name was written out twice, so changing the constant would have done nothing.
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@latest ./...
 
   secrets:
     name: Secret scan (gitleaks)
@@ -88,6 +96,19 @@ jobs:
       # advisory lock; run it against the same service DB.
       - name: Run leader-election integration test
         run: go test -run TestAdvisoryLockMutualExclusion -v ./internal/leader/...
+      # The coverage gate lives HERE, not in the Backend job, because it needs this
+      # job's Postgres service: internal/graph/age is only exercised when the contract
+      # test can reach a real AGE database, and measuring without it understates the
+      # library coverage by several points and would fail the gate for the wrong reason.
+      #
+      # Two things the script does that a plain `go test -cover` does not, and both
+      # change the number: it passes -coverpkg, so a package driven through an interface
+      # by another package's test is credited (age reads 6.6% without it and is really
+      # 67.6%), and it excludes cmd/ - main() plus the CLI subcommands, where a test
+      # would assert the process starts rather than that anything works. cmd's own
+      # number is printed for visibility, never enforced.
+      - name: Coverage gate (libraries ≥ 80%)
+        run: ../scripts/coverage-gate.sh 80
 
   frontend:
     name: Frontend (React)

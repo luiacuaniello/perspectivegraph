@@ -129,7 +129,7 @@ func (s *Server) handleTool(w http.ResponseWriter, r *http.Request) {
 	if n, err := strconv.Atoi(q.Get("pr")); err == nil {
 		opts.PRNumber = n
 	}
-	events, err := c.Parse(http.MaxBytesReader(w, r.Body, 32<<20), opts)
+	events, err := c.Parse(http.MaxBytesReader(w, r.Body, maxIngestBody), opts)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -139,7 +139,7 @@ func (s *Server) handleTool(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 32<<20))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxIngestBody))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
