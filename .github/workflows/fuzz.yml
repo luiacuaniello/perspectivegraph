@@ -49,12 +49,21 @@ jobs:
         with:
           go-version: "1.25.12"
 
+      # Run through the wrapper rather than calling `go test -fuzz` directly. Go does not
+      # distinguish "found something" from "the clock ran out" in its exit code: when
+      # -fuzztime expires the run can exit non-zero with "context deadline exceeded"
+      # (golang/go#72104), which turned this weekly job red for a target that had in fact
+      # survived 2.6M executions without a finding. Verified: the same command, target and
+      # Go version pass locally with 7.3M executions and a steady rate, while the CI run
+      # showed the coordinator starving - long stretches of 0 execs/sec, then the counter
+      # jumping six figures at once - on a runner where four workers compete with it.
+      # The wrapper swallows ONLY a clean expiry with no reproducer on disk; a crash, a
+      # seed-corpus failure, or anything it cannot explain still fails.
       - name: Fuzz ${{ matrix.target }}
-        working-directory: backend
         run: >
-          go test ./internal/ingestion/fuzz -run '^$'
-          -fuzz '^${{ matrix.target }}$'
-          -fuzztime '${{ inputs.fuzztime || '3m' }}'
+          scripts/fuzz-target.sh
+          '${{ matrix.target }}'
+          '${{ inputs.fuzztime || '3m' }}'
 
       - name: Upload crasher on failure
         if: failure()
