@@ -26,6 +26,16 @@ updates:
       npm-dependencies:
         patterns:
           - "*"
+    ignore:
+      # TypeScript 7 compiles this project fine, but typescript-eslint's latest STABLE
+      # declares `typescript: ">=4.8.4 <6.1.0"` and refuses to load under it - only
+      # alphas go further, and an alpha does not belong in a security tool's lint gate.
+      # Measured twice: once by hand, and again when a grouped bump carrying TS 7 turned
+      # the Frontend job red. Without this rule the whole npm group is unmergeable every
+      # week for one package. Drop it as soon as typescript-eslint ships stable TS 7
+      # support - the rest of the group is worth having.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: "chore(deps)"
 
