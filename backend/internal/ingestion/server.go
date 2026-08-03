@@ -11,6 +11,7 @@ import (
 
 	"github.com/luiacuaniello/perspectivegraph/internal/audit"
 	"github.com/luiacuaniello/perspectivegraph/internal/auth"
+	"github.com/luiacuaniello/perspectivegraph/internal/coverage"
 	"github.com/luiacuaniello/perspectivegraph/internal/metrics"
 	"github.com/luiacuaniello/perspectivegraph/internal/ratelimit"
 	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
@@ -31,6 +32,7 @@ type Server struct {
 	audit      audit.Recorder
 	limiter    *ratelimit.Limiter
 	connStatus func() any // agentless connector health, for GET /connectors
+	coverage   *coverage.Store
 }
 
 func NewServer(pub Publisher, collectors ...Collector) *Server {
@@ -69,6 +71,14 @@ func (s *Server) WithAudit(rec audit.Recorder) *Server {
 // provider serves an empty list. Returns the server for chaining.
 func (s *Server) WithConnectorStatus(fn func() any) *Server {
 	s.connStatus = fn
+	return s
+}
+
+// WithCoverage records what each collector actually delivered, so the engine can later
+// distinguish "no attack path" from "nothing was ever ingested about that". Returns the
+// server for chaining; a nil store is a no-op.
+func (s *Server) WithCoverage(c *coverage.Store) *Server {
+	s.coverage = c
 	return s
 }
 
@@ -177,6 +187,11 @@ func (s *Server) publishAll(w http.ResponseWriter, ctx context.Context, events [
 	}
 	metrics.IngestNodes.Add(float64(nodes))
 	metrics.IngestEdges.Add(float64(edges))
+	// Recorded only once the events are actually on the bus: coverage must describe
+	// what the graph received, not what someone attempted to send.
+	for _, ev := range events {
+		s.coverage.Record(tenant, ev.Source, len(ev.Nodes), len(ev.Edges))
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(map[string]any{

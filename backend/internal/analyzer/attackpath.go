@@ -194,8 +194,9 @@ func FindCriticalPaths(snap graph.Snapshot) []AttackPath {
 	// the original sequential nested loop (and thus the post-sort output) exactly.
 	perSeed := make([][]AttackPath, len(seeds))
 	if workers := resolvedWorkers(len(seeds)); workers <= 1 {
+		sc := newScratch()
 		for i, seed := range seeds {
-			perSeed[i] = pathsFromSeed(seed, jewels, adj, nodes)
+			perSeed[i] = pathsFromSeed(seed, jewels, adj, nodes, sc)
 		}
 	} else {
 		var wg sync.WaitGroup
@@ -204,8 +205,9 @@ func FindCriticalPaths(snap graph.Snapshot) []AttackPath {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
+				sc := newScratch() // per-worker: sharing one would race
 				for i := range work {
-					perSeed[i] = pathsFromSeed(seeds[i], jewels, adj, nodes)
+					perSeed[i] = pathsFromSeed(seeds[i], jewels, adj, nodes, sc)
 				}
 			}()
 		}
@@ -234,8 +236,8 @@ func FindCriticalPaths(snap graph.Snapshot) []AttackPath {
 // pathsFromSeed runs one seed's Dijkstra and reconstructs the best route to every
 // reachable jewel. It owns its dist/prev maps and only reads the shared adjacency
 // and node index, so many of these run concurrently without coordination.
-func pathsFromSeed(seed string, jewels []string, adj map[string][]outEdge, nodes map[string]ontology.Node) []AttackPath {
-	dist, prev := dijkstra(seed, adj)
+func pathsFromSeed(seed string, jewels []string, adj map[string][]outEdge, nodes map[string]ontology.Node, sc *scratch) []AttackPath {
+	dist, prev := dijkstra(seed, adj, sc)
 	var out []AttackPath
 	for _, jewel := range jewels {
 		if seed == jewel {
@@ -558,10 +560,50 @@ func resolutionOf(props map[string]any) (method string, confidence float64) {
 	return method, confidence
 }
 
-func dijkstra(src string, adj map[string][]outEdge) (dist map[string]float64, prev map[string]Step) {
-	dist = map[string]float64{src: 0}
-	prev = map[string]Step{}
-	pq := &minHeap{{node: src, d: 0}}
+// scratch holds the working set of one shortest-path run so it can be REUSED across
+// seeds instead of reallocated per seed. Profiling put 75% of the analyzer's allocated
+// bytes inside dijkstra: with one Dijkstra per seed, each call grew a dist map, a prev
+// map of nine-field Steps, and a heap from empty to |V| - so a 64-seed pass paid 64
+// rounds of map growth and rehashing for structures of identical shape. clear() keeps
+// the buckets, so the second seed onward reuses what the first paid for.
+//
+// One scratch per WORKER, never shared: seeds are fanned out across a goroutine pool,
+// and a shared scratch would be a data race and, worse, would silently mix two seeds'
+// shortest-path trees.
+type scratch struct {
+	dist map[string]float64
+	prev map[string]Step
+	pq   minHeap
+}
+
+// newScratch deliberately does NOT pre-size to the graph. The win here is REUSE - the
+// second seed onward inherits the buckets the first grew - not preallocation. Sizing to
+// len(adj) was measurably worse on small estates, where each worker paid for a
+// graph-sized map it would never fill: +46% bytes and +38% time on the 8-seed case,
+// to buy 6% on the 64-seed one. Most estates are the small case.
+func newScratch() *scratch {
+	return &scratch{
+		dist: map[string]float64{},
+		prev: map[string]Step{},
+		pq:   minHeap{},
+	}
+}
+
+func (s *scratch) reset() {
+	clear(s.dist)
+	clear(s.prev)
+	s.pq = s.pq[:0]
+}
+
+func dijkstra(src string, adj map[string][]outEdge, sc *scratch) (dist map[string]float64, prev map[string]Step) {
+	if sc == nil {
+		sc = newScratch()
+	}
+	sc.reset()
+	dist, prev = sc.dist, sc.prev
+	dist[src] = 0
+	sc.pq = append(sc.pq, heapItem{node: src, d: 0})
+	pq := &sc.pq
 
 	for pq.Len() > 0 {
 		cur := heap.Pop(pq).(heapItem)

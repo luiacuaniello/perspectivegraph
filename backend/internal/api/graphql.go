@@ -17,6 +17,7 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/attck"
 	"github.com/luiacuaniello/perspectivegraph/internal/audit"
 	"github.com/luiacuaniello/perspectivegraph/internal/auth"
+	"github.com/luiacuaniello/perspectivegraph/internal/coverage"
 	"github.com/luiacuaniello/perspectivegraph/internal/detection"
 	"github.com/luiacuaniello/perspectivegraph/internal/exportsign"
 	"github.com/luiacuaniello/perspectivegraph/internal/graph"
@@ -36,6 +37,7 @@ import (
 // caller's tenant (from the authenticated principal; the default tenant when
 // auth is open).
 type API struct {
+	coverage     *coverage.Store
 	manager      *graph.Manager
 	analyzer     *analyzer.Service
 	search       search.Indexer
@@ -106,6 +108,14 @@ func (a *API) WithSuppress(s *suppress.Store) *API {
 // WithHistory attaches the temporal store the API reads for path age, MTTR and
 // the posture trend. A nil store leaves the default in-memory one in place.
 // Returns the API for chaining.
+// WithCoverage lets the API report what the engine has actually been fed, so a caller
+// can tell "no attack path" apart from "nothing was ever ingested about that". Returns
+// the API for chaining; a nil store simply reports no coverage.
+func (a *API) WithCoverage(c *coverage.Store) *API {
+	a.coverage = c
+	return a
+}
+
 func (a *API) WithHistory(h *history.Store) *API {
 	if h != nil {
 		a.history = h
@@ -785,6 +795,26 @@ func (a *API) Schema() (graphql.Schema, error) {
 		}),
 	})
 
+	// What the engine has actually been fed. Every other number here qualifies what it
+	// SHOWS; this qualifies what it could not see. A path-finding engine on incomplete
+	// input produces false negatives, and those are invisible - nobody chases a route
+	// they were never shown - so "no path found" has to be readable as "none in what I
+	// was given", with the given part stated.
+	ingestSourceType := graphql.NewObject(graphql.ObjectConfig{
+		Name:        "IngestSource",
+		Description: "One collector's contribution to this tenant's graph: when it was last heard from and how much it delivered. A stale source means the engine is answering from data that has stopped arriving.",
+		Fields: graphql.Fields{
+			"source":    &graphql.Field{Type: graphql.String, Description: "Collector name (trivy, falco, iam, …).", Resolve: field[coverage.Source](func(c coverage.Source) any { return c.Source })},
+			"firstSeen": &graphql.Field{Type: graphql.String, Description: "When this source was first heard from (RFC3339).", Resolve: field[coverage.Source](func(c coverage.Source) any { return c.First.UTC().Format(time.RFC3339) })},
+			"lastSeen":  &graphql.Field{Type: graphql.String, Description: "When it last delivered (RFC3339).", Resolve: field[coverage.Source](func(c coverage.Source) any { return c.Last.UTC().Format(time.RFC3339) })},
+			"events":    &graphql.Field{Type: graphql.Int, Description: "Accepted ingest calls.", Resolve: field[coverage.Source](func(c coverage.Source) any { return c.Events })},
+			"nodes":     &graphql.Field{Type: graphql.Int, Description: "Assets contributed.", Resolve: field[coverage.Source](func(c coverage.Source) any { return c.Nodes })},
+			"edges":     &graphql.Field{Type: graphql.Int, Description: "Relationships contributed.", Resolve: field[coverage.Source](func(c coverage.Source) any { return c.Edges })},
+			"stale":     &graphql.Field{Type: graphql.Boolean, Description: "Silent for longer than the staleness window: this source is describing an older estate than the rest.", Resolve: field[coverage.Source](func(c coverage.Source) any { return c.Stale })},
+			"silentFor": &graphql.Field{Type: graphql.String, Description: "How long it has been silent, when stale.", Resolve: field[coverage.Source](func(c coverage.Source) any { return c.Silent })},
+		},
+	})
+
 	calibrationTrendPointType := graphql.NewObject(graphql.ObjectConfig{
 		Name:        "CalibrationTrendPoint",
 		Description: "One sample of the calibration trend - the headline calibration numbers at a point in time, so the evidence accumulating over a calibration program is visible.",
@@ -846,6 +876,13 @@ func (a *API) Schema() (graphql.Schema, error) {
 						return nil, err
 					}
 					return applications(snap), nil
+				},
+			},
+			"ingestCoverage": &graphql.Field{
+				Type:        graphql.NewList(ingestSourceType),
+				Description: "What this engine has actually been fed, per collector, most recent first. Read it beside an empty board: 'no attack path' means none in what was ingested, and this says what that was - and which sources have gone quiet.",
+				Resolve: func(p graphql.ResolveParams) (any, error) {
+					return a.coverage.Snapshot(tenantOf(p.Context)), nil
 				},
 			},
 			"remediationPlan": &graphql.Field{

@@ -353,6 +353,19 @@ export interface History {
   persistent: boolean;
 }
 
+// What the engine has actually been fed. It qualifies an empty board: "no attack path"
+// is only reassuring if the sources that would have shown one are still reporting.
+export interface IngestSource {
+  source: string;
+  firstSeen: string;
+  lastSeen: string;
+  events: number;
+  nodes: number;
+  edges: number;
+  stale?: boolean | null;
+  silentFor?: string | null;
+}
+
 export interface Dashboard {
   posture: Posture;
   riskSimulation: RiskSimulation;
@@ -364,6 +377,7 @@ export interface Dashboard {
   invariantViolations: Violation[];
   validation: ValidationMetrics;
   calibration: Calibration;
+  ingestCoverage?: IngestSource[] | null;
   calibrationTrend: CalibrationTrendPoint[];
 }
 
@@ -470,6 +484,7 @@ const dashboardQuery = (app?: string) => {
       edge { samples brier ece meanPredicted observedRate verdict hasData
              bins { low high count meanPredicted observedRate } }
     }
+    ingestCoverage { source lastSeen events nodes edges stale silentFor }
     calibrationTrend { at brier ece samples }
   }
 `;

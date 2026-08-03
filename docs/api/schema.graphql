@@ -166,6 +166,17 @@ type History {
   trend: [PosturePoint]
 }
 
+type IngestSource {
+  edges: Int
+  events: Int
+  firstSeen: String
+  lastSeen: String
+  nodes: Int
+  silentFor: String
+  source: String
+  stale: Boolean
+}
+
 type Node {
   classification: String
   crownJewel: Boolean
@@ -232,6 +243,7 @@ type Query {
   calibrationTrend(points: Int): [CalibrationTrendPoint]
   graph(app: String, limit: Int, offset: Int): GraphView
   history(points: Int): History
+  ingestCoverage: [IngestSource]
   invariantViolations: [PolicyViolation]
   kShortestPaths(from: String, k: Int, target: String!): [AttackPath]
   posture: Posture

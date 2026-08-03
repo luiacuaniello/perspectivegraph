@@ -1,4 +1,4 @@
-import type { AttackPath, Calibration, Dashboard, Fix, History, RiskSimulation } from "../api/client";
+import type { AttackPath, Calibration, Dashboard, Fix, History, IngestSource, RiskSimulation } from "../api/client";
 import InfoTip from "./InfoTip";
 import { ZapIcon } from "./icons";
 
@@ -19,6 +19,7 @@ interface Props {
   onOpenPath: (id: string) => void;
   onSeeAllPaths: () => void;
   onOpenTrust: () => void;
+  coverage?: IngestSource[] | null;
 }
 
 // TOP_FIXES is how many actions the page asks for. Three is a decision; ten is
@@ -36,6 +37,7 @@ export default function TodayView({
   onOpenPath,
   onSeeAllPaths,
   onOpenTrust,
+  coverage,
 }: Props) {
   const topFixes = plan.slice(0, TOP_FIXES);
   const removable = topFixes.reduce((a, f) => a + f.coveragePct, 0);
@@ -82,6 +84,8 @@ export default function TodayView({
           hint="Routes from internet exposure to a sensitive asset that are currently open. Suppressed routes are excluded."
         />
       </div>
+
+      <CoverageStrip coverage={coverage} openRoutes={posture.activePaths} />
 
       <section>
         <div className="mb-2 flex items-baseline justify-between">
@@ -134,6 +138,47 @@ export default function TodayView({
         <TrustCard calibration={calibration} onOpen={onOpenTrust} />
         {violations.length > 0 && <ViolationCard count={violations.length} violations={violations} />}
       </div>
+    </div>
+  );
+}
+
+// CoverageStrip is what stops an empty board from reading as good news. Every other
+// number on this page qualifies what it SHOWS; this qualifies what the engine could not
+// see. A path-finding engine fed by incomplete scanners produces false negatives, and
+// those are invisible - nobody chases a route they were never shown - so "0 open routes"
+// has to be readable as "none in what I was given", with the given part stated. It gets
+// louder when the board is empty AND a source has gone quiet, because that is exactly
+// when a reader would otherwise relax.
+function CoverageStrip({ coverage, openRoutes }: { coverage?: IngestSource[] | null; openRoutes: number }) {
+  if (!coverage || coverage.length === 0) return null;
+  const stale = coverage.filter((c) => c.stale);
+  const alarming = openRoutes === 0 && stale.length > 0;
+  return (
+    <div
+      className={`rounded-xl border px-4 py-2.5 text-[11px] ${
+        alarming ? "border-amber-500/40 bg-amber-500/[0.07]" : "border-edge bg-panel"
+      }`}
+    >
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className={alarming ? "font-medium text-amber-700" : "text-muted"}>
+          {alarming ? "Nothing found - but some sources have gone quiet" : "Built from"}
+        </span>
+        {coverage.map((c) => (
+          <span key={c.source} className={c.stale ? "text-amber-700" : "text-slate-600"}>
+            {c.source}
+            <span className={c.stale ? "text-amber-700/75" : "text-slate-400"}>
+              {" "}
+              {c.stale ? `silent ${c.silentFor}` : "current"}
+            </span>
+          </span>
+        ))}
+      </div>
+      {alarming && (
+        <p className="mt-1 text-[11px] leading-relaxed text-amber-700/80">
+          An empty board only means "no reachable path" for the parts of the estate that were actually
+          reported. A source that stopped reporting cannot show you a route it never sent.
+        </p>
+      )}
     </div>
   );
 }

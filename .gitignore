@@ -3,7 +3,13 @@
 /backend/perspectivegraph
 *.test
 *.out
-coverage.*
+# Coverage ARTEFACTS only. This was `coverage.*`, which also matched Go SOURCE: adding
+# internal/coverage/coverage.go silently committed its test without its implementation,
+# and every Go job in CI failed to build. A pattern broad enough to swallow a .go file
+# has no business in a Go repository.
+coverage.html
+coverage.txt
+coverage.xml
 
 # Node / frontend
 node_modules/
