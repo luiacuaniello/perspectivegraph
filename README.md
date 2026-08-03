@@ -49,7 +49,15 @@ dry run that evaluates policy without performing anything, so it creates nothing
 costs nothing. It needs `iam:SimulatePrincipalPolicy` and `iam:ListRoles` - both inside
 `SecurityAudit`. Binaries for linux/macOS (amd64, arm64) and Windows are on the
 [releases page](https://github.com/luiacuaniello/perspectivegraph/releases/latest),
-signed with cosign and carrying SLSA build provenance.
+signed with cosign and carrying SLSA build provenance. The signature covers `SHA256SUMS`,
+so one check covers every archive:
+
+```bash
+cosign verify-blob --bundle SHA256SUMS.bundle \
+  --certificate-identity-regexp 'https://github.com/luiacuaniello/perspectivegraph/.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  SHA256SUMS && sha256sum -c SHA256SUMS --ignore-missing
+```
 
 Add `-compare` and it also runs the engine over the same account and **exits non-zero
 where the two disagree** - each disagreement is a false positive or a miss, in the
@@ -71,8 +79,8 @@ Prefer not to build? The release images are published to GHCR (`latest` also tra
 newest release; the pinned tag is the one to use if you care about reproducibility):
 
 ```bash
-docker pull ghcr.io/luiacuaniello/perspectivegraph:v0.9.0 # x-release-please-version
-docker pull ghcr.io/luiacuaniello/perspectivegraph-dashboard:v0.9.0 # x-release-please-version
+docker pull ghcr.io/luiacuaniello/perspectivegraph:v0.9.1 # x-release-please-version
+docker pull ghcr.io/luiacuaniello/perspectivegraph-dashboard:v0.9.1 # x-release-please-version
 ```
 
 They are signed with cosign keyless and carry an SPDX SBOM plus a SLSA build
@@ -83,7 +91,7 @@ on trust:
 cosign verify \
   --certificate-identity-regexp 'https://github.com/luiacuaniello/perspectivegraph/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  ghcr.io/luiacuaniello/perspectivegraph:v0.9.0 # x-release-please-version
+  ghcr.io/luiacuaniello/perspectivegraph:v0.9.1 # x-release-please-version
 ```
 
 The dashboard opens on the decision, not the inventory: what is being exploited right
@@ -162,7 +170,7 @@ risk percentage in front of a board. What is and isn't claimed is spelled out in
 no outbound connection at all - GitHub, the AI assistant and the KEV/EPSS feeds each stay
 dark until you set a key or flag (`THREATINTEL` is `off` by default).
 
-**The benchmark, as of v0.9.0.** <!-- x-release-please-version --> `make bench-cloudgoat`
+**The benchmark, as of v0.9.1.** <!-- x-release-please-version --> `make bench-cloudgoat`
 runs four CloudGoat-shaped scenarios in CI and grades the engine on each:
 
 | Scenario | Expects | Result |
