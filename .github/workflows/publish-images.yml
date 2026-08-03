@@ -223,11 +223,27 @@ jobs:
 
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
+      # cosign v3 (installer v4) defaults to the Sigstore bundle format, which carries the
+      # signature AND the certificate in one file. --output-signature/--output-certificate
+      # are not merely deprecated there, they are IGNORED - so the old invocation asked it
+      # to write a bundle to an unset path and died with `open : no such file or directory`
+      # on an empty filename. Publishing one bundle is also the better artifact: a verifier
+      # fetches one file instead of two that must be kept in step.
       - name: Sign the checksums (cosign keyless)
         run: |
           cosign sign-blob --yes \
-            --output-signature dist/SHA256SUMS.sig \
-            --output-certificate dist/SHA256SUMS.pem \
+            --bundle dist/SHA256SUMS.bundle \
+            dist/SHA256SUMS
+
+      # Verify what was just produced, here, rather than trusting that it is verifiable.
+      # This is the exact command the release notes hand to a user: if it cannot pass on
+      # the runner that made the file, it will not pass for them either.
+      - name: Verify the signature is usable
+        run: |
+          cosign verify-blob \
+            --bundle dist/SHA256SUMS.bundle \
+            --certificate-identity-regexp 'https://github.com/${{ github.repository }}/.*' \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             dist/SHA256SUMS
 
       - name: SLSA build provenance
