@@ -14,6 +14,7 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/coverage"
 	"github.com/luiacuaniello/perspectivegraph/internal/metrics"
 	"github.com/luiacuaniello/perspectivegraph/internal/ratelimit"
+	"github.com/luiacuaniello/perspectivegraph/internal/reqid"
 	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
 )
 
@@ -107,7 +108,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /ingest/{source}", guard(http.HandlerFunc(s.handleTool)))
 	// Generic pre-normalized events (one Event or a JSON array of Events).
 	mux.Handle("POST /ingest/events", guard(http.HandlerFunc(s.handleEvents)))
-	return mux
+	// Outermost, as on the API: a rejected webhook is the one an operator asks about.
+	return reqid.Middleware(mux)
 }
 
 func (s *Server) handleConnectors(w http.ResponseWriter, _ *http.Request) {

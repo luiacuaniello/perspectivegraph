@@ -17,7 +17,8 @@ func TestQueryDepth(t *testing.T) {
 		{"fragment resolved", `query { attackPaths { ...f } } fragment f on AttackPath { nodes { id } }`, 3},
 	}
 	for _, c := range cases {
-		got, err := queryDepth(c.query)
+		c2, err := queryCost(c.query)
+		got := c2.depth
 		if err != nil {
 			t.Fatalf("%s: parse error: %v", c.name, err)
 		}
@@ -31,7 +32,8 @@ func TestQueryDepthCyclicFragmentDoesNotHang(t *testing.T) {
 	// A self-referential fragment is invalid GraphQL, but a malicious client can
 	// still send it - the guard must terminate, not recurse forever.
 	q := `query { attackPaths { ...a } } fragment a on AttackPath { nodes { id } ...a }`
-	got, err := queryDepth(q)
+	c2, err := queryCost(q)
+	got := c2.depth
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}

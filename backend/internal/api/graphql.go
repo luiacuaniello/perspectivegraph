@@ -148,7 +148,7 @@ func tenantOf(ctx context.Context) string {
 // A no-op unless AUDIT_LOG_PATH is configured (a.audit is then audit.Nop).
 func (a *API) auditView(ctx context.Context, action string, fields map[string]any) {
 	p := auth.PrincipalFromContext(ctx)
-	a.audit.Record(action, p.Subject, p.Role.String(), p.Tenant, fields)
+	a.audit.Record(ctx, action, p.Subject, p.Role.String(), p.Tenant, fields)
 	// Exfiltration watch: a principal pulling an unusual volume of attack paths
 	// (bulk reads/exports) in a short window is the tool's own data walking out the
 	// door - fire one alert per principal per cooldown.

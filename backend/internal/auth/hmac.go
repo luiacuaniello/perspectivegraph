@@ -65,7 +65,7 @@ func (h *HMACVerifier) Require(rec audit.Recorder, next http.Handler) http.Handl
 		}
 		secret, ok := h.secrets[tenant]
 		if !ok {
-			rec.Record("auth.deny", "hmac", "", tenant, map[string]any{"reason": "unknown tenant", "remote": clientIP(r)})
+			rec.Record(r.Context(), "auth.deny", "hmac", "", tenant, map[string]any{"reason": "unknown tenant", "remote": clientIP(r)})
 			unauthorized(w, "unknown tenant")
 			return
 		}
@@ -75,12 +75,12 @@ func (h *HMACVerifier) Require(rec audit.Recorder, next http.Handler) http.Handl
 			return
 		}
 		if !verify(secret, r.Header.Get(SignatureHeader), body) {
-			rec.Record("auth.deny", "hmac", "", tenant, map[string]any{"reason": "bad signature", "remote": clientIP(r)})
+			rec.Record(r.Context(), "auth.deny", "hmac", "", tenant, map[string]any{"reason": "bad signature", "remote": clientIP(r)})
 			unauthorized(w, "invalid or missing "+SignatureHeader)
 			return
 		}
 		restoreBody(r, body)
-		rec.Record("ingest", "hmac", "", tenant, map[string]any{"path": r.URL.Path, "remote": clientIP(r)})
+		rec.Record(r.Context(), "ingest", "hmac", "", tenant, map[string]any{"path": r.URL.Path, "remote": clientIP(r)})
 		p := Principal{Subject: "hmac", Tenant: tenant}
 		next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), p)))
 	})

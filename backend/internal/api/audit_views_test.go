@@ -17,7 +17,7 @@ import (
 // capRecorder captures audit records so a test can assert a read was logged.
 type capRecorder struct{ actions []string }
 
-func (c *capRecorder) Record(action, _, _, _ string, _ map[string]any) {
+func (c *capRecorder) Record(_ context.Context, action, _, _, _ string, _ map[string]any) {
 	c.actions = append(c.actions, action)
 }
 func (c *capRecorder) has(action string) bool {

@@ -17,6 +17,8 @@ backend:
   env: production
   replicas: 1 # keep 1 while persistence is on (the governance stores are single-writer)
   logLevel: info
+  # A production deployment ships its logs somewhere that parses them.
+  logFormat: json
   resources:
     requests: { cpu: "250m", memory: "512Mi" }
     limits: { cpu: "2", memory: "2Gi" }

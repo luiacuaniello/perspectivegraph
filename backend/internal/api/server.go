@@ -18,6 +18,7 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/graph"
 	"github.com/luiacuaniello/perspectivegraph/internal/metrics"
 	"github.com/luiacuaniello/perspectivegraph/internal/ratelimit"
+	"github.com/luiacuaniello/perspectivegraph/internal/reqid"
 	"github.com/luiacuaniello/perspectivegraph/internal/secwatch"
 )
 
@@ -26,6 +27,16 @@ const (
 	// are a classic GraphQL DoS vector. The schema is acyclic and the deepest
 	// legitimate query (incl. GraphiQL introspection) stays well under this.
 	maxQueryDepth = 15
+	// maxQuerySelections caps the TOTAL field resolutions one document may request.
+	// Depth is not a budget on its own: a three-level query that aliases the same
+	// field ten thousand times is shallow, legal, and ten thousand resolutions. A body
+	// limit blunts that but does not bound it - at 256 KiB an alias costs ~20 bytes,
+	// so roughly 13k of them fit.
+	//
+	// 2000 is about five times the largest thing the dashboard asks for (its entire
+	// client, every query combined, is under 400 selections) against a schema of 252
+	// fields, so it has no effect on real use.
+	maxQuerySelections = 2000
 	// maxBodyBytes caps the request body (query + variables) to blunt
 	// alias-amplification and oversized payloads.
 	maxBodyBytes = 256 << 10 // 256 KiB
@@ -137,7 +148,9 @@ func (a *API) Handler() (http.Handler, error) {
 	mux.Handle("POST /validations/import", secured("validations_import", http.HandlerFunc(a.importValidations)))
 	mux.Handle("DELETE /validations/{id}", secured("validations_delete", http.HandlerFunc(a.deleteValidation)))
 
-	return a.withCORS(mux), nil
+	// reqid is OUTERMOST so every request has an id, including the ones rejected by
+	// CORS, the rate limiter or auth - those are exactly the ones someone asks about.
+	return reqid.Middleware(a.withCORS(mux)), nil
 }
 
 // counting records the response status class for a named handler.
@@ -184,25 +197,61 @@ func withQueryGuard(next http.Handler) http.Handler {
 		}
 
 		if query != "" {
-			if depth, err := queryDepth(query); err == nil && depth > maxQueryDepth {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusBadRequest)
-				_, _ = io.WriteString(w, `{"errors":[{"message":"query exceeds maximum depth"}]}`)
-				return
+			// A parse failure is deliberately NOT rejected here: this uses the same
+			// parser the executor does, so anything unparseable fails downstream on its
+			// own terms, with a proper GraphQL error instead of ours.
+			if c, err := queryCost(query); err == nil {
+				var msg string
+				switch {
+				case c.depth > maxQueryDepth:
+					msg = "query exceeds maximum depth"
+				case c.selections > maxQuerySelections:
+					msg = "query exceeds maximum complexity"
+				}
+				if msg != "" {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = io.WriteString(w, `{"errors":[{"message":"`+msg+`"}]}`)
+					return
+				}
 			}
 		}
 		next.ServeHTTP(w, r)
 	})
 }
 
-// queryDepth parses a GraphQL document and returns its maximum selection-set
-// nesting, resolving fragment spreads (with a cycle guard).
-func queryDepth(query string) (int, error) {
+// cost is what one selection set asks the server to do: how deep it nests, and how many
+// field resolutions it adds up to. Depth alone is not a budget - a document three levels
+// deep that aliases the same expensive field ten thousand times passes every depth check
+// there is and still resolves it ten thousand times.
+type cost struct {
+	depth      int
+	selections int
+}
+
+// queryCost parses a GraphQL document and returns the worst depth and the total field
+// count across its operations, expanding fragment spreads.
+//
+// Fragment costs are MEMOISED, and that is a security property rather than an
+// optimisation. The previous version re-descended into every spread at every use site,
+// which is exponential on a document with no cycle at all:
+//
+//	query { ...F0 }
+//	fragment F0 on Query { ...F1 ...F1 }
+//	fragment F1 on Query { ...F2 ...F2 }   … and so on
+//
+// Thirty such fragments fit in 1233 bytes and cost 2^30 descents - measured at over ten
+// seconds before this change, against 4.4 s at twenty-five and 125 ms at twenty. The
+// cycle guard did not help because there is no cycle; each fragment is simply used twice.
+// So the guard meant to stop a denial of service WAS one, reachable by anyone who could
+// reach the endpoint with a credential - and by anyone at all in the demo profile, where
+// auth is off. Memoising makes it linear in the document.
+func queryCost(query string) (cost, error) {
 	doc, err := parser.Parse(parser.ParseParams{
 		Source: source.NewSource(&source.Source{Body: []byte(query)}),
 	})
 	if err != nil {
-		return 0, err
+		return cost{}, err
 	}
 	fragments := map[string]*ast.FragmentDefinition{}
 	for _, def := range doc.Definitions {
@@ -210,45 +259,79 @@ func queryDepth(query string) (int, error) {
 			fragments[fd.Name.Value] = fd
 		}
 	}
-	max := 0
+
+	memo := map[string]cost{}
+	visiting := map[string]bool{}
+	var worst cost
 	for _, def := range doc.Definitions {
-		if op, ok := def.(*ast.OperationDefinition); ok {
-			if d := selectionSetDepth(op.SelectionSet, fragments, map[string]bool{}); d > max {
-				max = d
-			}
+		op, ok := def.(*ast.OperationDefinition)
+		if !ok {
+			continue
+		}
+		c := selectionSetCost(op.SelectionSet, fragments, memo, visiting)
+		if c.depth > worst.depth {
+			worst.depth = c.depth
+		}
+		// The MOST EXPENSIVE operation, not the sum of them. A GraphQL request executes
+		// exactly one operation - whichever `operationName` selects - so charging for
+		// all of them would reject documents that are perfectly legal and cheap to
+		// serve. GraphiQL sends exactly that: the whole editor buffer, one operation
+		// chosen. Nothing is given away by taking the max, because the operations that
+		// are not selected never resolve a field; the only cost they add is parsing,
+		// which the body-size limit already bounds.
+		if c.selections > worst.selections {
+			worst.selections = c.selections
 		}
 	}
-	return max, nil
+	return worst, nil
 }
 
-func selectionSetDepth(ss *ast.SelectionSet, fragments map[string]*ast.FragmentDefinition, visiting map[string]bool) int {
+func selectionSetCost(ss *ast.SelectionSet, fragments map[string]*ast.FragmentDefinition, memo map[string]cost, visiting map[string]bool) cost {
 	if ss == nil {
-		return 0
+		return cost{}
 	}
-	max := 0
+	var out cost
 	for _, sel := range ss.Selections {
-		d := 0
+		var c cost
 		switch s := sel.(type) {
 		case *ast.Field:
-			d = 1 + selectionSetDepth(s.SelectionSet, fragments, visiting)
+			child := selectionSetCost(s.SelectionSet, fragments, memo, visiting)
+			// Each field - each ALIAS of a field - is one resolution of its own.
+			c = cost{depth: 1 + child.depth, selections: 1 + child.selections}
 		case *ast.InlineFragment:
-			d = selectionSetDepth(s.SelectionSet, fragments, visiting)
+			c = selectionSetCost(s.SelectionSet, fragments, memo, visiting)
 		case *ast.FragmentSpread:
-			name := s.Name.Value
-			if visiting[name] { // cyclic fragment - bail rather than recurse forever
-				return maxQueryDepth + 1
-			}
-			if fd, ok := fragments[name]; ok {
-				visiting[name] = true
-				d = selectionSetDepth(fd.SelectionSet, fragments, visiting)
-				delete(visiting, name)
-			}
+			c = fragmentCost(s.Name.Value, fragments, memo, visiting)
 		}
-		if d > max {
-			max = d
+		if c.depth > out.depth {
+			out.depth = c.depth
+		}
+		out.selections += c.selections
+		// Stop counting once the budget is already blown: the counter must not become
+		// the cost it exists to bound.
+		if out.selections > maxQuerySelections {
+			return out
 		}
 	}
-	return max
+	return out
+}
+
+func fragmentCost(name string, fragments map[string]*ast.FragmentDefinition, memo map[string]cost, visiting map[string]bool) cost {
+	if c, ok := memo[name]; ok {
+		return c
+	}
+	if visiting[name] { // cyclic fragment - poison it rather than recurse forever
+		return cost{depth: maxQueryDepth + 1, selections: maxQuerySelections + 1}
+	}
+	fd, ok := fragments[name]
+	if !ok {
+		return cost{} // undefined fragment; the executor rejects it on its own terms
+	}
+	visiting[name] = true
+	c := selectionSetCost(fd.SelectionSet, fragments, memo, visiting)
+	delete(visiting, name)
+	memo[name] = c
+	return c
 }
 
 // withCORS echoes Access-Control-Allow-Origin only for an allow-listed Origin

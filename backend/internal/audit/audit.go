@@ -11,6 +11,7 @@ package audit
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -19,6 +20,8 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"github.com/luiacuaniello/perspectivegraph/internal/reqid"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/cryptostore"
 )
@@ -40,13 +43,13 @@ type Record struct {
 // Recorder appends audit records. Implementations must be safe for concurrent
 // use by the HTTP middlewares.
 type Recorder interface {
-	Record(action, subject, role, tenant string, fields map[string]any)
+	Record(ctx context.Context, action, subject, role, tenant string, fields map[string]any)
 }
 
 // Nop discards records (audit disabled).
 type Nop struct{}
 
-func (Nop) Record(string, string, string, string, map[string]any) {}
+func (Nop) Record(context.Context, string, string, string, string, map[string]any) {}
 
 // Log is a file-backed, hash-chained Recorder.
 type Log struct {
@@ -121,7 +124,23 @@ func decodeLine(line []byte, sealer cryptostore.Sealer) ([]byte, error) {
 	return sealer.Open(raw)
 }
 
-func (l *Log) Record(action, subject, role, tenant string, fields map[string]any) {
+func (l *Log) Record(ctx context.Context, action, subject, role, tenant string, fields map[string]any) {
+	// The request id rides in Fields rather than in a new Record column on purpose:
+	// Record is hash-chained, and widening the struct would change what every future
+	// hash covers for a value that is not always present. Fields is already the place
+	// for per-action detail, and `omitempty` keeps records without one byte-identical
+	// to the ones this log has always written.
+	if id := reqid.FromContext(ctx); id != "" {
+		// Copy rather than mutate: callers build these maps inline, but a shared or
+		// reused map would otherwise be written to under our lock and read outside it.
+		merged := make(map[string]any, len(fields)+1)
+		for k, v := range fields {
+			merged[k] = v
+		}
+		merged["request_id"] = id
+		fields = merged
+	}
+
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	rec := Record{

@@ -17,10 +17,20 @@ import (
 )
 
 // JWTConfig configures OIDC/JWT authentication.
+//
+// Issuer and Audience are structurally optional here - this type cannot enforce them,
+// and leaving them empty simply skips the corresponding check - but the binary REFUSES
+// TO START if JWKSURL is set without both (see checkAuthConfig in cmd/perspectivegraph).
+// They are not a recommendation. Skipping audience validation means accepting any token
+// the IdP ever minted, including tokens issued to a different relying party sharing the
+// same JWKS: another application's user silently becomes this one's, carrying whatever
+// role and tenant claims their token happens to hold.
 type JWTConfig struct {
-	JWKSURL     string // OIDC JWKS endpoint (RS256 public keys)
-	Issuer      string // expected "iss" (optional but recommended)
-	Audience    string // expected "aud" (optional but recommended)
+	JWKSURL string // OIDC JWKS endpoint (RS256 public keys)
+	// Issuer and Audience are REQUIRED whenever JWKSURL is set; the startup gate
+	// enforces it. See the type comment for what skipping them actually costs.
+	Issuer      string // expected "iss"
+	Audience    string // expected "aud"
 	RoleClaim   string // claim holding the role (default "role")
 	TenantClaim string // claim holding the tenant (default "tenant")
 	AppsClaim   string // claim holding the application allowlist (default "apps")

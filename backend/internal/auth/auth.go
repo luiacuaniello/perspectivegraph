@@ -257,13 +257,13 @@ func RequireRole(authn Authenticator, min Role, rec audit.Recorder, guard *secwa
 		}
 		ip := clientIPHost(r)
 		if guard.Tripped(ip) {
-			rec.Record("auth.locked", "unknown", "", "", map[string]any{"path": r.URL.Path, "remote": ip})
+			rec.Record(r.Context(), "auth.locked", "unknown", "", "", map[string]any{"path": r.URL.Path, "remote": ip})
 			tooManyRequests(w)
 			return
 		}
 		p, ok := authn.Authenticate(r)
 		if !ok || p.Role < min {
-			rec.Record("auth.deny", "unknown", "", "", map[string]any{"path": r.URL.Path, "remote": ip})
+			rec.Record(r.Context(), "auth.deny", "unknown", "", "", map[string]any{"path": r.URL.Path, "remote": ip})
 			// Only a *rejected credential* counts toward the brute-force lockout -
 			// i.e. a bearer token was presented and authentication failed (!ok). An
 			// anonymous request (no Authorization header) isn't credential guessing,
@@ -278,7 +278,7 @@ func RequireRole(authn Authenticator, min Role, rec audit.Recorder, guard *secwa
 			unauthorized(w, "invalid or insufficient credentials")
 			return
 		}
-		rec.Record("api", p.Subject, p.Role.String(), p.Tenant,
+		rec.Record(r.Context(), "api", p.Subject, p.Role.String(), p.Tenant,
 			map[string]any{"method": r.Method, "path": r.URL.Path, "remote": ip})
 		next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), p)))
 	})

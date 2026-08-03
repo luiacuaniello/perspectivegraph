@@ -6,9 +6,10 @@ tool itself seriously and welcome coordinated disclosure of vulnerabilities.
 
 ## Supported versions
 
-PerspectiveGraph is pre-1.0 and ships from `main`. Security fixes are applied to
-the latest released version and to `main`; there are no long-term support branches
-yet. Always run the latest tagged release (or `main`) to receive fixes.
+PerspectiveGraph ships from `main`. Security fixes are applied to the latest released
+version and to `main`; there are no long-term support branches, and 1.0 does not create
+one - it fixes the *interface*, not a maintenance window. Always run the latest tagged
+release (or `main`) to receive fixes.
 
 | Version | Supported |
 |---------|-----------|

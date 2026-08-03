@@ -4,10 +4,17 @@ PerspectiveGraph follows [Semantic Versioning](https://semver.org). This documen
 declares the **stable public surface** and the compatibility rules that govern it, so you
 can build on it and know what a version bump means.
 
-> Pre-1.0 status: while the version is `0.x` the surface is stabilizing and may still
-> change with a **minor** bump - always called out in the [CHANGELOG](../CHANGELOG.md).
-> The rules below are the ones that take full effect at `1.0`, and we already hold the
-> GraphQL schema to them (it is machine-guarded, see "Enforcement").
+> **As of 1.0 these rules are in force.** The surface below will not break without a
+> **major** bump, and every change is called out in the [CHANGELOG](../CHANGELOG.md).
+> The GraphQL schema was already held to them before 1.0 - it is machine-guarded, see
+> "Enforcement" - so this is a promise the tests have been keeping for some time, not one
+> made on the day.
+>
+> 1.0 is a statement about the **interface**, not about the model's accuracy. The engine's
+> probabilities have still not been calibrated against field outcomes (the
+> [README](../README.md) says so up front, and the reliability panel withholds a verdict
+> until real outcomes exist). A stable API and an unvalidated model are different claims,
+> and only the first is being made here.
 
 ## The stable surface
 
