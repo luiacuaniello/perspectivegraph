@@ -118,6 +118,11 @@ type Config struct {
 	// calibration dataset that builds itself, with no red team. Requires
 	// KEV_HOLDOUT_PATH to survive restarts, since a window outlives most uptimes.
 	// See internal/kevholdout for why the grading must be out-of-sample.
+	// CoverageStaleAfter is when an ingest source stops counting as current. It bounds
+	// the claim an empty board makes: "no path in what I was given, and this is how
+	// recently I was given it".
+	CoverageStaleAfter time.Duration
+
 	KEVHoldoutEnabled bool
 	KEVHoldoutPath    string
 	KEVHoldoutWindow  time.Duration
@@ -306,6 +311,8 @@ func Load() Config {
 		ThreatIntelEnabled: getbool("THREATINTEL", false),
 		KEVFeedURL:         getenv("KEV_FEED_URL", ""),
 		EPSSAPIURL:         getenv("EPSS_API_URL", ""),
+
+		CoverageStaleAfter: getdur("COVERAGE_STALE_AFTER", 24*time.Hour),
 
 		KEVHoldoutEnabled: getbool("KEV_HOLDOUT", false),
 		KEVHoldoutPath:    getenv("KEV_HOLDOUT_PATH", ""),

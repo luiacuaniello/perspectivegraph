@@ -138,3 +138,45 @@ describe("TodayView", () => {
     expect(screen.getByText(/No remediation was generated/)).toBeInTheDocument();
   });
 });
+
+// Coverage is what stops an empty board from reading as good news. These pin the two
+// states that matter; the quiet one is the whole reason the feature exists.
+const sources = (stale: boolean) => [
+  { source: "trivy", firstSeen: "", lastSeen: "", events: 1, nodes: 5, edges: 4, stale, silentFor: stale ? "3d" : "" },
+  { source: "falco", firstSeen: "", lastSeen: "", events: 1, nodes: 1, edges: 0, stale: false, silentFor: "" },
+];
+
+describe("ingest coverage", () => {
+  it("names the sources the board was built from", () => {
+    renderToday({ coverage: sources(false) });
+    expect(screen.getByText(/Built from/)).toBeInTheDocument();
+    expect(screen.getByText("trivy")).toBeInTheDocument();
+    expect(screen.getByText("falco")).toBeInTheDocument();
+  });
+
+  // The case the feature exists for: nothing found AND a source has gone quiet. A green
+  // board over a region no collector reached is not good news, and saying so is the only
+  // defence against a false negative, which is otherwise invisible.
+  it("warns when an empty board rests on a source that stopped reporting", () => {
+    renderToday({
+      coverage: sources(true),
+      posture: { ...posture, activePaths: 0, criticalPaths: 0 },
+      paths: [],
+      plan: [],
+    });
+    expect(screen.getByText(/gone quiet/i)).toBeInTheDocument();
+    expect(screen.getByText(/cannot show you a route it never sent/i)).toBeInTheDocument();
+  });
+
+  // With routes on the board the strip stays informational: the warning is about a
+  // silence that could be hiding something, not about silence as such.
+  it("does not cry wolf while routes are on the board", () => {
+    renderToday({ coverage: sources(true) });
+    expect(screen.queryByText(/gone quiet/i)).not.toBeInTheDocument();
+  });
+
+  it("renders nothing when no source has ever reported", () => {
+    renderToday({ coverage: [] });
+    expect(screen.queryByText(/Built from/)).not.toBeInTheDocument();
+  });
+});

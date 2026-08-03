@@ -393,6 +393,7 @@ export default function App() {
                   onOpenPath={openPath}
                   onSeeAllPaths={() => setView("paths")}
                   onOpenTrust={() => setView("trust")}
+                  coverage={data.ingestCoverage}
                 />
               </div>
             )}

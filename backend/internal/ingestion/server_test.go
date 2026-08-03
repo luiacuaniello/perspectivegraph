@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/auth"
+	"github.com/luiacuaniello/perspectivegraph/internal/coverage"
 	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
 )
 
@@ -293,5 +294,65 @@ func TestOptionSettersChain(t *testing.T) {
 	}
 	if s.audit == nil {
 		t.Error("WithAudit(nil) cleared the no-op recorder, so audit calls would panic")
+	}
+}
+
+// Coverage must describe what the graph RECEIVED, not what someone tried to send: a
+// rejected or unpublished payload that still counted would manufacture exactly the false
+// assurance the coverage feature exists to prevent.
+func TestCoverageRecordsOnlyWhatWasPublished(t *testing.T) {
+	cov := coverage.New()
+	c := &fakeCollector{source: "trivy", produces: oneEvent("trivy")}
+	h := NewServer(&capturingPublisher{}, c).WithCoverage(cov).Handler()
+
+	if rec := do(h, httptest.NewRequest(http.MethodPost, "/ingest/trivy", strings.NewReader("{}"))); rec.Code != http.StatusAccepted {
+		t.Fatalf("status %d", rec.Code)
+	}
+	got := cov.Snapshot("")
+	if len(got) != 1 || got[0].Source != "trivy" {
+		t.Fatalf("coverage after one accepted ingest: %+v", got)
+	}
+	if got[0].Nodes != 1 || got[0].Edges != 1 || got[0].Events != 1 {
+		t.Errorf("coverage counts %+v, want 1 event / 1 node / 1 edge", got[0])
+	}
+}
+
+func TestFailedPublishIsNotCounted(t *testing.T) {
+	cov := coverage.New()
+	pub := &capturingPublisher{err: errors.New("nats: no servers available")}
+	h := NewServer(pub, &fakeCollector{source: "trivy", produces: oneEvent("trivy")}).WithCoverage(cov).Handler()
+
+	do(h, httptest.NewRequest(http.MethodPost, "/ingest/trivy", strings.NewReader("{}")))
+	if got := cov.Snapshot(""); len(got) != 0 {
+		t.Fatalf("a failed publish was counted as coverage: %+v", got)
+	}
+}
+
+func TestRejectedBodyIsNotCounted(t *testing.T) {
+	cov := coverage.New()
+	h := NewServer(&capturingPublisher{}, &fakeCollector{source: "trivy", err: errors.New("bad report")}).
+		WithCoverage(cov).Handler()
+
+	do(h, httptest.NewRequest(http.MethodPost, "/ingest/trivy", strings.NewReader("{}")))
+	if got := cov.Snapshot(""); len(got) != 0 {
+		t.Fatalf("a rejected report was counted as coverage: %+v", got)
+	}
+}
+
+// Coverage is stamped with the authenticated tenant, like the events themselves - or one
+// tenant's silence could be masked by another's activity.
+func TestCoverageFollowsTheAuthenticatedTenant(t *testing.T) {
+	cov := coverage.New()
+	h := NewServer(&capturingPublisher{}).WithCoverage(cov).Handler()
+
+	req := httptest.NewRequest(http.MethodPost, "/ingest/events", strings.NewReader(`{"source":"custom","nodes":[],"edges":[]}`))
+	req = req.WithContext(auth.WithPrincipal(req.Context(), auth.Principal{Tenant: "acme"}))
+	do(h, req)
+
+	if got := cov.Snapshot("acme"); len(got) != 1 {
+		t.Fatalf("acme coverage: %+v", got)
+	}
+	if got := cov.Snapshot("other-corp"); len(got) != 0 {
+		t.Fatalf("another tenant sees acme's coverage: %+v", got)
 	}
 }
