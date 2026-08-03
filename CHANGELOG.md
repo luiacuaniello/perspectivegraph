@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0](https://github.com/luiacuaniello/perspectivegraph/compare/v0.9.4...v1.0.0) (2026-08-03)
+
+
+### Features
+
+* bound the abuse detectors, make verdict writes O(1), and close a GraphQL DoS ([#105](https://github.com/luiacuaniello/perspectivegraph/issues/105)) ([f0ce9b5](https://github.com/luiacuaniello/perspectivegraph/commit/f0ce9b54e92061fb061b3d5bdb402fb9e7049112))
+* say what the board was built from, harden the ingest boundary, … ([#103](https://github.com/luiacuaniello/perspectivegraph/issues/103)) ([f5f7f7b](https://github.com/luiacuaniello/perspectivegraph/commit/f5f7f7bcf6dcd10ea9082589851a1ed6f7391bf6))
+
 ## [0.9.4](https://github.com/luiacuaniello/perspectivegraph/compare/v0.9.3...v0.9.4) (2026-08-03)
 
 
