@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1](https://github.com/luiacuaniello/perspectivegraph/compare/v0.9.0...v0.9.1) (2026-08-03)
+
+
+### Bug Fixes
+
+* **fuzz:** stop reading a clean -fuzztime expiry as a finding ([#82](https://github.com/luiacuaniello/perspectivegraph/issues/82)) ([dd4e2a4](https://github.com/luiacuaniello/perspectivegraph/commit/dd4e2a45b767d64013b63ad06c4547e324da2cd6))
+* **release:** sign the checksums with a bundle, and verify it where it is made ([#88](https://github.com/luiacuaniello/perspectivegraph/issues/88)) ([33e7b08](https://github.com/luiacuaniello/perspectivegraph/commit/33e7b08ecc808bee37765bc7a90acf4020803595))
+
 ## [0.9.0](https://github.com/luiacuaniello/perspectivegraph/compare/v0.8.0...v0.9.0) (2026-07-31)
 
 
