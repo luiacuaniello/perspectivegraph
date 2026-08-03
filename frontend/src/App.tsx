@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { exportUrl, fetchDashboard, fetchGraph, fetchHistory, fetchStatus, type Dashboard, type GraphData, type History } from "./api/client";
 import Sidebar, { type View } from "./components/Sidebar";
 import AttackPathList from "./components/AttackPathList";
@@ -72,8 +72,20 @@ export default function App() {
   // not a destination you navigate away to.
   const [searchOpen, setSearchOpen] = useState(false);
   const [graphOpen, setGraphOpen] = useState(false);
-  const [graphData, setGraphData] = useState<GraphData | null>(null);
+  // The fetched graph is stored WITH the scope it was fetched for, and the scope is
+  // checked on read. Keeping them apart and clearing the data from an effect on `app`
+  // left a window - one render between the scope changing and the effect running - in
+  // which the canvas drew the previous application's graph under the new application's
+  // label. Deriving closes that window by construction: data for another scope simply
+  // is not this scope's data.
+  const [graphFetch, setGraphFetch] = useState<{ app: string; data: GraphData } | null>(null);
+  const graphData = graphFetch && graphFetch.app === app ? graphFetch.data : null;
   const [graphLoading, setGraphLoading] = useState(false);
+  // The in-flight guard is a ref, not state. As state it had to be in the effect's own
+  // dependencies while also being set inside it, so every fetch spent a render entering
+  // the effect only to fall out of the guard. `graphLoading` stays as state because the
+  // UI renders it; the ref is what decides whether to start another request.
+  const graphInFlight = useRef(false);
   // Triage: hide suppressed paths by default; bump reloadKey to refetch after a
   // suppress / un-suppress so the board reflects the decision immediately.
   const [showSuppressed, setShowSuppressed] = useState(false);
@@ -217,18 +229,18 @@ export default function App() {
   // kept afterwards so toggling back is instant. Pulling it on every dashboard
   // poll is what made a real estate (thousands of nodes) time the request out.
   useEffect(() => {
-    if (!graphOpen || graphData || graphLoading) return;
+    if (!graphOpen || graphData || graphInFlight.current) return;
+    graphInFlight.current = true;
     setGraphLoading(true);
+    const forApp = app;
     fetchGraph(app || undefined)
-      .then(setGraphData)
+      .then((data) => setGraphFetch({ app: forApp, data }))
       .catch((e) => setError(String(e.message ?? e)))
-      .finally(() => setGraphLoading(false));
-  }, [graphOpen, graphData, graphLoading, app]);
-
-  // A different application scope is a different graph.
-  useEffect(() => {
-    setGraphData(null);
-  }, [app]);
+      .finally(() => {
+        graphInFlight.current = false;
+        setGraphLoading(false);
+      });
+  }, [graphOpen, graphData, app]);
 
   const openPath = (id: string) => {
     setSelectedPathId(id);

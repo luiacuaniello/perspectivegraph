@@ -12,6 +12,12 @@ export default function SearchView({ enabled = true }: { enabled?: boolean }) {
   const [busy, setBusy] = useState(false);
   const timer = useRef<number | undefined>(undefined);
 
+  // The lint flags the three setState calls below as "synchronous setState in an effect".
+  // Deliberate, and not the cascading case the rule is aimed at: none of hits, error or
+  // busy is in this effect's dependencies, so clearing them cannot re-enter it. It is a
+  // single extra render on the transition to an empty box, which is what emptying a
+  // search field should cost. Deriving the three values instead would trade that render
+  // for three derived expressions and a debounce that can no longer cancel itself.
   useEffect(() => {
     window.clearTimeout(timer.current);
     const q = query.trim();
