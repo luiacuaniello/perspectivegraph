@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.4](https://github.com/luiacuaniello/perspectivegraph/compare/v0.9.3...v0.9.4) (2026-08-03)
+
+
+### Bug Fixes
+
+* **analyzer:** stop shortID collapsing distinct assets onto one id ([#101](https://github.com/luiacuaniello/perspectivegraph/issues/101)) ([c9aeee5](https://github.com/luiacuaniello/perspectivegraph/commit/c9aeee5ddfccb83eccee3011060d7c2674b1e744))
+
 ## [0.9.3](https://github.com/luiacuaniello/perspectivegraph/compare/v0.9.2...v0.9.3) (2026-08-03)
 
 
