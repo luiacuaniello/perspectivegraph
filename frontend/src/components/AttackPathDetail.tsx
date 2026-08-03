@@ -857,10 +857,18 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
       {/* ── Detection-as-code ────────────────────────────────────────── */}
       {path.detections.length > 0 && (
         <section>
-          <h3 className="mb-2 text-xs font-semibold text-muted">Detection-as-code ({path.detections.length})</h3>
+          {/* "Detection-as-code (2)" read as two things to deploy. They are the same
+              detection in two formats - one for Falco, one for a SIEM - so the heading
+              says how many FORMATS there are and the sentence says to pick one. The
+              remediation above is the action; this only watches. */}
+          <h3 className="mb-2 text-xs font-semibold text-muted">
+            Detection-as-code · {path.detections.length === 1 ? "1 format" : `${path.detections.length} formats, pick one`}
+          </h3>
           <p className="mb-2 text-xs text-muted">
-            Remediation cuts the path; these Falco/Sigma rules <span className="font-medium">watch</span> it - deploy them to catch
-            exploitation of the exposed workload.
+            The remediation above <span className="font-medium">cuts</span> the path; these rules{" "}
+            <span className="font-medium">watch</span> it until it is cut. They express the{" "}
+            <span className="font-medium">same</span> detection for different stacks - deploy the one that matches what you
+            already run, not both.
           </p>
           <div className="flex flex-col gap-3">
             {path.detections.map((d, i) => (

@@ -23,6 +23,7 @@ import (
 	"math"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -600,11 +601,37 @@ func reconstruct(seed, jewel string, prev map[string]Step, nodes map[string]onto
 	return assembleAttackPath(pathNodes, steps)
 }
 
+// shortID shortens a node id for the human-readable part of a path id. Two things it
+// must not do, and the previous `id[len(id)-12:]` did both.
+//
+// It sliced BYTES. Twelve is divisible by 2, 3 and 4, so a tail of uniformly-wide
+// characters landed on a rune boundary by arithmetic luck - but a MIXED tail did not,
+// and produced invalid UTF-8. That string is not cosmetic: it is embedded in the `id:`
+// and `tags:` of the Sigma and Falco rules the product generates, so an asset name with
+// an accent or an ideogram in the wrong position shipped a detection file a SIEM
+// rejects.
+//
+// And it cut mid-word: "payments-admin" became "yments-admin", which then appeared in
+// every generated artifact for that path.
+//
+// So: last runes, and if that lands inside a word, start after the next separator
+// instead - provided enough is left to still identify the asset.
 func shortID(id string) string {
-	if len(id) > 12 {
-		return id[len(id)-12:]
+	const maxRunes = 12
+	const minKept = 4
+	r := []rune(id)
+	if len(r) <= maxRunes {
+		return id
 	}
-	return id
+	tail := string(r[len(r)-maxRunes:])
+	// The tail begins mid-word unless the cut happened to fall on a separator; skipping
+	// to the next one yields a whole fragment ("admin" rather than "yments-admin").
+	if i := strings.IndexAny(tail, "-:/._"); i >= 0 {
+		if rest := tail[i+1:]; len([]rune(rest)) >= minKept {
+			return rest
+		}
+	}
+	return tail
 }
 
 // ── priority queue ──────────────────────────────────────────────────
