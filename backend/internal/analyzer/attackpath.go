@@ -23,7 +23,6 @@ import (
 	"math"
 	"runtime"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -614,24 +613,24 @@ func reconstruct(seed, jewel string, prev map[string]Step, nodes map[string]onto
 // And it cut mid-word: "payments-admin" became "yments-admin", which then appeared in
 // every generated artifact for that path.
 //
-// So: last runes, and if that lands inside a word, start after the next separator
-// instead - provided enough is left to still identify the asset.
+// So: the last runes, and NOTHING more clever than that.
+//
+// An earlier version of this also skipped to the next separator so the fragment read as
+// a whole word - "payments-admin" became "admin" instead of "yments-admin". That was a
+// regression, and a worse one than the ugliness it fixed: it threw away exactly the
+// characters that tell two assets apart. "payments-admin", "billing-admin" and
+// "customers-admin" all collapsed to "admin", and because FindCriticalPaths builds its
+// id as ap-<first>-<last> with no hash, two routes to two different crown jewels got the
+// SAME id - so suppressing one suppressed the other, and a verdict on one graded the
+// other. Trailing words like -admin, -db and -prod are the norm in this domain, not the
+// exception. An identifier is allowed to be ugly; it is not allowed to be ambiguous.
 func shortID(id string) string {
 	const maxRunes = 12
-	const minKept = 4
 	r := []rune(id)
 	if len(r) <= maxRunes {
 		return id
 	}
-	tail := string(r[len(r)-maxRunes:])
-	// The tail begins mid-word unless the cut happened to fall on a separator; skipping
-	// to the next one yields a whole fragment ("admin" rather than "yments-admin").
-	if i := strings.IndexAny(tail, "-:/._"); i >= 0 {
-		if rest := tail[i+1:]; len([]rune(rest)) >= minKept {
-			return rest
-		}
-	}
-	return tail
+	return string(r[len(r)-maxRunes:])
 }
 
 // ── priority queue ──────────────────────────────────────────────────

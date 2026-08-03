@@ -28,14 +28,27 @@ func TestShortIDNeverProducesInvalidUTF8(t *testing.T) {
 	}
 }
 
-// A fragment cut mid-word ("yments-admin") is what a user reads in every artifact for
-// that path, so the shortening starts at a separator when it can.
-func TestShortIDDoesNotCutMidWord(t *testing.T) {
-	if got := shortID("payments-admin"); got != "admin" {
-		t.Errorf("shortID(\"payments-admin\") = %q, want %q", got, "admin")
+// The test that should have been written first. Path ids embed shortID and one form
+// (FindCriticalPaths) carries no hash, so two assets that shorten alike give two routes
+// the same id - and then suppressing one suppresses the other. Trailing words like
+// -admin and -db are the norm here, so this is the common case, not an exotic one.
+func TestShortIDKeepsDistinctAssetsDistinct(t *testing.T) {
+	groups := [][]string{
+		{"payments-admin", "billing-admin", "customers-admin"},
+		{"payments-db-prod", "customers-db-prod"},
+		{"IAMRole:payments-admin", "IAMRole:billing-admin"},
+		{"acme-web-frontend", "acme-api-frontend"},
 	}
-	if got := shortID("LoadBalancer:edge-alb"); got != "edge-alb" {
-		t.Errorf("shortID(\"LoadBalancer:edge-alb\") = %q, want %q", got, "edge-alb")
+	for _, g := range groups {
+		seen := map[string]string{}
+		for _, name := range g {
+			s := shortID(name)
+			if prev, clash := seen[s]; clash {
+				t.Errorf("shortID collapses %q and %q to %q - two routes to different assets "+
+					"would share an id", prev, name, s)
+			}
+			seen[s] = name
+		}
 	}
 }
 
