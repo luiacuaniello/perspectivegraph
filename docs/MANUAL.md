@@ -473,8 +473,9 @@ contract collectors must satisfy - everything downstream consumes it:
 | Graph | `internal/graph` | `Store` interface + in-memory & Apache AGE implementations (native agtype node/edge properties; optional DB-side `CriticalPaths` via Cypher, safe-railed; optional `Pruner` capability - `last_seen` staleness TTL so departed assets don't become phantom paths) |
 | Analyzer | `internal/analyzer` | reachability (in-process Dijkstra by default; opt-in DB-side Cypher) + path scoring + runtime confirmation; Yen K-shortest, Monte Carlo risk quantification, what-if simulation |
 | Compliance | `internal/compliance` | render attack-path posture as a NIST OSCAL 1.1.2 assessment-results document |
-| Observability | `internal/metrics` | Prometheus collectors (ingest/normalize/analyzer/dead-letter) exposed at `/metrics` |
-| Rate limiting | `internal/ratelimit` | per-client-IP token-bucket middleware for the ingest and API servers |
+| Observability | `internal/metrics` | Prometheus collectors (ingest/normalize/analyzer/dead-letter) exposed at `/metrics`. Open and unthrottled so a scrape never starves - and on the API's own port, with `tenant` labels, so do not publish that port (see [THREAT-MODEL](THREAT-MODEL.md)) |
+| Request correlation | `internal/reqid` | stamps every request with an id, echoed in `X-Request-Id`, attached to context-aware log lines and written into the audit record's `fields.request_id` - so one call joins the audit log, the application log and what a user reports. An inbound id is honoured only when short and alphanumeric, since that value is echoed and logged |
+| Rate limiting | `internal/ratelimit` | per-client-IP token-bucket middleware for the ingest and API servers, with a capped client table (a flood of spoofed IPv6 sources cannot grow it without bound) and a shared overflow bucket past the cap |
 | Leader election | `internal/leader` | Postgres advisory-lock singleton so only one replica fires at-most-once side-effects |
 | Policy | `internal/policy` | architectural invariants (forbidden graph shapes) |
 | Action | `internal/action` | GitHub/GitLab PR/MR commenters (shared base) |

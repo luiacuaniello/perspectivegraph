@@ -31,6 +31,25 @@ pull request.**
 kill chain and its generated Terraform fix → whether the scores can be trusted. Sample
 scanner output and seeded verdicts, not a real environment.*
 
+> ### What this has not done yet
+>
+> The engine reports probabilities, credible intervals and its own calibration - Brier
+> score, ECE, a reliability diagram. **None of that has been calibrated against field
+> data.** Nobody has yet run it over a real estate, tested the paths it surfaced, and fed
+> the verdicts back. The machinery for that closed loop is built and tested; the loop has
+> not been closed with real outcomes.
+>
+> So read a score as *"what this model believes, and how sure it says it is"*, not as a
+> measured frequency. A path at 0.7 has not been shown to be exploited seven times in ten
+> - it has been shown to be what the model concludes from the evidence it was given, and
+> the interval beside it says how thin that evidence is.
+>
+> That is a statement about maturity, not about intent: the calibration harness exists
+> precisely so that number can be earned rather than asserted, and the
+> [CloudGoat benchmark](backend/testdata/cloudgoat/README.md) grades the path-finding itself on public,
+> reproducible scenarios today. If you run this on a real environment and record what you
+> find, [that is the contribution that matters most](CONTRIBUTING.md).
+
 ## Check your own account in 30 seconds
 
 No deployment, no Docker, nothing ingested. One static binary asks **AWS's own policy

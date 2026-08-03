@@ -15,13 +15,13 @@
 package validation
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -154,6 +154,20 @@ type Store struct {
 	now      func() time.Time
 	rnd      func() string
 	sealer   cryptostore.Sealer
+
+	// On-disk log bookkeeping; see log.go. logEvents is how many events the file
+	// currently holds, which drives compaction. legacy marks a store loaded from the
+	// v1 whole-file format, so the first write migrates it. dirty marks a failed
+	// append, so the next write compacts and re-persists everything rather than
+	// leaving a hole in the log.
+	logEvents int
+	legacy    bool
+	dirty     bool
+	// compacting is set while a rewrite is encoding its snapshot with the lock
+	// RELEASED; pending collects the events written during that window so the rewrite
+	// can fold them in before it swaps the file. Both are guarded by mu.
+	compacting bool
+	pending    []logEvent
 }
 
 // Option configures a Store.
@@ -223,6 +237,29 @@ func (s *Store) Put(r Record) (Record, error) {
 	r.ID = s.rnd()
 
 	s.mu.Lock()
+	s.applyPutLocked(r)
+	// The APPEND happens under the lock: it is one small write, and serialising it with
+	// the memory mutation is what guarantees log order and in-memory order can never
+	// disagree, which is what makes replay faithful. A full rewrite does not - see
+	// compact - so noteLocked only reports that one is due and we run it below, with
+	// the lock released.
+	rewrite, err := s.noteLocked(logEvent{Op: "put", Rec: &r})
+	s.mu.Unlock()
+	if err != nil && !rewrite {
+		return Record{}, err
+	}
+	if rewrite {
+		if err := s.compact(); err != nil {
+			return Record{}, err
+		}
+	}
+	return r, nil
+}
+
+// applyPutLocked is the in-memory half of Put, shared with log replay so a reloaded
+// store and a live one cannot diverge. The caller holds s.mu and has already validated
+// and materialised r.
+func (s *Store) applyPutLocked(r Record) {
 	list := s.byTenant[r.Tenant]
 	// Edge-scoped verdicts accumulate like "missed" does, and for the same reason: each
 	// one closes a separate sealed forecast over its own window, so the same CVE
@@ -242,21 +279,11 @@ func (s *Store) Put(r Record) (Record, error) {
 		list = filtered
 	}
 	s.byTenant[r.Tenant] = append(list, r)
-	s.mu.Unlock()
-
-	if err := s.persist(); err != nil {
-		return Record{}, err
-	}
-	return r, nil
 }
 
-// Delete removes a verdict by id.
-func (s *Store) Delete(tenant, id string) error {
-	if s == nil {
-		return errors.New("validation: store not configured")
-	}
-	tenant = tenantKey(tenant)
-	s.mu.Lock()
+// applyDeleteLocked is the in-memory half of Delete, likewise shared with replay. It
+// reports whether anything was removed.
+func (s *Store) applyDeleteLocked(tenant, id string) bool {
 	list := s.byTenant[tenant]
 	out := list[:0:0]
 	found := false
@@ -268,11 +295,29 @@ func (s *Store) Delete(tenant, id string) error {
 		out = append(out, x)
 	}
 	s.byTenant[tenant] = out
-	s.mu.Unlock()
-	if !found {
+	return found
+}
+
+// Delete removes a verdict by id.
+func (s *Store) Delete(tenant, id string) error {
+	if s == nil {
+		return errors.New("validation: store not configured")
+	}
+	tenant = tenantKey(tenant)
+	s.mu.Lock()
+	if !s.applyDeleteLocked(tenant, id) {
+		s.mu.Unlock()
 		return ErrNotFound
 	}
-	return s.persist()
+	rewrite, err := s.noteLocked(logEvent{Op: "del", Tenant: tenant, ID: id})
+	s.mu.Unlock()
+	if err != nil && !rewrite {
+		return err
+	}
+	if rewrite {
+		return s.compact()
+	}
+	return nil
 }
 
 // Get returns the current verdict for a surfaced path, if any.
@@ -351,6 +396,13 @@ func (s *Store) load() error {
 	if err != nil {
 		return err
 	}
+
+	// The v2 magic line is plaintext precisely so the format can be told apart without
+	// a key; anything else is the v1 whole-file blob.
+	if bytes.HasPrefix(b, []byte(logMagicV2)) {
+		return s.replayLog(b)
+	}
+
 	if b, err = s.sealer.Open(b); err != nil {
 		return fmt.Errorf("validation: decrypt %s: %w", s.path, err)
 	}
@@ -361,56 +413,11 @@ func (s *Store) load() error {
 	for _, r := range f.Records {
 		s.byTenant[r.Tenant] = append(s.byTenant[r.Tenant], r)
 	}
+	// Loading is read-only: an operator who starts the binary against an existing file
+	// and stops it should not find the file rewritten. The migration happens on the
+	// first write instead, which is also the first moment the new format buys anything.
+	s.legacy = true
 	return nil
-}
-
-func (s *Store) persist() error {
-	if s.path == "" {
-		return nil
-	}
-	s.mu.RLock()
-	var f fileShape
-	for _, list := range s.byTenant {
-		f.Records = append(f.Records, list...)
-	}
-	s.mu.RUnlock()
-	sort.Slice(f.Records, func(i, j int) bool {
-		if f.Records[i].Tenant != f.Records[j].Tenant {
-			return f.Records[i].Tenant < f.Records[j].Tenant
-		}
-		return f.Records[i].ID < f.Records[j].ID
-	})
-
-	b, err := json.MarshalIndent(f, "", "  ")
-	if err != nil {
-		return err
-	}
-	if b, err = s.sealer.Seal(b); err != nil {
-		return err
-	}
-	if dir := filepath.Dir(s.path); dir != "" {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return err
-		}
-	}
-	// Unique temp name (not a shared "<path>.tmp") so two concurrent writers can't
-	// corrupt each other's partial write; the rename is atomic and the last
-	// consistent snapshot wins.
-	tf, err := os.CreateTemp(filepath.Dir(s.path), filepath.Base(s.path)+".*.tmp")
-	if err != nil {
-		return err
-	}
-	tmp := tf.Name()
-	if _, err := tf.Write(b); err != nil {
-		tf.Close()
-		os.Remove(tmp)
-		return err
-	}
-	if err := tf.Close(); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return os.Rename(tmp, s.path)
 }
 
 func randID() string {

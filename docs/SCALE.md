@@ -67,6 +67,48 @@ genload: posted 4000 nodes + 14000 edges in 8 events (1731 KiB) -> 202 Accepted
 (The resident graph is smaller than what `genload` posts because dangling edges - whose
 endpoints have not arrived yet - are rejected and redelivered, and duplicate nodes merge.)
 
+## How the cost grows
+
+The sample above is one point. This is the shape, measured on the synthetic layered graph
+(`BenchmarkFindCriticalPaths`, 64 seeds, 32 jewels, one laptop core count) so the growth is
+comparable across sizes:
+
+| graph | pathfinding pass | allocated per pass |
+|---|---|---|
+| 10k nodes / 45k edges | 241 ms | 48 MB |
+| 25k nodes / 120k edges | 339 ms | 95 MB |
+| 50k nodes / 245k edges | 560 ms | 180 MB |
+| 100k nodes / 495k edges | 1.27 s | 349 MB |
+
+Ten times the graph costs about 5.3x the time: **sub-linear in nodes**, because the work is
+per-seed Dijkstra over a sparse graph rather than anything quadratic. Memory grows roughly
+linearly with edges. These are pathfinding numbers only - on Apache AGE the graph *fetch*
+usually dominates a pass at these sizes, which is what `ANALYZER_INCREMENTAL` addresses.
+
+Reproduce with `go test ./internal/analyzer -bench FindCriticalPaths -benchmem`.
+
+## Scaling out (replicas)
+
+The compute path is already replica-safe, and the governance path is not. Both halves of
+that sentence matter:
+
+- **Reads and analysis scale horizontally.** Every replica computes attack paths locally and
+  serves its own API reads. Work is not duplicated where it would be harmful, because
+  at-most-once side effects - drift webhooks, PR/MR comments, connector collection - are
+  gated behind a **leader election** (`internal/leader`): a PostgreSQL *session-scoped*
+  advisory lock, so if the leader dies its connection drops, the lock releases, and another
+  replica takes over on its next check. No external coordinator. This is active whenever the
+  store backend is `apache-age`.
+- **The file-backed governance stores are single-writer.** Validations, suppressions,
+  tickets, history and the KEV holdout persist to files owned by one process; two replicas
+  writing the same volume would clobber each other. So with any `*_PATH` set, keep
+  `backend.replicas: 1` (this is what `values-production.yaml` already pins, and why).
+
+In practice: run one replica when you want the governance state to survive restarts, or run
+N replicas with those stores in memory and the graph in a shared AGE. Moving them onto
+Postgres would lift the restriction and is the natural next step - it is not done today, and
+the chart says so rather than letting an operator discover it.
+
 ## Interpreting it
 
 - **`avg pass time` approaching `ANALYZER_INTERVAL`**: passes are starting to overlap. Raise

@@ -4,10 +4,16 @@ Where PerspectiveGraph is, and where it's going. This is intentionally honest ab
 what is and isn't done, for the same reason the engine reports its own calibration:
 a status you can check beats one you have to take on faith.
 
-**No dates.** This is a 0.x project in active development; the version number means
-the API can still change. What follows is ordered by how much it would move the
-project, not by when it will land. Items marked *(scaffolded)* have the structure in
-place but are not wired for production; *(not started)* is exactly that.
+**No dates.** What follows is ordered by how much it would move the project, not by
+when it will land. Items marked *(scaffolded)* have the structure in place but are not
+wired for production; *(not started)* is exactly that.
+
+**On 1.0.** The version says the *interface* is stable - the GraphQL schema, the ingest
+contract, the operational endpoints, the environment variables and the CLI, all governed
+by [API stability](docs/API-STABILITY.md) and machine-guarded in CI. It does **not** say
+the model has been validated in the field: nobody has yet run this over a real estate,
+tested the paths it surfaced and fed the verdicts back, and the README opens by saying so.
+Those are separate claims, and everything below is what is still open.
 
 Contributions to any of these are welcome - open an issue first so we can agree on
 the shape.

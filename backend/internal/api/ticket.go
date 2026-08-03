@@ -56,7 +56,7 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := auth.PrincipalFromContext(r.Context())
-	a.audit.Record("ticket.create", p.Subject, p.Role.String(), p.Tenant, map[string]any{
+	a.audit.Record(r.Context(), "ticket.create", p.Subject, p.Role.String(), p.Tenant, map[string]any{
 		"id": tk.ID, "path": tk.PathID, "owner": tk.Owner,
 	})
 	writeJSON(w, http.StatusOK, tk)
@@ -78,7 +78,7 @@ func (a *API) closeTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := auth.PrincipalFromContext(r.Context())
-	a.audit.Record("ticket.close", p.Subject, p.Role.String(), p.Tenant, map[string]any{
+	a.audit.Record(r.Context(), "ticket.close", p.Subject, p.Role.String(), p.Tenant, map[string]any{
 		"id": tk.ID, "path": tk.PathID,
 	})
 	writeJSON(w, http.StatusOK, tk)

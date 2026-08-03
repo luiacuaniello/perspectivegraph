@@ -14,7 +14,6 @@ package analyzer
 // random numbers so the before/after risk delta reflects the cut, not noise.
 
 import (
-	"container/heap"
 	"fmt"
 	"math"
 	"sort"
@@ -78,7 +77,7 @@ func (g *wgraph) shortest(src, dst string, removedNodes map[string]bool, removed
 	pq := &minHeap{{node: src, d: 0}}
 
 	for pq.Len() > 0 {
-		cur := heap.Pop(pq).(heapItem)
+		cur := pq.pop()
 		if cur.d > dist[cur.node] {
 			continue
 		}
@@ -90,7 +89,7 @@ func (g *wgraph) shortest(src, dst string, removedNodes map[string]bool, removed
 			if old, ok := dist[e.to]; !ok || nd < old {
 				dist[e.to] = nd
 				prev[e.to] = cur.node
-				heap.Push(pq, heapItem{node: e.to, d: nd})
+				pq.push(heapItem{node: e.to, d: nd})
 			}
 		}
 	}

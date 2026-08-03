@@ -1,7 +1,7 @@
 {
 	"info": {
 		"name": "PerspectiveGraph API",
-		"description": "All PerspectiveGraph endpoints: health checks, the scanner-webhook ingest API (:8081) and the GraphQL API (:8080).\n\nRun the **Ingest** folder top-to-bottom to reproduce the demo (`make seed`): six core sources + two discovery collectors (Kubernetes, cloud network) that correlate into six ranked attack paths. The analyzer recomputes paths on its interval (default 30s), so give it a moment before querying GraphQL.\n\nAdjust `apiUrl` / `ingestUrl` collection variables to point at another deployment.\n\nThreat intel: run the backend with THREATINTEL=on to enrich CVEs with CISA KEV (exploited in the wild) + FIRST EPSS (30-day exploitation probability); the GraphQL queries below expose node.kev / node.epss and posture.kevOnPaths.\n\nAuth: if the backend runs with INGEST_HMAC_SECRET / API_TOKENS set, fill the collection variables `ingestHmacSecret` and `apiToken` - a pre-request script then signs ingest requests (HMAC) and adds the bearer token to GraphQL requests automatically. Leave them empty for an open (dev) backend.\n\nMulti-tenant: set the `tenant` collection variable (and use that tenant's `ingestHmacSecret`/`apiToken`) to scope ingest + queries to one tenant; the pre-request script adds the X-Tenant header automatically.\n\nAction layer: drift alerts fire to ALERT_WEBHOOK_URL when a new path appears; per-path Falco/Sigma detections are on the GraphQL AttackPath; GET /export/ndjson is the SIEM enrichment feed.",
+		"description": "All PerspectiveGraph endpoints: health checks, the scanner-webhook ingest API (:8081) and the GraphQL API (:8080).\n\nRun the **Ingest** folder top-to-bottom to reproduce the demo (`make seed`): six core sources + two discovery collectors (Kubernetes, cloud network) that correlate into six ranked attack paths. The analyzer recomputes paths on its interval (default 30s), so give it a moment before querying GraphQL.\n\nAdjust `apiUrl` / `ingestUrl` collection variables to point at another deployment.\n\nThreat intel: run the backend with THREATINTEL=on to enrich CVEs with CISA KEV (exploited in the wild) + FIRST EPSS (30-day exploitation probability); the GraphQL queries below expose node.kev / node.epss and posture.kevOnPaths.\n\nAuth: if the backend runs with INGEST_HMAC_SECRET / API_TOKENS set, fill the collection variables `ingestHmacSecret` and `apiToken` - a pre-request script then signs ingest requests (HMAC) and adds the bearer token to GraphQL requests automatically. Leave them empty for an open (dev) backend.\n\nMulti-tenant: set the `tenant` collection variable (and use that tenant's `ingestHmacSecret`/`apiToken`) to scope ingest + queries to one tenant; the pre-request script adds the X-Tenant header automatically.\n\nAction layer: drift alerts fire to ALERT_WEBHOOK_URL when a new path appears; per-path Falco/Sigma detections are on the GraphQL AttackPath; GET /export/ndjson is the SIEM enrichment feed.\n\nRequest correlation: every response carries an **X-Request-Id** header, and the same id is written into the audit log (`fields.request_id`) and onto log lines made with that request's context - so one identifier joins what you saw, what the app logged and what was audited. Send your own X-Request-Id to keep an id you already correlate on; it is honoured when it is at most 64 characters of letters, digits, `-`, `_` or `.`, and replaced otherwise, since that value is echoed back and logged.",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"variable": [
@@ -1040,6 +1040,35 @@
 							}
 						},
 						"description": "High-level counters for the overview cards."
+					}
+				},
+				{
+					"name": "Ingest coverage (what the board was built from)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{apiUrl}}/graphql",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "{ ingestCoverage { source events nodes edges firstSeen lastSeen stale silentFor } }",
+								"variables": ""
+							}
+						},
+						"description": "Which collectors have actually reported, how recently, and how much - the one thing that separates \"no attack path\" from \"nothing was ever ingested about that part of the estate\". A false negative is invisible by definition: nobody opens a ticket for a route they were never shown, so a green board over a region no collector reached is not good news. `stale: true` with `silentFor` means that source has stopped reporting and the verdict is answering from old data. Coverage is per-process and in memory by design: a restart genuinely has not been told anything yet, and claiming otherwise from a file would be the exact false assurance this exists to prevent."
 					}
 				},
 				{

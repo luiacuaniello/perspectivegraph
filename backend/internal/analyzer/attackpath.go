@@ -15,7 +15,6 @@
 package analyzer
 
 import (
-	"container/heap"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -194,7 +193,8 @@ func FindCriticalPaths(snap graph.Snapshot) []AttackPath {
 	// the original sequential nested loop (and thus the post-sort output) exactly.
 	perSeed := make([][]AttackPath, len(seeds))
 	if workers := resolvedWorkers(len(seeds)); workers <= 1 {
-		sc := newScratch()
+		sc := getScratch()
+		defer putScratch(sc)
 		for i, seed := range seeds {
 			perSeed[i] = pathsFromSeed(seed, jewels, adj, nodes, sc)
 		}
@@ -205,7 +205,8 @@ func FindCriticalPaths(snap graph.Snapshot) []AttackPath {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				sc := newScratch() // per-worker: sharing one would race
+				sc := getScratch() // per-worker: sharing one would race
+				defer putScratch(sc)
 				for i := range work {
 					perSeed[i] = pathsFromSeed(seeds[i], jewels, adj, nodes, sc)
 				}
@@ -595,6 +596,28 @@ func (s *scratch) reset() {
 	s.pq = s.pq[:0]
 }
 
+// scratchPool carries the grown maps from one PASS into the next. Reuse between seeds
+// was already in place (one scratch per worker, reset between seeds); the remaining cost
+// was that every pass started from empty maps and regrew them to the size of the graph.
+// After the heap fix that regrowth became the single largest source of bytes in a pass -
+// 111 MB of 276 MB in the 64-seed profile - and it is pure repetition: the analyzer
+// re-runs on a timer against a graph whose size barely moves between runs.
+//
+// A sync.Pool rather than a fixed cache, because the GC may reclaim its contents between
+// cycles. An idle deployment hands the memory back instead of pinning graph-sized maps
+// forever; a busy one keeps hitting the warm path. Correctness does not depend on a hit:
+// dijkstra calls reset() before touching anything, so a recycled scratch and a fresh one
+// are indistinguishable to the search.
+var scratchPool = sync.Pool{New: func() any { return newScratch() }}
+
+func getScratch() *scratch { return scratchPool.Get().(*scratch) }
+
+// putScratch returns a scratch for reuse. The priority queue keeps its backing array,
+// and with it references to the node ids it last held; that is bounded by the graph and
+// is the price of not reallocating it, but the maps - by far the larger retention - are
+// emptied by reset() on the next use.
+func putScratch(s *scratch) { scratchPool.Put(s) }
+
 func dijkstra(src string, adj map[string][]outEdge, sc *scratch) (dist map[string]float64, prev map[string]Step) {
 	if sc == nil {
 		sc = newScratch()
@@ -602,11 +625,11 @@ func dijkstra(src string, adj map[string][]outEdge, sc *scratch) (dist map[strin
 	sc.reset()
 	dist, prev = sc.dist, sc.prev
 	dist[src] = 0
-	sc.pq = append(sc.pq, heapItem{node: src, d: 0})
 	pq := &sc.pq
+	pq.push(heapItem{node: src, d: 0})
 
 	for pq.Len() > 0 {
-		cur := heap.Pop(pq).(heapItem)
+		cur := pq.pop()
 		if cur.d > dist[cur.node] {
 			continue // stale entry
 		}
@@ -615,7 +638,7 @@ func dijkstra(src string, adj map[string][]outEdge, sc *scratch) (dist map[strin
 			if old, ok := dist[e.to]; !ok || nd < old {
 				dist[e.to] = nd
 				prev[e.to] = Step{EdgeType: e.typ, From: cur.node, To: e.to, Probability: e.prob, ResolutionMethod: e.resMethod, ResolutionConfidence: e.resConf, WeightBasis: e.basis, WeightConfidence: e.basisConf, EvidenceCount: e.evid}
-				heap.Push(pq, heapItem{node: e.to, d: nd})
+				pq.push(heapItem{node: e.to, d: nd})
 			}
 		}
 	}
@@ -682,16 +705,67 @@ type heapItem struct {
 	d    float64
 }
 
+// minHeap is a hand-rolled binary heap rather than a container/heap.Interface, and the
+// reason is measured rather than stylistic. container/heap's Push and Pop take and
+// return `any`; a heapItem is 24 bytes, too wide to travel inside an interface's pointer
+// word, so EVERY push and pop copied one onto the heap purely to satisfy the interface.
+// In the alloc_objects profile of the 64-seed benchmark that boxing was 4.22M of 4.88M
+// allocations - 86% of everything this package allocated was the cost of the abstraction,
+// not of the search. (The push half is billed to dijkstra, since boxing happens at the
+// call site, which is why that function looked like the culprit.)
+//
+// The sift loops below mirror container/heap's `up` and `down` EXACTLY: same strict `<`,
+// same choice of child when two compare equal. That is load-bearing, not incidental.
+// Equal distances are common here - edge probabilities repeat - and a different tie-break
+// would silently select a different shortest path, changing path ids and the generated
+// remediation for reasons no reader could ever trace back to a data-structure swap.
+// Identity is by construction, and heap_test.go pins it against container/heap on
+// randomised input.
 type minHeap []heapItem
 
-func (h minHeap) Len() int           { return len(h) }
-func (h minHeap) Less(i, j int) bool { return h[i].d < h[j].d }
-func (h minHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
-func (h *minHeap) Push(x any)        { *h = append(*h, x.(heapItem)) }
-func (h *minHeap) Pop() any {
-	old := *h
-	n := len(old)
-	it := old[n-1]
-	*h = old[:n-1]
-	return it
+func (h minHeap) Len() int { return len(h) }
+
+// push appends and sifts up. Mirrors container/heap.up.
+func (h *minHeap) push(it heapItem) {
+	*h = append(*h, it)
+	a := *h
+	j := len(a) - 1
+	for {
+		i := (j - 1) / 2 // parent
+		if i == j || !(a[j].d < a[i].d) {
+			break
+		}
+		a[i], a[j] = a[j], a[i]
+		j = i
+	}
+}
+
+// pop removes and returns the minimum; the caller must ensure Len() > 0. Mirrors
+// container/heap.Pop: swap root with last, sift the root down over the remaining
+// elements, then hand back what is now the tail.
+func (h *minHeap) pop() heapItem {
+	a := *h
+	n := len(a) - 1
+	a[0], a[n] = a[n], a[0]
+
+	i := 0
+	for {
+		j1 := 2*i + 1
+		if j1 >= n || j1 < 0 { // j1 < 0 guards int overflow, as container/heap does
+			break
+		}
+		j := j1
+		if j2 := j1 + 1; j2 < n && a[j2].d < a[j1].d {
+			j = j2
+		}
+		if !(a[j].d < a[i].d) {
+			break
+		}
+		a[i], a[j] = a[j], a[i]
+		i = j
+	}
+
+	top := a[n]
+	*h = a[:n]
+	return top
 }

@@ -54,6 +54,7 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/notify"
 	"github.com/luiacuaniello/perspectivegraph/internal/policy"
 	"github.com/luiacuaniello/perspectivegraph/internal/ratelimit"
+	"github.com/luiacuaniello/perspectivegraph/internal/reqid"
 	"github.com/luiacuaniello/perspectivegraph/internal/search"
 	"github.com/luiacuaniello/perspectivegraph/internal/secwatch"
 	"github.com/luiacuaniello/perspectivegraph/internal/suppress"
@@ -180,7 +181,7 @@ func main() {
 	}
 
 	cfg := config.Load()
-	setupLogging(cfg.LogLevel)
+	setupLogging(cfg.LogLevel, cfg.LogFormat)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -233,9 +234,30 @@ func checkProductionConfig(cfg config.Config) error {
 	return nil
 }
 
+// checkAuthConfig enforces the fail-closed rules that hold in EVERY environment, not
+// just a declared production one - which is why it is separate from
+// checkProductionConfig rather than folded into it.
+//
+// A JWT verifier that skips issuer and audience accepts any token its IdP ever minted,
+// including tokens issued to a DIFFERENT relying party sharing the same JWKS. That is a
+// confused deputy: another application's user becomes this application's user, carrying
+// whatever role and tenant claims their token happens to have. It is not a
+// production-only concern - a staging deployment wired to the corporate IdP has exactly
+// the same hole - so the refusal is unconditional.
+func checkAuthConfig(cfg config.Config) error {
+	if cfg.OIDCJWKSURL != "" && (cfg.OIDCIssuer == "" || cfg.OIDCAudience == "") {
+		return errors.New("OIDC enabled (OIDC_JWKS_URL set) but OIDC_ISSUER and/or OIDC_AUDIENCE is empty: " +
+			"refusing to start without iss/aud validation. Set both, or unset OIDC_JWKS_URL to use static API_TOKENS")
+	}
+	return nil
+}
+
 func run(ctx context.Context, cfg config.Config) error {
 	// Validate the deployment profile before touching any dependency.
 	if err := checkProductionConfig(cfg); err != nil {
+		return err
+	}
+	if err := checkAuthConfig(cfg); err != nil {
 		return err
 	}
 
@@ -397,14 +419,22 @@ func run(ctx context.Context, cfg config.Config) error {
 	const watchWindow, watchCooldown = 5 * time.Minute, 15 * time.Minute
 	exfilWatcher := secwatch.New(cfg.ExfilAlertThreshold, watchWindow, watchCooldown, func(key string, count int) {
 		slog.Warn("ALERT: possible attack-map exfiltration", "principal", key, "paths_in_window", count)
-		auditRec.Record("exfil.alert", "secwatch", "", "", map[string]any{"principal": key, "count": count})
+		// No request id: this alert is about a WINDOW of events crossing a
+		// threshold, not about the single request that happened to be last.
+		// Attributing it to that one would point an investigation at an
+		// arbitrary request instead of the pattern.
+		auditRec.Record(context.Background(), "exfil.alert", "secwatch", "", "", map[string]any{"principal": key, "count": count})
 	})
 	if exfilWatcher.Enabled() {
 		slog.Info("exfiltration alerting enabled", "threshold_paths_per_5m", cfg.ExfilAlertThreshold)
 	}
 	authGuard := secwatch.New(cfg.AuthLockoutThreshold, watchWindow, watchCooldown, func(key string, count int) {
 		slog.Warn("ALERT: auth brute-force lockout", "remote", key, "failures_in_window", count)
-		auditRec.Record("auth.lockout.alert", "secwatch", "", "", map[string]any{"remote": key, "count": count})
+		// No request id: this alert is about a WINDOW of events crossing a
+		// threshold, not about the single request that happened to be last.
+		// Attributing it to that one would point an investigation at an
+		// arbitrary request instead of the pattern.
+		auditRec.Record(context.Background(), "auth.lockout.alert", "secwatch", "", "", map[string]any{"remote": key, "count": count})
 	})
 	if authGuard.Enabled() {
 		slog.Info("auth brute-force lockout enabled", "threshold_failures_per_5m", cfg.AuthLockoutThreshold)
@@ -417,13 +447,8 @@ func run(ctx context.Context, cfg config.Config) error {
 	} else {
 		slog.Warn("ingest auth DISABLED - webhook endpoints are open (set INGEST_HMAC_SECRET)")
 	}
-	// Fail-closed: if OIDC is enabled, refuse to start without both iss and aud.
-	// A JWT verifier that skips issuer/audience accepts any RS256 token the IdP
-	// (or another relying party sharing it) ever minted - a silent auth weakness.
-	if cfg.OIDCJWKSURL != "" && (cfg.OIDCIssuer == "" || cfg.OIDCAudience == "") {
-		return errors.New("OIDC enabled (OIDC_JWKS_URL set) but OIDC_ISSUER and/or OIDC_AUDIENCE is empty: " +
-			"refusing to start without iss/aud validation. Set both, or unset OIDC_JWKS_URL to use static API_TOKENS")
-	}
+	// The iss/aud fail-closed rule is enforced by checkAuthConfig, before this
+	// function runs and before the process touches any dependency.
 	authn := auth.Chain{
 		auth.NewTokenStore(cfg.APITokens),
 		auth.NewJWTAuthenticator(auth.JWTConfig{
@@ -784,7 +809,13 @@ func healthCheck() error {
 	return nil
 }
 
-func setupLogging(level string) {
+// setupLogging installs the process logger.
+//
+// The format is a choice, not a default, because the two audiences want opposite things:
+// `text` is what a person reading a terminal during `make demo` wants, and `json` is what
+// every log pipeline wants. This tool EXPORTS to SIEMs for a living, so shipping logs it
+// could not ingest itself was a poor look as well as a poor default for production.
+func setupLogging(level, format string) {
 	var lvl slog.Level
 	switch level {
 	case "debug":
@@ -796,7 +827,44 @@ func setupLogging(level string) {
 	default:
 		lvl = slog.LevelInfo
 	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: lvl})))
+	opts := &slog.HandlerOptions{Level: lvl}
+
+	var h slog.Handler
+	if strings.EqualFold(strings.TrimSpace(format), "json") {
+		h = slog.NewJSONHandler(os.Stdout, opts)
+	} else {
+		h = slog.NewTextHandler(os.Stdout, opts)
+	}
+	slog.SetDefault(slog.New(&requestIDHandler{inner: h}))
+}
+
+// requestIDHandler stamps request_id onto any record logged with a context that carries
+// one. It works at the handler rather than the call site so a log line does not have to
+// remember to correlate itself - the ones that can, do.
+//
+// Calls that pass no context (plain slog.Info from a background task) are untouched:
+// there is no request to attribute them to, and inventing one would be worse than the
+// silence.
+type requestIDHandler struct{ inner slog.Handler }
+
+func (h *requestIDHandler) Enabled(ctx context.Context, l slog.Level) bool {
+	return h.inner.Enabled(ctx, l)
+}
+
+func (h *requestIDHandler) Handle(ctx context.Context, r slog.Record) error {
+	if id := reqid.FromContext(ctx); id != "" {
+		r = r.Clone()
+		r.AddAttrs(slog.String("request_id", id))
+	}
+	return h.inner.Handle(ctx, r)
+}
+
+func (h *requestIDHandler) WithAttrs(as []slog.Attr) slog.Handler {
+	return &requestIDHandler{inner: h.inner.WithAttrs(as)}
+}
+
+func (h *requestIDHandler) WithGroup(name string) slog.Handler {
+	return &requestIDHandler{inner: h.inner.WithGroup(name)}
 }
 
 // runKEVHoldout drives the holdout on its own slow ticker: one pass per day is ample

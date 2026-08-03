@@ -122,7 +122,7 @@ func (a *API) runAI(w http.ResponseWriter, r *http.Request, action, system, user
 	}
 	p := auth.PrincipalFromContext(r.Context())
 	provider, model := a.ai.Describe()
-	a.audit.Record(action, p.Subject, p.Role.String(), p.Tenant,
+	a.audit.Record(r.Context(), action, p.Subject, p.Role.String(), p.Tenant,
 		map[string]any{"answer_chars": len(answer), "provider": provider, "model": model})
 
 	// The answer says which model wrote it. Prose reads with the same authority

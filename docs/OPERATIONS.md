@@ -136,6 +136,30 @@ Pin to a signed, digest-referenced image and verify it before rollout (see
   load the rules, point a scrape at `/metrics`. For analyzer load/scale characterization see
   [SCALE.md](SCALE.md) (`make scale-test`).
 
+### Logs
+
+- Set **`LOG_FORMAT=json`** in production. The default is `text`, which is what a person
+  wants during `make demo` and what no log pipeline wants. `LOG_LEVEL` is
+  `debug|info|warn|error`. Both go to stdout; collect them there rather than writing files.
+- **Every request carries an id.** It is generated per request (or taken from an inbound
+  `X-Request-Id` when that value is short and alphanumeric), returned in the
+  `X-Request-Id` response header, attached to log lines made with the request's context,
+  and written into the audit record's `fields.request_id`. So one identifier joins what a
+  user reports, what the application log says, and what the audit log recorded - which is
+  the join you want at the moment you actually need it.
+  - It rides in the audit record's `fields`, not in a new column, so the hash chain still
+    verifies exactly as before and `verify-audit` is unaffected.
+  - Alerts raised by the abuse watchers (`exfil.alert`, `auth.lockout.alert`) deliberately
+    carry **no** request id: they describe a window of events crossing a threshold, not
+    the one request that happened to be last, and pinning them to it would point an
+    investigation at an arbitrary call.
+- **`/metrics` is open and unthrottled** - deliberately, so a scrape never starves - and
+  it is served on the same port as the API. Series such as
+  `perspectivegraph_analyzer_critical_paths` carry a `tenant` label, so reaching that port
+  is enough to enumerate tenants and read each one's current path count. Scrape from
+  inside the cluster and do not publish the API port directly; see
+  [THREAT-MODEL.md](THREAT-MODEL.md).
+
 ## 7. High availability
 
 The analyzer/scheduler and connectors are **leader-gated** - extra replicas do not

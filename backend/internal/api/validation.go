@@ -214,7 +214,7 @@ func (a *API) putValidation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := auth.PrincipalFromContext(r.Context())
-	a.audit.Record("validation.put", p.Subject, p.Role.String(), p.Tenant, map[string]any{
+	a.audit.Record(r.Context(), "validation.put", p.Subject, p.Role.String(), p.Tenant, map[string]any{
 		"id": rec.ID, "path": rec.PathID, "outcome": string(rec.Outcome), "source": rec.Source,
 	})
 	writeJSON(w, http.StatusOK, rec)
@@ -293,7 +293,7 @@ func (a *API) importValidations(w http.ResponseWriter, r *http.Request) {
 		recorded++
 	}
 	p := auth.PrincipalFromContext(r.Context())
-	a.audit.Record("validation.import", p.Subject, p.Role.String(), p.Tenant, map[string]any{
+	a.audit.Record(r.Context(), "validation.import", p.Subject, p.Role.String(), p.Tenant, map[string]any{
 		"source": source, "recorded": recorded, "unmatched": unmatched, "rejected": rejected,
 	})
 	// Nothing stored and every finding was a client error ⇒ 400, so a broken integration

@@ -20,10 +20,22 @@ type Limiter struct {
 	burst int
 	ttl   time.Duration
 
+	maxClients int
+	// overflow is the shared bucket serving callers we refuse to allocate per-IP state
+	// for once maxClients is reached. One limiter, created up front, so the overflow
+	// path itself allocates nothing.
+	overflow *rate.Limiter
+
 	mu      sync.Mutex
 	clients map[string]*client
 	lastGC  time.Time
 }
+
+// DefaultMaxClients bounds the per-IP table. At roughly 200 bytes per entry - key,
+// client struct and the rate.Limiter behind it - 100k entries is about 20 MB, which is
+// a footprint an operator can reason about, and far more distinct peers than a single
+// backend legitimately serves inside one TTL.
+const DefaultMaxClients = 100_000
 
 type client struct {
 	lim  *rate.Limiter
@@ -37,12 +49,33 @@ func New(rps float64, burst int) *Limiter {
 		burst = 1
 	}
 	return &Limiter{
-		rate:    rate.Limit(rps),
-		burst:   burst,
-		ttl:     10 * time.Minute,
-		clients: map[string]*client{},
-		lastGC:  time.Now(),
+		rate:       rate.Limit(rps),
+		burst:      burst,
+		ttl:        10 * time.Minute,
+		maxClients: DefaultMaxClients,
+		overflow:   rate.NewLimiter(rate.Limit(rps), burst),
+		clients:    map[string]*client{},
+		lastGC:     time.Now(),
 	}
+}
+
+// WithMaxClients overrides the per-IP table ceiling. Returns the limiter for chaining.
+func (l *Limiter) WithMaxClients(n int) *Limiter {
+	if n > 0 {
+		l.maxClients = n
+	}
+	return l
+}
+
+// TrackedClients reports the current size of the per-IP table, so a test can assert the
+// bound holds and an operator can see the footprint.
+func (l *Limiter) TrackedClients() int {
+	if l == nil {
+		return 0
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.clients)
 }
 
 // Enabled reports whether limiting is active.
@@ -53,13 +86,28 @@ func (l *Limiter) allow(ip string) bool {
 	defer l.mu.Unlock()
 
 	now := time.Now()
-	if now.Sub(l.lastGC) > l.ttl {
+	if now.Sub(l.lastGC) > l.ttl || len(l.clients) > l.maxClients {
 		for k, c := range l.clients {
 			if now.Sub(c.seen) > l.ttl {
 				delete(l.clients, k)
 			}
 		}
 		l.lastGC = now
+	}
+	// The sweep above is time-based, so between two passes the map had no ceiling at
+	// all - and the key is the peer address, which the caller picks. A single IPv6 /64
+	// supplies 2^64 of them, so ten minutes of rotation could grow this map to
+	// gigabytes: the control meant to stop resource exhaustion became a way to cause
+	// it. When even a fresh sweep leaves us over the cap, every entry is younger than
+	// the TTL - the flood case - so stop minting per-IP state.
+	//
+	// Overflow callers share ONE bucket rather than being denied outright or waved
+	// through. Denying would let a flood lock out every genuinely new client; a fresh
+	// per-request limiter would allow everything, since a new token bucket starts full.
+	// Sharing degrades new arrivals during an attack without ever unbounding memory,
+	// and the already-tracked clients keep their own budgets untouched.
+	if _, known := l.clients[ip]; !known && len(l.clients) >= l.maxClients {
+		return l.overflow.Allow()
 	}
 
 	c := l.clients[ip]

@@ -85,7 +85,7 @@ func (a *API) openRemediationPR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := auth.PrincipalFromContext(r.Context())
-	a.audit.Record("remediation.pr", p.Subject, p.Role.String(), p.Tenant, map[string]any{
+	a.audit.Record(r.Context(), "remediation.pr", p.Subject, p.Role.String(), p.Tenant, map[string]any{
 		"path": path.ID, "slug": slug, "url": url, "files": len(files),
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"url": url, "files": len(files)})

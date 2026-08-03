@@ -11,6 +11,8 @@ backend:
   # the API and ingest are authenticated; "demo" keeps the permissive default.
   env: demo
   logLevel: info
+  # text (human) or json (log pipelines). Production should be json.
+  logFormat: text
   analyzerInterval: 30s
   # Scale knobs. analyzerWorkers bounds the per-seed pathfinding parallelism
   # (0 = auto = CPUs; the result is identical, it only trades CPU for pass

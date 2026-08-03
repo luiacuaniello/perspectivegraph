@@ -252,6 +252,8 @@ type Config struct {
 
 	// Observability
 	LogLevel string
+	// LogFormat is "text" (human, the demo default) or "json" (log pipelines).
+	LogFormat string
 }
 
 // Load reads configuration from the environment, applying sane defaults so the
@@ -370,7 +372,8 @@ func Load() Config {
 		AuthLockoutThreshold: getint("AUTH_LOCKOUT_THRESHOLD", 50),
 		ExfilAlertThreshold:  getint("EXFIL_ALERT_THRESHOLD", 0),
 
-		LogLevel: getenv("LOG_LEVEL", "info"),
+		LogLevel:  getenv("LOG_LEVEL", "info"),
+		LogFormat: getenv("LOG_FORMAT", "text"),
 	}
 }
 

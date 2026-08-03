@@ -87,7 +87,7 @@ func (a *API) putSuppression(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := auth.PrincipalFromContext(r.Context())
-	a.audit.Record("suppress.put", p.Subject, p.Role.String(), p.Tenant, map[string]any{
+	a.audit.Record(r.Context(), "suppress.put", p.Subject, p.Role.String(), p.Tenant, map[string]any{
 		"path": stored.PathID, "reason": string(stored.Reason), "owner": stored.Owner,
 	})
 	writeJSON(w, http.StatusOK, stored)
@@ -110,7 +110,7 @@ func (a *API) deleteSuppression(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := auth.PrincipalFromContext(r.Context())
-	a.audit.Record("suppress.delete", p.Subject, p.Role.String(), p.Tenant, map[string]any{
+	a.audit.Record(r.Context(), "suppress.delete", p.Subject, p.Role.String(), p.Tenant, map[string]any{
 		"path": pathID,
 	})
 	w.WriteHeader(http.StatusNoContent)

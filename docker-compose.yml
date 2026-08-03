@@ -138,6 +138,7 @@ services:
       KEV_HOLDOUT_PATH: ${KEV_HOLDOUT_PATH:-}
       KEV_HOLDOUT_WINDOW: ${KEV_HOLDOUT_WINDOW:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
       # demo by default; PG_ENV=production refuses to start without auth on both sides.
       PG_ENV: ${PG_ENV:-demo}
       # Auth (optional) - pass through when set; open with a loud warning otherwise.
