@@ -171,7 +171,15 @@ export default function GraphCanvas({ nodes, edges, highlightNodes, highlightEdg
   // to colour a fresh build, and restyle in place (no relayout) when it toggles.
   const { theme } = useTheme();
   const themeRef = useRef(theme);
-  themeRef.current = theme;
+  // Written in an effect, not during render. A ref write during render is discarded or
+  // applied out of order under concurrent rendering and runs twice in StrictMode, so
+  // the value a later effect reads is not guaranteed to be the one this render saw.
+  // useRef's initial value already makes the first build correct; this only has to keep
+  // up with later toggles, and the rebuild effect it feeds runs on topology changes,
+  // which are always after this has settled.
+  useEffect(() => {
+    themeRef.current = theme;
+  }, [theme]);
 
   // (Re)build the graph only when the topology actually changes - the dashboard
   // polls every few seconds with fresh arrays, and rebuilding would reset the
