@@ -21,6 +21,35 @@ PerspectiveGraph somewhere, this is the shape of the honest version.
   handing to an agent instead of asking a model to imagine routes.
 - Everything above is **verifiable in one command**, not asserted.
 
+## Where this sits
+
+Someone will ask what this replaces. The answer is three questions, and none of them
+needs another product's name to answer - describe the shape precisely enough and the
+reader places it themselves.
+
+**Does it replace the tools I run?** No. It consumes them. The graph is built from the
+output of scanners already in the pipeline, so the value appears without another agent,
+another scan window, or another thing to keep running. A tool that competes with your
+scanners has to win on detection; this one has to win on what it does with what they
+already found, which is a different job.
+
+**When does it act?** At the pull request, before the merge - which is the whole point,
+and the sharpest line to draw. Reachability answered after deployment produces a ticket;
+answered at review it produces a diff that never lands. The engine also runs
+continuously against the live graph, but the wedge is the merge gate, and a product that
+can only tell you about production is answering a later question.
+
+**Why believe the number?** Because it grades itself. Each route carries which of its
+hops are observed evidence and which are estimates, and the calibration report says
+whether the scores held up against recorded outcomes - including saying "insufficient
+data" and withholding a verdict when nothing has been tested. The distinguishing claim
+is not accuracy; it is that the accuracy is measured and published, so a wrong number is
+visible rather than merely wrong.
+
+What it therefore sits *beside* rather than *instead of*: the scanners that find things,
+the inventory that lists them, the runtime that watches them. What it sits *in front of*
+is the merge.
+
 ## What is not claimed
 
 State these before anyone has to find them. They are in the README's maturity
