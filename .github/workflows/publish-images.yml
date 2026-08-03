@@ -62,7 +62,7 @@ jobs:
       # source comes from the tag. So a fix to the build plumbing cannot be retrofitted
       # onto a tag that predates it. That is the intended trade: when a release build is
       # broken, cut a patch release rather than quietly changing what a tag builds.
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: ${{ inputs.tag }}
 
@@ -180,7 +180,7 @@ jobs:
       id-token: write # cosign keyless (Sigstore OIDC)
       attestations: write # SLSA build provenance
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: ${{ inputs.tag }}
 
