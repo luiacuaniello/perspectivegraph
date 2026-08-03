@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.3](https://github.com/luiacuaniello/perspectivegraph/compare/v0.9.2...v0.9.3) (2026-08-03)
+
+
+### Bug Fixes
+
+* **analyzer:** shorten node ids on rune and word boundaries, and say the detections are alternatives ([#99](https://github.com/luiacuaniello/perspectivegraph/issues/99)) ([1bf2bc3](https://github.com/luiacuaniello/perspectivegraph/commit/1bf2bc32a88b4e1636ab1fe8cf4b37b8afed4f2f))
+
 ## [0.9.2](https://github.com/luiacuaniello/perspectivegraph/compare/v0.9.1...v0.9.2) (2026-08-03)
 
 
