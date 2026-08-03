@@ -34,5 +34,17 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Grouped like the other two ecosystems, and for a reason this one learned the hard
+    # way: ungrouped, every action bump is its own PR, and nearly all of them edit
+    # .github/workflows/ci.yml. Five accumulated, each conflicting with the others, so
+    # merging any one forced a rebase of the rest - and none was merged for 39 days.
+    # On a security tool, a wall of stale-but-green dependency PRs is the first thing a
+    # visitor sees and the hardest to argue with. One PR a week is reviewable; five that
+    # fight over one file are not.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 5
     commit-message:
       prefix: "chore(ci)"
