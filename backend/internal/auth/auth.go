@@ -148,6 +148,17 @@ type tokenEntry struct {
 	expiry    time.Time // zero = no expiry
 }
 
+// Len reports how many usable tokens the store holds - entries that parsed, named a
+// known role and have not expired. It exists so a caller can tell "no credential was
+// configured" apart from "a credential was configured and none of it survived parsing",
+// which look identical from the outside and are the same open endpoint.
+func (ts *TokenStore) Len() int {
+	if ts == nil {
+		return 0
+	}
+	return len(ts.entries)
+}
+
 func NewTokenStore(spec string) *TokenStore {
 	ts := &TokenStore{now: time.Now}
 	for _, entry := range strings.Split(spec, ",") {

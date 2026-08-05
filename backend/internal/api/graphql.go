@@ -37,18 +37,21 @@ import (
 // caller's tenant (from the authenticated principal; the default tenant when
 // auth is open).
 type API struct {
-	coverage     *coverage.Store
-	manager      *graph.Manager
-	analyzer     *analyzer.Service
-	search       search.Indexer
-	authn        auth.Authenticator
-	audit        audit.Recorder
-	limiter      *ratelimit.Limiter
-	suppress     *suppress.Store
-	history      *history.Store
-	ticket       *ticket.Store
-	validation   *validation.Store
-	corsOrigins  []string
+	coverage    *coverage.Store
+	manager     *graph.Manager
+	analyzer    *analyzer.Service
+	search      search.Indexer
+	authn       auth.Authenticator
+	audit       audit.Recorder
+	limiter     *ratelimit.Limiter
+	suppress    *suppress.Store
+	history     *history.Store
+	ticket      *ticket.Store
+	validation  *validation.Store
+	corsOrigins []string
+	// degraded, when non-empty, is why this instance serves in a reduced mode;
+	// /healthz fails while it is set. See WithDegraded.
+	degraded     string
 	exportSigner *exportsign.Signer
 	exfil        *secwatch.Watcher // exfiltration detector (attack-map bulk reads)
 	authGuard    *secwatch.Watcher // auth brute-force lockout

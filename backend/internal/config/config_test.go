@@ -19,7 +19,7 @@ func TestPostgresDSNSSLMode(t *testing.T) {
 	}
 	for val, want := range cases {
 		t.Setenv("POSTGRES_SSLMODE", val)
-		if dsn := buildPostgresDSN(); !strings.Contains(dsn, want) {
+		if dsn := buildPostgresDSN(&secretReader{}); !strings.Contains(dsn, want) {
 			t.Errorf("POSTGRES_SSLMODE=%q → DSN %q, want it to contain %q", val, dsn, want)
 		}
 	}

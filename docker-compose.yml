@@ -170,6 +170,30 @@ services:
       # Data hygiene: redact secret-looking values out of scanner output before the
       # store (default on).
       SCRUB_INGEST: ${SCRUB_INGEST:-true}
+      # ── Parity block ────────────────────────────────────────────────
+      # Every key the backend reads must be reachable from here, or an operator
+      # who follows OPERATIONS.md sets it in .env and it is silently ignored -
+      # which is how CORS_ALLOWED_ORIGINS and the per-tenant ingest HMAC used to
+      # do nothing under Docker while working under Helm. Guarded by
+      # TestDeploySurfacesExposeEveryConfigKey.
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
+      AUTH_LOCKOUT_THRESHOLD: ${AUTH_LOCKOUT_THRESHOLD:-}
+      EXFIL_ALERT_THRESHOLD: ${EXFIL_ALERT_THRESHOLD:-}
+      INGEST_HMAC_SECRETS: ${INGEST_HMAC_SECRETS:-}
+      INGEST_RATE_RPS: ${INGEST_RATE_RPS:-}
+      API_RATE_RPS: ${API_RATE_RPS:-}
+      COVERAGE_STALE_AFTER: ${COVERAGE_STALE_AFTER:-}
+      GRAPH_STRICT: ${GRAPH_STRICT:-}
+      POSTGRES_DSN: ${POSTGRES_DSN:-}
+      NATS_STREAM: ${NATS_STREAM:-}
+      NATS_SUBJECT: ${NATS_SUBJECT:-}
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+      ALERT_WEBHOOK_FORMAT: ${ALERT_WEBHOOK_FORMAT:-}
+      GITLAB_TOKEN: ${GITLAB_TOKEN:-}
+      GITLAB_API_URL: ${GITLAB_API_URL:-}
+      GITLAB_DRY_RUN: ${GITLAB_DRY_RUN:-}
+      KEV_FEED_URL: ${KEV_FEED_URL:-}
+      EPSS_API_URL: ${EPSS_API_URL:-}
       # OIDC login (SSO) - validation (jwks/iss/aud) + the SPA-facing coordinates
       # the dashboard login gate uses for the Authorization-Code + PKCE flow.
       OIDC_JWKS_URL: ${OIDC_JWKS_URL:-}

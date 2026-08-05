@@ -6,19 +6,37 @@ backend:
     tag: latest
     pullPolicy: IfNotPresent
   replicas: 1
+  # Requests/limits are REQUIRED for a production deployment. Left empty the pod is
+  # BestEffort QoS: the kubelet evicts it first under node pressure, and an analyzer
+  # pass over a large graph is exactly the memory spike that triggers that. Sized from
+  # the measured curve in docs/SCALE.md (a 100k-node pass allocates ~350 MB).
   resources: {}
+    # requests:
+    #   cpu: 500m
+    #   memory: 512Mi
+    # limits:
+    #   memory: 2Gi   # no cpu limit: throttling an analyzer pass only lengthens it
   # Deployment profile. "production" makes the backend refuse to start unless both
   # the API and ingest are authenticated; "demo" keeps the permissive default.
   env: demo
   logLevel: info
   # text (human) or json (log pipelines). Production should be json.
   logFormat: text
+  # Left empty => the backend's own default applies. Listed here so every key the
+  # backend reads is reachable from values.yaml (see the parity test).
+  corsAllowedOrigins: ""
+  authLockoutThreshold: ""
+  exfilAlertThreshold: ""
+  coverageStaleAfter: ""
+  graphStrict: ""
   analyzerInterval: 30s
   # Scale knobs. analyzerWorkers bounds the per-seed pathfinding parallelism
   # (0 = auto = CPUs; the result is identical, it only trades CPU for pass
   # latency). analyzerIncremental keeps the graph resident and patches it with the
   # per-pass delta instead of re-reading it all each pass - the fetch-cost win on a
   # large AGE graph; off by default (trades memory for fetch cost).
+  analyzerMaxHops: ""
+  analyzerDbPaths: ""
   analyzerWorkers: 0
   analyzerIncremental: false
   # Attacker-profile mixture: the path score is also marginalized over a latent
@@ -64,6 +82,8 @@ service:
 # deploy/postgres/init-age.sql). auth.* is used for the external instance too.
 postgres:
   enabled: true
+  # Full libpq DSN; when set it bypasses host/port/user/password/db/sslMode.
+  dsn: ""
   externalHost: ""
   externalPort: 5432
   image: apache/age:release_PG16_1.6.0@sha256:16aa423d20a31aed36a3313244bf7aa00731325862f20ed584510e381f2feaed
@@ -265,3 +285,20 @@ ingress:
     enabled: false
     secretName: perspectivegraph-tls
     host: ""
+
+# Threat intel (CISA KEV + FIRST EPSS). Empty => the backend's defaults.
+threatIntel:
+  enabled: ""
+  kevFeedUrl: ""
+  epssApiUrl: ""
+
+# KEV holdout calibration. Needs threatIntel and a path that survives restarts.
+kevHoldout:
+  enabled: ""
+  path: ""
+  window: ""
+
+# Drift alerting webhook.
+alert:
+  webhookUrl: ""
+  webhookFormat: ""

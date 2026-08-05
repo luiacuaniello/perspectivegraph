@@ -28,7 +28,12 @@ trap 'rm -f "$profile"' EXIT
 
 echo "→ running tests with cross-package coverage attribution…"
 GOTOOLCHAIN="${GOTOOLCHAIN:-go1.25.12}" CGO_ENABLED=0 \
-  go test ./... -coverpkg=./... -coverprofile="$profile" -timeout 900s >/dev/null
+  # -count=1 disables the test cache. Without it the gate can report a stale number:
+  # a package whose integration tests skipped earlier (database down, env var unset)
+  # keeps that degraded result in the cache, and the gate happily grades it. That
+  # cost real time once already - it looked exactly like a 3-point regression. CI
+  # starts with an empty cache, so this only ever slows a local run.
+  go test ./... -coverpkg=./... -coverprofile="$profile" -timeout 900s -count=1 >/dev/null
 
 awk -v min="$MIN" '
 NR > 1 {
