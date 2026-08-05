@@ -42,6 +42,18 @@ const (
 	maxBodyBytes = 256 << 10 // 256 KiB
 )
 
+// WithDegraded marks the API as serving in a reduced mode, which makes /healthz fail so
+// an orchestrator stops routing to it. The reason is the human-readable cause, e.g. the
+// graph store having fallen back to memory because Apache AGE was unreachable. An empty
+// reason (the default) means healthy.
+//
+// It is deliberately NOT set for a deployment that runs on the in-memory store BY DESIGN:
+// that is the demo profile working as intended, not a failure.
+func (a *API) WithDegraded(reason string) *API {
+	a.degraded = reason
+	return a
+}
+
 // WithRateLimit caps API requests per client IP. Returns the API for chaining;
 // a nil limiter is a no-op.
 func (a *API) WithRateLimit(l *ratelimit.Limiter) *API {
@@ -93,10 +105,14 @@ func (a *API) Handler() (http.Handler, error) {
 	})
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
-	})
+	// Health has to be able to say no, or it is decoration. It used to return 200
+	// unconditionally, which meant the Kubernetes readiness probe only ever proved the
+	// HTTP server was listening. Combined with the in-memory fallback that engaged when
+	// Apache AGE was unreachable, a backend serving an empty volatile graph reported
+	// healthy and kept receiving traffic - and an empty graph answers "no attack paths",
+	// which reads as good news. A degraded engine now fails the probe and is taken out
+	// of rotation, because withholding an answer beats returning a falsely reassuring one.
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { a.writeHealth(w) })
 	// Prometheus metrics - open and unthrottled so scraping never starves.
 	mux.Handle("GET /metrics", metrics.Handler())
 	// Public auth config - necessarily open: it tells an unauthenticated SPA how to
@@ -411,4 +427,17 @@ func (a *API) rawSnapshot(ctx context.Context) (graph.Snapshot, error) {
 		return graph.Snapshot{}, err
 	}
 	return store.Snapshot(ctx)
+}
+
+// writeHealth is the body of GET /healthz, split out so it can be tested without
+// standing up the whole router.
+func (a *API) writeHealth(w http.ResponseWriter) {
+	if a.degraded != "" {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, "degraded: "+a.degraded+"\n")
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok"))
 }

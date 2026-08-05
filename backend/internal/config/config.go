@@ -251,6 +251,11 @@ type Config struct {
 	ExfilAlertThreshold  int
 
 	// Observability
+	// SecretErrors collects problems found while reading <KEY>_FILE secrets. Load
+	// cannot return an error, so the refusal to start lives in checkSecretConfig -
+	// same shape as the production and auth gates.
+	SecretErrors []string
+
 	LogLevel string
 	// LogFormat is "text" (human, the demo default) or "json" (log pipelines).
 	LogFormat string
@@ -265,8 +270,9 @@ func Load() Config {
 	loadDotEnv(".env")
 	loadDotEnv(filepath.Join("..", ".env"))
 
-	return Config{
-		PostgresDSN: getenv("POSTGRES_DSN", buildPostgresDSN()),
+	sec := &secretReader{}
+	cfg := Config{
+		PostgresDSN: sec.get("POSTGRES_DSN", buildPostgresDSN(sec)),
 		AGEGraph:    getenv("AGE_GRAPH_NAME", "perspective"),
 
 		NATSURL:         getenv("NATS_URL", "nats://localhost:4222"),
@@ -291,20 +297,20 @@ func Load() Config {
 		EPSSTraversalGamma:    getfloat("EPSS_TRAVERSAL_GAMMA", 1.0),
 		SeedIAMUsers:          getbool("SEED_IAM_USERS", false),
 
-		AnthropicAPIKey:  getenv("ANTHROPIC_API_KEY", ""),
+		AnthropicAPIKey:  sec.get("ANTHROPIC_API_KEY", ""),
 		AnthropicModel:   getenv("ANTHROPIC_MODEL", ""),
 		AnthropicBaseURL: getenv("ANTHROPIC_BASE_URL", ""),
 		AIMaxTokens:      getint("AI_MAX_TOKENS", 0),
-		HFToken:          getenv("HF_TOKEN", getenv("HUGGINGFACE_API_KEY", "")),
+		HFToken:          sec.get("HF_TOKEN", sec.get("HUGGINGFACE_API_KEY", "")),
 		HFModel:          getenv("HF_MODEL", ""),
 		HFBaseURL:        getenv("HF_BASE_URL", ""),
 
 		DashboardURL: getenv("DASHBOARD_URL", ""),
-		GitHubToken:  getenv("GITHUB_TOKEN", ""),
+		GitHubToken:  sec.get("GITHUB_TOKEN", ""),
 		GitHubAPIURL: getenv("GITHUB_API_URL", "https://api.github.com"),
 		GitHubDryRun: getbool("GITHUB_DRY_RUN", false),
 
-		GitLabToken:  getenv("GITLAB_TOKEN", ""),
+		GitLabToken:  sec.get("GITLAB_TOKEN", ""),
 		GitLabAPIURL: getenv("GITLAB_API_URL", "https://gitlab.com/api/v4"),
 		GitLabDryRun: getbool("GITLAB_DRY_RUN", false),
 
@@ -323,9 +329,9 @@ func Load() Config {
 		// kevholdout - config imports no feature package.
 		KEVHoldoutWindow: getdur("KEV_HOLDOUT_WINDOW", 30*24*time.Hour),
 
-		IngestHMACSecret:  getenv("INGEST_HMAC_SECRET", ""),
-		IngestHMACSecrets: getenv("INGEST_HMAC_SECRETS", ""),
-		APITokens:         getenv("API_TOKENS", ""),
+		IngestHMACSecret:  sec.get("INGEST_HMAC_SECRET", ""),
+		IngestHMACSecrets: sec.get("INGEST_HMAC_SECRETS", ""),
+		APITokens:         sec.get("API_TOKENS", ""),
 
 		OIDCJWKSURL:   getenv("OIDC_JWKS_URL", ""),
 		OIDCIssuer:    getenv("OIDC_ISSUER", ""),
@@ -340,10 +346,10 @@ func Load() Config {
 		SuppressionsPath: getenv("SUPPRESSIONS_PATH", ""),
 		HistoryPath:      getenv("HISTORY_PATH", ""),
 		TicketsPath:      getenv("TICKETS_PATH", ""),
-		TicketWebhookURL: getenv("TICKET_WEBHOOK_URL", ""),
+		TicketWebhookURL: sec.get("TICKET_WEBHOOK_URL", ""),
 		ValidationsPath:  getenv("VALIDATIONS_PATH", ""),
 
-		AlertWebhookURL:    getenv("ALERT_WEBHOOK_URL", ""),
+		AlertWebhookURL:    sec.get("ALERT_WEBHOOK_URL", ""),
 		AlertWebhookFormat: getenv("ALERT_WEBHOOK_FORMAT", "slack"),
 
 		IngestRateRPS: getfloat("INGEST_RATE_RPS", 30),
@@ -366,8 +372,8 @@ func Load() Config {
 
 		CORSAllowedOrigins: getlist("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000"),
 
-		StoreEncryptionKey: getenv("STORE_ENCRYPTION_KEY", ""),
-		ExportSigningKey:   getenv("EXPORT_SIGNING_KEY", ""),
+		StoreEncryptionKey: sec.get("STORE_ENCRYPTION_KEY", ""),
+		ExportSigningKey:   sec.get("EXPORT_SIGNING_KEY", ""),
 
 		AuthLockoutThreshold: getint("AUTH_LOCKOUT_THRESHOLD", 50),
 		ExfilAlertThreshold:  getint("EXFIL_ALERT_THRESHOLD", 0),
@@ -375,13 +381,15 @@ func Load() Config {
 		LogLevel:  getenv("LOG_LEVEL", "info"),
 		LogFormat: getenv("LOG_FORMAT", "text"),
 	}
+	cfg.SecretErrors = sec.errs
+	return cfg
 }
 
-func buildPostgresDSN() string {
+func buildPostgresDSN(sec *secretReader) string {
 	host := getenv("POSTGRES_HOST", "localhost")
 	port := getenv("POSTGRES_PORT", "5432")
 	user := getenv("POSTGRES_USER", "perspective")
-	pass := getenv("POSTGRES_PASSWORD", "perspective")
+	pass := sec.get("POSTGRES_PASSWORD", "perspective")
 	db := getenv("POSTGRES_DB", "perspectivegraph")
 	// sslmode is configurable (POSTGRES_SSLMODE): the bundled in-cluster Postgres
 	// has no TLS so the demo defaults to "disable", but a managed/external DB holds
@@ -398,6 +406,51 @@ func getenv(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// secretReader reads values that should not have to live in the process environment.
+//
+// The environment is one of the least private places on a Unix box: anything that can
+// read /proc/<pid>/environ sees it, `docker inspect` prints it in full to anyone in the
+// docker group, it lands in crash dumps, and every child process inherits it. Kubernetes
+// deployments already avoid the worst of that by sourcing values from a Secret, but the
+// value still arrives as an environment variable, and Docker had no equivalent at all.
+//
+// So every secret also accepts <KEY>_FILE: the path to a file holding the value. That is
+// the convention the postgres and mysql images established, and it is what makes Docker
+// secrets, Swarm secrets, a Vault Agent sidecar and a Kubernetes Secret mounted as a
+// volume all work without the value ever passing through the environment.
+type secretReader struct{ errs []string }
+
+// get prefers <KEY>_FILE, then <KEY>, then the default.
+//
+// A <KEY>_FILE that is set but unreadable is recorded as an ERROR rather than quietly
+// falling through to <KEY> or the default. That fallback is the dangerous one: an
+// operator who mounted a secret and mistyped the path would start successfully, with an
+// empty credential, believing the mount had worked. For an ingest HMAC key or an API
+// token that is the difference between a closed deployment and an open one.
+func (s *secretReader) get(key, def string) string {
+	if path := os.Getenv(key + "_FILE"); path != "" {
+		b, err := os.ReadFile(path) // #nosec G304 G703 -- the path comes from <KEY>_FILE, set by whoever runs the process; anyone who can set its environment already owns it
+		switch {
+		case err != nil:
+			s.errs = append(s.errs, key+"_FILE is set to "+path+" but it cannot be read: "+err.Error())
+		case len(trimSecret(b)) == 0:
+			s.errs = append(s.errs, key+"_FILE is set to "+path+" but the file is empty")
+		default:
+			return trimSecret(b)
+		}
+		return "" // never fall through to a weaker source once a file was named
+	}
+	return getenv(key, def)
+}
+
+// trimSecret strips the trailing newline a secret file almost always carries (`echo` and
+// most secret managers add one) without touching anything else. Deliberately not
+// TrimSpace: a passphrase is allowed to begin or end with a space, and silently altering
+// a credential is worse than carrying a stray byte.
+func trimSecret(b []byte) string {
+	return strings.TrimRight(string(b), "\r\n")
 }
 
 // getlist parses a comma-separated env var into a trimmed, non-empty slice. A

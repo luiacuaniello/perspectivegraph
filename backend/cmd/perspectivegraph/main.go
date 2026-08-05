@@ -224,6 +224,17 @@ func checkProductionConfig(cfg config.Config) error {
 			"GraphQL endpoint, which would publish this environment's attack paths to anyone who can reach it. " +
 			"Set API_TOKENS (static bearer tokens) or OIDC_JWKS_URL + OIDC_ISSUER + OIDC_AUDIENCE (SSO)")
 	}
+	// A non-empty API_TOKENS that parses to nothing is worse than an empty one, because
+	// it satisfies the check above and still leaves the endpoint open. Every malformed
+	// entry is dropped with a warning that scrolls past in a startup log, and what is
+	// left is auth DISABLED on a deployment its operator declared production - the exact
+	// outcome this gate exists to prevent, reached by a missing ":admin".
+	if cfg.OIDCJWKSURL == "" && auth.NewTokenStore(cfg.APITokens).Len() == 0 {
+		return errors.New("PG_ENV=production but API_TOKENS yields no usable credential: every entry was " +
+			"dropped as malformed, as naming an unknown role, or as already expired, which would leave the " +
+			"GraphQL endpoint open. Each entry is token:role[:tenant[:YYYY-MM-DD]] and role is viewer or admin, " +
+			"e.g. API_TOKENS=s3cr3t:admin. Check the startup warnings for which entry was rejected")
+	}
 	// Ingest is the write side: an open one lets anyone inject nodes and edges, which
 	// fabricates attack paths that do not exist or buries ones that do.
 	if cfg.IngestHMACSecret == "" && cfg.IngestHMACSecrets == "" {
@@ -252,12 +263,33 @@ func checkAuthConfig(cfg config.Config) error {
 	return nil
 }
 
+// checkSecretConfig refuses to start when a secret was requested from a file that could
+// not be read.
+//
+// This is the whole reason the <KEY>_FILE support is worth having. An operator who mounts
+// a Docker or Kubernetes secret and mistypes the path has, from the process's point of
+// view, simply not set that credential - and "no ingest HMAC key" or "no API token" is
+// not an error, it is the demo profile. So the mistake would start cleanly and serve an
+// open endpoint, which is precisely the outcome the operator was trying to avoid by using
+// a mounted secret in the first place.
+func checkSecretConfig(cfg config.Config) error {
+	if len(cfg.SecretErrors) == 0 {
+		return nil
+	}
+	return errors.New("refusing to start: a secret was requested from a file that could not be read - " +
+		strings.Join(cfg.SecretErrors, "; ") +
+		". Fix the path or the file's permissions, or unset the *_FILE variable to read the value from the environment")
+}
+
 func run(ctx context.Context, cfg config.Config) error {
 	// Validate the deployment profile before touching any dependency.
 	if err := checkProductionConfig(cfg); err != nil {
 		return err
 	}
 	if err := checkAuthConfig(cfg); err != nil {
+		return err
+	}
+	if err := checkSecretConfig(cfg); err != nil {
 		return err
 	}
 
@@ -549,7 +581,7 @@ func run(ctx context.Context, cfg config.Config) error {
 		provider, model := ai.Provider(aiCfg)
 		slog.Info("AI-native layer enabled", "provider", provider, "model", model)
 	}
-	apiHandler, err := buildAPI(manager, analyzerSvc, indexer, authn, auditRec, apiLimiter, suppressStore, historyStore, ticketStore, validationStore, cfg.CORSAllowedOrigins, exportSigner, exfilWatcher, authGuard, authInfoFromConfig(cfg, authn.Enabled()), prOpener, aiClient, coverageStore)
+	apiHandler, err := buildAPI(manager, analyzerSvc, indexer, authn, auditRec, apiLimiter, suppressStore, historyStore, ticketStore, validationStore, cfg.CORSAllowedOrigins, exportSigner, exfilWatcher, authGuard, authInfoFromConfig(cfg, authn.Enabled()), prOpener, aiClient, coverageStore, degradedReason(backend, cfg.Env))
 	if err != nil {
 		return err
 	}
@@ -674,6 +706,14 @@ func buildConnectors(ctx context.Context, cfg config.Config, pub connector.Publi
 // in which case it returns an error and the process refuses to start rather than
 // silently dropping persistence (data that "works" in the demo but is lost on
 // restart is its own kind of incident).
+// backendMemoryDegraded names the graph backend when Apache AGE was unreachable and the
+// engine fell back to memory. It is a constant rather than a literal in two places
+// because the health signal depends on the two agreeing: if the producer's spelling
+// drifted from the consumer's, degradedReason would return "" forever and /healthz would
+// go back to reporting a broken engine as healthy - silently, and with every test still
+// passing.
+const backendMemoryDegraded = "memory-degraded"
+
 func storeFactory(ctx context.Context, cfg config.Config) (graph.StoreFactory, string, error) {
 	graphName := func(tenant string) string {
 		if tenant == graph.DefaultTenant {
@@ -696,10 +736,22 @@ func storeFactory(ctx context.Context, cfg config.Config) (graph.StoreFactory, s
 	if cfg.GraphStrict {
 		return nil, "", fmt.Errorf("GRAPH_STRICT is set but Apache AGE is unavailable: %w", err)
 	}
+	// Fail-closed in a declared production deployment, for the same reason every other
+	// gate here does: the degraded mode does not look degraded. Falling back leaves the
+	// engine computing over an empty, volatile graph, and an empty graph yields "no
+	// attack paths" - which reads as good news. That is the precise failure this product
+	// exists to make visible, arriving one layer below where ingestCoverage can see it,
+	// with only a warning scrolling past to say so.
+	if isProduction(cfg.Env) {
+		return nil, "", fmt.Errorf("PG_ENV=production but Apache AGE is unavailable, and falling back to "+
+			"in-memory stores would silently discard the graph while still reporting healthy - so an empty "+
+			"board would read as \"no attack paths\" rather than \"no database\". Fix POSTGRES_DSN / the "+
+			"database, or set PG_ENV=demo to accept the in-memory fallback: %w", err)
+	}
 	slog.Warn("Apache AGE UNAVAILABLE - falling back to IN-MEMORY stores (data is NOT persisted; set GRAPH_STRICT=true to fail instead)", "err", err)
 	return func(context.Context, string) (graph.Store, error) {
 		return memory.New(), nil
-	}, "memory", nil
+	}, backendMemoryDegraded, nil
 }
 
 // hmacSecrets builds the tenant→secret map from the single-secret (default
@@ -749,8 +801,8 @@ func authInfoFromConfig(cfg config.Config, authEnabled bool) api.AuthInfo {
 	return info
 }
 
-func buildAPI(manager *graph.Manager, svc *analyzer.Service, idx search.Indexer, authn auth.Authenticator, rec audit.Recorder, limiter *ratelimit.Limiter, suppressStore *suppress.Store, historyStore *history.Store, ticketStore *ticket.Store, validationStore *validation.Store, corsOrigins []string, exportSigner *exportsign.Signer, exfilWatcher, authGuard *secwatch.Watcher, authInfo api.AuthInfo, prOpener action.PROpener, aiClient ai.Client, coverageStore *coverage.Store) (http.Handler, error) {
-	return api.New(manager, svc, idx).WithAuth(authn, rec).WithRateLimit(limiter).WithSuppress(suppressStore).WithHistory(historyStore).WithTickets(ticketStore).WithValidation(validationStore).WithCORSOrigins(corsOrigins).WithExportSigner(exportSigner).WithAbuseWatchers(exfilWatcher, authGuard).WithAuthInfo(authInfo).WithRemediationPR(prOpener).WithAI(aiClient).WithCoverage(coverageStore).Handler()
+func buildAPI(manager *graph.Manager, svc *analyzer.Service, idx search.Indexer, authn auth.Authenticator, rec audit.Recorder, limiter *ratelimit.Limiter, suppressStore *suppress.Store, historyStore *history.Store, ticketStore *ticket.Store, validationStore *validation.Store, corsOrigins []string, exportSigner *exportsign.Signer, exfilWatcher, authGuard *secwatch.Watcher, authInfo api.AuthInfo, prOpener action.PROpener, aiClient ai.Client, coverageStore *coverage.Store, degraded string) (http.Handler, error) {
+	return api.New(manager, svc, idx).WithAuth(authn, rec).WithRateLimit(limiter).WithSuppress(suppressStore).WithHistory(historyStore).WithTickets(ticketStore).WithValidation(validationStore).WithCORSOrigins(corsOrigins).WithExportSigner(exportSigner).WithAbuseWatchers(exfilWatcher, authGuard).WithAuthInfo(authInfo).WithRemediationPR(prOpener).WithAI(aiClient).WithCoverage(coverageStore).WithDegraded(degraded).Handler()
 }
 
 func serveHTTP(ctx context.Context, wg *sync.WaitGroup, name string, srv *http.Server, certFile, keyFile string) {
@@ -914,4 +966,34 @@ func runKEVHoldout(ctx context.Context, runner *kevholdout.Runner, manager *grap
 		case <-t.C:
 		}
 	}
+}
+
+// degradedReason turns the chosen graph backend into the human-readable cause /healthz
+// reports, or "" when nothing is wrong.
+//
+// The demo profile is deliberately exempt, and getting this wrong is easy. There is no
+// way to ASK for the in-memory store: it is only ever reached by falling back when Apache
+// AGE is unreachable. So `make run-backend` - the documented zero-dependency local path,
+// no database at all - takes exactly the same branch as a production database outage.
+// Marking both degraded would have made local development report unhealthy and, because
+// the dashboard container waits on the backend being healthy, would have stopped it
+// starting at all.
+//
+// The distinction is therefore the declared profile, not the store: in demo (the default)
+// memory is the intended mode; a deployment that declares any other environment asked for
+// a database and did not get one. Production never reaches here - it refuses to start.
+func degradedReason(backend, env string) string {
+	if backend != backendMemoryDegraded || !isDeclaredEnvironment(env) {
+		return ""
+	}
+	return "graph store fell back to memory: Apache AGE was unreachable at startup, " +
+		"so the graph is neither persisted nor complete and any \"no attack paths\" answer is meaningless"
+}
+
+// isDeclaredEnvironment reports whether the operator named an environment at all. An
+// empty or "demo" PG_ENV is the frictionless default, where running without a database is
+// a choice rather than a fault.
+func isDeclaredEnvironment(env string) bool {
+	e := strings.ToLower(strings.TrimSpace(env))
+	return e != "" && e != "demo"
 }

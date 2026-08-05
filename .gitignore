@@ -26,6 +26,9 @@ node_modules/
 
 # Env & secrets
 .env
+# Docker secret files (docker-compose.secrets.yml mounts these). Real credentials
+# live here; nothing under it may ever be committed.
+/secrets/
 *.pem
 *.key
 *.crt

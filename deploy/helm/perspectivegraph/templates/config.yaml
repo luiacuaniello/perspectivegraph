@@ -55,6 +55,27 @@ data:
   GITLAB_DRY_RUN: {{ .Values.gitlab.dryRun | quote }}
   LOG_LEVEL: {{ .Values.backend.logLevel | quote }}
   LOG_FORMAT: {{ .Values.backend.logFormat | quote }}
+  # ── Parity block ──────────────────────────────────────────────────────
+  # Every key the backend reads must be settable from here too, or a value an
+  # operator puts in values.yaml is silently ignored. Guarded by
+  # TestDeploySurfacesExposeEveryConfigKey. Empty strings are the backend's own
+  # defaults, so listing a key costs nothing until someone sets it.
+  CORS_ALLOWED_ORIGINS: {{ .Values.backend.corsAllowedOrigins | default "" | quote }}
+  AUTH_LOCKOUT_THRESHOLD: {{ .Values.backend.authLockoutThreshold | default "" | quote }}
+  EXFIL_ALERT_THRESHOLD: {{ .Values.backend.exfilAlertThreshold | default "" | quote }}
+  COVERAGE_STALE_AFTER: {{ .Values.backend.coverageStaleAfter | default "" | quote }}
+  GRAPH_STRICT: {{ .Values.backend.graphStrict | default "" | quote }}
+  ANALYZER_MAX_HOPS: {{ .Values.backend.analyzerMaxHops | default "" | quote }}
+  ANALYZER_DB_PATHS: {{ .Values.backend.analyzerDbPaths | default "" | quote }}
+  POSTGRES_DSN: {{ .Values.postgres.dsn | default "" | quote }}
+  THREATINTEL: {{ .Values.threatIntel.enabled | default "" | quote }}
+  KEV_FEED_URL: {{ .Values.threatIntel.kevFeedUrl | default "" | quote }}
+  EPSS_API_URL: {{ .Values.threatIntel.epssApiUrl | default "" | quote }}
+  KEV_HOLDOUT: {{ .Values.kevHoldout.enabled | default "" | quote }}
+  KEV_HOLDOUT_PATH: {{ .Values.kevHoldout.path | default "" | quote }}
+  KEV_HOLDOUT_WINDOW: {{ .Values.kevHoldout.window | default "" | quote }}
+  ALERT_WEBHOOK_URL: {{ .Values.alert.webhookUrl | default "" | quote }}
+  ALERT_WEBHOOK_FORMAT: {{ .Values.alert.webhookFormat | default "" | quote }}
   PG_ENV: {{ .Values.backend.env | quote }}
   API_RATE_RPS: {{ .Values.auth.apiRateRps | quote }}
   INGEST_RATE_RPS: {{ .Values.auth.ingestRateRps | quote }}

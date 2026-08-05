@@ -26,7 +26,12 @@ Turn these on for any deployment reachable beyond a trusted boundary:
 
 ```bash
 # API authentication (pick tokens, OIDC, or both)
-API_TOKENS=<tenant>:<bearer-token>,...        # static bearer credentials
+API_TOKENS=<token>:<role>[:<tenant>[:<YYYY-MM-DD>]],...  # role is viewer|admin
+                                              # e.g. API_TOKENS=s3cr3t:admin
+                                              # Entries that do not parse are DROPPED,
+                                              # so with PG_ENV=production the backend
+                                              # refuses to start rather than serve an
+                                              # open endpoint. Check startup warnings.
 OIDC_ISSUER=https://idp.example.com/realms/pg # + OIDC_CLIENT_ID, OIDC_JWKS_URL,
                                               #   OIDC_AUDIENCE, OIDC_AUTHORIZE_URL,
                                               #   OIDC_TOKEN_URL, OIDC_SCOPES
@@ -73,6 +78,50 @@ Two ready-to-use hardened profiles apply all of the above:
   cp .env.production.example .env   # then fill it in and: chmod 600 .env
   docker compose --profile app -f docker-compose.yml -f docker-compose.prod.yml up -d
   ```
+
+### Keeping secrets out of the environment
+
+Every credential above also accepts a **`<KEY>_FILE`** variant holding the *path* to a
+file with the value: `API_TOKENS_FILE`, `INGEST_HMAC_SECRET_FILE`,
+`POSTGRES_PASSWORD_FILE`, `STORE_ENCRYPTION_KEY_FILE`, `EXPORT_SIGNING_KEY_FILE`,
+`GITHUB_TOKEN_FILE`, `GITLAB_TOKEN_FILE`, `ANTHROPIC_API_KEY_FILE`, `HF_TOKEN_FILE`, and
+the rest.
+
+Use them. The process environment is one of the least private places on a Unix host:
+anything that can read `/proc/<pid>/environ` sees it, `docker inspect` prints it in full
+to anyone in the `docker` group, it lands in crash dumps, and every child process
+inherits it. A mounted file keeps the value out of all of that, and it is what makes
+Docker secrets, Swarm secrets, a Vault Agent sidecar and a Kubernetes Secret mounted as a
+volume work without the credential ever passing through the environment.
+
+**Docker.** An overlay ships with the repo:
+
+```bash
+mkdir -p secrets && chmod 700 secrets
+printf '%s' "$(openssl rand -hex 32)"        > secrets/ingest_hmac_secret
+printf '%s' "tok-$(openssl rand -hex 16):admin" > secrets/api_tokens
+printf '%s' "$(openssl rand -hex 32)"        > secrets/postgres_password
+printf '%s' "$(openssl rand -hex 32)"        > secrets/store_encryption_key
+chmod 600 secrets/*
+
+docker compose -f docker-compose.yml -f docker-compose.secrets.yml --profile app up -d
+```
+
+It mounts each file at `/run/secrets/…`, points the matching `*_FILE` variable at it,
+blanks the environment-borne version so a stale value cannot win, and sets
+`PG_ENV=production`. `secrets/` is gitignored. Verify with
+`docker inspect perspective-backend | grep -i secret` - you should see only paths.
+
+**Kubernetes.** The chart already provisions a Secret and consumes it with
+`secretKeyRef`; set `secrets.existingSecret` to bring your own from External Secrets,
+Sealed Secrets or Vault. To go further and avoid the environment entirely, mount that
+Secret as a volume and set the `*_FILE` variables to the mounted paths.
+
+**A `<KEY>_FILE` that is set but unreadable stops the process.** That is deliberate: an
+operator who mistypes a mount path would otherwise start cleanly with no credential at
+all - and "no API token" is not an error, it is the demo profile - which is exactly the
+open deployment the mount was meant to prevent. A trailing newline is stripped (secret
+managers add one); nothing else is touched, so a passphrase may begin or end with a space.
 
 ## 3. External PostgreSQL + Apache AGE
 
@@ -135,6 +184,29 @@ Pin to a signed, digest-referenced image and verify it before rollout (see
   dashboard and Prometheus alert rules for exactly these signals - import the dashboard,
   load the rules, point a scrape at `/metrics`. For analyzer load/scale characterization see
   [SCALE.md](SCALE.md) (`make scale-test`).
+
+### Health, and what it now refuses to hide
+
+`GET /healthz` returns **503** when the engine is serving in a reduced mode, and 200
+otherwise. The Helm readiness probe hits it, so a degraded pod is taken out of rotation.
+
+That distinction did not exist until it was found by running the stack: `/healthz`
+returned 200 unconditionally, so the probe only ever proved the HTTP server was
+listening. Meanwhile, when Apache AGE was unreachable at startup the backend **fell back
+to in-memory stores** with a single warning - leaving the engine computing over an empty,
+volatile graph. An empty graph answers *"no attack paths"*, which reads as good news. So
+a database outage presented as a clean bill of health, one layer below where
+`ingestCoverage` can see it.
+
+Two changes close that:
+
+- **`PG_ENV=production` now refuses to start** when Apache AGE is unavailable, instead of
+  falling back. Set `PG_ENV=demo` if you genuinely want the in-memory store, or
+  `GRAPH_STRICT=true` to get the same refusal outside production.
+- When the fallback *does* engage (demo profiles), `/healthz` reports 503 with the reason,
+  so nothing downstream mistakes it for a working deployment. A deployment that runs
+  in-memory **by design** stays healthy - that is the demo working as intended, not a
+  failure.
 
 ### Logs
 
