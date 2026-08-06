@@ -50,6 +50,7 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/trivy"
 	"github.com/luiacuaniello/perspectivegraph/internal/kevholdout"
 	"github.com/luiacuaniello/perspectivegraph/internal/leader"
+	"github.com/luiacuaniello/perspectivegraph/internal/metrics"
 	"github.com/luiacuaniello/perspectivegraph/internal/normalization"
 	"github.com/luiacuaniello/perspectivegraph/internal/notify"
 	"github.com/luiacuaniello/perspectivegraph/internal/policy"
@@ -581,7 +582,7 @@ func run(ctx context.Context, cfg config.Config) error {
 		provider, model := ai.Provider(aiCfg)
 		slog.Info("AI-native layer enabled", "provider", provider, "model", model)
 	}
-	apiHandler, err := buildAPI(manager, analyzerSvc, indexer, authn, auditRec, apiLimiter, suppressStore, historyStore, ticketStore, validationStore, cfg.CORSAllowedOrigins, exportSigner, exfilWatcher, authGuard, authInfoFromConfig(cfg, authn.Enabled()), prOpener, aiClient, coverageStore, degradedReason(backend, cfg.Env))
+	apiHandler, err := buildAPI(manager, analyzerSvc, indexer, authn, auditRec, apiLimiter, suppressStore, historyStore, ticketStore, validationStore, cfg.CORSAllowedOrigins, exportSigner, exfilWatcher, authGuard, authInfoFromConfig(cfg, authn.Enabled()), prOpener, aiClient, coverageStore, degradedReason(backend, cfg.Env), cfg.MetricsAddr != "")
 	if err != nil {
 		return err
 	}
@@ -643,6 +644,26 @@ func run(ctx context.Context, cfg config.Config) error {
 	}
 	serveHTTP(ctx, &wg, "ingestion", ingestHTTP, cfg.TLSCertFile, cfg.TLSKeyFile)
 	serveHTTP(ctx, &wg, "api", apiHTTP, cfg.TLSCertFile, cfg.TLSKeyFile)
+
+	// Metrics on their own listener when asked. Deliberately plain HTTP even when the
+	// API speaks TLS: this is meant for an address the outside cannot reach (bind it to
+	// 127.0.0.1 or a pod-internal interface), and requiring a certificate there is
+	// friction that pushes operators back onto the public port - which is the thing this
+	// exists to avoid. It carries only /metrics: no GraphQL, no auth config, no exports.
+	if cfg.MetricsAddr != "" {
+		mmux := http.NewServeMux()
+		mmux.Handle("GET /metrics", metrics.Handler())
+		metricsHTTP := &http.Server{
+			Addr:              cfg.MetricsAddr,
+			Handler:           mmux,
+			ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout:       15 * time.Second,
+			WriteTimeout:      30 * time.Second,
+			IdleTimeout:       60 * time.Second,
+		}
+		serveHTTP(ctx, &wg, "metrics", metricsHTTP, "", "")
+		slog.Info("metrics on a separate listener - not on the API port", "addr", cfg.MetricsAddr)
+	}
 
 	scheme := "http"
 	if cfg.TLSCertFile != "" && cfg.TLSKeyFile != "" {
@@ -801,8 +822,8 @@ func authInfoFromConfig(cfg config.Config, authEnabled bool) api.AuthInfo {
 	return info
 }
 
-func buildAPI(manager *graph.Manager, svc *analyzer.Service, idx search.Indexer, authn auth.Authenticator, rec audit.Recorder, limiter *ratelimit.Limiter, suppressStore *suppress.Store, historyStore *history.Store, ticketStore *ticket.Store, validationStore *validation.Store, corsOrigins []string, exportSigner *exportsign.Signer, exfilWatcher, authGuard *secwatch.Watcher, authInfo api.AuthInfo, prOpener action.PROpener, aiClient ai.Client, coverageStore *coverage.Store, degraded string) (http.Handler, error) {
-	return api.New(manager, svc, idx).WithAuth(authn, rec).WithRateLimit(limiter).WithSuppress(suppressStore).WithHistory(historyStore).WithTickets(ticketStore).WithValidation(validationStore).WithCORSOrigins(corsOrigins).WithExportSigner(exportSigner).WithAbuseWatchers(exfilWatcher, authGuard).WithAuthInfo(authInfo).WithRemediationPR(prOpener).WithAI(aiClient).WithCoverage(coverageStore).WithDegraded(degraded).Handler()
+func buildAPI(manager *graph.Manager, svc *analyzer.Service, idx search.Indexer, authn auth.Authenticator, rec audit.Recorder, limiter *ratelimit.Limiter, suppressStore *suppress.Store, historyStore *history.Store, ticketStore *ticket.Store, validationStore *validation.Store, corsOrigins []string, exportSigner *exportsign.Signer, exfilWatcher, authGuard *secwatch.Watcher, authInfo api.AuthInfo, prOpener action.PROpener, aiClient ai.Client, coverageStore *coverage.Store, degraded string, metricsElsewhere bool) (http.Handler, error) {
+	return api.New(manager, svc, idx).WithAuth(authn, rec).WithRateLimit(limiter).WithSuppress(suppressStore).WithHistory(historyStore).WithTickets(ticketStore).WithValidation(validationStore).WithCORSOrigins(corsOrigins).WithExportSigner(exportSigner).WithAbuseWatchers(exfilWatcher, authGuard).WithAuthInfo(authInfo).WithRemediationPR(prOpener).WithAI(aiClient).WithCoverage(coverageStore).WithDegraded(degraded).WithMetricsElsewhere(metricsElsewhere).Handler()
 }
 
 func serveHTTP(ctx context.Context, wg *sync.WaitGroup, name string, srv *http.Server, certFile, keyFile string) {
