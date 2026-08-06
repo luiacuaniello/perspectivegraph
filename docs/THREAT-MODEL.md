@@ -64,13 +64,93 @@ Scanners/CI ─► Ingest :8081 ──────────────┼─
 
 ## Data handling and privacy
 
-- The graph in A1 is **sensitive**: it describes how a real environment can be attacked.
-  Treat the datastore as you would a secrets store.
-- Retention: nodes/edges support TTL pruning; audit and validation stores are
-  append-only (validation can be in-memory or persisted via `VALIDATIONS_PATH`).
-- Egress: with the AI features enabled, attack-path context is sent to the configured
-  LLM provider. This is opt-in; if your policy forbids sending topology to a third party,
-  leave `ANTHROPIC_API_KEY` / the HF endpoint unset.
+The graph in A1 is **sensitive**: it describes how a real environment can be attacked, so
+treat the datastore as you would a secrets store. It also contains personal data, and the
+AI features send some of it outside your boundary when enabled - both are covered in
+detail in the next section, along with retention and the transfer question.
+
+## Personal data and compliance (GDPR / NIS2)
+
+This tool processes personal data. Saying so plainly, and saying exactly which, is
+cheaper for everyone than letting a data protection officer discover it during review.
+
+**You are the controller.** The project ships software; the deployment that ingests your
+estate decides the purposes and means, and is therefore the controller under GDPR Art. 4.
+Nothing is sent to the maintainers - there is no telemetry, no phone-home, no hosted
+component.
+
+### What personal data the system holds, and where
+
+| Where | What | Kind |
+|---|---|---|
+| **Graph** (Postgres/AGE or memory) | IAM user names from the `iam` collector; **email addresses** from the `sso` collector (`{"email":"alice@acme.com"}`); whatever names your estate puts in asset tags | **Directly identifying** |
+| **Audit log** | The acting subject per request: `anonymous`, `hmac`, `token:<8-hex SHA-256 fingerprint>` or `jwt:<sub>` (the OIDC subject claim, an opaque identifier) | **Pseudonymous** |
+| **Application log** | The same subjects, plus remote IP on `auth.deny` / lockout alerts | Pseudonymous + IP |
+
+The audit log is pseudonymous **by design**: it never records a bearer token, an email or
+a user name - only a truncated hash or the IdP's opaque subject. That is the Art. 32
+measure it looks like, and it is deliberate. It remains personal data under Recital 26,
+but the exposure if the file leaks is materially smaller than the graph's.
+
+The graph is the sensitive artefact, and it holds directly identifying data.
+
+### Lawful basis
+
+Legitimate interest (Art. 6(1)(f)) is the basis that fits, and GDPR **Recital 49 names
+network and information security explicitly** as such an interest, including preventing
+unauthorised access. Document that assessment; do not leave it to be inferred. If your
+organisation treats security tooling under a different basis, nothing here depends on the
+choice.
+
+### Retention, and one honest tension
+
+- **Graph**: bounded. `GRAPH_TTL` prunes nodes and edges not re-observed within the
+  window, so an identity that leaves your estate leaves the graph.
+- **Audit log**: **append-only, with no retention policy and no rotation.** Set one. It is
+  the gap most likely to be raised in review, and today the answer is "it grows forever".
+
+The tension worth naming rather than hiding: the audit log is **hash-chained** so that
+tampering is detectable, which means **deleting a single record breaks every hash after
+it**. Erasure (Art. 17) and tamper-evidence pull in opposite directions. The workable
+answer is rotation, not surgery - retire whole files on a schedule and archive or destroy
+them intact - which is also why the subjects are pseudonymous in the first place: there is
+far less to erase.
+
+### Transfers outside the EEA
+
+**With the AI features enabled, personal data leaves your boundary.** The attack-path
+context sent to Anthropic or a HuggingFace-compatible endpoint includes asset names, and
+asset names in a real estate routinely carry user names and email addresses. That is a
+Chapter V transfer, not merely an architectural preference, and it needs the usual
+paperwork (adequacy, SCCs, or a provider inside the EEA).
+
+It is **off by default** and every call is audited (`ai.query` / `ai.summary` /
+`ai.explain`). Leave `ANTHROPIC_API_KEY` and the HF endpoint unset and no data leaves.
+The HuggingFace path accepts any OpenAI-compatible endpoint, so an EEA-hosted or
+self-hosted model keeps the transfer inside your boundary while keeping the feature.
+
+### Data subject requests
+
+- **Access / rectification**: identities live in the graph as nodes; query by name through
+  the API and correct them at the source (the graph is derived, so fixing IAM or the IdP
+  and letting the next pass re-ingest is the durable fix).
+- **Erasure**: remove the identity at the source and let `GRAPH_TTL` prune it, rather than
+  editing the graph by hand. For the audit log, see the rotation note above.
+
+### NIS2
+
+For entities in scope (in Italy, D.Lgs. 138/2024), several obligations map onto artefacts
+this tool already produces. It does **not** make you compliant - no tool does - but these
+are things you would otherwise have to build:
+
+- **Tamper-evident logging of access to security data** - the hash-chained audit log,
+  verifiable with `perspectivegraph verify-audit`.
+- **Supply-chain security of the tooling itself** - release images and binaries are
+  cosign-signed, carry an SPDX SBOM and SLSA build provenance, and can be verified before
+  they run.
+- **Vulnerability handling and disclosure** - see [SECURITY.md](../SECURITY.md).
+- **Risk-management evidence** - the OSCAL assessment-results export (`GET /export/oscal`)
+  renders posture in a format an assessor can consume.
 
 ## Operator assumptions (what you must do for production)
 
