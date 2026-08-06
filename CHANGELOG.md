@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.1.0...v1.2.0) (2026-08-06)
+
+
+### Features
+
+* **metrics:** let METRICS_ADDR move /metrics off the API port ([#110](https://github.com/luiacuaniello/perspectivegraph/issues/110)) ([fb8a40e](https://github.com/luiacuaniello/perspectivegraph/commit/fb8a40e99bb3872e1d9fa07264eb904e5427b4c6))
+
 ## [1.1.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.0.0...v1.1.0) (2026-08-05)
 
 
