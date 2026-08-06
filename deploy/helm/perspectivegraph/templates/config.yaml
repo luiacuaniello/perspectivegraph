@@ -61,6 +61,7 @@ data:
   # TestDeploySurfacesExposeEveryConfigKey. Empty strings are the backend's own
   # defaults, so listing a key costs nothing until someone sets it.
   CORS_ALLOWED_ORIGINS: {{ .Values.backend.corsAllowedOrigins | default "" | quote }}
+  METRICS_ADDR: {{ .Values.backend.metricsAddr | default "" | quote }}
   AUTH_LOCKOUT_THRESHOLD: {{ .Values.backend.authLockoutThreshold | default "" | quote }}
   EXFIL_ALERT_THRESHOLD: {{ .Values.backend.exfilAlertThreshold | default "" | quote }}
   COVERAGE_STALE_AFTER: {{ .Values.backend.coverageStaleAfter | default "" | quote }}

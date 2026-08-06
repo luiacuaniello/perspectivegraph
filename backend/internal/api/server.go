@@ -42,6 +42,22 @@ const (
 	maxBodyBytes = 256 << 10 // 256 KiB
 )
 
+// WithMetricsElsewhere removes GET /metrics from the API's mux, for deployments that
+// serve it on a separate listener instead.
+//
+// Metrics are open and unthrottled by design so a scrape never starves, but several
+// series carry a `tenant` label - analyzer_critical_paths, analyzer_graph_nodes,
+// analyzer_graph_edges - so on a reachable API port they let anyone enumerate tenants and
+// read each one's current posture. That is aggregate, but "which tenants exist and which
+// is worst off right now" is the shape of a targeting signal.
+//
+// Off by default: /metrics on the API port is declared stable surface in
+// docs/API-STABILITY.md, and moving it silently would break every existing scrape config.
+func (a *API) WithMetricsElsewhere(elsewhere bool) *API {
+	a.metricsElsewhere = elsewhere
+	return a
+}
+
 // WithDegraded marks the API as serving in a reduced mode, which makes /healthz fail so
 // an orchestrator stops routing to it. The reason is the human-readable cause, e.g. the
 // graph store having fallen back to memory because Apache AGE was unreachable. An empty
@@ -113,8 +129,11 @@ func (a *API) Handler() (http.Handler, error) {
 	// which reads as good news. A degraded engine now fails the probe and is taken out
 	// of rotation, because withholding an answer beats returning a falsely reassuring one.
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { a.writeHealth(w) })
-	// Prometheus metrics - open and unthrottled so scraping never starves.
-	mux.Handle("GET /metrics", metrics.Handler())
+	// Prometheus metrics - open and unthrottled so scraping never starves. Served here
+	// unless METRICS_ADDR gave them their own listener; see WithMetricsElsewhere.
+	if !a.metricsElsewhere {
+		mux.Handle("GET /metrics", metrics.Handler())
+	}
 	// Public auth config - necessarily open: it tells an unauthenticated SPA how to
 	// authenticate (token vs SSO). Secret-free (only the IdP's public coordinates).
 	mux.HandleFunc("GET /auth/config", a.handleAuthConfig)

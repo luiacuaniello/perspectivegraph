@@ -51,13 +51,15 @@ type API struct {
 	corsOrigins []string
 	// degraded, when non-empty, is why this instance serves in a reduced mode;
 	// /healthz fails while it is set. See WithDegraded.
-	degraded     string
-	exportSigner *exportsign.Signer
-	exfil        *secwatch.Watcher // exfiltration detector (attack-map bulk reads)
-	authGuard    *secwatch.Watcher // auth brute-force lockout
-	authInfo     AuthInfo          // public auth config for the SPA login gate
-	prOpener     action.PROpener   // opens remediation pull requests (nil → disabled)
-	ai           ai.Client         // AI-native layer (nil/Nop → disabled)
+	degraded string
+	// metricsElsewhere drops GET /metrics from this mux; see WithMetricsElsewhere.
+	metricsElsewhere bool
+	exportSigner     *exportsign.Signer
+	exfil            *secwatch.Watcher // exfiltration detector (attack-map bulk reads)
+	authGuard        *secwatch.Watcher // auth brute-force lockout
+	authInfo         AuthInfo          // public auth config for the SPA login gate
+	prOpener         action.PROpener   // opens remediation pull requests (nil → disabled)
+	ai               ai.Client         // AI-native layer (nil/Nop → disabled)
 }
 
 func New(manager *graph.Manager, svc *analyzer.Service, idx search.Indexer) *API {

@@ -225,12 +225,19 @@ Two changes close that:
     carry **no** request id: they describe a window of events crossing a threshold, not
     the one request that happened to be last, and pinning them to it would point an
     investigation at an arbitrary call.
-- **`/metrics` is open and unthrottled** - deliberately, so a scrape never starves - and
-  it is served on the same port as the API. Series such as
-  `perspectivegraph_analyzer_critical_paths` carry a `tenant` label, so reaching that port
-  is enough to enumerate tenants and read each one's current path count. Scrape from
-  inside the cluster and do not publish the API port directly; see
-  [THREAT-MODEL.md](THREAT-MODEL.md).
+- **`/metrics` is open and unthrottled** - deliberately, so a scrape never starves.
+  Series such as `perspectivegraph_analyzer_critical_paths` carry a `tenant` label, so on
+  a reachable port they are enough to enumerate tenants and read each one's current path
+  count.
+  - **Set `METRICS_ADDR`** to move them off the API port onto their own listener, e.g.
+    `METRICS_ADDR=127.0.0.1:9090`. That listener serves `/metrics` and nothing else - no
+    GraphQL, no auth config, no exports - and speaks plain HTTP by design, because it is
+    meant for an address the outside cannot reach and demanding a certificate there is
+    the friction that pushes operators back onto the public port.
+    `values-production.yaml` sets it.
+  - It is **empty by default**: `/metrics` on the API port is declared stable surface in
+    [API-STABILITY.md](API-STABILITY.md), and relocating it silently would break every
+    existing scrape config.
 
 ## 7. High availability
 

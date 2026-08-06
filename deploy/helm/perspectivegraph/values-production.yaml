@@ -19,6 +19,8 @@ backend:
   logLevel: info
   # A production deployment ships its logs somewhere that parses them.
   logFormat: json
+  # Off the public API port; scrape it from inside the cluster.
+  metricsAddr: "127.0.0.1:9090"
   resources:
     requests: { cpu: "250m", memory: "512Mi" }
     limits: { cpu: "2", memory: "2Gi" }

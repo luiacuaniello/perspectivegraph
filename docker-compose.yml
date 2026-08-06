@@ -177,6 +177,7 @@ services:
       # do nothing under Docker while working under Helm. Guarded by
       # TestDeploySurfacesExposeEveryConfigKey.
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
+      METRICS_ADDR: ${METRICS_ADDR:-}
       AUTH_LOCKOUT_THRESHOLD: ${AUTH_LOCKOUT_THRESHOLD:-}
       EXFIL_ALERT_THRESHOLD: ${EXFIL_ALERT_THRESHOLD:-}
       INGEST_HMAC_SECRETS: ${INGEST_HMAC_SECRETS:-}

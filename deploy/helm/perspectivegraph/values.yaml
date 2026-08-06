@@ -25,6 +25,9 @@ backend:
   # Left empty => the backend's own default applies. Listed here so every key the
   # backend reads is reachable from values.yaml (see the parity test).
   corsAllowedOrigins: ""
+  # Move Prometheus /metrics off the API port, e.g. "127.0.0.1:9090". See
+  # docs/OPERATIONS.md - the series carry a tenant label.
+  metricsAddr: ""
   authLockoutThreshold: ""
   exfilAlertThreshold: ""
   coverageStaleAfter: ""

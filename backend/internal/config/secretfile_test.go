@@ -149,3 +149,28 @@ func TestLoadCollectsSecretErrors(t *testing.T) {
 		t.Errorf("SecretErrors does not name the variable: %v", cfg.SecretErrors)
 	}
 }
+
+// METRICS_ADDR moves Prometheus /metrics onto its own listener. This asserts the value
+// actually reaches the field, which is not the same as the key appearing in the source.
+//
+// It is here because that is precisely the bug that happened: the edit adding the key to
+// Load silently did not apply (gofmt had aligned the anchor line differently), so
+// MetricsAddr stayed empty forever and the listener never started - and it compiled
+// without a warning. The parity test caught it by scanning the source text, which would
+// NOT have caught the value landing in the wrong field. This would.
+func TestMetricsAddrReachesTheConfig(t *testing.T) {
+	t.Setenv("METRICS_ADDR", "127.0.0.1:9090")
+	if got := Load().MetricsAddr; got != "127.0.0.1:9090" {
+		t.Fatalf("MetricsAddr = %q, want the value from the environment", got)
+	}
+}
+
+// Empty is the default and it means "serve /metrics on the API port", which is the
+// historical behaviour and declared stable surface. A non-empty default would silently
+// relocate the endpoint for every existing deployment.
+func TestMetricsAddrDefaultsToEmpty(t *testing.T) {
+	t.Setenv("METRICS_ADDR", "")
+	if got := Load().MetricsAddr; got != "" {
+		t.Fatalf("MetricsAddr = %q with the variable unset, want empty", got)
+	}
+}

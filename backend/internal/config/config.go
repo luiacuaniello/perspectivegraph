@@ -37,6 +37,12 @@ type Config struct {
 	// HTTP servers
 	APIAddr    string
 	IngestAddr string
+	// MetricsAddr, when set, serves Prometheus /metrics on its OWN listener instead of
+	// on the API's mux. Several series carry a `tenant` label, so on a reachable API
+	// port they let anyone enumerate tenants and read each one's critical-path count.
+	// Empty (default) keeps the historical behaviour, since /metrics on the API port is
+	// declared stable surface; bind it to an internal interface in production.
+	MetricsAddr string
 
 	// TLS for the API + ingest servers. When both are set the servers speak HTTPS
 	// (TLS >= 1.2) directly; empty (the default) serves plain HTTP, expecting TLS
@@ -285,6 +291,7 @@ func Load() Config {
 		Env:         getenv("PG_ENV", "demo"),
 		APIAddr:     getenv("API_ADDR", ":8080"),
 		IngestAddr:  getenv("INGEST_ADDR", ":8081"),
+		MetricsAddr: getenv("METRICS_ADDR", ""),
 		TLSCertFile: getenv("TLS_CERT_FILE", ""),
 		TLSKeyFile:  getenv("TLS_KEY_FILE", ""),
 
