@@ -199,6 +199,15 @@ type Node {
   slsaLevel: Int
 }
 
+type PRVerdict {
+  analysed: Boolean
+  analysedAt: String
+  criticalPaths: Int
+  paths: [AttackPath]
+  sha: String
+  slug: String
+}
+
 type PolicyViolation {
   description: String
   invariantId: String
@@ -247,6 +256,7 @@ type Query {
   invariantViolations: [PolicyViolation]
   kShortestPaths(from: String, k: Int, target: String!): [AttackPath]
   posture: Posture
+  prVerdict(sha: String!, slug: String!): PRVerdict
   remediationPlan(app: String): [Fix]
   riskSimulation(iterations: Int, seed: Int): RiskSimulation
   search(query: String!, size: Int): [SearchHit]

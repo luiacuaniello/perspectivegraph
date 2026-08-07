@@ -691,6 +691,36 @@
 					"response": []
 				},
 				{
+					"name": "Merge gate verdict for one commit (prVerdict)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{apiUrl}}/graphql",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "query($slug:String!,$sha:String!){ prVerdict(slug:$slug,sha:$sha){ analysed criticalPaths analysedAt paths{ id score priority nodes{ name label } } } }",
+								"variables": "{\n\t\"slug\": \"owner/name\",\n\t\"sha\": \"REPLACE_WITH_COMMIT_SHA\"\n}"
+							}
+						},
+						"description": "What the engine says about ONE commit, for a CI merge gate. This is the query behind `perspectivegraph gate` and the GitHub Action.\n\nIt reports THREE states, not two, and the third is why it exists:\n\n- `analysed: true`, `criticalPaths: 0` - clean. The engine looked and found nothing.\n- `analysed: true`, `criticalPaths: N` - blocked. N critical paths run through this commit, listed in `paths`.\n- `analysed: false` - UNKNOWN. Nothing carrying this commit ever reached the graph. This is NOT clean: a pipeline whose scanner output never arrived would otherwise get the same green light as one that is genuinely safe, which is the silent false negative this product exists to make visible.\n\n`analysedAt` dates the pass that produced `criticalPaths`. A gate must ignore a verdict older than its own ingest - the commit can already be in the graph while the paths still describe the estate as it was before it arrived, and that reads as zero paths.\n\nThe commit gets into the graph via the `slug` and `sha` query parameters on the ingest webhooks (see 'Ingest - scanner webhooks'). Without them nothing is stamped and every verdict here is UNKNOWN."
+					},
+					"response": []
+				},
+				{
 					"name": "Temporal history (trend / MTTR / path age)",
 					"request": {
 						"method": "POST",

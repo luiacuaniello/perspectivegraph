@@ -148,6 +148,48 @@ and missing context**.
 | **Architect** | No live view of how IaC becomes attack surface | Auto-generated, always-current architecture & data-flow maps + drift detection |
 
 
+## Block the pull request that opens the path
+
+```yaml
+- uses: luiacuaniello/perspectivegraph@v1
+  with:
+    api: https://perspectivegraph.internal
+    ingest: https://perspectivegraph.internal:8081
+    report: trivy.json
+    hmac-secret: ${{ secrets.PG_INGEST_HMAC }}
+```
+
+The check goes red when *this commit* puts a sensitive asset within reach. Not when it
+adds a critical CVE - a critical on a host nothing routes to does not fail the build, and
+a medium on a container that now reaches the production database does. That is a
+different question from the one your other scanners answer, and answering it needs a live
+estate, which is why the action talks to a running engine instead of scanning the runner.
+
+**It has three outcomes, and the third is the point.** Every two-state gate ever written
+gives a pipeline whose scanner output never arrived the same green tick as one that is
+genuinely clean. Here that is `unknown`, and it fails the build by default:
+
+| Verdict | Exit | Meaning |
+| --- | --- | --- |
+| `clean` | 0 | The engine analysed this commit and found no path through it |
+| `blocked` | 1 | Critical attack paths run through it - the check names them |
+| `unknown` | 2 | **Nobody analysed it.** The scan, the ingest or the SHA is wrong |
+
+Set `allow-unknown: true` while you roll the gate out. Leaving it on afterwards turns a
+broken ingest back into a green check, which is the one thing this gate is for.
+
+The same thing without GitHub Actions - the action is a thin wrapper over one command:
+
+```bash
+perspectivegraph gate -api https://perspectivegraph.internal \
+  -ingest https://perspectivegraph.internal:8081 \
+  -report trivy.json -slug owner/name -sha "$COMMIT_SHA"
+```
+
+Full input reference in [`action.yml`](action.yml); the underlying query is `prVerdict`
+in the [API schema](docs/api/schema.graphql).
+
+
 ## Let an agent query it
 
 A language model is weak at exactly what this engine is good at: it cannot enumerate
