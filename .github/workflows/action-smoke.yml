@@ -34,28 +34,57 @@ jobs:
           - case: clean
             serve: clean
             allow_unknown: "false"
+            soft_fail: "false"
             want_outcome: success
             want_verdict: clean
             want_paths: "0"
-          - case: blocked
+
+          # The two hard-fail cases assert an empty verdict on purpose. GitHub does not
+          # evaluate a composite action's outputs when the action fails, so on a red check
+          # there is nothing to read - which is exactly why soft-fail exists. Asserting it
+          # keeps the documented caveat true; if these ever start arriving populated, the
+          # platform changed and the caveat can go.
+          - case: blocked-fails-the-build
             serve: blocked
             allow_unknown: "false"
+            soft_fail: "false"
             want_outcome: failure
-            want_verdict: blocked
-            want_paths: "2"
+            want_verdict: ""
+            want_paths: ""
           # The one that matters: a commit nobody analysed must go red, not green.
           - case: unknown-fails-closed
             serve: unknown
             allow_unknown: "false"
+            soft_fail: "false"
             want_outcome: failure
-            want_verdict: unknown
-            want_paths: "0"
-          # And when an operator opts out, the build passes but the OUTPUT must still say
+            want_verdict: ""
+            want_paths: ""
+
+          # When an operator opts out, the build passes but the OUTPUT must still say
           # unknown - reporting "clean" for a commit nobody looked at is the lie this
           # whole tool exists to prevent, and it would be an easy one to introduce here.
           - case: unknown-allowed
             serve: unknown
             allow_unknown: "true"
+            soft_fail: "false"
+            want_outcome: success
+            want_verdict: unknown
+            want_paths: "0"
+
+          # soft-fail is what a consumer uses to act on a bad verdict rather than merely
+          # be stopped by it, so the verdict has to survive the cases that would otherwise
+          # have gone red.
+          - case: blocked-reported-not-enforced
+            serve: blocked
+            allow_unknown: "false"
+            soft_fail: "true"
+            want_outcome: success
+            want_verdict: blocked
+            want_paths: "2"
+          - case: unknown-reported-not-enforced
+            serve: unknown
+            allow_unknown: "false"
+            soft_fail: "true"
             want_outcome: success
             want_verdict: unknown
             want_paths: "0"
@@ -125,6 +154,7 @@ jobs:
           sha: abc123def456
           timeout: 30s
           allow-unknown: ${{ matrix.allow_unknown }}
+          soft-fail: ${{ matrix.soft_fail }}
 
       - name: Assert
         env:
