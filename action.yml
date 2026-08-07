@@ -34,11 +34,45 @@ inputs:
     description: 'Collector that parses the report, i.e. the /ingest/{source} route: trivy, semgrep, ...'
     required: false
     default: trivy
+  mode:
+    description: >-
+      "server" (default) sends the report to a running PerspectiveGraph and waits for its
+      verdict. "local" needs no deployment at all: the runner reads your estate read-only,
+      ingests this pull request's scan, and computes the verdict in-process with the same
+      engine. Local mode still needs an estate - `aws-region` or `estate` - because
+      without one there are no attack paths, only a flat list of findings.
+    required: false
+    default: server
   api:
-    description: Base URL of the PerspectiveGraph API.
-    required: true
+    description: Base URL of the PerspectiveGraph API. Required in server mode, unused in local mode.
+    required: false
+    default: ""
   ingest:
-    description: Base URL of the ingest webhook. Only needed when a report is given.
+    description: Base URL of the ingest webhook. Server mode only, and only when a report is given.
+    required: false
+    default: ""
+  aws-region:
+    description: >-
+      Local mode: read the estate live from this AWS region. Read-only - it describes
+      resources and writes nothing. Give the job an OIDC role with SecurityAudit.
+    required: false
+    default: ""
+  aws-role:
+    description: "Local mode: cross-account read-only role to assume for aws-region."
+    required: false
+    default: ""
+  estate:
+    description: >-
+      Local mode: the estate as an events JSON file, the format `perspectivegraph
+      awscollect -json` writes. An alternative to aws-region for pipelines that collect
+      the estate on their own schedule rather than on every pull request.
+    required: false
+    default: ""
+  reports:
+    description: >-
+      Local mode: additional scanner reports, one `source=path` per line (e.g.
+      "semgrep=semgrep.json"). With no server accumulating scans, whatever this run is
+      given is the whole picture.
     required: false
     default: ""
   token:
@@ -81,6 +115,15 @@ inputs:
       check. Reasonable while you are rolling the gate out; a liability afterwards.
     required: false
     default: "false"
+  binary:
+    description: >-
+      Path to a perspectivegraph binary that already exists on the runner. Skips the
+      download and the signature check, because there is nothing downloaded to verify.
+      For air-gapped runners, and for testing a build that has not been released yet -
+      without it, this action can only ever be exercised against the previous release,
+      which makes any change to it untestable until after it ships.
+    required: false
+    default: ""
   version:
     description: Release tag of the gate binary to run. "latest" tracks the newest release.
     required: false
@@ -118,7 +161,7 @@ runs:
   using: composite
   steps:
     - name: Install cosign
-      if: inputs.verify == 'true'
+      if: inputs.verify == 'true' && inputs.binary == ''
       uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
     - name: Download the gate binary
@@ -126,49 +169,62 @@ runs:
       env:
         VERSION: ${{ inputs.version }}
         VERIFY: ${{ inputs.verify }}
+        BINARY: ${{ inputs.binary }}
       run: |
         set -euo pipefail
         dir="${RUNNER_TEMP}/perspectivegraph"
         mkdir -p "$dir"
-        base="https://github.com/luiacuaniello/perspectivegraph/releases"
-        if [ "$VERSION" = "latest" ]; then
-          base="${base}/latest/download"
+
+        # A binary supplied by the caller replaces the download entirely - there is
+        # nothing fetched, so there is nothing to verify. It is copied rather than used
+        # in place so the probe and the run below take the same path in both cases.
+        if [ -n "$BINARY" ]; then
+          if [ ! -x "$BINARY" ]; then
+            echo "::error::binary '${BINARY}' does not exist or is not executable"
+            exit 1
+          fi
+          cp "$BINARY" "${dir}/perspectivegraph"
         else
-          base="${base}/download/${VERSION}"
-        fi
+          base="https://github.com/luiacuaniello/perspectivegraph/releases"
+          if [ "$VERSION" = "latest" ]; then
+            base="${base}/latest/download"
+          else
+            base="${base}/download/${VERSION}"
+          fi
 
-        arch="$(uname -m)"
-        case "$arch" in
-          x86_64) arch=amd64 ;;
-          aarch64|arm64) arch=arm64 ;;
-          *) echo "::error::unsupported runner architecture ${arch}"; exit 1 ;;
-        esac
-        archive="perspectivegraph_linux_${arch}.tar.gz"
+          arch="$(uname -m)"
+          case "$arch" in
+            x86_64) arch=amd64 ;;
+            aarch64|arm64) arch=arm64 ;;
+            *) echo "::error::unsupported runner architecture ${arch}"; exit 1 ;;
+          esac
+          archive="perspectivegraph_linux_${arch}.tar.gz"
 
-        curl --fail --silent --show-error --location --retry 3 \
-          -o "${dir}/${archive}" "${base}/${archive}"
-
-        if [ "$VERIFY" = "true" ]; then
           curl --fail --silent --show-error --location --retry 3 \
-            -o "${dir}/SHA256SUMS" "${base}/SHA256SUMS"
-          curl --fail --silent --show-error --location --retry 3 \
-            -o "${dir}/SHA256SUMS.bundle" "${base}/SHA256SUMS.bundle"
+            -o "${dir}/${archive}" "${base}/${archive}"
 
-          # The signature covers the checksum file, which covers every archive - so one
-          # signature check plus one checksum check proves this exact binary came from
-          # this repository's release workflow and nothing rewrote it in between.
-          cosign verify-blob \
-            --bundle "${dir}/SHA256SUMS.bundle" \
-            --certificate-identity-regexp 'https://github.com/luiacuaniello/perspectivegraph/.*' \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            "${dir}/SHA256SUMS"
-          ( cd "$dir" && sha256sum -c SHA256SUMS --ignore-missing )
-        else
-          echo "::warning::signature verification is off, so this step executes an unverified download"
+          if [ "$VERIFY" = "true" ]; then
+            curl --fail --silent --show-error --location --retry 3 \
+              -o "${dir}/SHA256SUMS" "${base}/SHA256SUMS"
+            curl --fail --silent --show-error --location --retry 3 \
+              -o "${dir}/SHA256SUMS.bundle" "${base}/SHA256SUMS.bundle"
+
+            # The signature covers the checksum file, which covers every archive - so one
+            # signature check plus one checksum check proves this exact binary came from
+            # this repository's release workflow and nothing rewrote it in between.
+            cosign verify-blob \
+              --bundle "${dir}/SHA256SUMS.bundle" \
+              --certificate-identity-regexp 'https://github.com/luiacuaniello/perspectivegraph/.*' \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "${dir}/SHA256SUMS"
+            ( cd "$dir" && sha256sum -c SHA256SUMS --ignore-missing )
+          else
+            echo "::warning::signature verification is off, so this step executes an unverified download"
+          fi
+
+          tar -xzf "${dir}/${archive}" -C "$dir"
+          chmod +x "${dir}/perspectivegraph"
         fi
-
-        tar -xzf "${dir}/${archive}" -C "$dir"
-        chmod +x "${dir}/perspectivegraph"
 
         # Releases older than the gate do not merely lack the subcommand - they fall
         # through to starting the API server, bind a port, and sit there until the job's
@@ -181,7 +237,11 @@ runs:
         case "$probe" in
           *-max-critical*) ;;
           *)
-            echo "::error::release ${VERSION} has no usable 'gate' subcommand. Pin a version that ships it."
+            if [ -n "$BINARY" ]; then
+              echo "::error::the binary at '${BINARY}' has no usable 'gate' subcommand"
+            else
+              echo "::error::release ${VERSION} has no usable 'gate' subcommand. Pin a version that ships it."
+            fi
             exit 1
             ;;
         esac
@@ -198,8 +258,13 @@ runs:
         INGEST_HMAC_SECRET: ${{ inputs.hmac-secret }}
         REPORT: ${{ inputs.report }}
         SOURCE: ${{ inputs.source }}
+        REPORTS: ${{ inputs.reports }}
+        MODE: ${{ inputs.mode }}
         API: ${{ inputs.api }}
         INGEST: ${{ inputs.ingest }}
+        AWS_REGION_IN: ${{ inputs.aws-region }}
+        AWS_ROLE: ${{ inputs.aws-role }}
+        ESTATE: ${{ inputs.estate }}
         SLUG: ${{ inputs.slug }}
         SHA: ${{ inputs.sha }}
         PR: ${{ inputs.pr }}
@@ -216,21 +281,41 @@ runs:
         set +e
         set -uo pipefail
 
-        if [ -n "$REPORT" ] && [ -z "$INGEST" ]; then
-          echo "::error::a report was given but no ingest URL, so there is nowhere to send it"
-          exit 1
-        fi
-
         # Only pass the flags we actually have. An empty -slug would override the
         # binary's own GITHUB_REPOSITORY fallback with nothing, and the gate would refuse
         # to run on the very event it is meant for.
-        args=(gate -api "$API" -timeout "$TIMEOUT" -max-critical "$MAX_CRITICAL")
+        args=(gate -timeout "$TIMEOUT" -max-critical "$MAX_CRITICAL")
         [ -n "$SLUG" ] && args+=(-slug "$SLUG")
         [ -n "$SHA" ] && args+=(-sha "$SHA")
         [ -n "$PR" ] && [ "$PR" != "0" ] && args+=(-pr "$PR")
         [ -n "$REPORT" ] && args+=(-report "$REPORT" -source "$SOURCE")
-        [ -n "$INGEST" ] && args+=(-ingest "$INGEST")
         [ "$ALLOW_UNKNOWN" = "true" ] && args+=(-allow-unknown)
+
+        if [ "$MODE" = "local" ]; then
+          if [ -z "$AWS_REGION_IN" ] && [ -z "$ESTATE" ]; then
+            echo "::error::local mode needs an estate: set aws-region (live, read-only) or estate. Without one there are no attack paths to reason about, only a flat list of findings."
+            exit 1
+          fi
+          args+=(-local)
+          [ -n "$AWS_REGION_IN" ] && args+=(-aws-region "$AWS_REGION_IN")
+          [ -n "$AWS_ROLE" ] && args+=(-aws-role "$AWS_ROLE")
+          [ -n "$ESTATE" ] && args+=(-estate "$ESTATE")
+          # One source=path per line, so a workflow can list several scans readably.
+          while IFS= read -r spec; do
+            [ -n "$spec" ] && args+=(-reports "$spec")
+          done <<< "$REPORTS"
+        else
+          if [ -z "$API" ]; then
+            echo "::error::server mode needs the api input (or use mode: local, which needs no deployment)"
+            exit 1
+          fi
+          if [ -n "$REPORT" ] && [ -z "$INGEST" ]; then
+            echo "::error::a report was given but no ingest URL, so there is nowhere to send it"
+            exit 1
+          fi
+          args+=(-api "$API")
+          [ -n "$INGEST" ] && args+=(-ingest "$INGEST")
+        fi
 
         # This is the line -e must not be allowed to abort (see the top of the step): the
         # code it returns has to be read and translated, so that "nobody analysed this"

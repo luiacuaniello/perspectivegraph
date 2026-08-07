@@ -44,3 +44,6 @@ node_modules/
 # Data volumes (docker)
 /.data/
 node_modules.nosync/
+
+# The gate writes its machine-readable verdict here when run with -json.
+verdict.json
