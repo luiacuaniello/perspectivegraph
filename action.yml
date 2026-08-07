@@ -172,7 +172,11 @@ runs:
         BINARY: ${{ inputs.binary }}
       run: |
         set -euo pipefail
-        dir="${RUNNER_TEMP}/perspectivegraph"
+        # Not ${RUNNER_TEMP}/perspectivegraph: that is where a workflow building the
+        # binary itself would naturally put it, and `mkdir -p` over an existing FILE
+        # fails - killing this step before it produces anything, which reads as an
+        # action that ran and reported nothing.
+        dir="${RUNNER_TEMP}/perspectivegraph-gate"
         mkdir -p "$dir"
 
         # A binary supplied by the caller replaces the download entirely - there is

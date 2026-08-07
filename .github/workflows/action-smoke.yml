@@ -234,14 +234,16 @@ jobs:
         working-directory: ./backend
         env:
           CGO_ENABLED: "0"
-        run: go build -o "${RUNNER_TEMP}/perspectivegraph" ./cmd/perspectivegraph
+        run: |
+          mkdir -p "${RUNNER_TEMP}/pg-build"
+          go build -o "${RUNNER_TEMP}/pg-build/perspectivegraph" ./cmd/perspectivegraph
 
       - id: gate
         continue-on-error: true
         uses: ./
         with:
           mode: local
-          binary: ${{ runner.temp }}/perspectivegraph
+          binary: ${{ runner.temp }}/pg-build/perspectivegraph
           estate: backend/testdata/gate-local-estate.json
           report: backend/testdata/trivy-sample.json
           source: trivy
@@ -284,14 +286,16 @@ jobs:
         working-directory: ./backend
         env:
           CGO_ENABLED: "0"
-        run: go build -o "${RUNNER_TEMP}/perspectivegraph" ./cmd/perspectivegraph
+        run: |
+          mkdir -p "${RUNNER_TEMP}/pg-build"
+          go build -o "${RUNNER_TEMP}/pg-build/perspectivegraph" ./cmd/perspectivegraph
 
       - id: gate
         continue-on-error: true
         uses: ./
         with:
           mode: local
-          binary: ${{ runner.temp }}/perspectivegraph
+          binary: ${{ runner.temp }}/pg-build/perspectivegraph
           report: backend/testdata/trivy-sample.json
           slug: acme/payments
           sha: abc123def456
