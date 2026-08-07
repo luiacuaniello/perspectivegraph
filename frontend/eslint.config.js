@@ -23,10 +23,18 @@ export default tseslint.config(
     rules: {
       ...reactHooks.configs.recommended.rules,
       "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
-      // Two react-hooks v6 rules fire on deliberate, idiomatic patterns already in the
-      // code (the "latest ref written during render" in GraphCanvas, and the debounced
-      // search resetting state inside its own effect). They are not bugs, so keep them as
-      // warnings (visible, tracked) rather than blocking - revisit if we adopt the compiler.
+      // Two react-hooks v6 rules are enabled explicitly. Only one of them currently
+      // fires: set-state-in-effect, on the debounced search clearing its own state inside
+      // its effect, which is deliberate (nothing it clears is in the effect's
+      // dependencies, so it cannot re-enter) and is disabled on that exact line with the
+      // reasoning beside it. refs fires nowhere today and is listed so that enabling it
+      // stays a decision rather than an accident of what the recommended set contains.
+      //
+      // They stay at "warn" rather than "error" because the distinction still helps when
+      // reading output locally. It is NOT a softer gate: `npm run lint` runs with
+      // --max-warnings=0, so a warning fails the build exactly as an error would. What the
+      // level buys is that a genuine future violation surfaces as something to judge,
+      // rather than as a rule someone is tempted to switch off wholesale.
       "react-hooks/refs": "warn",
       "react-hooks/set-state-in-effect": "warn",
     },
