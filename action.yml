@@ -22,6 +22,10 @@ branding:
 # output never arrived gets the same green light as one that is genuinely clean, from
 # every two-state gate ever written. Here that is UNKNOWN, and it fails the build by
 # default - see the allow-unknown input.
+#
+# Runners: Linux and macOS, on amd64 or arm64. The release also ships a Windows binary,
+# but these steps assume POSIX tooling throughout, so a Windows runner is refused with a
+# message that says so rather than left to fail somewhere further down.
 
 inputs:
   report:
@@ -207,7 +211,20 @@ runs:
             aarch64|arm64) arch=arm64 ;;
             *) echo "::error::unsupported runner architecture ${arch}"; exit 1 ;;
           esac
-          archive="perspectivegraph_linux_${arch}.tar.gz"
+
+          # The archive used to be hardcoded to linux, so a macOS runner downloaded a
+          # Linux binary and then failed at the probe with "this release has no gate
+          # subcommand" - blaming the release for what was a platform mismatch, and
+          # sending whoever read it hunting for a bug that did not exist.
+          case "$(uname -s)" in
+            Linux)  os=linux ;;
+            Darwin) os=darwin ;;
+            *)
+              echo "::error::unsupported runner OS $(uname -s). This action needs a Linux or macOS runner; the release ships a Windows binary but this action's steps assume POSIX tooling."
+              exit 1
+              ;;
+          esac
+          archive="perspectivegraph_${os}_${arch}.tar.gz"
 
           curl --fail --silent --show-error --location --retry 3 \
             -o "${dir}/${archive}" "${base}/${archive}"
@@ -226,7 +243,13 @@ runs:
               --certificate-identity-regexp 'https://github.com/luiacuaniello/perspectivegraph/.*' \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com \
               "${dir}/SHA256SUMS"
-            ( cd "$dir" && sha256sum -c SHA256SUMS --ignore-missing )
+            # coreutils on Linux, the stock Perl shasum on macOS. Both accept this file
+            # and --ignore-missing; only the name differs.
+            if command -v sha256sum >/dev/null 2>&1; then
+              ( cd "$dir" && sha256sum -c SHA256SUMS --ignore-missing )
+            else
+              ( cd "$dir" && shasum -a 256 -c SHA256SUMS --ignore-missing )
+            fi
           else
             echo "::warning::signature verification is off, so this step executes an unverified download"
           fi
@@ -242,7 +265,25 @@ runs:
         # Captured rather than piped into grep: `gate -h` exits non-zero by design, and
         # under `pipefail` that makes the whole pipeline non-zero however the grep went -
         # which would reject every valid binary and break the action for everybody.
-        probe="$(timeout 30 "${dir}/perspectivegraph" gate -h 2>&1 || true)"
+        #
+        # Run in the background with a hand-rolled deadline rather than under `timeout`,
+        # which does not exist on macOS - it was the second half of the same platform
+        # bug: the probe died with "command not found", the output carried no flags, and
+        # the action blamed the release.
+        "${dir}/perspectivegraph" gate -h >"${dir}/probe.txt" 2>&1 &
+        probe_pid=$!
+        waited=0
+        while [ "$waited" -lt 30 ] && kill -0 "$probe_pid" 2>/dev/null; do
+          sleep 1
+          waited=$((waited + 1))
+        done
+        if kill -0 "$probe_pid" 2>/dev/null; then
+          # Still alive after 30s means it is not answering -h at all: an older release
+          # that fell through to starting the API server.
+          kill "$probe_pid" 2>/dev/null || true
+        fi
+        wait "$probe_pid" 2>/dev/null || true
+        probe="$(cat "${dir}/probe.txt" 2>/dev/null || true)"
         case "$probe" in
           *-max-critical*) ;;
           *)
