@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -358,13 +359,13 @@ func TestEstateSourcesAddUpRatherThanOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != len(estateEvents())+len(fromCloud) {
+	if len(got.events) != len(estateEvents())+len(fromCloud) {
 		t.Fatalf("collectEstate returned %d events, want %d - one source overrode the other",
-			len(got), len(estateEvents())+len(fromCloud))
+			len(got.events), len(estateEvents())+len(fromCloud))
 	}
 
 	var sawFile, sawCloud bool
-	for _, ev := range got {
+	for _, ev := range got.events {
 		for _, n := range ev.Nodes {
 			switch n.Name {
 			case "edge-alb":
@@ -457,4 +458,79 @@ func parseTrivyForTest(t *testing.T) []ontology.Event {
 		t.Fatal(err)
 	}
 	return events
+}
+
+// Reading NOTHING from the live account - bad credentials, a wrong region, a denied role
+// - must stop the run. This was a real defect: it printed a warning and carried on with
+// whatever the -estate file happened to hold, so a green build could be reported for an
+// environment nobody ever read. Verified by hand against a nonexistent region.
+func TestLocalModeFailsWhenTheLiveReadReturnedNothing(t *testing.T) {
+	o := localOpts{
+		slug: localSlug, sha: localSHA,
+		estate: writeEstate(t, standaloneEstate()), // a perfectly readable file
+		collectAWSFn: func(context.Context) ([]ontology.Event, error) {
+			return nil, errors.New("InvalidClientTokenId")
+		},
+	}
+	_, err := o.collectEstate(context.Background())
+	if err == nil {
+		t.Fatal("carried on with the file alone after reading nothing from the account")
+	}
+	if !strings.Contains(err.Error(), "nothing to judge this commit against") {
+		t.Errorf("the error does not say why it refuses: %v", err)
+	}
+}
+
+// A PARTIAL read is survivable - one throttled feed should not make the gate flaky - but
+// it cannot be downgraded to a log line, because "no attack path" on half an estate is
+// indistinguishable from a path through the half that failed to read.
+func TestPartialEstateTurnsACleanVerdictIntoUnknown(t *testing.T) {
+	// Exactly the shape that produced a green build by hand: the commit IS in the graph
+	// (the scan was ingested) and no path runs through it - but the estate that could
+	// have provided one was only read in part.
+	partial := errors.New("describe security groups: throttled")
+	o := localOpts{
+		slug: localSlug, sha: localSHA, repository: localSlug,
+		reports: []reportSpec{trivySampleSpec(t)},
+		estate:  writeEstate(t, standaloneEstate()),
+		collectAWSFn: func(context.Context) ([]ontology.Event, error) {
+			return standaloneEstate(), partial // read something, but not everything
+		},
+	}
+	v, err := localVerdict(context.Background(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.Analysed {
+		t.Fatal("the ingested scan did not reach the graph, so this is not the case under test")
+	}
+	if v.CriticalPaths != 0 {
+		t.Fatalf("expected a clean-looking verdict, got %d paths", v.CriticalPaths)
+	}
+	if v.Incomplete == "" {
+		t.Fatal("a partial read was not carried on the verdict, so it scrolls past in a log")
+	}
+
+	// A clean-looking verdict on partial data must exit UNKNOWN, not CLEAN.
+	var buf bytes.Buffer
+	printGateVerdict(&buf, v, localSlug, localSHA, 0)
+	out := buf.String()
+	if !strings.Contains(out, "UNKNOWN") {
+		t.Errorf("reported as clean despite an incomplete estate: %q", out)
+	}
+	if !strings.Contains(out, "read only in part") {
+		t.Errorf("the output does not say why it is unknown: %q", out)
+	}
+}
+
+// But a path found on partial data is still a real path: BLOCKED must survive, or an
+// operator would learn that a flaky read downgrades a genuine finding.
+func TestPartialEstateStillBlocksOnARealPath(t *testing.T) {
+	v := gateVerdict{Analysed: true, CriticalPaths: 1, Incomplete: "throttled",
+		Paths: []gatePath{{ID: "p1", Nodes: []gateNode{{Name: "a"}, {Name: "b"}}}}}
+	var buf bytes.Buffer
+	printGateVerdict(&buf, v, localSlug, localSHA, 0)
+	if !strings.Contains(buf.String(), "BLOCKED") {
+		t.Errorf("a real path was downgraded because the estate read was partial: %q", buf.String())
+	}
 }

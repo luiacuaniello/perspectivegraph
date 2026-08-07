@@ -101,6 +101,15 @@ type localOpts struct {
 	collectAWSFn func(context.Context) ([]ontology.Event, error)
 }
 
+// estate is what the environment sources produced, and how completely they managed it.
+type estate struct {
+	events []ontology.Event
+	// partial is the reason the read was incomplete, empty when it was not. A gate that
+	// downgrades this to a log line reports a clean build for an environment it never
+	// saw, which is the failure this whole tool exists to make visible.
+	partial string
+}
+
 // localMaxHops mirrors the server's ANALYZER_MAX_HOPS default. It is passed for
 // signature fidelity with the analyzer service and bites nothing today: maxHops reaches
 // only the DB-side Cypher pathfinder, and local mode runs on an in-memory store with the
@@ -122,11 +131,11 @@ func localVerdict(ctx context.Context, o localOpts) (gateVerdict, error) {
 	// a different graph than the server builds from the same input.
 	norm := normalization.New(mgr)
 
-	estate, err := o.collectEstate(ctx)
+	est, err := o.collectEstate(ctx)
 	if err != nil {
 		return gateVerdict{}, err
 	}
-	if len(estate) == 0 {
+	if len(est.events) == 0 {
 		return gateVerdict{}, fmt.Errorf("the estate source produced no events, so there is nothing for this commit to be reachable through")
 	}
 
@@ -135,7 +144,7 @@ func localVerdict(ctx context.Context, o localOpts) (gateVerdict, error) {
 		return gateVerdict{}, err
 	}
 
-	if err := applyEvents(ctx, norm, append(reports, estate...)); err != nil {
+	if err := applyEvents(ctx, norm, append(reports, est.events...)); err != nil {
 		return gateVerdict{}, err
 	}
 
@@ -150,7 +159,9 @@ func localVerdict(ctx context.Context, o localOpts) (gateVerdict, error) {
 	paths := analyzer.CriticalPathsVia(ctx, store, snap, localMaxHops, false)
 	analyzer.Prioritize(paths)
 
-	return buildVerdict(snap, paths, o.slug, o.sha), nil
+	v := buildVerdict(snap, paths, o.slug, o.sha)
+	v.Incomplete = est.partial
+	return v, nil
 }
 
 // buildVerdict applies the same three-state rule as the prVerdict resolver: "analysed" is
@@ -189,19 +200,22 @@ func buildVerdict(snap graph.Snapshot, paths []analyzer.AttackPath, slug, sha st
 // on-prem, the CI provenance linking an image to where it runs. Letting one silently win
 // would drop half the environment and answer confidently about the remainder, which for
 // a reachability question means reporting clean because the route left the part it read.
-func (o localOpts) collectEstate(ctx context.Context) ([]ontology.Event, error) {
-	var events []ontology.Event
+func (o localOpts) collectEstate(ctx context.Context) (estate, error) {
+	if o.estate == "" && o.awsRegion == "" && o.collectAWSFn == nil {
+		return estate{}, fmt.Errorf("local mode needs an estate: pass -aws-region (live, read-only) or -estate <events.json>")
+	}
+	var out estate
 
 	if o.estate != "" {
 		b, err := os.ReadFile(o.estate) // #nosec G304 G703 -- operator-supplied path to their own estate export
 		if err != nil {
-			return nil, fmt.Errorf("read -estate: %w", err)
+			return estate{}, fmt.Errorf("read -estate: %w", err)
 		}
 		var fromFile []ontology.Event
 		if err := json.Unmarshal(b, &fromFile); err != nil {
-			return nil, fmt.Errorf("decode -estate (expects the JSON `awscollect -json` writes): %w", err)
+			return estate{}, fmt.Errorf("decode -estate (expects the JSON `awscollect -json` writes): %w", err)
 		}
-		events = append(events, fromFile...)
+		out.events = append(out.events, fromFile...)
 	}
 
 	if o.awsRegion != "" || o.collectAWSFn != nil {
@@ -209,17 +223,30 @@ func (o localOpts) collectEstate(ctx context.Context) ([]ontology.Event, error) 
 		if o.collectAWSFn != nil {
 			collect = o.collectAWSFn
 		}
-		live, err := collect(ctx)
+		live, partial, err := collect2(ctx, collect)
 		if err != nil {
-			return nil, err
+			return estate{}, err
 		}
-		events = append(events, live...)
+		out.events = append(out.events, live...)
+		out.partial = partial
 	}
+	return out, nil
+}
 
-	if o.estate == "" && o.awsRegion == "" && o.collectAWSFn == nil {
-		return nil, fmt.Errorf("local mode needs an estate: pass -aws-region (live, read-only) or -estate <events.json>")
+// collect2 separates the two ways a live read goes wrong, which the first version of this
+// conflated into one warning. Reading NOTHING is a failure - bad credentials, a wrong
+// region, a denied role - and continuing on whatever an -estate file happened to contain
+// would grade the commit against an environment nobody looked at. Reading only PART of it
+// is survivable, but it has to travel with the verdict rather than scroll past in a log.
+func collect2(ctx context.Context, collect func(context.Context) ([]ontology.Event, error)) ([]ontology.Event, string, error) {
+	events, err := collect(ctx)
+	if err == nil {
+		return events, "", nil
 	}
-	return events, nil
+	if len(events) == 0 {
+		return nil, "", fmt.Errorf("could not read the estate at all, so there is nothing to judge this commit against: %w", err)
+	}
+	return events, err.Error(), nil
 }
 
 // collectAWS reads the live account: describes and lists only, no writes, no cost.
@@ -230,15 +257,9 @@ func (o localOpts) collectAWS(ctx context.Context) ([]ontology.Event, error) {
 	if err != nil {
 		return nil, fmt.Errorf("aws connector: %w", err)
 	}
-	events, err := conn.Collect(ctx)
-	// Collect joins per-feed errors but still returns what it did read. A partial estate
-	// is a partial answer, so say so loudly rather than silently grading the commit
-	// against half an account - a route through the half that failed to read looks
-	// exactly like no route at all.
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "gate: WARNING - the estate was read only in part: %v\n", err)
-	}
-	return events, nil
+	// Collect joins per-feed errors and still returns what it did read, so the error and
+	// the events both matter. Grading how bad it is belongs to the caller.
+	return conn.Collect(ctx)
 }
 
 // parseReports turns this pull request's scanner output into events, stamped with the
