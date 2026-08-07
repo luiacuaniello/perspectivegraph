@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { CheckIcon, GemIcon, GlobeIcon, LayersIcon, XIcon, ZapIcon } from "./icons";
 import Button from "./ui/Button";
 
@@ -11,44 +10,6 @@ import Button from "./ui/Button";
 // the decision instead - what is being exploited, the fewest changes that fix it -
 // and a screen that needs a manual in front of it has not earned the reader's first
 // impression. The explainer stays one click away for whoever wants the theory.
-const KEY = "pg_intro_dismissed_v1";
-// OPEN_VALUE is the stored flag for "the reader asked to see this", the inverse of
-// the old dismissed flag. A new key would have been equivalent; reusing this one
-// with inverted meaning would silently re-open the banner for everyone who had
-// dismissed it, so the name changes with the semantics.
-const OPEN_KEY = "pg_intro_open_v1";
-
-export function useIntroDismissed() {
-  const [dismissed, setDismissed] = useState<boolean>(() => {
-    try {
-      // Closed unless explicitly opened. The legacy key is still honoured so a
-      // reader who dismissed the old banner is never shown it again either way.
-      return localStorage.getItem(OPEN_KEY) !== "1" || localStorage.getItem(KEY) === "1";
-    } catch {
-      return true;
-    }
-  });
-  const dismiss = () => {
-    try {
-      localStorage.removeItem(OPEN_KEY);
-      localStorage.setItem(KEY, "1");
-    } catch {
-      /* ignore */
-    }
-    setDismissed(true);
-  };
-  const reopen = () => {
-    try {
-      localStorage.setItem(OPEN_KEY, "1");
-      localStorage.removeItem(KEY);
-    } catch {
-      /* ignore */
-    }
-    setDismissed(false);
-  };
-  return { dismissed, dismiss, reopen };
-}
-
 function FlowChip({
   icon,
   label,

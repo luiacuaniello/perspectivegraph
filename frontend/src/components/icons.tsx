@@ -1,3 +1,12 @@
+/* eslint-disable react-refresh/only-export-components --
+   Every export in this file IS a component. Most are produced by the `make()` factory
+   below, and the rule recognises a component only from a function declaration or an
+   arrow function returning JSX - a factory call assigned to a const looks to it like an
+   ordinary value exported alongside components, which is what it warns about.
+   The premise it is defending (Fast Refresh cannot hot-update a file mixing components
+   with other exports) does not apply here, because there is nothing else to mix.
+   Scoped to this file rather than switched off globally: elsewhere the rule is right,
+   and it caught two real cases in this same pass. */
 // Inline SVG icon set, Feather/Lucide style (ISC/MIT-licensed path data).
 // All icons inherit currentColor and size via className (e.g. "h-4 w-4").
 import type { ReactElement, ReactNode, SVGProps } from "react";

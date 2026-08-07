@@ -4,9 +4,6 @@ import type { Edge, Node } from "../api/client";
 import { useTheme, type Theme } from "../theme";
 import { category, CATEGORY_STYLE, labelColor, type Category } from "./graphColors";
 
-// labelColor is re-exported for backwards compatibility; import it from ./graphColors in
-// new code (that module carries no Cytoscape dependency).
-export { labelColor };
 
 // Small SVG glyph matching each category's node shape, for the legend.
 function ShapeGlyph({ cat }: { cat: Category }) {

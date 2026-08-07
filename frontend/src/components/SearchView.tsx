@@ -22,6 +22,7 @@ export default function SearchView({ enabled = true }: { enabled?: boolean }) {
     window.clearTimeout(timer.current);
     const q = query.trim();
     if (!q) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- see the note above
       setHits(null);
       setError(null);
       setBusy(false);
