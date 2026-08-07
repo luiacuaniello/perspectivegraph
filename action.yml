@@ -95,24 +95,23 @@ inputs:
   soft-fail:
     description: >-
       Always succeed, and report the verdict through the outputs instead of through a red
-      check. Use this when a later step decides what to do - comment on the PR, open a
-      ticket, fail only on some branches. Note that this is the ONLY way to read the
-      outputs on a bad verdict: GitHub does not evaluate a composite action's outputs when
-      the action fails, so by default `verdict` is set exactly when the check is green.
+      check. Use it when a later step decides what to do - comment on the PR, open a
+      ticket, block only on some branches. The outputs are set either way, so this changes
+      whether the build stops, not what you can read.
     required: false
     default: "false"
 
+# Set on every run, including a red one - a later step can always read what was decided,
+# whether or not it also stopped the build.
 outputs:
   verdict:
-    description: >-
-      One of clean, blocked or unknown. Empty when the check failed, unless soft-fail is
-      set - see that input.
+    description: One of clean, blocked or unknown.
     value: ${{ steps.gate.outputs.verdict }}
   critical-paths:
-    description: How many critical attack paths run through this commit. Same caveat as verdict.
+    description: How many critical attack paths run through this commit.
     value: ${{ steps.gate.outputs.critical-paths }}
   exit-code:
-    description: "0 clean, 1 blocked, 2 unknown, 3 error. Same caveat as verdict."
+    description: "0 clean, 1 blocked, 2 unknown, 3 error."
     value: ${{ steps.gate.outputs.exit-code }}
 
 runs:

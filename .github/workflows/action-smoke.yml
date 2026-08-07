@@ -39,26 +39,24 @@ jobs:
             want_verdict: clean
             want_paths: "0"
 
-          # The two hard-fail cases assert an empty verdict on purpose. GitHub does not
-          # evaluate a composite action's outputs when the action fails, so on a red check
-          # there is nothing to read - which is exactly why soft-fail exists. Asserting it
-          # keeps the documented caveat true; if these ever start arriving populated, the
-          # platform changed and the caveat can go.
+          # A red check must still SAY what it decided. The outputs are set on a failing
+          # run too, so a later step can comment, open a ticket or annotate without having
+          # to re-run anything - these cases exist to keep that true.
           - case: blocked-fails-the-build
             serve: blocked
             allow_unknown: "false"
             soft_fail: "false"
             want_outcome: failure
-            want_verdict: ""
-            want_paths: ""
+            want_verdict: blocked
+            want_paths: "2"
           # The one that matters: a commit nobody analysed must go red, not green.
           - case: unknown-fails-closed
             serve: unknown
             allow_unknown: "false"
             soft_fail: "false"
             want_outcome: failure
-            want_verdict: ""
-            want_paths: ""
+            want_verdict: unknown
+            want_paths: "0"
 
           # When an operator opts out, the build passes but the OUTPUT must still say
           # unknown - reporting "clean" for a commit nobody looked at is the lie this
@@ -71,9 +69,8 @@ jobs:
             want_verdict: unknown
             want_paths: "0"
 
-          # soft-fail is what a consumer uses to act on a bad verdict rather than merely
-          # be stopped by it, so the verdict has to survive the cases that would otherwise
-          # have gone red.
+          # soft-fail changes only whether the build stops - the same verdict must come
+          # back. These are the two cases that would otherwise have gone red.
           - case: blocked-reported-not-enforced
             serve: blocked
             allow_unknown: "false"
