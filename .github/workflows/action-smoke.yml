@@ -1,0 +1,211 @@
+name: Action smoke test
+
+# The gate's logic is unit-tested in Go. This tests the part that Go cannot reach: the
+# published action as a consumer actually gets it - downloading the released binary,
+# verifying its signature, putting it on PATH, assembling flags, and turning an exit code
+# into a red or green check.
+#
+# None of that had ever run on a real runner before this workflow existed, and an action
+# that fails the first time somebody adds it to their pipeline is worse than no action.
+#
+# It runs against a canned verdict server rather than a live engine on purpose: the point
+# here is the wrapper, and a fixed answer makes "blocked must fail the build" an assertion
+# instead of a hope.
+
+on:
+  pull_request:
+    paths:
+      - action.yml
+      - .github/workflows/action-smoke.yml
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  verdicts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - case: clean
+            serve: clean
+            allow_unknown: "false"
+            soft_fail: "false"
+            want_outcome: success
+            want_verdict: clean
+            want_paths: "0"
+
+          # A red check must still SAY what it decided. The outputs are set on a failing
+          # run too, so a later step can comment, open a ticket or annotate without having
+          # to re-run anything - these cases exist to keep that true.
+          - case: blocked-fails-the-build
+            serve: blocked
+            allow_unknown: "false"
+            soft_fail: "false"
+            want_outcome: failure
+            want_verdict: blocked
+            want_paths: "2"
+          # The one that matters: a commit nobody analysed must go red, not green.
+          - case: unknown-fails-closed
+            serve: unknown
+            allow_unknown: "false"
+            soft_fail: "false"
+            want_outcome: failure
+            want_verdict: unknown
+            want_paths: "0"
+
+          # When an operator opts out, the build passes but the OUTPUT must still say
+          # unknown - reporting "clean" for a commit nobody looked at is the lie this
+          # whole tool exists to prevent, and it would be an easy one to introduce here.
+          - case: unknown-allowed
+            serve: unknown
+            allow_unknown: "true"
+            soft_fail: "false"
+            want_outcome: success
+            want_verdict: unknown
+            want_paths: "0"
+
+          # soft-fail changes only whether the build stops - the same verdict must come
+          # back. These are the two cases that would otherwise have gone red.
+          - case: blocked-reported-not-enforced
+            serve: blocked
+            allow_unknown: "false"
+            soft_fail: "true"
+            want_outcome: success
+            want_verdict: blocked
+            want_paths: "2"
+          - case: unknown-reported-not-enforced
+            serve: unknown
+            allow_unknown: "false"
+            soft_fail: "true"
+            want_outcome: success
+            want_verdict: unknown
+            want_paths: "0"
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+
+      - name: Serve a canned verdict
+        env:
+          SERVE: ${{ matrix.serve }}
+        run: |
+          set -euo pipefail
+          cat > /tmp/verdict-server.py <<'PY'
+          import json, os, sys
+          from http.server import BaseHTTPRequestHandler, HTTPServer
+
+          # analysedAt is far in the future so the freshness floor can never reject it.
+          # This job never ingests, so no floor applies - but pinning it keeps the test
+          # from depending on that fact staying true.
+          VERDICTS = {
+              "clean":   {"analysed": True,  "criticalPaths": 0, "paths": []},
+              "unknown": {"analysed": False, "criticalPaths": 0, "paths": []},
+              "blocked": {"analysed": True,  "criticalPaths": 2, "paths": [
+                  {"id": "p1", "score": 0.72, "priority": 91.4,
+                   "nodes": [{"name": "edge-alb", "label": "LoadBalancer"},
+                             {"name": "payments-db", "label": "Database"}]},
+                  {"id": "p2", "score": 0.31, "priority": 55.0,
+                   "nodes": [{"name": "edge-alb", "label": "LoadBalancer"},
+                             {"name": "admin-role", "label": "IAMRole"}]},
+              ]},
+          }
+          V = dict(VERDICTS[os.environ["SERVE"]], analysedAt="2099-01-01T00:00:00Z")
+
+          class H(BaseHTTPRequestHandler):
+              def do_POST(self):
+                  self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                  body = json.dumps({"data": {"prVerdict": V}}).encode()
+                  self.send_response(200)
+                  self.send_header("Content-Type", "application/json")
+                  self.send_header("Content-Length", str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+              def log_message(self, *a):
+                  pass
+
+          HTTPServer(("127.0.0.1", 8099), H).serve_forever()
+          PY
+          python3 /tmp/verdict-server.py &
+
+          for _ in $(seq 1 30); do
+            if curl -sf -X POST -d '{}' http://127.0.0.1:8099/graphql >/dev/null 2>&1; then
+              echo "verdict server up, serving: ${SERVE}"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::the canned verdict server never came up"
+          exit 1
+
+      - name: Run the action
+        id: gate
+        continue-on-error: true
+        uses: ./
+        with:
+          api: http://127.0.0.1:8099
+          slug: acme/payments
+          sha: abc123def456
+          timeout: 30s
+          allow-unknown: ${{ matrix.allow_unknown }}
+          soft-fail: ${{ matrix.soft_fail }}
+
+      - name: Assert
+        env:
+          GOT_OUTCOME: ${{ steps.gate.outcome }}
+          GOT_VERDICT: ${{ steps.gate.outputs.verdict }}
+          GOT_PATHS: ${{ steps.gate.outputs.critical-paths }}
+          WANT_OUTCOME: ${{ matrix.want_outcome }}
+          WANT_VERDICT: ${{ matrix.want_verdict }}
+          WANT_PATHS: ${{ matrix.want_paths }}
+        run: |
+          set -uo pipefail
+          fail=0
+          check() {
+            if [ "$2" != "$3" ]; then
+              echo "::error::${1}: got '${2}', want '${3}'"
+              fail=1
+            else
+              echo "ok  ${1} = ${2}"
+            fi
+          }
+          check "build outcome" "$GOT_OUTCOME" "$WANT_OUTCOME"
+          check "verdict output" "$GOT_VERDICT" "$WANT_VERDICT"
+          check "critical-paths output" "$GOT_PATHS" "$WANT_PATHS"
+          exit "$fail"
+
+  # A release older than the gate does not merely lack the subcommand: it falls through to
+  # starting the API server, binds a port, and sits there until the job's own timeout kills
+  # it - hours later, with no verdict and no clue why. The action probes for that and must
+  # refuse in seconds. v1.2.1 is the last release without the gate, so it stays a usable
+  # fixture for as long as it exists.
+  rejects-a-release-without-the-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+
+      - id: gate
+        continue-on-error: true
+        uses: ./
+        with:
+          api: http://127.0.0.1:8099
+          version: v1.2.1
+          slug: acme/payments
+          sha: abc123def456
+          timeout: 30s
+
+      - name: Assert it refused rather than hanging
+        env:
+          OUTCOME: ${{ steps.gate.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::the action accepted a release with no gate subcommand (outcome=${OUTCOME})"
+            exit 1
+          fi
+          echo "ok  refused a release without the gate subcommand"

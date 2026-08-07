@@ -92,6 +92,17 @@ inputs:
     required: false
     default: "true"
 
+  soft-fail:
+    description: >-
+      Always succeed, and report the verdict through the outputs instead of through a red
+      check. Use it when a later step decides what to do - comment on the PR, open a
+      ticket, block only on some branches. The outputs are set either way, so this changes
+      whether the build stops, not what you can read.
+    required: false
+    default: "false"
+
+# Set on every run, including a red one - a later step can always read what was decided,
+# whether or not it also stopped the build.
 outputs:
   verdict:
     description: One of clean, blocked or unknown.
@@ -99,6 +110,9 @@ outputs:
   critical-paths:
     description: How many critical attack paths run through this commit.
     value: ${{ steps.gate.outputs.critical-paths }}
+  exit-code:
+    description: "0 clean, 1 blocked, 2 unknown, 3 error."
+    value: ${{ steps.gate.outputs.exit-code }}
 
 runs:
   using: composite
@@ -193,7 +207,15 @@ runs:
         TIMEOUT: ${{ inputs.timeout }}
         ALLOW_UNKNOWN: ${{ inputs.allow-unknown }}
       run: |
+        # -e OFF, explicitly. GitHub runs composite bash steps as `bash -e -o pipefail`,
+        # so a non-zero exit from the gate would abort this step at the line that produces
+        # it - before the verdict is recorded and before the summary is written. The exit
+        # code is the RESULT here, not a failure, so it has to be read rather than
+        # inherited. Assuming -e was absent is what made blocked and unknown report
+        # nothing at all.
+        set +e
         set -uo pipefail
+
         if [ -n "$REPORT" ] && [ -z "$INGEST" ]; then
           echo "::error::a report was given but no ingest URL, so there is nowhere to send it"
           exit 1
@@ -210,22 +232,33 @@ runs:
         [ -n "$INGEST" ] && args+=(-ingest "$INGEST")
         [ "$ALLOW_UNKNOWN" = "true" ] && args+=(-allow-unknown)
 
-        # Deliberately not `set -e`: the exit code IS the result. It has to be read and
-        # translated, so that "nobody analysed this" reports differently from "this is
-        # dangerous" - collapsing them is the failure mode this gate exists to avoid.
+        # This is the line -e must not be allowed to abort (see the top of the step): the
+        # code it returns has to be read and translated, so that "nobody analysed this"
+        # reports differently from "this is dangerous". Collapsing those two is the exact
+        # failure this gate exists to prevent.
         perspectivegraph "${args[@]}" -json > verdict.json
         code=$?
 
-        case "$code" in
-          0) verdict=clean ;;
-          1) verdict=blocked ;;
-          2) verdict=unknown ;;
-          *) verdict=error ;;
-        esac
+        # The verdict comes from the ANSWER, not from the exit code alone. With
+        # allow-unknown the gate exits 0 on a commit nobody analysed - reading only the
+        # code would publish verdict=clean for it, and anything downstream branching on
+        # that output would be told the commit is safe. It was never looked at. The exit
+        # code says what happens to the build; this says what is actually known.
         paths="$(jq -r '.criticalPaths // 0' verdict.json 2>/dev/null || echo 0)"
+        analysed="$(jq -r '.analysed // false' verdict.json 2>/dev/null || echo false)"
+        if [ "$code" -ge 3 ]; then
+          verdict=error
+        elif [ "$analysed" != "true" ]; then
+          verdict=unknown
+        elif [ "$code" = "1" ]; then
+          verdict=blocked
+        else
+          verdict=clean
+        fi
         {
           echo "verdict=${verdict}"
           echo "critical-paths=${paths}"
+          echo "exit-code=${code}"
         } >> "$GITHUB_OUTPUT"
 
         # Rendered once, into both the job log and the run summary: an engineer reading a
@@ -249,6 +282,11 @@ runs:
               echo
               echo "This is not a clean result. Check that the scan ran, and that the ingest URL, the"
               echo "HMAC secret and the commit SHA are the ones this engine expects."
+              if [ "$ALLOW_UNKNOWN" = "true" ]; then
+                echo
+                echo "**The build was passed anyway** because \`allow-unknown\` is set. This check is"
+                echo "currently incapable of failing on an unanalysed commit."
+              fi
               ;;
             *)
               echo "**Error.** The gate could not reach a verdict. See the step log."
@@ -256,4 +294,26 @@ runs:
           esac
         } | tee -a "$GITHUB_STEP_SUMMARY"
 
-        exit "$code"
+        # This step always succeeds; the next one turns the verdict into a red check.
+        # Failing here instead would abort the composite action, and GitHub does not
+        # evaluate an action's outputs when the action fails - so the verdict would be
+        # reported to nobody in exactly the cases worth reporting.
+        exit 0
+
+    # The decision lives in the shell rather than in a step-level `if:`, so that one
+    # reading of the inputs applies everywhere: every other input this action acts on
+    # arrives through `env:` too. It also keeps the step in the log with its reason,
+    # instead of a silent `skipped`.
+    - name: Fail the build
+      shell: bash
+      env:
+        CODE: ${{ steps.gate.outputs.exit-code }}
+        SOFT: ${{ inputs.soft-fail }}
+      run: |
+        if [ "$SOFT" = "true" ]; then
+          echo "::notice::soft-fail is set - reporting the verdict through the outputs rather than failing the build"
+          exit 0
+        fi
+        # Empty means the gate never got far enough to record a verdict, which is not a
+        # pass. Fail closed on 3 (error) rather than on bash's 255 for `exit ""`.
+        exit "${CODE:-3}"

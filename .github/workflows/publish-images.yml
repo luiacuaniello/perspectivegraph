@@ -255,3 +255,45 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "${{ inputs.tag }}" dist/* --clobber
+
+  # The floating major tag. `uses: owner/repo@v1` resolves v1 as a git ref, not as a
+  # version: without a tag named exactly `v1` that line fails with "unable to find version
+  # v1", and with it every consumer picks up patches without editing their workflow.
+  #
+  # It runs last, and that ordering is the point. The tag is a promise that everything
+  # `uses: @v1` needs is there - so it may only move once the images are pushed AND the
+  # binaries are attached, because the action downloads one of those binaries. Moving it
+  # first would aim every consumer at a release whose artifacts do not exist yet.
+  major-tag:
+    needs: [publish, binaries]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write # move the floating tag
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+
+      - name: Move the floating major tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          # A prerelease must never capture the tag that stable consumers follow.
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *)
+              echo "::notice::${TAG} is not a stable vX.Y.Z tag; leaving the floating tag alone"
+              exit 0
+              ;;
+          esac
+
+          major="${TAG%%.*}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f -a "$major" -m "${major} -> ${TAG}"
+          git push -f origin "refs/tags/${major}"
+          echo "::notice::${major} now points at ${TAG}"
