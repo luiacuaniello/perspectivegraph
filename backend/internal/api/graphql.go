@@ -6,6 +6,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strconv"
 	"time"
@@ -530,6 +531,38 @@ func (a *API) Schema() (graphql.Schema, error) {
 		},
 	})
 
+	// prVerdictType answers one question for a CI gate: what does the engine say about
+	// THIS commit. It reports three states, not two, and the third is the reason it
+	// exists: "analysed: false" means nothing from that commit has reached the graph yet,
+	// which is NOT the same as "no attack path". A gate that could not tell those apart
+	// would report a green light for a pipeline whose scanner output never arrived, which
+	// is the false negative this whole product is built to make visible.
+	prVerdictType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "PRVerdict",
+		Fields: graphql.Fields{
+			"slug": &graphql.Field{Type: graphql.String, Description: "Repository the verdict is about (\"owner/name\")."},
+			"sha":  &graphql.Field{Type: graphql.String, Description: "Commit the verdict is about."},
+			"analysed": &graphql.Field{
+				Type:        graphql.Boolean,
+				Description: "Whether anything carrying this commit has reached the graph. False means the engine has not seen it - treat that as UNKNOWN, never as safe.",
+			},
+			"criticalPaths": &graphql.Field{
+				Type:        graphql.Int,
+				Description: "How many critical attack paths pass through an asset stamped with this commit.",
+			},
+			"paths": &graphql.Field{
+				Type:        graphql.NewList(pathType),
+				Description: "Those paths, so a gate can report what it blocked on rather than only that it blocked.",
+			},
+			"analysedAt": &graphql.Field{
+				Type: graphql.String,
+				Description: "When the pass that produced criticalPaths ran (RFC 3339). A gate must ignore " +
+					"a verdict older than its own ingest: the commit can be in the graph while the paths " +
+					"still describe the estate as it was before it arrived, which reads as zero paths.",
+			},
+		},
+	})
+
 	postureType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "Posture",
 		Fields: graphql.Fields{
@@ -964,6 +997,58 @@ func (a *API) Schema() (graphql.Schema, error) {
 						}
 					}
 					return out, nil
+				},
+			},
+			"prVerdict": &graphql.Field{
+				Type:        prVerdictType,
+				Description: "What the engine says about one commit, for a CI gate. Reports whether the commit was analysed at all, separately from whether it is clean.",
+				Args: graphql.FieldConfigArgument{
+					"slug": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String), Description: "Repository, \"owner/name\"."},
+					"sha":  &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String), Description: "Commit SHA, as sent to the ingest webhook."},
+				},
+				Resolve: func(p graphql.ResolveParams) (any, error) {
+					slug, _ := p.Args["slug"].(string)
+					sha, _ := p.Args["sha"].(string)
+					if slug == "" || sha == "" {
+						return nil, errors.New("prVerdict: slug and sha are required")
+					}
+
+					// "Analysed" is answered from the GRAPH, not from the paths: an asset
+					// carrying this commit may exist and reach nothing, which is the clean
+					// case and must not look like the never-ingested case.
+					snap, err := a.snapshot(p.Context)
+					if err != nil {
+						return nil, err
+					}
+					analysed := false
+					for _, n := range snap.Nodes {
+						if stampedWith(n.Properties, slug, sha) {
+							analysed = true
+							break
+						}
+					}
+
+					var hit []analyzer.AttackPath
+					for _, ap := range a.scopedLatest(p.Context) {
+						for _, n := range ap.Nodes {
+							if stampedWith(n.Properties, slug, sha) {
+								hit = append(hit, ap)
+								break
+							}
+						}
+					}
+					// Dating the pass is what makes the answer safe to act on. Without it a
+					// gate cannot distinguish "no path from this commit" from "the paths
+					// predate this commit", and the second one reads as zero.
+					analysedAt := ""
+					if at := a.analyzer.Status(tenantOf(p.Context)).AnalyzedAt; !at.IsZero() {
+						analysedAt = at.UTC().Format(time.RFC3339Nano)
+					}
+					return map[string]any{
+						"slug": slug, "sha": sha,
+						"analysed": analysed, "criticalPaths": len(hit), "paths": hit,
+						"analysedAt": analysedAt,
+					}, nil
 				},
 			},
 			"posture": &graphql.Field{
@@ -1424,4 +1509,12 @@ func paginate(nodes []ontology.Node, edges []ontology.Edge, limit, offset int) (
 		}
 	}
 	return page, keptEdges
+}
+
+// stampedWith reports whether a node carries this pull request's commit context, which
+// the trivy and semgrep collectors attach when CI posts their output with slug/pr/sha.
+func stampedWith(props map[string]any, slug, sha string) bool {
+	s, _ := props[ontology.PropRepoSlug].(string)
+	c, _ := props[ontology.PropCommitSHA].(string)
+	return s == slug && c == sha
 }

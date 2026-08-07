@@ -1,0 +1,259 @@
+name: PerspectiveGraph attack-path gate
+description: >-
+  Fail a pull request when the change puts a sensitive asset within reach - blocking on
+  attack paths rather than on vulnerability counts, and telling you when nobody looked.
+author: luiacuaniello
+branding:
+  icon: git-merge
+  color: red
+
+# What this is for, and what it is not for.
+#
+# Every scanner already in your pipeline blocks on severity: a critical CVE fails the
+# build wherever it sits. Most of those criticals cannot be reached from the internet, and
+# some of the mediums can - so severity gates cost you time on the ones that do not matter
+# and stay quiet on the ones that do. This gate answers a different question: after this
+# change, is there a route from something exposed to something that matters?
+#
+# Answering it needs an estate, which is why this action talks to a running
+# PerspectiveGraph rather than analysing the repository in the runner. Point it at yours.
+#
+# It has THREE outcomes, and the third is the reason it exists. A pipeline whose scanner
+# output never arrived gets the same green light as one that is genuinely clean, from
+# every two-state gate ever written. Here that is UNKNOWN, and it fails the build by
+# default - see the allow-unknown input.
+
+inputs:
+  report:
+    description: >-
+      Scanner report to ingest (Trivy JSON, Semgrep JSON, ...). Leave empty to only wait
+      for a verdict, for pipelines where something else already ingested this commit.
+    required: false
+    default: ""
+  source:
+    description: 'Collector that parses the report, i.e. the /ingest/{source} route: trivy, semgrep, ...'
+    required: false
+    default: trivy
+  api:
+    description: Base URL of the PerspectiveGraph API.
+    required: true
+  ingest:
+    description: Base URL of the ingest webhook. Only needed when a report is given.
+    required: false
+    default: ""
+  token:
+    description: Bearer token for the API, if auth is on. Pass a secret, never a literal.
+    required: false
+    default: ""
+  hmac-secret:
+    description: Shared secret signing the ingest body, if the webhook requires it.
+    required: false
+    default: ""
+  slug:
+    description: Repository as "owner/name". Defaults to the one running the workflow.
+    required: false
+    default: ${{ github.repository }}
+  sha:
+    description: >-
+      Commit under test. Defaults to the pull request's head SHA, which is the commit a
+      reviewer is looking at - github.sha on a pull_request event is the merge commit, and
+      no scanner stamps that one.
+    required: false
+    default: ${{ github.event.pull_request.head.sha || github.sha }}
+  pr:
+    description: Pull-request number, so findings can be commented back onto it.
+    required: false
+    default: ${{ github.event.pull_request.number || 0 }}
+  max-critical:
+    description: Fail when the commit sits on more than this many critical attack paths.
+    required: false
+    default: "0"
+  timeout:
+    description: >-
+      How long to wait for the engine to analyse this commit before reporting UNKNOWN.
+      Must comfortably exceed your ANALYZER_INTERVAL.
+    required: false
+    default: 5m
+  allow-unknown:
+    description: >-
+      Pass the build when the commit was never analysed. This turns off the one thing this
+      action does that your other scanners do not, so a broken ingest becomes a green
+      check. Reasonable while you are rolling the gate out; a liability afterwards.
+    required: false
+    default: "false"
+  version:
+    description: Release tag of the gate binary to run. "latest" tracks the newest release.
+    required: false
+    default: latest
+  verify:
+    description: >-
+      Verify the downloaded binary's cosign signature and checksum before running it. Off
+      means executing an unverified download in your CI, with your ingest secret.
+    required: false
+    default: "true"
+
+outputs:
+  verdict:
+    description: One of clean, blocked or unknown.
+    value: ${{ steps.gate.outputs.verdict }}
+  critical-paths:
+    description: How many critical attack paths run through this commit.
+    value: ${{ steps.gate.outputs.critical-paths }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install cosign
+      if: inputs.verify == 'true'
+      uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+    - name: Download the gate binary
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        VERIFY: ${{ inputs.verify }}
+      run: |
+        set -euo pipefail
+        dir="${RUNNER_TEMP}/perspectivegraph"
+        mkdir -p "$dir"
+        base="https://github.com/luiacuaniello/perspectivegraph/releases"
+        if [ "$VERSION" = "latest" ]; then
+          base="${base}/latest/download"
+        else
+          base="${base}/download/${VERSION}"
+        fi
+
+        arch="$(uname -m)"
+        case "$arch" in
+          x86_64) arch=amd64 ;;
+          aarch64|arm64) arch=arm64 ;;
+          *) echo "::error::unsupported runner architecture ${arch}"; exit 1 ;;
+        esac
+        archive="perspectivegraph_linux_${arch}.tar.gz"
+
+        curl --fail --silent --show-error --location --retry 3 \
+          -o "${dir}/${archive}" "${base}/${archive}"
+
+        if [ "$VERIFY" = "true" ]; then
+          curl --fail --silent --show-error --location --retry 3 \
+            -o "${dir}/SHA256SUMS" "${base}/SHA256SUMS"
+          curl --fail --silent --show-error --location --retry 3 \
+            -o "${dir}/SHA256SUMS.bundle" "${base}/SHA256SUMS.bundle"
+
+          # The signature covers the checksum file, which covers every archive - so one
+          # signature check plus one checksum check proves this exact binary came from
+          # this repository's release workflow and nothing rewrote it in between.
+          cosign verify-blob \
+            --bundle "${dir}/SHA256SUMS.bundle" \
+            --certificate-identity-regexp 'https://github.com/luiacuaniello/perspectivegraph/.*' \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "${dir}/SHA256SUMS"
+          ( cd "$dir" && sha256sum -c SHA256SUMS --ignore-missing )
+        else
+          echo "::warning::signature verification is off, so this step executes an unverified download"
+        fi
+
+        tar -xzf "${dir}/${archive}" -C "$dir"
+        chmod +x "${dir}/perspectivegraph"
+
+        # Releases older than the gate do not merely lack the subcommand - they fall
+        # through to starting the API server, bind a port, and sit there until the job's
+        # own timeout kills it hours later with no verdict and no explanation. Catch that
+        # here, in one line, rather than in someone's billing.
+        # Captured rather than piped into grep: `gate -h` exits non-zero by design, and
+        # under `pipefail` that makes the whole pipeline non-zero however the grep went -
+        # which would reject every valid binary and break the action for everybody.
+        probe="$(timeout 30 "${dir}/perspectivegraph" gate -h 2>&1 || true)"
+        case "$probe" in
+          *-max-critical*) ;;
+          *)
+            echo "::error::release ${VERSION} has no usable 'gate' subcommand. Pin a version that ships it."
+            exit 1
+            ;;
+        esac
+
+        echo "$dir" >> "$GITHUB_PATH"
+
+    - name: Gate on attack paths
+      id: gate
+      shell: bash
+      env:
+        # Secrets travel in the environment rather than on the command line, where every
+        # process on the runner can read them out of /proc.
+        API_TOKEN: ${{ inputs.token }}
+        INGEST_HMAC_SECRET: ${{ inputs.hmac-secret }}
+        REPORT: ${{ inputs.report }}
+        SOURCE: ${{ inputs.source }}
+        API: ${{ inputs.api }}
+        INGEST: ${{ inputs.ingest }}
+        SLUG: ${{ inputs.slug }}
+        SHA: ${{ inputs.sha }}
+        PR: ${{ inputs.pr }}
+        MAX_CRITICAL: ${{ inputs.max-critical }}
+        TIMEOUT: ${{ inputs.timeout }}
+        ALLOW_UNKNOWN: ${{ inputs.allow-unknown }}
+      run: |
+        set -uo pipefail
+        if [ -n "$REPORT" ] && [ -z "$INGEST" ]; then
+          echo "::error::a report was given but no ingest URL, so there is nowhere to send it"
+          exit 1
+        fi
+
+        # Only pass the flags we actually have. An empty -slug would override the
+        # binary's own GITHUB_REPOSITORY fallback with nothing, and the gate would refuse
+        # to run on the very event it is meant for.
+        args=(gate -api "$API" -timeout "$TIMEOUT" -max-critical "$MAX_CRITICAL")
+        [ -n "$SLUG" ] && args+=(-slug "$SLUG")
+        [ -n "$SHA" ] && args+=(-sha "$SHA")
+        [ -n "$PR" ] && [ "$PR" != "0" ] && args+=(-pr "$PR")
+        [ -n "$REPORT" ] && args+=(-report "$REPORT" -source "$SOURCE")
+        [ -n "$INGEST" ] && args+=(-ingest "$INGEST")
+        [ "$ALLOW_UNKNOWN" = "true" ] && args+=(-allow-unknown)
+
+        # Deliberately not `set -e`: the exit code IS the result. It has to be read and
+        # translated, so that "nobody analysed this" reports differently from "this is
+        # dangerous" - collapsing them is the failure mode this gate exists to avoid.
+        perspectivegraph "${args[@]}" -json > verdict.json
+        code=$?
+
+        case "$code" in
+          0) verdict=clean ;;
+          1) verdict=blocked ;;
+          2) verdict=unknown ;;
+          *) verdict=error ;;
+        esac
+        paths="$(jq -r '.criticalPaths // 0' verdict.json 2>/dev/null || echo 0)"
+        {
+          echo "verdict=${verdict}"
+          echo "critical-paths=${paths}"
+        } >> "$GITHUB_OUTPUT"
+
+        # Rendered once, into both the job log and the run summary: an engineer reading a
+        # red build should not have to open an artifact to find out what it blocked on.
+        {
+          echo "## PerspectiveGraph attack-path gate"
+          echo
+          case "$verdict" in
+            clean)
+              echo "**Clean.** \`${SHA}\` was analysed. No critical attack path reaches a sensitive asset through it."
+              ;;
+            blocked)
+              echo "**Blocked.** ${paths} critical attack path(s) run through \`${SHA}\`."
+              echo
+              echo '```'
+              jq -r '.paths[]? | "[P" + (.priority | floor | tostring) + "] " + ([.nodes[].name] | join(" -> "))' verdict.json
+              echo '```'
+              ;;
+            unknown)
+              echo "**Unknown.** Nothing carrying \`${SHA}\` reached the engine, so nobody analysed it."
+              echo
+              echo "This is not a clean result. Check that the scan ran, and that the ingest URL, the"
+              echo "HMAC secret and the commit SHA are the ones this engine expects."
+              ;;
+            *)
+              echo "**Error.** The gate could not reach a verdict. See the step log."
+              ;;
+          esac
+        } | tee -a "$GITHUB_STEP_SUMMARY"
+
+        exit "$code"

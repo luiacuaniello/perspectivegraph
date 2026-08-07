@@ -65,6 +65,15 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
 )
 
+// subcommands is what the binary answers to, for the "unknown subcommand" message at the
+// bottom of main. A test keeps it in step with the dispatch above it, because a list that
+// silently drifts is worse than no list: it tells someone their spelling was wrong when
+// the command actually exists.
+var subcommands = []string{
+	"andprobe", "awscollect", "gate", "genload", "genverdicts", "healthz",
+	"importverdicts", "ingestreal", "mcp", "redteam", "verify-audit",
+}
+
 func main() {
 	// Operator utility: verify the audit log's hash chain and exit.
 	if len(os.Args) >= 3 && os.Args[1] == "verify-audit" {
@@ -100,6 +109,18 @@ func main() {
 		if err := runGenverdicts(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "genverdicts:", err)
 			os.Exit(1)
+		}
+		return
+	}
+
+	// Merge gate: ingest one scanner report stamped with a pull request's identity, wait
+	// for the engine to place it in the estate graph, and exit non-zero when the change
+	// puts a sensitive asset within reach. Blocks on attack paths, not on CVE counts. Its
+	// exit code is its interface, so it exits itself rather than returning. See runGate.
+	if len(os.Args) >= 2 && os.Args[1] == "gate" {
+		if err := runGate(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "gate:", err)
+			os.Exit(gateExitError)
 		}
 		return
 	}
@@ -179,6 +200,19 @@ func main() {
 			os.Exit(1)
 		}
 		return
+	}
+
+	// Everything past this point starts the server, so an argument that reached here is a
+	// subcommand nobody recognised - and silently starting a server instead is a nasty way
+	// to fail. In CI it does not look like an error at all: the process binds a port and
+	// sits there until the job's own timeout kills it, hours later, with no verdict and no
+	// clue why. A typo, or a `gate` invocation against a release too old to have it, should
+	// say so in one line.
+	if len(os.Args) >= 2 {
+		fmt.Fprintf(os.Stderr, "perspectivegraph: unknown subcommand %q\n", os.Args[1])
+		fmt.Fprintln(os.Stderr, "subcommands:", strings.Join(subcommands, ", "))
+		fmt.Fprintln(os.Stderr, "run with no arguments to start the server; configuration comes from the environment")
+		os.Exit(gateExitError)
 	}
 
 	cfg := config.Load()
