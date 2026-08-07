@@ -208,7 +208,15 @@ runs:
         TIMEOUT: ${{ inputs.timeout }}
         ALLOW_UNKNOWN: ${{ inputs.allow-unknown }}
       run: |
+        # -e OFF, explicitly. GitHub runs composite bash steps as `bash -e -o pipefail`,
+        # so a non-zero exit from the gate would abort this step at the line that produces
+        # it - before the verdict is recorded and before the summary is written. The exit
+        # code is the RESULT here, not a failure, so it has to be read rather than
+        # inherited. Assuming -e was absent is what made blocked and unknown report
+        # nothing at all.
+        set +e
         set -uo pipefail
+
         if [ -n "$REPORT" ] && [ -z "$INGEST" ]; then
           echo "::error::a report was given but no ingest URL, so there is nowhere to send it"
           exit 1
@@ -225,9 +233,10 @@ runs:
         [ -n "$INGEST" ] && args+=(-ingest "$INGEST")
         [ "$ALLOW_UNKNOWN" = "true" ] && args+=(-allow-unknown)
 
-        # Deliberately not `set -e`: the exit code IS the result. It has to be read and
-        # translated, so that "nobody analysed this" reports differently from "this is
-        # dangerous" - collapsing them is the failure mode this gate exists to avoid.
+        # This is the line -e must not be allowed to abort (see the top of the step): the
+        # code it returns has to be read and translated, so that "nobody analysed this"
+        # reports differently from "this is dangerous". Collapsing those two is the exact
+        # failure this gate exists to prevent.
         perspectivegraph "${args[@]}" -json > verdict.json
         code=$?
 
@@ -292,12 +301,10 @@ runs:
         # reported to nobody in exactly the cases worth reporting.
         exit 0
 
-    # The decision lives in the shell rather than in an `if:` expression. A hyphenated
-    # input read from a step-level `if:` on a composite action does not evaluate the way
-    # `${{ }}` interpolation does - `inputs.soft-fail` there came back as something other
-    # than the input's value, so the step fired on every run and soft-fail did nothing.
-    # Passing it through `env:` is the mechanism the rest of this action already uses, and
-    # it is unambiguous.
+    # The decision lives in the shell rather than in a step-level `if:`, so that one
+    # reading of the inputs applies everywhere: every other input this action acts on
+    # arrives through `env:` too. It also keeps the step in the log with its reason,
+    # instead of a silent `skipped`.
     - name: Fail the build
       shell: bash
       env:
