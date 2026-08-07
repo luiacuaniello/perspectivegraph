@@ -292,12 +292,22 @@ runs:
         # reported to nobody in exactly the cases worth reporting.
         exit 0
 
+    # The decision lives in the shell rather than in an `if:` expression. A hyphenated
+    # input read from a step-level `if:` on a composite action does not evaluate the way
+    # `${{ }}` interpolation does - `inputs.soft-fail` there came back as something other
+    # than the input's value, so the step fired on every run and soft-fail did nothing.
+    # Passing it through `env:` is the mechanism the rest of this action already uses, and
+    # it is unambiguous.
     - name: Fail the build
-      if: inputs.soft-fail != 'true' && steps.gate.outputs.exit-code != '0'
       shell: bash
       env:
         CODE: ${{ steps.gate.outputs.exit-code }}
+        SOFT: ${{ inputs.soft-fail }}
       run: |
+        if [ "$SOFT" = "true" ]; then
+          echo "::notice::soft-fail is set - reporting the verdict through the outputs rather than failing the build"
+          exit 0
+        fi
         # Empty means the gate never got far enough to record a verdict, which is not a
         # pass. Fail closed on 3 (error) rather than on bash's 255 for `exit ""`.
         exit "${CODE:-3}"
