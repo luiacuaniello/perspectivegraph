@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1](https://github.com/luiacuaniello/perspectivegraph/compare/v1.4.0...v1.4.1) (2026-08-07)
+
+
+### Bug Fixes
+
+* **gate:** a failed estate read is not a clean build ([#121](https://github.com/luiacuaniello/perspectivegraph/issues/121)) ([20da918](https://github.com/luiacuaniello/perspectivegraph/commit/20da918a25c643ade5cd14c51656776d13ab54d6))
+
 ## [1.4.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.3.1...v1.4.0) (2026-08-07)
 
 
