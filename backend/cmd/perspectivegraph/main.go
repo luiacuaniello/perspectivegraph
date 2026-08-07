@@ -37,17 +37,7 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/graph/memory"
 	"github.com/luiacuaniello/perspectivegraph/internal/history"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion"
-	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/build"
-	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/cloudnet"
-	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/custodian"
-	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/dataclass"
-	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/falco"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/iam"
-	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/k8s"
-	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/semgrep"
-	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/sso"
-	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/supplychain"
-	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/trivy"
 	"github.com/luiacuaniello/perspectivegraph/internal/kevholdout"
 	"github.com/luiacuaniello/perspectivegraph/internal/leader"
 	"github.com/luiacuaniello/perspectivegraph/internal/metrics"
@@ -601,8 +591,7 @@ func run(ctx context.Context, cfg config.Config) error {
 	// (which reports it), so an empty board can say what it was actually built from.
 	coverageStore := coverage.New().WithStaleAfter(cfg.CoverageStaleAfter)
 
-	ingestSrv := ingestion.NewServer(bus,
-		trivy.New(), semgrep.New(), custodian.New(), falco.New(), build.New(), k8s.New(), cloudnet.New(), iam.New(), supplychain.New(), sso.New(), dataclass.New()).
+	ingestSrv := ingestion.NewServer(bus, allCollectors()...).
 		WithHMAC(hmac).WithAudit(auditRec).WithRateLimit(ingestLimiter).
 		WithConnectorStatus(func() any { return connSched.Status() }).
 		WithCoverage(coverageStore)

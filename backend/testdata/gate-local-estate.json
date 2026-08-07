@@ -1,0 +1,40 @@
+[
+  {
+    "source": "awscollect",
+    "kind": "asset",
+    "observed_at": "2026-01-01T00:00:00Z",
+    "nodes": [
+      {
+        "id": "LoadBalancer:3663cb76c33ef295",
+        "label": "LoadBalancer",
+        "name": "edge-alb",
+        "properties": {
+          "internet_exposed": true
+        }
+      },
+      {
+        "id": "Secret:65595e06818eca3b",
+        "label": "Secret",
+        "name": "secrets-vault",
+        "properties": {
+          "crown_jewel": true,
+          "crown_jewel_basis": "tagged:operator"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "type": "EXPOSES",
+        "from": "LoadBalancer:3663cb76c33ef295",
+        "to": "Image:98b06dcdd2c1656f",
+        "exploit_probability": 0.9
+      },
+      {
+        "type": "EXPLOITS",
+        "from": "CVE:6c58f4a6711be1a5",
+        "to": "Secret:65595e06818eca3b",
+        "exploit_probability": 0.9
+      }
+    ]
+  }
+]

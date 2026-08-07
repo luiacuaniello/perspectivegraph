@@ -150,6 +150,25 @@ and missing context**.
 
 ## Block the pull request that opens the path
 
+**No deployment required.** The runner reads your estate read-only, ingests this pull
+request's scan, and answers in-process with the same engine:
+
+```yaml
+- uses: luiacuaniello/perspectivegraph@v1
+  with:
+    mode: local
+    aws-region: eu-west-1     # read-only; give the job an OIDC role with SecurityAudit
+    report: trivy.json
+```
+
+An estate is not optional, and that is the point: without one there are no attack paths,
+only a flat list of findings - the thing this replaces. If you collect your estate on its
+own schedule, pass `estate: estate.json` (what `perspectivegraph awscollect -json` writes)
+instead of `aws-region`.
+
+Already running the engine? Point at it and it keeps the graph across pull requests, plus
+triage, history and the dashboard:
+
 ```yaml
 - uses: luiacuaniello/perspectivegraph@v1
   with:
@@ -158,6 +177,9 @@ and missing context**.
     report: trivy.json
     hmac-secret: ${{ secrets.PG_INGEST_HMAC }}
 ```
+
+Both modes run the same normalizer, the same pathfinder and the same triage priority, and
+return the same verdict - a test asserts they agree path-for-path on identical input.
 
 The check goes red when *this commit* puts a sensitive asset within reach. Not when it
 adds a critical CVE - a critical on a host nothing routes to does not fail the build, and
@@ -181,8 +203,7 @@ broken ingest back into a green check, which is the one thing this gate is for.
 The same thing without GitHub Actions - the action is a thin wrapper over one command:
 
 ```bash
-perspectivegraph gate -api https://perspectivegraph.internal \
-  -ingest https://perspectivegraph.internal:8081 \
+perspectivegraph gate -local -aws-region eu-west-1 \
   -report trivy.json -slug owner/name -sha "$COMMIT_SHA"
 ```
 

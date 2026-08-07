@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -32,20 +33,26 @@ const (
 	gateExitError   = 3
 )
 
-// gateVerdict mirrors the prVerdict GraphQL type.
+// gateVerdict mirrors the prVerdict GraphQL type. It is the contract between the two
+// ways of reaching a verdict - polling a running engine, or computing it here in local
+// mode - so that everything downstream cannot tell them apart.
 type gateVerdict struct {
-	Analysed      bool   `json:"analysed"`
-	CriticalPaths int    `json:"criticalPaths"`
-	AnalysedAt    string `json:"analysedAt"`
-	Paths         []struct {
-		ID       string  `json:"id"`
-		Score    float64 `json:"score"`
-		Priority float64 `json:"priority"`
-		Nodes    []struct {
-			Name  string `json:"name"`
-			Label string `json:"label"`
-		} `json:"nodes"`
-	} `json:"paths"`
+	Analysed      bool       `json:"analysed"`
+	CriticalPaths int        `json:"criticalPaths"`
+	AnalysedAt    string     `json:"analysedAt"`
+	Paths         []gatePath `json:"paths"`
+}
+
+type gatePath struct {
+	ID       string     `json:"id"`
+	Score    float64    `json:"score"`
+	Priority float64    `json:"priority"`
+	Nodes    []gateNode `json:"nodes"`
+}
+
+type gateNode struct {
+	Name  string `json:"name"`
+	Label string `json:"label"`
 }
 
 // runGate is the merge gate: push one scanner report into the engine stamped with the
@@ -60,6 +67,12 @@ func runGate(args []string) error {
 	fs := flag.NewFlagSet("gate", flag.ContinueOnError)
 	report := fs.String("report", "", "scanner report to ingest (\"-\" for stdin). Empty polls only, for when something else already ingested.")
 	source := fs.String("source", "trivy", "collector that parses -report (trivy, semgrep, ...); the /ingest/{source} route")
+	local := fs.Bool("local", false, "compute the verdict in this process instead of polling a running engine: read the estate read-only, ingest -report, and answer here. Needs no deployment.")
+	estate := fs.String("estate", "", "local mode: estate as an events JSON file, the format `awscollect -json` writes")
+	awsRegion := fs.String("aws-region", "", "local mode: read the estate live from this AWS region (read-only)")
+	awsRole := fs.String("aws-role", "", "local mode: cross-account read-only role to assume for -aws-region")
+	var reports reportFlag
+	fs.Var(&reports, "reports", "local mode: repeatable scanner report as source=path (e.g. -reports trivy=t.json -reports semgrep=s.json)")
 	slug := fs.String("slug", os.Getenv("GITHUB_REPOSITORY"), "repository, \"owner/name\"")
 	sha := fs.String("sha", os.Getenv("GITHUB_SHA"), "commit SHA under test")
 	pr := fs.Int("pr", 0, "pull-request number, if any")
@@ -78,6 +91,34 @@ func runGate(args []string) error {
 	}
 	if *slug == "" || *sha == "" {
 		return errors.New("-slug and -sha are required (GITHUB_REPOSITORY and GITHUB_SHA supply them on GitHub Actions)")
+	}
+
+	// Local mode short-circuits every remote concern - no ingest, no polling, no
+	// freshness floor, because the graph is built and read once in this process. From
+	// here down the two modes converge: the same verdict shape, the same printing, the
+	// same exit codes.
+	if *local {
+		if *report != "" {
+			if err := reports.Set(*source + "=" + *report); err != nil {
+				return err
+			}
+		}
+		specs, err := reports.resolveSources(*source)
+		if err != nil {
+			return err
+		}
+		if *repo == "" {
+			*repo = *slug
+		}
+		v, err := localVerdict(context.Background(), localOpts{
+			slug: *slug, sha: *sha, pr: *pr, repository: *repo,
+			reports: specs, estate: *estate,
+			awsRegion: *awsRegion, awsRole: *awsRole,
+		})
+		if err != nil {
+			return err
+		}
+		reportAndExit(v, *slug, *sha, *maxCritical, *allowUnknown, *asJSON)
 	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
@@ -111,28 +152,36 @@ func runGate(args []string) error {
 		return err
 	}
 
-	if *asJSON {
+	reportAndExit(v, *slug, *sha, *maxCritical, *allowUnknown, *asJSON)
+	return nil
+}
+
+// reportAndExit renders a verdict and turns it into this process's exit code. Both modes
+// end here, which is what makes local mode a different way to OBTAIN the verdict rather
+// than a second gate with its own opinions about what blocks a build.
+func reportAndExit(v gateVerdict, slug, sha string, maxCritical int, allowUnknown, asJSON bool) {
+	if asJSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(v); err != nil {
-			return err
+			fmt.Fprintln(os.Stderr, "gate:", err)
+			os.Exit(gateExitError)
 		}
 	} else {
-		printGateVerdict(os.Stdout, v, *slug, *sha, *maxCritical)
+		printGateVerdict(os.Stdout, v, slug, sha, maxCritical)
 	}
 
 	switch {
 	case !v.Analysed:
-		if *allowUnknown {
+		if allowUnknown {
 			fmt.Fprintln(os.Stderr, "gate: UNKNOWN, passing anyway because -allow-unknown was set")
 			os.Exit(gateExitClean)
 		}
 		os.Exit(gateExitUnknown)
-	case v.CriticalPaths > *maxCritical:
+	case v.CriticalPaths > maxCritical:
 		os.Exit(gateExitBlocked)
 	}
 	os.Exit(gateExitClean)
-	return nil
 }
 
 func shortSHA(sha string) string {

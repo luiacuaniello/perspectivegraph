@@ -189,27 +189,14 @@ func TestGateFailsWhenIngestIsRejected(t *testing.T) {
 // The output is what an engineer reads at 3pm on a red build. UNKNOWN in particular must
 // never be phrased in a way that can be skimmed as a pass.
 func TestGateOutputNamesWhatItBlockedOn(t *testing.T) {
-	var v gateVerdict
-	v.Analysed = true
-	v.CriticalPaths = 1
-	v.Paths = append(v.Paths, struct {
-		ID       string  `json:"id"`
-		Score    float64 `json:"score"`
-		Priority float64 `json:"priority"`
-		Nodes    []struct {
-			Name  string `json:"name"`
-			Label string `json:"label"`
-		} `json:"nodes"`
-	}{ID: "p1", Priority: 91})
-	v.Paths[0].Nodes = append(v.Paths[0].Nodes,
-		struct {
-			Name  string `json:"name"`
-			Label string `json:"label"`
-		}{Name: "edge-alb"},
-		struct {
-			Name  string `json:"name"`
-			Label string `json:"label"`
-		}{Name: "payments-db"})
+	v := gateVerdict{
+		Analysed:      true,
+		CriticalPaths: 1,
+		Paths: []gatePath{{
+			ID: "p1", Priority: 91,
+			Nodes: []gateNode{{Name: "edge-alb"}, {Name: "payments-db"}},
+		}},
+	}
 
 	var buf bytes.Buffer
 	printGateVerdict(&buf, v, "acme/payments", "abc123def456", 0)

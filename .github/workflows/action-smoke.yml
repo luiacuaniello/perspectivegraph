@@ -209,3 +209,103 @@ jobs:
             exit 1
           fi
           echo "ok  refused a release without the gate subcommand"
+
+  # Local mode, which is the one that needs no deployment - and therefore the one most
+  # people will actually reach for. It runs the real released binary against a committed
+  # estate fixture and the repository's Trivy sample, so this exercises the whole chain a
+  # consumer gets: download, verify, collect, ingest, pathfind, block.
+  local-mode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.25.12"
+          cache-dependency-path: backend/go.sum
+
+      # Local mode is newer than the last release, so the released binary cannot run it.
+      # Testing the action against a build of THIS commit is the only way a change to the
+      # action is ever exercised before it ships - that is what the `binary` input is for.
+      - name: Build the gate from this commit
+        working-directory: ./backend
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p "${RUNNER_TEMP}/pg-build"
+          go build -o "${RUNNER_TEMP}/pg-build/perspectivegraph" ./cmd/perspectivegraph
+
+      - id: gate
+        continue-on-error: true
+        uses: ./
+        with:
+          mode: local
+          binary: ${{ runner.temp }}/pg-build/perspectivegraph
+          estate: backend/testdata/gate-local-estate.json
+          report: backend/testdata/trivy-sample.json
+          source: trivy
+          slug: acme/payments
+          sha: abc123def456
+
+      - name: Assert it blocked, and named the route
+        env:
+          OUTCOME: ${{ steps.gate.outcome }}
+          VERDICT: ${{ steps.gate.outputs.verdict }}
+          PATHS: ${{ steps.gate.outputs.critical-paths }}
+        run: |
+          set -uo pipefail
+          fail=0
+          [ "$OUTCOME" = "failure" ] || { echo "::error::outcome=${OUTCOME}, want failure"; fail=1; }
+          [ "$VERDICT" = "blocked" ] || { echo "::error::verdict=${VERDICT}, want blocked"; fail=1; }
+          [ "$PATHS" = "1" ] || { echo "::error::critical-paths=${PATHS}, want 1"; fail=1; }
+          exit "$fail"
+
+  # An estate is not optional. Without one there are no attack paths, only a flat list of
+  # findings - which is the thing this engine exists to replace - so local mode must
+  # refuse rather than return a verdict it cannot support.
+  local-mode-refuses-without-an-estate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.25.12"
+          cache-dependency-path: backend/go.sum
+
+      # Local mode is newer than the last release, so the released binary cannot run it.
+      # Testing the action against a build of THIS commit is the only way a change to the
+      # action is ever exercised before it ships - that is what the `binary` input is for.
+      - name: Build the gate from this commit
+        working-directory: ./backend
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p "${RUNNER_TEMP}/pg-build"
+          go build -o "${RUNNER_TEMP}/pg-build/perspectivegraph" ./cmd/perspectivegraph
+
+      - id: gate
+        continue-on-error: true
+        uses: ./
+        with:
+          mode: local
+          binary: ${{ runner.temp }}/pg-build/perspectivegraph
+          report: backend/testdata/trivy-sample.json
+          slug: acme/payments
+          sha: abc123def456
+
+      - name: Assert it refused
+        env:
+          OUTCOME: ${{ steps.gate.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::local mode answered with no estate (outcome=${OUTCOME})"
+            exit 1
+          fi
+          echo "ok  refused to answer without an estate"

@@ -1513,8 +1513,8 @@ func paginate(nodes []ontology.Node, edges []ontology.Edge, limit, offset int) (
 
 // stampedWith reports whether a node carries this pull request's commit context, which
 // the trivy and semgrep collectors attach when CI posts their output with slug/pr/sha.
+// stampedWith defers to the shared rule so this query and the CI gate's local mode
+// cannot drift apart. See ontology.StampedWith.
 func stampedWith(props map[string]any, slug, sha string) bool {
-	s, _ := props[ontology.PropRepoSlug].(string)
-	c, _ := props[ontology.PropCommitSHA].(string)
-	return s == slug && c == sha
+	return ontology.StampedWith(props, slug, sha)
 }

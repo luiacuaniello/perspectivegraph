@@ -210,3 +210,23 @@ const (
 	// independent cause. A collector should stamp the CVE/credential id when known.
 	PropWeightCause = "weight_cause"
 )
+
+// StampedWith reports whether a node's properties carry this exact pull-request
+// identity: the repository AND the commit, together.
+//
+// It lives here because two very different callers must agree on it - the API's
+// prVerdict query, answering for a running engine, and the CI gate computing a
+// verdict in the runner with no engine at all. If those two ever drifted, the same
+// commit could be "analysed" one way and "never seen" the other, and a gate would
+// pass a build the server would have blocked. One rule, one home.
+//
+// Both must match. Matching on the SHA alone would attribute a commit to every
+// repository that happens to share it (forks, monorepo splits, cherry-picks).
+func StampedWith(props map[string]any, slug, sha string) bool {
+	if slug == "" || sha == "" {
+		return false
+	}
+	s, _ := props[PropRepoSlug].(string)
+	c, _ := props[PropCommitSHA].(string)
+	return s == slug && c == sha
+}
