@@ -41,6 +41,12 @@ type gateVerdict struct {
 	CriticalPaths int        `json:"criticalPaths"`
 	AnalysedAt    string     `json:"analysedAt"`
 	Paths         []gatePath `json:"paths"`
+
+	// Incomplete is set (to the reason) when the estate was read only in part, which
+	// local mode can detect and the server cannot. A path found on partial data is
+	// still a real path, so BLOCKED survives - but "no path" on partial data is not
+	// clean, it is unknown, and it is reported as such.
+	Incomplete string `json:"incomplete,omitempty"`
 }
 
 type gatePath struct {
@@ -172,7 +178,7 @@ func reportAndExit(v gateVerdict, slug, sha string, maxCritical int, allowUnknow
 	}
 
 	switch {
-	case !v.Analysed:
+	case !v.Analysed, v.Incomplete != "" && v.CriticalPaths <= maxCritical:
 		if allowUnknown {
 			fmt.Fprintln(os.Stderr, "gate: UNKNOWN, passing anyway because -allow-unknown was set")
 			os.Exit(gateExitClean)
@@ -323,6 +329,12 @@ func printGateVerdict(w io.Writer, v gateVerdict, slug, sha string, maxCritical 
 		fmt.Fprintln(w, "  Nothing carrying this commit reached the engine, so nobody analysed it.")
 		fmt.Fprintln(w, "  This is NOT a clean result. Check that the scan ran and that the ingest URL,")
 		fmt.Fprintln(w, "  the HMAC secret and the -slug/-sha values are the ones this engine expects.")
+	case v.Incomplete != "" && v.CriticalPaths <= maxCritical:
+		// Not clean: the engine found no route, but it did not see the whole estate, and
+		// a route through the part it could not read looks exactly like no route at all.
+		fmt.Fprintf(w, "UNKNOWN  %s@%s\n", slug, shortSHA(sha))
+		fmt.Fprintf(w, "  The estate was read only in part, so \"no attack path\" cannot be trusted:\n  %s\n", v.Incomplete)
+		fmt.Fprintln(w, "  This is NOT a clean result. Fix the estate access and run it again.")
 	case v.CriticalPaths > maxCritical:
 		fmt.Fprintf(w, "BLOCKED  %s@%s: %d critical attack path(s) run through this commit\n", slug, shortSHA(sha), v.CriticalPaths)
 		for i, p := range v.Paths {

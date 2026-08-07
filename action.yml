@@ -76,11 +76,15 @@ inputs:
     required: false
     default: ""
   token:
-    description: Bearer token for the API, if auth is on. Pass a secret, never a literal.
+    description: >-
+      Bearer token for the API, if auth is on. Server mode only. Pass a secret, never a
+      literal.
     required: false
     default: ""
   hmac-secret:
-    description: Shared secret signing the ingest body, if the webhook requires it.
+    description: >-
+      Server mode only: shared secret signing the ingest body, if the webhook requires it.
+      Local mode posts to no webhook, so it needs no secret.
     required: false
     default: ""
   slug:
@@ -104,8 +108,9 @@ inputs:
     default: "0"
   timeout:
     description: >-
-      How long to wait for the engine to analyse this commit before reporting UNKNOWN.
-      Must comfortably exceed your ANALYZER_INTERVAL.
+      Server mode only: how long to wait for the engine to analyse this commit before
+      reporting UNKNOWN. Must comfortably exceed your ANALYZER_INTERVAL. Local mode
+      computes the verdict in one pass, so it never waits.
     required: false
     default: 5m
   allow-unknown:
@@ -335,12 +340,18 @@ runs:
         # code says what happens to the build; this says what is actually known.
         paths="$(jq -r '.criticalPaths // 0' verdict.json 2>/dev/null || echo 0)"
         analysed="$(jq -r '.analysed // false' verdict.json 2>/dev/null || echo false)"
+        incomplete="$(jq -r '.incomplete // ""' verdict.json 2>/dev/null || echo "")"
         if [ "$code" -ge 3 ]; then
           verdict=error
-        elif [ "$analysed" != "true" ]; then
-          verdict=unknown
         elif [ "$code" = "1" ]; then
+          # A path found on partial data is still a real path, so blocked wins outright.
           verdict=blocked
+        elif [ "$analysed" != "true" ] || [ -n "$incomplete" ] || [ "$code" = "2" ]; then
+          # Three ways to not know: nothing carried the commit, the estate was read only
+          # in part, or the gate said so itself. allow-unknown turns the exit code into 0
+          # but must not turn the ANSWER into "clean" - reading only the code is how a
+          # commit nobody looked at gets reported as safe.
+          verdict=unknown
         else
           verdict=clean
         fi
@@ -367,10 +378,19 @@ runs:
               echo '```'
               ;;
             unknown)
-              echo "**Unknown.** Nothing carrying \`${SHA}\` reached the engine, so nobody analysed it."
-              echo
-              echo "This is not a clean result. Check that the scan ran, and that the ingest URL, the"
-              echo "HMAC secret and the commit SHA are the ones this engine expects."
+              if [ -n "$incomplete" ]; then
+                echo "**Unknown.** The estate was read only in part, so \"no attack path\" cannot be trusted -"
+                echo "a route through the part that failed to read looks exactly like no route at all."
+                echo
+                echo '```'
+                echo "$incomplete"
+                echo '```'
+              else
+                echo "**Unknown.** Nothing carrying \`${SHA}\` reached the engine, so nobody analysed it."
+                echo
+                echo "This is not a clean result. Check that the scan ran, and that the ingest URL, the"
+                echo "HMAC secret and the commit SHA are the ones this engine expects."
+              fi
               if [ "$ALLOW_UNKNOWN" = "true" ]; then
                 echo
                 echo "**The build was passed anyway** because \`allow-unknown\` is set. This check is"
