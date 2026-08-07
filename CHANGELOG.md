@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.3.1...v1.4.0) (2026-08-07)
+
+
+### Features
+
+* **gate:** answer in the runner, with no deployment ([#119](https://github.com/luiacuaniello/perspectivegraph/issues/119)) ([1cab800](https://github.com/luiacuaniello/perspectivegraph/commit/1cab800c3835fe0ba3fd472c722cc2ab7565e91c))
+
 ## [1.3.1](https://github.com/luiacuaniello/perspectivegraph/compare/v1.3.0...v1.3.1) (2026-08-07)
 
 
