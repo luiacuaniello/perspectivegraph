@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1](https://github.com/luiacuaniello/perspectivegraph/compare/v1.2.0...v1.2.1) (2026-08-07)
+
+
+### Bug Fixes
+
+* **frontend:** fix the two real lint findings and gate the build at zero warnings ([#113](https://github.com/luiacuaniello/perspectivegraph/issues/113)) ([87b092b](https://github.com/luiacuaniello/perspectivegraph/commit/87b092bcd253f66366d65148d1aa31357864550d))
+
 ## [1.2.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.1.0...v1.2.0) (2026-08-06)
 
 

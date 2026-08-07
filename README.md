@@ -99,8 +99,8 @@ Prefer not to build? The release images are published to GHCR (`latest` also tra
 newest release; the pinned tag is the one to use if you care about reproducibility):
 
 ```bash
-docker pull ghcr.io/luiacuaniello/perspectivegraph:v1.2.0 # x-release-please-version
-docker pull ghcr.io/luiacuaniello/perspectivegraph-dashboard:v1.2.0 # x-release-please-version
+docker pull ghcr.io/luiacuaniello/perspectivegraph:v1.2.1 # x-release-please-version
+docker pull ghcr.io/luiacuaniello/perspectivegraph-dashboard:v1.2.1 # x-release-please-version
 ```
 
 They are signed with cosign keyless and carry an SPDX SBOM plus a SLSA build
@@ -111,7 +111,7 @@ on trust:
 cosign verify \
   --certificate-identity-regexp 'https://github.com/luiacuaniello/perspectivegraph/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  ghcr.io/luiacuaniello/perspectivegraph:v1.2.0 # x-release-please-version
+  ghcr.io/luiacuaniello/perspectivegraph:v1.2.1 # x-release-please-version
 ```
 
 The dashboard opens on the decision, not the inventory: what is being exploited right
@@ -190,7 +190,7 @@ risk percentage in front of a board. What is and isn't claimed is spelled out in
 no outbound connection at all - GitHub, the AI assistant and the KEV/EPSS feeds each stay
 dark until you set a key or flag (`THREATINTEL` is `off` by default).
 
-**The benchmark, as of v1.2.0.** <!-- x-release-please-version --> `make bench-cloudgoat`
+**The benchmark, as of v1.2.1.** <!-- x-release-please-version --> `make bench-cloudgoat`
 runs four CloudGoat-shaped scenarios in CI and grades the engine on each:
 
 | Scenario | Expects | Result |
