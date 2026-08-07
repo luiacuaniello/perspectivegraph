@@ -216,13 +216,22 @@ runs:
         perspectivegraph "${args[@]}" -json > verdict.json
         code=$?
 
-        case "$code" in
-          0) verdict=clean ;;
-          1) verdict=blocked ;;
-          2) verdict=unknown ;;
-          *) verdict=error ;;
-        esac
+        # The verdict comes from the ANSWER, not from the exit code alone. With
+        # allow-unknown the gate exits 0 on a commit nobody analysed - reading only the
+        # code would publish verdict=clean for it, and anything downstream branching on
+        # that output would be told the commit is safe. It was never looked at. The exit
+        # code says what happens to the build; this says what is actually known.
         paths="$(jq -r '.criticalPaths // 0' verdict.json 2>/dev/null || echo 0)"
+        analysed="$(jq -r '.analysed // false' verdict.json 2>/dev/null || echo false)"
+        if [ "$code" -ge 3 ]; then
+          verdict=error
+        elif [ "$analysed" != "true" ]; then
+          verdict=unknown
+        elif [ "$code" = "1" ]; then
+          verdict=blocked
+        else
+          verdict=clean
+        fi
         {
           echo "verdict=${verdict}"
           echo "critical-paths=${paths}"
@@ -249,6 +258,11 @@ runs:
               echo
               echo "This is not a clean result. Check that the scan ran, and that the ingest URL, the"
               echo "HMAC secret and the commit SHA are the ones this engine expects."
+              if [ "$ALLOW_UNKNOWN" = "true" ]; then
+                echo
+                echo "**The build was passed anyway** because \`allow-unknown\` is set. This check is"
+                echo "currently incapable of failing on an unanalysed commit."
+              fi
               ;;
             *)
               echo "**Error.** The gate could not reach a verdict. See the step log."
