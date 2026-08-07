@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.2](https://github.com/luiacuaniello/perspectivegraph/compare/v1.4.1...v1.4.2) (2026-08-07)
+
+
+### Bug Fixes
+
+* **ci:** pick the binary for the runner's platform, not always linux ([#123](https://github.com/luiacuaniello/perspectivegraph/issues/123)) ([7061342](https://github.com/luiacuaniello/perspectivegraph/commit/7061342b8e86be78273e35d0647c45520a3274e0))
+
 ## [1.4.1](https://github.com/luiacuaniello/perspectivegraph/compare/v1.4.0...v1.4.1) (2026-08-07)
 
 
