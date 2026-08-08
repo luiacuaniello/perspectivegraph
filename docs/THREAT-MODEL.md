@@ -31,6 +31,13 @@ Scanners/CI ─► Ingest :8081 ──────────────┼─
 - **B5 - Engine → GitHub.** Remediation-as-PR uses a token with write scope.
 - **B6 - Engine ↔ datastore/bus.** Graph in Postgres+AGE; events on NATS.
 - **B7 - Tenant ↔ tenant.** Multi-tenant graphs must stay isolated.
+- **B8 - CI runner (the merge gate).** In `mode: local` the gate runs the engine *inside
+  the runner*: it reads the estate with a cloud read-only credential and computes the
+  verdict there, so B3 moves into a job that also builds and tests the pull request's own
+  code. Anything that PR can execute during the build can read that credential. Keep the
+  gate in a job of its own with minimal `permissions:`, and never on `pull_request_target`
+  - that event hands your secrets to a contributor's code. Fork PRs get no secrets at all
+  and correctly fail closed as UNKNOWN.
 
 ## Assets to protect
 
@@ -59,7 +66,7 @@ Scanners/CI ─► Ingest :8081 ──────────────┼─
 | B1/B2 | D | Denial of service via large or frequent payloads | Body-size limits on ingest and API; per-client-IP token buckets on both (`API_RATE_RPS`, `INGEST_RATE_RPS`, default 60/30) with the limiter as the outermost middleware and a capped client table; connectors leader-gated (replicas don't multiply calls) | The limiter keys on the connecting peer, so behind a proxy it limits the proxy: terminate at a gateway that limits per real client. State is in-memory and per-replica |
 | B1 API | D | **A cheap request that costs the server a lot.** Depth limits alone do not bound work: a document three levels deep can alias one expensive field thousands of times, and fragments that each spread the next twice expand exponentially with no cycle for a cycle guard to catch | The query guard budgets both **depth** (15) and total **field resolutions** (2000, ~5× the dashboard's heaviest query), and fragment costs are memoised so measuring a document is linear in its size. Regression-tested: a 1.2 KB non-cyclic fragment bomb that previously took the guard **over ten seconds to measure** - before any field resolved - is now rejected in microseconds | The budget is static, not per-resolver cost-aware: 2000 cheap fields and 2000 expensive ones are charged the same. Resolvers read a cached analysis rather than recomputing, which is what keeps that acceptable |
 | the tool itself | T | Supply-chain compromise of the build | Digest-pinned base images (distroless, non-root, read-only rootfs), SHA-pinned GitHub Actions, `govulncheck`/`gosec`/CodeQL/`gitleaks`/Trivy gates + parser fuzzing in CI, Dependabot; release images are cosign-signed with an SBOM + SLSA provenance | No formal third-party penetration test yet (automated + community review only) |
-| B1 | R | Actions not attributable | Tamper-evident audit log (sealed); `auth.deny` and mutating actions recorded | Strong non-repudiation needs shipping the log to external WORM storage. There is **no request/correlation id**, so tying one HTTP call to its audit entry and its log lines is manual |
+| B1 | R | Actions not attributable | Tamper-evident audit log (sealed); `auth.deny` and mutating actions recorded | Strong non-repudiation needs shipping the log to external WORM storage. Every request carries an `X-Request-Id` - taken from the caller when well-formed, generated otherwise - that reaches the structured logs and the audit record's fields alike, so one HTTP call ties to its audit entry without guesswork |
 | B1 metrics | I | **`GET /metrics` is open by design** - unauthenticated and unthrottled, so a scrape never starves - but it sits on the same mux and port as the API, and several series carry a `tenant` label: `analyzer_critical_paths`, `analyzer_graph_nodes`, `analyzer_graph_edges`. Anyone who can reach the port therefore enumerates tenant names and learns how large each estate is and how many critical paths it currently has | Path contents, asset names and scores are never exposed - only counts and timings | **Closable**: set `METRICS_ADDR` (e.g. `127.0.0.1:9090`) and /metrics moves to its own listener and LEAVES the API mux entirely - `values-production.yaml` does this. It is off by default because /metrics on the API port is declared stable surface and moving it silently would break every existing scrape config. Left on the API port the residual stands: "which tenants exist, and which has the worst posture right now" is the shape of a targeting signal, so do not expose that port directly |
 
 ## Data handling and privacy

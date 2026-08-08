@@ -19,9 +19,21 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: postgres
     spec:
+      # The `restricted` Pod Security Standard, minus readOnlyRootFilesystem - which it
+      # does not require, and which these two DO need (JetStream writes its store, the
+      # bundled Postgres writes its data directory). Both images already run as a non-root
+      # user; this states it so an enforcing namespace admits the pod.
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: postgres
           image: {{ .Values.postgres.image }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           ports:
             - containerPort: 5432
           env:
@@ -34,6 +46,15 @@ spec:
                 secretKeyRef:
                   name: {{ include "perspectivegraph.fullname" . }}-secrets
                   key: POSTGRES_PASSWORD
+          # TCP rather than the readiness check: readiness answers "can it serve
+          # requests", liveness only "is the process still there". Conflating them
+          # restarts a component that is merely busy or waiting on a dependency.
+          livenessProbe:
+            tcpSocket:
+              port: 5432
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 3
           readinessProbe:
             exec:
               command: ["pg_isready", "-U", {{ .Values.postgres.auth.user | quote }}]

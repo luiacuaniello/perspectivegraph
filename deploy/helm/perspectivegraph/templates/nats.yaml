@@ -18,13 +18,34 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: nats
     spec:
+      # The `restricted` Pod Security Standard, minus readOnlyRootFilesystem - which it
+      # does not require, and which these two DO need (JetStream writes its store, the
+      # bundled Postgres writes its data directory). Both images already run as a non-root
+      # user; this states it so an enforcing namespace admits the pod.
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: nats
           image: {{ .Values.nats.image }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           args: ["-js", "-m", "8222"]
           ports:
             - containerPort: 4222
             - containerPort: 8222
+          # TCP rather than the readiness check: readiness answers "can it serve
+          # requests", liveness only "is the process still there". Conflating them
+          # restarts a component that is merely busy or waiting on a dependency.
+          livenessProbe:
+            tcpSocket:
+              port: 4222
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            failureThreshold: 3
           readinessProbe:
             httpGet:
               path: /healthz

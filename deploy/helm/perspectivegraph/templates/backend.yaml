@@ -35,6 +35,10 @@ spec:
         {{- if .Values.postgres.enabled }}
         - name: wait-for-postgres
           image: {{ .Values.backend.waitImage }}
+          # `restricted` applies to init containers too - they are the easiest place to
+          # forget it, and one non-compliant init container refuses the whole pod.
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           command:
             - sh
             - -c
@@ -46,6 +50,10 @@ spec:
         {{- if .Values.nats.enabled }}
         - name: wait-for-nats
           image: {{ .Values.backend.waitImage }}
+          # `restricted` applies to init containers too - they are the easiest place to
+          # forget it, and one non-compliant init container refuses the whole pod.
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           command:
             - sh
             - -c
@@ -143,6 +151,18 @@ spec:
             - name: NATS_TLS_KEY
               value: /etc/perspectivegraph/nats-tls/tls.key
             {{- end }}
+          # Liveness is a TCP connect ON PURPOSE, not GET /healthz. /healthz reports
+          # DEGRADED (503) when the graph has fallen back to memory because Postgres is
+          # unreachable - a state the process is handling, not one a restart repairs. A
+          # liveness probe pointed there would crash-loop the backend for the whole
+          # duration of a database outage, turning "degraded but serving" into "down".
+          # This asks only whether the process still accepts connections.
+          livenessProbe:
+            tcpSocket:
+              port: api
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            failureThreshold: 3
           readinessProbe:
             httpGet:
               path: /healthz

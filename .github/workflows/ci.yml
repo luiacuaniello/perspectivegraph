@@ -110,6 +110,40 @@ jobs:
       - name: Coverage gate (libraries ≥ 80%)
         run: ../scripts/coverage-gate.sh 80
 
+  # Nothing validated the Helm chart until now: not a lint, not a render. A template that
+  # stopped parsing, or a workload that quietly lost its security context, would have
+  # reached a user before anyone noticed.
+  chart:
+    name: Helm chart
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+
+      - uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112 # v4.3.0
+        with:
+          version: v3.16.4
+
+      - name: Lint
+        run: helm lint deploy/helm/perspectivegraph
+
+      # Pinned like every action SHA and image digest in this repo: an unpinned
+      # install is the one unreviewed thing that would run in CI.
+      - run: python3 -m pip install --quiet 'pyyaml==6.0.2'
+
+      # `restricted` is the Pod Security Standard most clusters this lands in enforce, and
+      # a pod that misses one of its fields is refused admission rather than merely being
+      # less hardened - so this is a compatibility gate as much as a security one. Both
+      # value sets are checked: the demo defaults and the production overlay.
+      - name: Admissible (restricted PSS) and self-healing (probes)
+        run: |
+          set -euo pipefail
+          for values in "" "-f deploy/helm/perspectivegraph/values-production.yaml"; do
+            # shellcheck disable=SC2086
+            helm template pg deploy/helm/perspectivegraph $values \
+              | python3 scripts/chart-check.py
+          done
+
   frontend:
     name: Frontend (React)
     runs-on: ubuntu-latest
