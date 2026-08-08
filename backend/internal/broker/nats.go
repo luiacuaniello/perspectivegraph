@@ -18,10 +18,21 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 )
 
-// dlqSubject is the dead-letter subject. It is intentionally OUTSIDE the main
-// stream's base.> filter so dead-lettered events are retained in their own
-// stream and never re-consumed by the normalizer.
-const dlqSubject = "perspectivegraph.dlq"
+// dlqPrefix roots the dead-letter subjects. It is intentionally OUTSIDE the main
+// stream's base.> filter so dead-lettered events are retained in their own stream and
+// never re-consumed by the normalizer.
+const dlqPrefix = "perspectivegraph.dlq"
+
+// dlqSubjectFor scopes the dead-letter subject to one deployment's stream.
+//
+// It used to be a single constant while the DLQ STREAM was already named per-stream, and
+// the mismatch had a sharp edge: two deployments sharing a NATS - staging and production
+// on one cluster is the ordinary case - both claimed the same subject, so the second
+// refused to start with "subjects overlap with an existing stream" and nothing in that
+// message pointed at the cause. Found by giving each integration test its own stream.
+func dlqSubjectFor(stream string) string {
+	return dlqPrefix + "." + sanitizeToken(stream)
+}
 
 // maxDeliver caps redeliveries of a failing event. Edge upserts fail (and Nak)
 // until their endpoint nodes arrive, which normally resolves within a couple
@@ -42,6 +53,7 @@ type Broker struct {
 	stream        string
 	streamSubject string // what the stream binds and the consumer filters (base.>)
 	base          string // publish prefix: base + "." + source token
+	dlq           string // dead-letter subject, scoped to this stream
 }
 
 // Connect dials NATS and ensures the durable stream exists. The configured
@@ -89,7 +101,7 @@ func Connect(ctx context.Context, url, stream, subject string, tlsConf TLSConfig
 	// (or a future replay tool) can inspect them instead of losing them silently.
 	if _, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
 		Name:     stream + "_DLQ",
-		Subjects: []string{dlqSubject},
+		Subjects: []string{dlqSubjectFor(stream)},
 		Storage:  jetstream.FileStorage,
 	}); err != nil {
 		nc.Close()
@@ -97,7 +109,7 @@ func Connect(ctx context.Context, url, stream, subject string, tlsConf TLSConfig
 	}
 
 	slog.Info("broker connected", "url", url, "stream", stream, "subject", streamSubject)
-	return &Broker{nc: nc, js: js, stream: stream, streamSubject: streamSubject, base: base}, nil
+	return &Broker{nc: nc, js: js, stream: stream, streamSubject: streamSubject, base: base, dlq: dlqSubjectFor(stream)}, nil
 }
 
 // Publish serializes an event and pushes it onto the bus. The subject is
@@ -141,14 +153,14 @@ func (b *Broker) Consume(ctx context.Context, durable string, handler func(conte
 			if meta, merr := msg.Metadata(); merr == nil {
 				attempt = meta.NumDelivered
 			}
-			if attempt >= maxDeliver {
+			delay, giveUp := retryOrDeadLetter(attempt)
+			if giveUp {
 				slog.Error("handler failed, giving up after max deliveries - dead-lettering",
 					"source", ev.Source, "attempts", attempt, "err", err)
 				b.deadLetter(ctx, msg.Data())
 				_ = msg.Term()
 				return
 			}
-			delay := backoffFor(attempt)
 			slog.Warn("handler failed, will redeliver",
 				"source", ev.Source, "attempt", attempt, "retry_in", delay, "err", err)
 			_ = msg.NakWithDelay(delay)
@@ -180,7 +192,7 @@ func (b *Broker) subjectFor(source string) string {
 // Best-effort: a failed DLQ publish is logged, never blocks Term.
 func (b *Broker) deadLetter(ctx context.Context, data []byte) {
 	metrics.BrokerDeadLettered.Inc()
-	if _, err := b.js.Publish(context.WithoutCancel(ctx), dlqSubject, data); err != nil {
+	if _, err := b.js.Publish(context.WithoutCancel(ctx), b.dlq, data); err != nil {
 		slog.Warn("dead-letter publish failed", "err", err)
 	}
 }
@@ -218,6 +230,23 @@ func sanitizeToken(s string) string {
 		}
 	}
 	return sb.String()
+}
+
+// retryOrDeadLetter decides what a failed delivery has earned: another attempt after a
+// backoff, or the dead-letter queue.
+//
+// It is a function rather than three lines inside the consume callback because the
+// boundary is the whole point and it is off-by-one country. Give up one delivery too
+// early and an event that would have succeeded on its last retry is dead-lettered - a
+// node missing from the graph, so an attack path that never appears. Give up one too
+// late and a permanently failing event is redelivered for ever, and the backlog behind
+// it never drains. `attempt` is 1-based: it is NumDelivered, which is 1 on the first
+// delivery, so the cap is reached when attempt EQUALS maxDeliver.
+func retryOrDeadLetter(attempt uint64) (delay time.Duration, giveUp bool) {
+	if attempt >= maxDeliver {
+		return 0, true
+	}
+	return backoffFor(attempt), false
 }
 
 // backoffFor returns the redelivery delay after the given (1-based) attempt.

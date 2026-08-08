@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"strings"
 	"time"
+
+	"github.com/luiacuaniello/perspectivegraph/internal/basimport"
 )
 
 // runImportVerdicts is the BAS → /validations bridge: it maps a tool-agnostic attack
@@ -94,7 +95,7 @@ func runImportVerdicts(args []string) error {
 		if f.Outcome == "missed" {
 			body["route"] = f.Route // a false negative: no live path to reference
 		} else {
-			id, ok := resolvePath(paths, f.PathID, f.Target, f.From)
+			id, ok := basimport.Resolve(paths, f.PathID, f.Target, f.From)
 			if !ok {
 				fmt.Printf("  ✗ no live path matches target=%q from=%q - skipped\n", f.Target, f.From)
 				unmatched++
@@ -126,14 +127,7 @@ func runImportVerdicts(args []string) error {
 	return nil
 }
 
-// pathInfo is the live-path index the matcher walks: id plus the entry and target
-// node names and the triage priority (to break ties).
-type pathInfo struct {
-	id, from, target string
-	priority         float64
-}
-
-func fetchPaths(client *http.Client, api, token string) ([]pathInfo, error) {
+func fetchPaths(client *http.Client, api, token string) ([]basimport.PathInfo, error) {
 	q := []byte(`{"query":"{ attackPaths { id priority nodes { name } } }"}`)
 	st, rb, err := apiRequest(client, http.MethodPost, api+"/graphql", token, q)
 	if err != nil {
@@ -156,42 +150,12 @@ func fetchPaths(client *http.Client, api, token string) ([]pathInfo, error) {
 	if err := json.Unmarshal(rb, &resp); err != nil {
 		return nil, err
 	}
-	out := make([]pathInfo, 0, len(resp.Data.AttackPaths))
+	out := make([]basimport.PathInfo, 0, len(resp.Data.AttackPaths))
 	for _, p := range resp.Data.AttackPaths {
 		if len(p.Nodes) < 2 {
 			continue
 		}
-		out = append(out, pathInfo{id: p.ID, from: p.Nodes[0].Name, target: p.Nodes[len(p.Nodes)-1].Name, priority: p.Priority})
+		out = append(out, basimport.PathInfo{ID: p.ID, From: p.Nodes[0].Name, Target: p.Nodes[len(p.Nodes)-1].Name, Priority: p.Priority})
 	}
 	return out, nil
-}
-
-// resolvePath maps a finding to a live path id: an explicit pathId wins; otherwise the
-// highest-priority path whose target contains `target` (and, if given, whose entry
-// contains `from`) - case-insensitive substring, so a tester's "account-admin" matches
-// "account-admin (effective)". Reports false when nothing matches.
-func resolvePath(paths []pathInfo, pathID, target, from string) (string, bool) {
-	if pathID != "" {
-		return pathID, true
-	}
-	if target == "" {
-		return "", false
-	}
-	best, bestPri := "", -1.0
-	for _, p := range paths {
-		if !containsFold(p.target, target) {
-			continue
-		}
-		if from != "" && !containsFold(p.from, from) {
-			continue
-		}
-		if p.priority > bestPri {
-			best, bestPri = p.id, p.priority
-		}
-	}
-	return best, best != ""
-}
-
-func containsFold(s, sub string) bool {
-	return strings.Contains(strings.ToLower(s), strings.ToLower(sub))
 }
