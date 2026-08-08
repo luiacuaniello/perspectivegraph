@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/luiacuaniello/perspectivegraph/internal/andprobe"
 )
 
 // runAndProbe is the #6 (Bayesian Attack Graph) DECISION tool: does your environment
@@ -139,7 +141,7 @@ func runAndProbe(args []string) error {
 	fmt.Printf("  AND-candidate nodes (>=2 distinct incoming prerequisite categories): %d\n", len(candidates))
 	if !*allNodes {
 		fmt.Printf("  critical paths through an AND candidate: %d/%d (%.0f%%)\n", pathsThrough, nPaths, frac*100)
-		fmt.Printf("  verdict: %s\n", andVerdict(frac, len(candidates)))
+		fmt.Printf("  verdict: %s\n", andprobe.Verdict(frac, len(candidates)))
 	}
 	if len(candidates) > 0 {
 		fmt.Printf("  --- top candidates (a human/verdict must confirm each is really AND, not just multiple OR entry points) ---\n")
@@ -169,17 +171,6 @@ var edgeCategory = map[string]string{
 	"AFFECTS": "vulnerability", "EXPLOITS": "vulnerability",
 	"ASSUMES": "identity", "HAS_PERMISSION": "identity", "CAN_ESCALATE_TO": "identity", "AUTHENTICATES": "identity",
 	"ESCAPES_TO": "escape",
-}
-
-func andVerdict(frac float64, candidates int) string {
-	switch {
-	case candidates == 0 || frac < 0.1:
-		return "or-dominated - #6 BAG is likely a NO-OP here; invest in better p(e) (calibration, κ-from-evidence-counts) instead"
-	case frac < 0.4:
-		return "some AND candidates - #6 may add signal on a minority of paths; confirm with real refuted verdicts before building"
-	default:
-		return "AND semantics is common - #6 BAG (as Monte-Carlo-over-BAG) would likely add real signal; still confirm with verdicts"
-	}
 }
 
 func joinSet(m map[string]bool) string {

@@ -6,12 +6,13 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"math/rand"
 	"net/http"
 	"os"
 	"time"
 
 	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
+
+	"github.com/luiacuaniello/perspectivegraph/internal/synthgraph"
 )
 
 // runGenload builds a layered synthetic attack surface and POSTs it as one ingest
@@ -44,7 +45,7 @@ func runGenload(args []string) error {
 		return fmt.Errorf("seeds and jewels must each be ≤ width (%d)", *width)
 	}
 
-	nodes, edges := genGraph(*seeds, *jewels, *layers, *width, *fanout, *randSeed)
+	nodes, edges := synthgraph.Build(*seeds, *jewels, *layers, *width, *fanout, *randSeed)
 	// One event is published as one NATS message, so chunk well under the broker's
 	// default 1 MiB max_payload. Nodes go first (in order) so an edge's endpoints
 	// exist by the time it is consumed (JetStream preserves per-subject order; the
@@ -85,47 +86,4 @@ func runGenload(args []string) error {
 		len(nodes), len(edges), len(events), len(body)/1024, *url, resp.Status)
 	fmt.Printf("  give the analyzer a pass, then query: { status { passes } attackPaths(limit:5){ id score } }\n")
 	return nil
-}
-
-// genGraph builds the synthetic layered attack surface as node and edge slices.
-// ObservedAt on the carrying events is now, so the ingest layer stamps every
-// element's last_seen - which keeps the incremental (delta) snapshot path working
-// for genload-sourced data too.
-func genGraph(seeds, jewels, layers, width, fanout int, randSeed int64) ([]ontology.Node, []ontology.Edge) {
-	rng := rand.New(rand.NewSource(randSeed)) // #nosec G404 -- deterministic PRNG for synthetic-graph generation, not security-sensitive
-	id := func(layer, i int) string { return fmt.Sprintf("genload-%d-%d", layer, i) }
-
-	var nodes []ontology.Node
-	for l := 0; l < layers; l++ {
-		for i := 0; i < width; i++ {
-			n := ontology.Node{
-				ID:         id(l, i),
-				Label:      ontology.LabelContainer,
-				Name:       id(l, i),
-				Properties: map[string]any{},
-			}
-			if l == 0 && i < seeds {
-				n.Properties[ontology.PropInternetExposed] = true
-			}
-			if l == layers-1 && i >= width-jewels {
-				n.Properties[ontology.PropCrownJewel] = true
-			}
-			nodes = append(nodes, n)
-		}
-	}
-
-	var edges []ontology.Edge
-	for l := 0; l < layers-1; l++ {
-		for i := 0; i < width; i++ {
-			for f := 0; f < fanout; f++ {
-				edges = append(edges, ontology.Edge{
-					Type:               ontology.EdgeConnectsTo,
-					From:               id(l, i),
-					To:                 id(l+1, rng.Intn(width)),
-					ExploitProbability: 0.2 + rng.Float64()*0.8,
-				})
-			}
-		}
-	}
-	return nodes, edges
 }

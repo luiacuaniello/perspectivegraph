@@ -90,6 +90,21 @@ jobs:
           go-version: "1.25.12"
           cache-dependency-path: backend/go.sum
       # The contract test creates the AGE extension + graph itself; just run it.
+      # JetStream cannot be a service container: GitHub gives no way to pass the -js
+      # argument, and without it the broker's streams do not exist. Started here instead,
+      # from the same pinned digest the chart deploys.
+      - name: Start NATS with JetStream
+        run: |
+          set -euo pipefail
+          docker run -d --name nats -p 4222:4222 \
+            nats:2.12.11-alpine@sha256:006a95e54643c0a2a33dfcee4654e9115f7540ebb8804822d3e2d82bf8515f61 -js
+          for _ in $(seq 1 30); do
+            if nc -z localhost 4222; then echo "nats up"; exit 0; fi
+            sleep 1
+          done
+          echo "::error::NATS never accepted connections"
+          exit 1
+
       - name: Run AGE store contract test
         run: go test -run TestAGEStoreContract -v ./internal/graph/...
       # Leader election's mutual-exclusion / failover needs a real Postgres
@@ -107,6 +122,12 @@ jobs:
       # 67.6%), and it excludes cmd/ - main() plus the CLI subcommands, where a test
       # would assert the process starts rather than that anything works. cmd's own
       # number is printed for visibility, never enforced.
+      # The delivery guarantees, against a real JetStream. They skip without one, so
+      # before this step existed they had never run anywhere but a developer's laptop.
+      - name: Run broker delivery integration tests
+        working-directory: ./backend
+        run: go test -run 'TestPublishedEventReachesTheHandler|TestFailedHandlerSeesTheEventAgain|TestMalformedMessageIsTerminatedNotRedelivered' -v -timeout 240s ./internal/broker/...
+
       - name: Coverage gate (libraries ≥ 80%)
         run: ../scripts/coverage-gate.sh 80
 
