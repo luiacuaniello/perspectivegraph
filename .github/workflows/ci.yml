@@ -148,9 +148,10 @@ jobs:
       - name: Lint
         run: helm lint deploy/helm/perspectivegraph
 
-      # Pinned like every action SHA and image digest in this repo: an unpinned
-      # install is the one unreviewed thing that would run in CI.
-      - run: python3 -m pip install --quiet 'pyyaml==6.0.2'
+      # --require-hashes, not just a version: a version alone still trusts whatever
+      # PyPI serves under it. Every Action here is pinned to a SHA and every image to a
+      # digest; this was the last install that was not.
+      - run: python3 -m pip install --quiet --require-hashes -r scripts/requirements-ci.txt
 
       # `restricted` is the Pod Security Standard most clusters this lands in enforce, and
       # a pod that misses one of its fields is refused admission rather than merely being
