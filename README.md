@@ -207,6 +207,19 @@ perspectivegraph gate -local -aws-region eu-west-1 \
   -report trivy.json -slug owner/name -sha "$COMMIT_SHA"
 ```
 
+> **Two things to settle before wiring it up.**
+>
+> **Fork pull requests.** The gate needs secrets, and GitHub gives a fork's `pull_request`
+> run none - so a fork PR cannot be analysed and fails closed as `unknown`. Do **not**
+> reach for `pull_request_target` to work around it: that event runs with your secrets
+> against the contributor's code, and in local mode your secrets are cloud credentials.
+> Run the gate on `push` to your own branches instead, and let fork PRs go without it.
+>
+> **Public repositories.** When it blocks, the check prints the route - real asset names,
+> the CVE linking them, the sensitive asset at the end - into the job log and summary,
+> which on a public repository are public. Use `soft-fail` and post the detail somewhere
+> private, or keep the gate on a private repository.
+
 Full input reference in [`action.yml`](action.yml); the underlying query is `prVerdict`
 in the [API schema](docs/api/schema.graphql).
 
@@ -267,8 +280,10 @@ Precision and recall are 1.00 on all four. Read that for what it is: four scenar
 of them negative controls - a regression gate against known shapes, not a measurement of
 field accuracy on your estate.
 
-The long version follows. PerspectiveGraph is **0.x, in active development** - the version
-number means the API can still change - and built in the open. What's next is in the
+The long version follows. PerspectiveGraph is **1.x and in active development**, built in
+the open. The GraphQL schema is frozen and drift-guarded and the CLI/config surface is
+documented, so a breaking change goes through a major version rather than arriving in a
+patch - see the [API stability policy](docs/API-STABILITY.md). What's next is in the
 [roadmap](ROADMAP.md); read this before you rely on it:
 
 - **Engine: feature-complete.** The correlation engine, agentless connectors, triage,
@@ -308,10 +323,14 @@ number means the API can still change - and built in the open. What's next is in
   reachability-precision case (an open SG on a private-subnet box must **not** form a path)
   and the credential-origin case (a leaked-key privesc is invisible until `SEED_IAM_USERS`
   is on). It runs under `make test`, so a regression that loses or invents a path fails the build.
-- **Deployment: demo-grade defaults, with a production switch.** The bundled `docker
-  compose` / Helm setup is hardened for a demo (distroless, non-root, read-only rootfs,
-  digest-pinned 0-CVE images, opt-in TLS) and is deliberately open so `make demo` is one
-  command. Set **`PG_ENV=production`** and the backend **refuses to start** unless both the
+- **Deployment: demo-grade defaults, with a production switch.** The **backend** is
+  hardened wherever it runs (distroless, non-root, read-only rootfs, all capabilities
+  dropped, digest-pinned 0-CVE images, opt-in TLS). Under `docker compose` the bundled
+  dependencies - the dashboard's nginx, NATS, the demo Postgres - run as their images
+  ship, because the demo has to stay one command. Under **Helm every workload, init
+  containers included, satisfies the `restricted` Pod Security Standard**, asserted in CI
+  on both value sets, so a namespace that enforces it admits the chart unmodified. The
+  demo defaults are otherwise deliberately open. Set **`PG_ENV=production`** and the backend **refuses to start** unless both the
   API and ingest are authenticated - the permissive default cannot be reached by forgetting
   to configure it. A production rollout still needs your own hardening beyond that: an
   external managed PostgreSQL+AGE, secrets in a manager (not env vars), TLS on by default,

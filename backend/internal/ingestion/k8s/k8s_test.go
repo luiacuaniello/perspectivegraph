@@ -314,3 +314,47 @@ func TestEmptySelectorMatchesNothing(t *testing.T) {
 		t.Error("selector must match a labels superset")
 	}
 }
+
+// A spec that does not parse must stop the ingest, not produce a benign-looking node.
+//
+// This is the regression that matters: before, the unmarshal error was discarded, so a
+// pod with a malformed spec still became a Container node - with no image_ref, no escape
+// reason and the "default" ServiceAccount. The estate then looked SAFER than it was,
+// which is the one direction a security tool must never fail in.
+func TestMalformedPodSpecIsRefusedRatherThanSilentlyDegraded(t *testing.T) {
+	// `containers` is an object where the type expects a list: valid JSON, wrong shape.
+	const dump = `{"items":[
+		{"kind":"Pod","metadata":{"name":"payments","namespace":"prod"},
+		 "spec":{"containers":{"image":"payments:1.0"},"serviceAccountName":"payments-sa"}}
+	]}`
+
+	events, err := New().Parse(strings.NewReader(dump), ingestion.Options{})
+	if err == nil {
+		t.Fatalf("a malformed pod spec was accepted; it produced %d event(s) that would look clean", len(events))
+	}
+	for _, want := range []string{"Pod", "prod", "payments"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error does not name %q, so an operator cannot find the resource: %v", want, err)
+		}
+	}
+}
+
+// A Service whose spec will not parse loses its type, and a Service that loses its type
+// is never marked internet-exposed - so it stops being a seed and every attack path that
+// started there disappears from the board.
+func TestMalformedServiceSpecIsRefused(t *testing.T) {
+	const dump = `{"items":[
+		{"kind":"Service","metadata":{"name":"edge","namespace":"prod"},"spec":{"type":["LoadBalancer"]}}
+	]}`
+	if _, err := New().Parse(strings.NewReader(dump), ingestion.Options{}); err == nil {
+		t.Fatal("a malformed service spec was accepted, so a seed could vanish unnoticed")
+	}
+}
+
+// A resource with no spec at all is not malformed - it is just empty, and must still parse.
+func TestAbsentSpecIsNotAnError(t *testing.T) {
+	const dump = `{"items":[{"kind":"Pod","metadata":{"name":"bare","namespace":"prod"}}]}`
+	if _, err := New().Parse(strings.NewReader(dump), ingestion.Options{}); err != nil {
+		t.Fatalf("a pod with no spec was rejected: %v", err)
+	}
+}

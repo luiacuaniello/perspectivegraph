@@ -23,6 +23,25 @@ branding:
 # every two-state gate ever written. Here that is UNKNOWN, and it fails the build by
 # default - see the allow-unknown input.
 #
+# TWO THINGS TO SETTLE BEFORE YOU WIRE THIS UP.
+#
+# 1. Pull requests from forks. This gate needs secrets - an ingest HMAC and API token in
+#    server mode, a cloud role in local mode - and GitHub does not give a fork's
+#    `pull_request` run any of them. So a fork PR cannot be analysed, and it fails closed:
+#    UNKNOWN, red. That is the honest outcome, not a bug.
+#
+#    Do NOT reach for `pull_request_target` to fix it. That event runs with the BASE
+#    repository's secrets while the code under test belongs to the contributor, so a PR
+#    that edits a build script reads them - and in local mode those secrets are cloud
+#    credentials. If you accept external contributions, run this gate on `push` to your
+#    own branches, or behind a maintainer approval gate, and let fork PRs go without it.
+#
+# 2. Public repositories. When the gate blocks it PRINTS THE ROUTE - real asset names, the
+#    CVE that links them, and the sensitive asset at the end - into the job log and the run
+#    summary. On a public repository those are public. That is a map of your attack surface,
+#    already ranked. Use `soft-fail` with a step of your own that posts the detail somewhere
+#    private, or keep the gate on a private repository.
+
 # Runners: Linux and macOS, on amd64 or arm64. The release also ships a Windows binary,
 # but these steps assume POSIX tooling throughout, so a Windows runner is refused with a
 # message that says so rather than left to fail somewhere further down.

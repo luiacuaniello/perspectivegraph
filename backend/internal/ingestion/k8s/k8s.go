@@ -100,7 +100,9 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 	podsByNS := map[string][]podRef{}
 	for _, p := range pods {
 		var spec podSpec
-		_ = json.Unmarshal(p.Spec, &spec)
+		if err := decodeSpec("Pod", p.Metadata, p.Spec, &spec); err != nil {
+			return nil, err
+		}
 		ns := nsOf(p.Metadata)
 		id := ontology.NewID(ontology.LabelContainer, ns+"/"+p.Metadata.Name)
 		props := map[string]any{"k8s_ns": ns, "k8s_pod": p.Metadata.Name}
@@ -130,7 +132,9 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 	svcID := map[string]string{} // ns/name -> node id
 	for _, s := range services {
 		var spec svcSpec
-		_ = json.Unmarshal(s.Spec, &spec)
+		if err := decodeSpec("Service", s.Metadata, s.Spec, &spec); err != nil {
+			return nil, err
+		}
 		ns := nsOf(s.Metadata)
 		key := ns + "/" + s.Metadata.Name
 		id := ontology.NewID(ontology.LabelLoadBalancer, "svc/"+key)
@@ -151,7 +155,9 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 	// Ingress is an internet entry point routing to backend services.
 	for _, in := range ingresses {
 		var spec ingSpec
-		_ = json.Unmarshal(in.Spec, &spec)
+		if err := decodeSpec("Ingress", in.Metadata, in.Spec, &spec); err != nil {
+			return nil, err
+		}
 		ns := nsOf(in.Metadata)
 		id := ontology.NewID(ontology.LabelLoadBalancer, "ing/"+ns+"/"+in.Metadata.Name)
 		host := ""
@@ -279,6 +285,29 @@ var dangerousCaps = map[string]bool{
 	"DAC_READ_SEARCH": true, // read any host file (open_by_handle_at, the "shocker" escape)
 	"DAC_OVERRIDE":    true, // bypass file permission checks
 	"BPF":             true, // load eBPF programs into the host kernel
+}
+
+// decodeSpec reads one resource's spec, and refuses rather than shrugging.
+//
+// These three unmarshals used to be `_ = json.Unmarshal(...)`, and the shrug was the
+// dangerous part: a spec that failed to parse left the struct at its zero value, so the
+// pod got no image_ref (its image's CVEs never joined the graph), escapeReason saw
+// nothing (T1611 container escape never fired), its ServiceAccount fell back to
+// "default", and a Service lost its type so it was never marked internet-exposed. Every
+// one of those makes the estate look SAFER than it is - a node that is present, plausible
+// and quietly wrong, which is worse than a node that is missing.
+//
+// The outer decode in this same file has always returned its error. This makes the inner
+// one agree: an operator gets a message naming the resource, instead of a graph that
+// silently stopped seeing part of the cluster.
+func decodeSpec(kind string, m meta, raw json.RawMessage, into any) error {
+	if len(raw) == 0 {
+		return nil // absent spec is not malformed - nothing to read
+	}
+	if err := json.Unmarshal(raw, into); err != nil {
+		return fmt.Errorf("decode %s %s/%s spec: %w", kind, nsOf(m), m.Name, err)
+	}
+	return nil
 }
 
 // dangerousCap returns the first host-boundary-breaking capability in an added

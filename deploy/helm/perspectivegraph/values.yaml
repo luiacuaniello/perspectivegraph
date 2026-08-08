@@ -67,6 +67,26 @@ backend:
   waitImage: busybox:1.37
 
 frontend:
+  # nginx runs as uid 101 in its image. These are values rather than fixed template text
+  # for the same reason the backend's are: a cluster that assigns its own UID range
+  # (OpenShift) cannot accept a pinned runAsUser, and would refuse the pod outright.
+  # fsGroup is what makes the emptyDirs below writable - nginx puts its pid in /var/run,
+  # which the image leaves owned by root.
+  #
+  # Verified by running the image this way: uid 101, read-only rootfs, only /var/run and
+  # /var/cache/nginx writable, serving on 8080.
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 101
+    runAsGroup: 101
+    fsGroup: 101
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: ["ALL"]
   enabled: true
   image:
     repository: ghcr.io/luiacuaniello/perspectivegraph-dashboard
@@ -259,6 +279,11 @@ podSecurityContext:
   runAsUser: 65532
   runAsGroup: 65532
   fsGroup: 65532
+  # Required by the `restricted` Pod Security Standard. Everything else here already
+  # satisfied it; without this one field an enforcing namespace still refuses the pod -
+  # so the backend was hardened in every respect except the one that decides admission.
+  seccompProfile:
+    type: RuntimeDefault
 # Container security context: match the compose hardening (drop all caps, no
 # privilege escalation, read-only rootfs). /tmp is an emptyDir so the read-only
 # rootfs still has scratch space. Set to {} to opt out on a constrained runtime.
