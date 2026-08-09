@@ -431,8 +431,13 @@ func (s *Store) Metrics(_ context.Context, tenant string) (Metrics, error) {
 	}
 	tenant = tenantKey(tenant)
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return metricsOf(s.byTenant[tenant]), nil
+	records := append([]Record(nil), s.byTenant[tenant]...)
+	s.mu.RUnlock()
+	// Same order as every other read. Precision and recall are ratios of counts, so
+	// they are order-independent today - but they are computed from this slice, and
+	// leaving one reader on insertion order is how the calibration numbers drifted.
+	sortRecords(records)
+	return metricsOf(records), nil
 }
 
 // ── persistence ─────────────────────────────────────────────────────

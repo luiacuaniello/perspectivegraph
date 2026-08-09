@@ -246,7 +246,15 @@ func (s *Store) List(_ context.Context, tenant string) ([]Record, error) {
 	for _, r := range s.byTenant[tenant] {
 		out = append(out, r)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	// Ties broken on path id. The records come out of a Go map, whose iteration order is
+	// randomised, and sort.Slice is not stable - so suppressions created in the same
+	// instant came back in a different order on each call, from one unchanged store.
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.After(out[j].CreatedAt)
+		}
+		return out[i].PathID < out[j].PathID
+	})
 	return out, nil
 }
 

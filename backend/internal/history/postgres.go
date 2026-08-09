@@ -338,7 +338,7 @@ func (p *PGStore) Stats(tenant string) Stats {
 
 	const q = `
 		SELECT tenant, id, route, score, first_seen, last_seen, open, resolved_at, reopens
-		FROM history_paths WHERE tenant = $1`
+		FROM history_paths WHERE tenant = $1 ORDER BY id`
 	rows, err := p.db.QueryContext(ctx, q, tenantKey(tenant))
 	if err != nil {
 		slog.Warn("history: reading stats failed", "err", err)

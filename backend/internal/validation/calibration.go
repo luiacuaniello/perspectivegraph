@@ -230,6 +230,15 @@ func (s *Store) Calibration(_ context.Context, tenant string) (Calibration, erro
 	s.mu.RLock()
 	records := append([]Record(nil), s.byTenant[tenant]...)
 	s.mu.RUnlock()
+	// The store's defined order, not insertion order.
+	//
+	// This read used to bypass it, so the file backend graded its evidence oldest-first
+	// while the Postgres one graded the same evidence newest-first. Brier and ECE are
+	// sums over those records and floating point addition is not associative, so two
+	// backends holding identical evidence published accuracy numbers that differed in
+	// their last bits. Order is not an implementation detail once the result is a
+	// number somebody reports.
+	sortRecords(records)
 	return calibrationOf(records, persistent), nil
 }
 

@@ -424,7 +424,13 @@ func (s *Store) Stats(tenant string) Stats {
 	}
 	var st Stats
 	var total float64
-	for _, rec := range th.paths {
+	// Iterated in id order rather than map order. MTTR is a mean - a float sum divided
+	// by a count - and floating point addition is not associative, so ranging over a Go
+	// map (whose order is deliberately randomised) let the SAME store report an MTTR
+	// that differed in its last bits between two consecutive calls. The Postgres
+	// backend, which reads without an ORDER BY, could differ from it again. A published
+	// number has to be reproducible.
+	for _, rec := range sortedPaths(th.paths) {
 		if rec.Open {
 			st.OpenPaths++
 			if st.OldestOpenSince == nil || rec.FirstSeen.Before(*st.OldestOpenSince) {
@@ -563,4 +569,19 @@ func (s *Store) persist() error {
 		return err
 	}
 	return os.Rename(tmp, s.path)
+}
+
+// sortedPaths returns the records in a stable, backend-independent order: by id, which
+// is unique, so this is a total order both backends can implement identically.
+func sortedPaths(m map[string]*PathRecord) []*PathRecord {
+	ids := make([]string, 0, len(m))
+	for id := range m {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	out := make([]*PathRecord, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, m[id])
+	}
+	return out
 }
