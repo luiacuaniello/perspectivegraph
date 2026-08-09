@@ -67,6 +67,7 @@ type API struct {
 	exportSigner     *exportsign.Signer
 	exfil            *secwatch.Watcher  // exfiltration detector (attack-map bulk reads)
 	ips              *clientip.Resolver // how per-IP controls identify a client
+	introspection    string             // "on" | "off" | "" (follow the auth posture)
 	authGuard        *secwatch.Watcher  // auth brute-force lockout
 	authInfo         AuthInfo           // public auth config for the SPA login gate
 	prOpener         action.PROpener    // opens remediation pull requests (nil → disabled)

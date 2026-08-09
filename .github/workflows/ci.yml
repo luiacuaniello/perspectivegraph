@@ -183,6 +183,13 @@ jobs:
               | python3 scripts/chart-check.py
           done
 
+      # The CSP pins a hash of the one inline script in index.html, and two nginx configs
+      # serve the same SPA - the image's and the chart's. Either drifting shows up as a
+      # blank or unstyled dashboard in production and nowhere in the build, so check it
+      # here rather than discover it there.
+      - name: Content-Security-Policy matches the page it protects
+        run: python3 scripts/csp-check.py
+
   frontend:
     name: Frontend (React)
     runs-on: ubuntu-latest

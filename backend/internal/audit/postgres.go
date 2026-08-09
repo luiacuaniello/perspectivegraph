@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,8 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
+
+	"github.com/luiacuaniello/perspectivegraph/internal/reqid"
 )
 
 // auditLockKey is the advisory lock every append serialises on. Transaction-scoped, so
@@ -114,10 +117,35 @@ func OpenPG(db *sql.DB, opts ...Option) (*PGLog, error) {
 func (l *PGLog) drain() {
 	defer close(l.done)
 	write := func(rec Record) {
-		if err := l.append(rec); err != nil {
-			// Loud: a lost audit record is the one loss that must never be quiet.
-			slog.Error("audit: record NOT written", "action", rec.Action, "subject", rec.Subject, "err", err)
+		err := l.append(rec)
+		if err == nil {
+			return
 		}
+		// A failed append consumes no sequence number, so the chain re-links over the
+		// hole and the verifier cannot see that anything is missing. Rather than let a
+		// record vanish invisibly, chain a tombstone in its place: the WHAT and WHO
+		// survive, the detail is replaced by the reason it could not be stored, and an
+		// auditor sees an acknowledged gap instead of a log that lies about being whole.
+		tomb := Record{
+			Time:    rec.Time,
+			Action:  rec.Action,
+			Subject: rec.Subject,
+			Role:    rec.Role,
+			Tenant:  rec.Tenant,
+			// Fixed, known-encodable fields: whatever broke the original must not break
+			// its tombstone too.
+			Fields: map[string]any{"audit_error": "the detail of this event could not be stored"},
+		}
+		if terr := l.append(tomb); terr != nil {
+			// Both failed - the store is unreachable, not the record malformed.
+			slog.Error("audit: record NOT written and NOT tombstoned - the trail has a silent gap",
+				"action", rec.Action, "subject", rec.Subject, "tenant", rec.Tenant,
+				"fields", fmt.Sprint(rec.Fields), "err", err, "tombstone_err", terr)
+			return
+		}
+		slog.Error("audit: record detail could not be stored, a tombstone was chained in its place",
+			"action", rec.Action, "subject", rec.Subject, "tenant", rec.Tenant,
+			"fields", fmt.Sprint(rec.Fields), "err", err)
 	}
 	for {
 		select {
@@ -142,11 +170,32 @@ func (l *PGLog) drain() {
 // Failures are logged rather than returned, exactly as the file log does: an audit write
 // must never fail the request it is recording, or an attacker could suppress their own
 // trail by making the log unwritable.
-func (l *PGLog) Record(_ context.Context, action, subject, role, tenant string, fields map[string]any) {
+func (l *PGLog) Record(ctx context.Context, action, subject, role, tenant string, fields map[string]any) {
 	if l == nil || l.db == nil {
 		return
 	}
-	rec := Record{Time: l.now().UTC().Truncate(storedPrecision), Action: action, Subject: subject, Role: role, Tenant: tenant, Fields: fields}
+	// The request id ties an audit entry back to the HTTP call that caused it, which the
+	// threat model relies on. The file backend merges it in Record; this backend used to
+	// ignore its context entirely and silently lost it.
+	if id := reqid.FromContext(ctx); id != "" {
+		merged := make(map[string]any, len(fields)+1)
+		for k, v := range fields {
+			merged[k] = v
+		}
+		merged["request_id"] = id
+		fields = merged
+	}
+	// Sanitised BEFORE hashing, so the hash covers exactly what the database will store.
+	// See storable: an unsanitised NUL made the INSERT fail, and a failed append leaves no
+	// gap, so an attacker could delete their own entries and still pass verification.
+	rec := Record{
+		Time:    l.now().UTC().Truncate(storedPrecision),
+		Action:  action,
+		Subject: stripNUL(subject),
+		Role:    role,
+		Tenant:  stripNUL(tenant),
+		Fields:  storableFields(fields),
+	}
 	select {
 	case <-l.closed:
 		slog.Error("audit: record NOT written, the log is closed", "action", action, "subject", subject)
@@ -217,6 +266,13 @@ func (l *PGLog) append(rec Record) error {
 // sealFields encrypts the fields blob when a key is configured. The chain columns stay
 // in the clear: the database has to order and compare them, and an operator verifying
 // the chain must be able to do so without the key.
+//
+// The ciphertext is base64'd into a JSON string because the column is jsonb, and AES-GCM
+// output is arbitrary binary - nonce and tag included. Handing those bytes to jsonb
+// directly made EVERY append fail as malformed JSON, so a deployment that set
+// STORE_ENCRYPTION_KEY together with the Postgres backend wrote no audit records at all
+// and, by the same no-gap property, still verified clean. The file backend already
+// base64s its sealed lines; this matches it.
 func (l *PGLog) sealFields(raw []byte) ([]byte, error) {
 	if l.sealer == nil || !l.sealer.Enabled() {
 		return raw, nil
@@ -225,7 +281,11 @@ func (l *PGLog) sealFields(raw []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("seal fields: %w", err)
 	}
-	return sealed, nil
+	wrapped, err := json.Marshal(base64.StdEncoding.EncodeToString(sealed))
+	if err != nil {
+		return nil, fmt.Errorf("wrap sealed fields: %w", err)
+	}
+	return wrapped, nil
 }
 
 // Close stops accepting records and waits for the queue to drain, so a graceful
@@ -309,5 +369,13 @@ func openFields(b []byte, sealer sealerLike) ([]byte, error) {
 	if sealer == nil || !sealer.Enabled() {
 		return b, nil
 	}
-	return sealer.Open(b)
+	var encoded string
+	if err := json.Unmarshal(b, &encoded); err != nil {
+		return nil, fmt.Errorf("sealed fields are not a JSON string: %w", err)
+	}
+	sealed, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("sealed fields are not base64: %w", err)
+	}
+	return sealer.Open(sealed)
 }

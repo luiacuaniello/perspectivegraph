@@ -32,6 +32,8 @@ backend:
   # Empty = trust none: per-IP controls key on the peer and X-Forwarded-For is ignored.
   # An ingress DOES sit in front in this chart, so set it to the ingress controller's
   # pod CIDR if you want per-client rate limiting and lockout rather than per-ingress.
+  # "on" | "off" | "" (follow the auth posture: on while open, off once authenticated).
+  graphqlIntrospection: ""
   trustedProxyCidrs: ""
   authLockoutThreshold: ""
   exfilAlertThreshold: ""

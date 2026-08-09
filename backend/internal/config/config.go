@@ -255,6 +255,13 @@ type Config struct {
 	// from the proxy and one attacker's failures will lock out everybody at once.
 	TrustedProxyCIDRs []string
 
+	// GraphQLIntrospection controls whether __schema/__type may be queried:
+	// "on", "off", or empty to follow the auth posture (on while the API is open and
+	// GraphiQL is served, off once a credential is required). The schema is a complete
+	// map of every query and argument the service accepts, so an authenticated
+	// deployment does not hand it to every viewer-role token by default.
+	GraphQLIntrospection string
+
 	// StoreEncryptionKey encrypts the file-backed governance stores and the audit
 	// log at rest (AES-256-GCM). A 64-hex-char value is the raw key; anything else
 	// is a passphrase. Empty (default) → plaintext on disk.
@@ -393,8 +400,9 @@ func Load() Config {
 		AzureConnectorMode: getenv("AZURE_CONNECTOR_MODE", "fixtures"),
 		AzureFixturesDir:   getenv("AZURE_FIXTURES_DIR", ""),
 
-		CORSAllowedOrigins: getlist("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000"),
-		TrustedProxyCIDRs:  getlist("TRUSTED_PROXY_CIDRS", ""),
+		CORSAllowedOrigins:   getlist("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000"),
+		TrustedProxyCIDRs:    getlist("TRUSTED_PROXY_CIDRS", ""),
+		GraphQLIntrospection: strings.ToLower(strings.TrimSpace(getenv("GRAPHQL_INTROSPECTION", ""))),
 
 		StoreEncryptionKey: sec.get("STORE_ENCRYPTION_KEY", ""),
 		ExportSigningKey:   sec.get("EXPORT_SIGNING_KEY", ""),

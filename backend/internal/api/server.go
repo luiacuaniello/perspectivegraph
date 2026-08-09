@@ -88,6 +88,13 @@ func (a *API) WithClientIP(r *clientip.Resolver) *API {
 	return a
 }
 
+// WithIntrospection sets whether __schema/__type may be queried: "on", "off", or empty
+// to follow the auth posture. See introspectionAllowed.
+func (a *API) WithIntrospection(mode string) *API {
+	a.introspection = mode
+	return a
+}
+
 // WithCORSOrigins sets the browser origins allowed to call the API cross-origin.
 // A single "*" allows any origin (opt-in); an empty list disables CORS entirely
 // (same-origin only). Returns the API for chaining.
@@ -160,7 +167,7 @@ func (a *API) Handler() (http.Handler, error) {
 	}
 
 	// Guard the query (depth + body size), then memoize one snapshot per request.
-	mux.Handle("/graphql", secured("graphql", withQueryGuard(withSnapshotCache(gql, a.manager))))
+	mux.Handle("/graphql", secured("graphql", withQueryGuard(a.introspectionAllowed(), withSnapshotCache(gql, a.manager))))
 	// SIEM enrichment export (NDJSON) and OSCAL assessment-results, same scoping.
 	mux.Handle("GET /export/ndjson", secured("export_ndjson", http.HandlerFunc(a.exportNDJSON)))
 	mux.Handle("GET /export/oscal", secured("export_oscal", http.HandlerFunc(a.exportOSCAL)))
@@ -220,7 +227,31 @@ func (w *statusWriter) WriteHeader(code int) {
 
 // ── GraphQL query guard (depth + body-size limit) ───────────────────
 
-func withQueryGuard(next http.Handler) http.Handler {
+// introspectionAllowed reports whether __schema/__type may be queried.
+//
+// It follows GraphiQL: on in the open/demo posture, off once the API is authenticated.
+// The playground needs introspection to work at all, so switching it off there would
+// break the demo for no gain - anyone who can reach an unauthenticated endpoint can read
+// the data itself, which tells them more than the schema does.
+//
+// Once auth is on, the calculus inverts. The schema is a complete map of every query,
+// mutation and argument the service accepts, and handing it to any viewer-role token
+// hands a stolen low-privilege credential the entire API surface. The dashboard does not
+// need it - its queries are hand-written, and the schema snapshot test builds the golden
+// file from the Go schema object rather than over HTTP. GRAPHQL_INTROSPECTION=on
+// re-enables it for teams that generate clients against an authenticated endpoint.
+func (a *API) introspectionAllowed() bool {
+	switch a.introspection {
+	case "on":
+		return true
+	case "off":
+		return false
+	default:
+		return !a.authEnabled()
+	}
+}
+
+func withQueryGuard(allowIntrospection bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// GET (GraphiQL UI, or ?query=) and POST (the standard transport).
 		var query string
@@ -243,6 +274,12 @@ func withQueryGuard(next http.Handler) http.Handler {
 		}
 
 		if query != "" {
+			if !allowIntrospection && usesIntrospection(query) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, `{"errors":[{"message":"schema introspection is disabled"}]}`)
+				return
+			}
 			// A parse failure is deliberately NOT rejected here: this uses the same
 			// parser the executor does, so anything unparseable fails downstream on its
 			// own terms, with a proper GraphQL error instead of ours.
@@ -582,4 +619,52 @@ func (a *API) storeReachable() error {
 
 	a.readyOnce, a.readyAt, a.readyErr = true, time.Now(), err
 	return err
+}
+
+// usesIntrospection reports whether a document selects the introspection meta-fields.
+//
+// __typename is deliberately NOT one of them: it names the concrete type of a value the
+// caller already has, reveals nothing about the rest of the schema, and clients (Apollo,
+// Relay, urql) add it automatically. Rejecting it would break ordinary queries while
+// protecting nothing.
+//
+// A parse failure returns false, matching the cost guard: the executor rejects an
+// unparseable document on its own terms.
+func usesIntrospection(query string) bool {
+	doc, err := parser.Parse(parser.ParseParams{
+		Source: source.NewSource(&source.Source{Body: []byte(query)}),
+	})
+	if err != nil {
+		return false
+	}
+	found := false
+	var walk func(ss *ast.SelectionSet)
+	walk = func(ss *ast.SelectionSet) {
+		if ss == nil || found {
+			return
+		}
+		for _, sel := range ss.Selections {
+			switch t := sel.(type) {
+			case *ast.Field:
+				if t.Name != nil && (t.Name.Value == "__schema" || t.Name.Value == "__type") {
+					found = true
+					return
+				}
+				walk(t.SelectionSet)
+			case *ast.InlineFragment:
+				walk(t.SelectionSet)
+			}
+		}
+	}
+	// Fragment definitions are walked too: a spread could otherwise carry the meta-field
+	// in from outside the operation body.
+	for _, def := range doc.Definitions {
+		switch d := def.(type) {
+		case *ast.OperationDefinition:
+			walk(d.SelectionSet)
+		case *ast.FragmentDefinition:
+			walk(d.SelectionSet)
+		}
+	}
+	return found
 }
