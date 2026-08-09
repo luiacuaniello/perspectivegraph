@@ -11,7 +11,9 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
+	"github.com/luiacuaniello/perspectivegraph/internal/cryptostore"
 	"github.com/luiacuaniello/perspectivegraph/internal/pgmigrate"
+	"github.com/luiacuaniello/perspectivegraph/internal/reqid"
 )
 
 func pgLog(t *testing.T) (*PGLog, *sql.DB) {
@@ -147,11 +149,15 @@ func TestDeletingARecordIsDetected(t *testing.T) {
 	}
 }
 
-// A failed append must not consume a sequence number: a gap is indistinguishable from a
-// deletion, so it would make an honest log look tampered with. This is why seq is
-// assigned inside the transaction rather than by a Postgres sequence, which does not
-// roll back.
-func TestAFailedAppendLeavesNoGap(t *testing.T) {
+// A failed append must not consume a sequence number - a gap is indistinguishable from a
+// deletion, so it would make an honest log look tampered with. That is why seq is assigned
+// inside the transaction rather than by a Postgres sequence, which does not roll back.
+//
+// But "no gap" alone means a dropped record is INVISIBLE: the chain re-links over it and
+// the verifier certifies a log that is missing an event. So the event is tombstoned
+// instead - the action and subject survive, the unstorable detail is replaced, and an
+// auditor sees an acknowledged loss rather than a log that lies about being whole.
+func TestAFailedAppendIsTombstonedNotDropped(t *testing.T) {
 	l, db := pgLog(t)
 	ctx := context.Background()
 	l.Record(ctx, "api", "alice", "admin", "acme", nil)
@@ -166,8 +172,21 @@ func TestAFailedAppendLeavesNoGap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a failed append left the chain unverifiable: %v", err)
 	}
-	if n != 2 {
-		t.Fatalf("verified %d records, want the 2 that succeeded", n)
+	if n != 3 {
+		t.Fatalf("verified %d records, want 3 - the event whose detail failed must still be chained", n)
+	}
+
+	var subject, marker string
+	if err := db.QueryRow(
+		`SELECT subject, coalesce(fields->>'audit_error','') FROM audit_log WHERE seq = 2`).
+		Scan(&subject, &marker); err != nil {
+		t.Fatal(err)
+	}
+	if subject != "bob" {
+		t.Errorf("tombstone subject = %q, want the subject of the event that failed", subject)
+	}
+	if marker == "" {
+		t.Error("the tombstone does not say the detail could not be stored")
 	}
 }
 
@@ -207,7 +226,10 @@ func TestRecordDoesNotBlockOnASlowDatabase(t *testing.T) {
 	t.Logf("200 denials recorded in %v", elapsed)
 
 	settled(t, l)
-	n, err := VerifyPG(ctx, db)
+	// Verified with the same sealer it was written with: sealed fields are base64 inside
+	// the jsonb column, so a verifier without the key cannot read them - which is the
+	// point of sealing them.
+	n, err := VerifyPG(ctx, db, WithSealer(slowSealer{}))
 	if err != nil {
 		t.Fatalf("the chain is broken: %v", err)
 	}
@@ -266,5 +288,116 @@ func TestNanosecondTimestampsStillVerify(t *testing.T) {
 	}
 	if want := pinned.Truncate(time.Microsecond); !got.UTC().Equal(want) {
 		t.Errorf("stored %s, want %s", got.UTC().Format(time.RFC3339Nano), want.Format(time.RFC3339Nano))
+	}
+}
+
+// A NUL byte in an attacker-reachable field must not be able to delete the record.
+//
+// The audit fields carry r.URL.Path, recorded by RequireRole on a denial BEFORE
+// authentication succeeds, and Go's ServeMux passes a percent-encoded NUL straight into a
+// wildcard segment. Go marshals it as a JSON escape that jsonb rejects (22P05), so the
+// INSERT failed - and because a rolled-back append consumes no sequence number, the next
+// record took the seq the dropped one would have had and the chain re-linked over the
+// hole. VerifyPG then certified a log an unauthenticated attacker had edited.
+func TestNULInFieldsCannotDeleteARecord(t *testing.T) {
+	l, db := pgLog(t)
+	ctx := context.Background()
+
+	l.Record(ctx, "auth.deny", "unknown", "", "acme", map[string]any{"path": "/suppressions/a"})
+	l.Record(ctx, "auth.deny", "unknown", "", "acme", map[string]any{"path": "/suppressions/b\x00"})
+	l.Record(ctx, "auth.deny", "unknown", "", "acme", map[string]any{"path": "/suppressions/c"})
+	settled(t, l)
+
+	n, err := VerifyPG(ctx, db)
+	if err != nil {
+		t.Fatalf("chain broken: %v", err)
+	}
+	if n != 3 {
+		t.Fatalf("verified %d records, want 3 - the attacker's request erased its own audit entry", n)
+	}
+
+	// The surviving record must still name the path, minus the byte that cannot be stored.
+	var stored string
+	if err := db.QueryRow(
+		`SELECT fields->>'path' FROM audit_log WHERE seq = 2`).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != "/suppressions/b" {
+		t.Errorf("stored path %q, want the sanitised path", stored)
+	}
+}
+
+// A NUL in the subject or tenant is the same attack through a different field.
+func TestNULInSubjectAndTenantIsSanitised(t *testing.T) {
+	l, db := pgLog(t)
+	l.Record(context.Background(), "api", "alice\x00", "admin", "acme\x00", nil)
+	settled(t, l)
+	if _, err := VerifyPG(context.Background(), db); err != nil {
+		t.Fatalf("chain broken: %v", err)
+	}
+	var subject, tenant string
+	if err := db.QueryRow(`SELECT subject, tenant FROM audit_log WHERE seq = 1`).Scan(&subject, &tenant); err != nil {
+		t.Fatal(err)
+	}
+	if subject != "alice" || tenant != "acme" {
+		t.Errorf("stored subject=%q tenant=%q, want them sanitised", subject, tenant)
+	}
+}
+
+// Encryption at rest must not silently disable the audit log.
+//
+// The sealer returns raw AES-GCM output - binary, nonce and tag included - and the column
+// is jsonb. Storing those bytes directly made every append fail as malformed JSON, so a
+// deployment with STORE_ENCRYPTION_KEY plus the Postgres backend recorded NOTHING, and by
+// the no-gap property the empty chain still verified clean.
+func TestSealedFieldsRoundTripThroughJSONB(t *testing.T) {
+	_, db := pgLog(t)
+	sealer, err := cryptostore.New(strings.Repeat("ab", 32)) // 64 hex chars = 32-byte key
+	if err != nil {
+		t.Fatalf("sealer: %v", err)
+	}
+	l, err := OpenPG(db, WithSealer(sealer))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	l.Record(ctx, "auth.deny", "mallory", "", "acme", map[string]any{"path": "/graphql", "remote": "203.0.113.9"})
+	settled(t, l)
+
+	n, err := VerifyPG(ctx, db, WithSealer(sealer))
+	if err != nil {
+		t.Fatalf("a sealed chain does not verify: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("verified %d records, want 1 - encryption at rest silently dropped the audit trail", n)
+	}
+
+	// And the plaintext must genuinely not be in the column.
+	var raw string
+	if err := db.QueryRow(`SELECT fields::text FROM audit_log WHERE seq = 1`).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(raw, "203.0.113.9") {
+		t.Errorf("the remote address is stored in clear despite a configured key: %s", raw)
+	}
+}
+
+// The request id ties an entry to the HTTP call that caused it. This backend ignored its
+// context and dropped it.
+func TestRequestIDReachesThePostgresLog(t *testing.T) {
+	l, db := pgLog(t)
+	ctx := reqid.NewContext(context.Background(), "req-abc123")
+	l.Record(ctx, "api", "alice", "admin", "acme", map[string]any{"path": "/graphql"})
+	settled(t, l)
+
+	var got string
+	if err := db.QueryRow(`SELECT fields->>'request_id' FROM audit_log WHERE seq = 1`).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != "req-abc123" {
+		t.Errorf("request_id = %q, want it carried onto the record", got)
+	}
+	if _, err := VerifyPG(context.Background(), db); err != nil {
+		t.Fatalf("chain broken: %v", err)
 	}
 }

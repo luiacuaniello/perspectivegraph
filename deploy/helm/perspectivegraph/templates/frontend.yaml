@@ -13,6 +13,19 @@ data:
       server_name _;
       root /usr/share/nginx/html;
       index index.html;
+      server_tokens off;
+
+      # The same header set the image's own nginx.conf serves. This file REPLACES that
+      # one when the chart mounts it, so the Kubernetes deployment - the production one -
+      # was previously served with no security headers at all while the compose demo had
+      # them. Keep the two in step; scripts/csp-check.py asserts they agree.
+      #
+      # nginx REPLACES add_header on an inner level rather than merging, so any location
+      # that adds one of its own must repeat this whole block.
+      add_header X-Content-Type-Options nosniff        always;
+      add_header X-Frame-Options        DENY           always;
+      add_header Referrer-Policy        same-origin    always;
+      add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-FiMaHP71FvIaDDWiCKLxBODudXjTZGEzi2huRD9YUUo='; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'" always;
 
       # Probed by kubelet several times a minute: answered from memory, so it never reads
       # the SPA off disk and never fills the access log. It says only "nginx is

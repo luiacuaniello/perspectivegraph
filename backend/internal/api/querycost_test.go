@@ -2,8 +2,10 @@ package api
 
 import (
 	"fmt"
+	"github.com/luiacuaniello/perspectivegraph/internal/auth"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -176,7 +178,7 @@ func TestGuardRejectsOverBudgetQueriesWithA400(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			reached := false
-			h := withQueryGuard(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true }))
+			h := withQueryGuard(true, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true }))
 
 			body := `{"query":` + quoteJSON(c.query) + `}`
 			req := httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(body))
@@ -304,5 +306,78 @@ func TestAPlanWideVerificationStillFits(t *testing.T) {
 	}
 	if c.selections > maxQuerySelections {
 		t.Fatalf("a plan with verification costs %d, over the %d budget", c.selections, maxQuerySelections)
+	}
+}
+
+// Introspection returns a complete map of every query, mutation and argument the service
+// accepts. In the open demo posture that is no additional exposure - the data itself is
+// readable - but once a credential is required, handing the whole API surface to any
+// viewer-role token gives a stolen low-privilege credential a head start.
+func TestIntrospectionIsRefusedWhenDisabled(t *testing.T) {
+	reached := false
+	h := withQueryGuard(false, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true }))
+
+	for _, q := range []string{
+		`{ __schema { types { name } } }`,
+		`{ __type(name: "AttackPath") { fields { name } } }`,
+		`{ ...F } fragment F on Query { __schema { queryType { name } } }`, // smuggled in a fragment
+		`query { alias: __schema { types { name } } }`,
+	} {
+		reached = false
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/graphql",
+			strings.NewReader(`{"query":`+strconv.Quote(q)+`}`)))
+		if reached {
+			t.Errorf("introspection reached the executor: %s", q)
+		}
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("got %d for %s, want 400", rec.Code, q)
+		}
+	}
+}
+
+// __typename names the concrete type of a value the caller already holds. It reveals
+// nothing about the rest of the schema, and Apollo/Relay/urql add it automatically - so
+// rejecting it would break ordinary clients while protecting nothing.
+func TestTypenameStillWorksWhenIntrospectionIsDisabled(t *testing.T) {
+	reached := false
+	h := withQueryGuard(false, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true }))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/graphql",
+		strings.NewReader(`{"query":"{ posture { __typename criticalPaths } }"}`)))
+	if !reached {
+		t.Fatalf("a query selecting __typename was rejected (%d) - ordinary clients would break", rec.Code)
+	}
+}
+
+// The demo posture keeps GraphiQL, which cannot function without introspection.
+func TestIntrospectionIsAllowedWhenEnabled(t *testing.T) {
+	reached := false
+	h := withQueryGuard(true, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true }))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/graphql",
+		strings.NewReader(`{"query":"{ __schema { types { name } } }"}`)))
+	if !reached {
+		t.Fatal("introspection was refused in the open posture, which breaks GraphiQL")
+	}
+}
+
+// The default follows the auth posture, so an operator who configures nothing still gets
+// the safe behaviour once they turn auth on.
+func TestIntrospectionDefaultFollowsTheAuthPosture(t *testing.T) {
+	open := &API{}
+	if !open.introspectionAllowed() {
+		t.Error("introspection is off in the open posture, breaking GraphiQL")
+	}
+	secured := &API{authn: auth.NewTokenStore("tok:admin")}
+	if secured.introspectionAllowed() {
+		t.Error("introspection stayed on once auth was enabled")
+	}
+	forced := &API{authn: auth.NewTokenStore("tok:admin"), introspection: "on"}
+	if !forced.introspectionAllowed() {
+		t.Error("GRAPHQL_INTROSPECTION=on did not re-enable it")
+	}
+	off := &API{introspection: "off"}
+	if off.introspectionAllowed() {
+		t.Error("GRAPHQL_INTROSPECTION=off did not disable it")
 	}
 }

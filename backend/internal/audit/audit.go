@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -147,10 +148,10 @@ func (l *Log) Record(ctx context.Context, action, subject, role, tenant string, 
 		Seq:      l.seq + 1,
 		Time:     time.Now().UTC(),
 		Action:   action,
-		Subject:  subject,
+		Subject:  stripNUL(subject),
 		Role:     role,
-		Tenant:   tenant,
-		Fields:   fields,
+		Tenant:   stripNUL(tenant),
+		Fields:   storableFields(fields),
 		PrevHash: l.prevHash,
 	}
 	rec.Hash = hashRecord(rec)
@@ -180,6 +181,57 @@ func (l *Log) Close() error {
 	defer l.mu.Unlock()
 	_ = l.w.Flush()
 	return l.f.Close()
+}
+
+// storable strips code points a backing store cannot round-trip, so what gets hashed is
+// what can actually be persisted.
+//
+// U+0000 is the case that matters. Go encodes it in JSON as the escape sequence for a NUL
+// byte, and PostgreSQL's jsonb rejects that outright (22P05) because its text type cannot
+// hold a NUL. The audit fields are attacker-reachable - RequireRole records r.URL.Path on
+// a denial, before authentication succeeds, and Go's ServeMux passes a percent-encoded NUL
+// straight through into a wildcard segment. So `DELETE /suppressions/x%00` made the INSERT
+// fail, and because a rolled-back append consumes no sequence number, the next record took
+// the seq the dropped one would have had and the chain re-linked over the hole. The
+// verifier then certified a log an unauthenticated attacker had selectively edited.
+//
+// Stripping here rather than at the SQL layer keeps both backends byte-identical: the file
+// log accepts NUL happily, and a log migrated between the two must still verify.
+func storable(v any) any {
+	switch t := v.(type) {
+	case string:
+		return stripNUL(t)
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, val := range t {
+			out[stripNUL(k)] = storable(val)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, val := range t {
+			out[i] = storable(val)
+		}
+		return out
+	}
+	return v
+}
+
+func stripNUL(s string) string {
+	if !strings.ContainsRune(s, 0) {
+		return s // the overwhelmingly common path, allocation-free
+	}
+	return strings.ReplaceAll(s, "\x00", "")
+}
+
+// storableFields applies storable to a whole field map, returning nil unchanged so a
+// record without fields stays byte-identical to the ones already in the log.
+func storableFields(fields map[string]any) map[string]any {
+	if len(fields) == 0 {
+		return fields
+	}
+	m, _ := storable(fields).(map[string]any)
+	return m
 }
 
 // hashRecord computes the chain hash over everything but Hash itself.
