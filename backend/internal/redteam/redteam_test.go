@@ -432,11 +432,11 @@ func TestUnsettledVerdictsAreNotCalibrationEvidence(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		r := rec
 		r.PathID = fmt.Sprintf("ap-%02d", i)
-		if _, err := contaminated.Put(r); err != nil {
+		if _, err := contaminated.Put(context.Background(), r); err != nil {
 			t.Fatal(err)
 		}
 	}
-	cal := contaminated.Calibration("t1")
+	cal, _ := contaminated.Calibration(context.Background(), "t1")
 	if cal.ObservedRate > 0.55 {
 		t.Fatalf("expected the contaminated set to read low, got %.2f", cal.ObservedRate)
 	}

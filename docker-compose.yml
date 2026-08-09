@@ -148,6 +148,7 @@ services:
       # persist, point this at a path on a writable volume (the backend rootfs is
       # read-only) and mount one, e.g. a named volume at /var/lib/perspectivegraph.
       SUPPRESSIONS_PATH: ${SUPPRESSIONS_PATH:-}
+      GOVERNANCE_BACKEND: ${GOVERNANCE_BACKEND:-file}
       # Temporal history persistence (path age / MTTR / trend). Same volume note
       # as above. Empty → in-memory only (resets on restart).
       HISTORY_PATH: ${HISTORY_PATH:-}
@@ -178,6 +179,7 @@ services:
       # TestDeploySurfacesExposeEveryConfigKey.
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
       METRICS_ADDR: ${METRICS_ADDR:-}
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
       AUTH_LOCKOUT_THRESHOLD: ${AUTH_LOCKOUT_THRESHOLD:-}
       EXFIL_ALERT_THRESHOLD: ${EXFIL_ALERT_THRESHOLD:-}
       INGEST_HMAC_SECRETS: ${INGEST_HMAC_SECRETS:-}

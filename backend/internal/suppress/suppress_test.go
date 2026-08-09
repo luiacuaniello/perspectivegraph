@@ -2,6 +2,7 @@ package suppress
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -19,7 +20,7 @@ func TestEncryptedAtRest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Put(Record{PathID: "ap-secret", Owner: "secops", Reason: ReasonAcceptRisk}); err != nil {
+	if _, err := s.Put(context.Background(), Record{PathID: "ap-secret", Owner: "secops", Reason: ReasonAcceptRisk}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -34,7 +35,7 @@ func TestEncryptedAtRest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := s2.Get("default", "ap-secret"); !ok {
+	if _, ok, _ := s2.Get(context.Background(), "default", "ap-secret"); !ok {
 		t.Fatal("encrypted record did not survive reload")
 	}
 
@@ -58,7 +59,7 @@ func TestPutValidation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := s.Put(tc.rec); !errors.Is(err, tc.want) {
+			if _, err := s.Put(context.Background(), tc.rec); !errors.Is(err, tc.want) {
 				t.Fatalf("Put = %v, want %v", err, tc.want)
 			}
 		})
@@ -67,10 +68,10 @@ func TestPutValidation(t *testing.T) {
 
 func TestPutGetDelete(t *testing.T) {
 	s, _ := New("")
-	if _, err := s.Put(Record{PathID: "ap-1", Owner: "alice", Reason: ReasonFalsePositive, Note: "scanner noise"}); err != nil {
+	if _, err := s.Put(context.Background(), Record{PathID: "ap-1", Owner: "alice", Reason: ReasonFalsePositive, Note: "scanner noise"}); err != nil {
 		t.Fatal(err)
 	}
-	rec, ok := s.Get("default", "ap-1")
+	rec, ok, _ := s.Get(context.Background(), "default", "ap-1")
 	if !ok {
 		t.Fatal("expected ap-1 suppressed")
 	}
@@ -80,10 +81,10 @@ func TestPutGetDelete(t *testing.T) {
 	if rec.CreatedAt.IsZero() {
 		t.Error("CreatedAt should be stamped")
 	}
-	if err := s.Delete("default", "ap-1"); err != nil {
+	if err := s.Delete(context.Background(), "default", "ap-1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := s.Get("default", "ap-1"); ok {
+	if _, ok, _ := s.Get(context.Background(), "default", "ap-1"); ok {
 		t.Fatal("expected ap-1 un-suppressed after delete")
 	}
 }
@@ -96,21 +97,21 @@ func TestExpiryReactivatesPath(t *testing.T) {
 	past := now.Add(-time.Hour)
 	future := now.Add(time.Hour)
 
-	if _, err := s.Put(Record{PathID: "expired", Owner: "alice", Reason: ReasonAcceptRisk, ExpiresAt: &past}); err != nil {
+	if _, err := s.Put(context.Background(), Record{PathID: "expired", Owner: "alice", Reason: ReasonAcceptRisk, ExpiresAt: &past}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Put(Record{PathID: "live", Owner: "alice", Reason: ReasonAcceptRisk, ExpiresAt: &future}); err != nil {
+	if _, err := s.Put(context.Background(), Record{PathID: "live", Owner: "alice", Reason: ReasonAcceptRisk, ExpiresAt: &future}); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, ok := s.Get("default", "expired"); ok {
+	if _, ok, _ := s.Get(context.Background(), "default", "expired"); ok {
 		t.Error("expired suppression must read as absent (path active again)")
 	}
-	if _, ok := s.Get("default", "live"); !ok {
+	if _, ok, _ := s.Get(context.Background(), "default", "live"); !ok {
 		t.Error("unexpired suppression must be in force")
 	}
 
-	active := s.ActiveSet("default")
+	active, _ := s.ActiveSet(context.Background(), "default")
 	if _, ok := active["expired"]; ok {
 		t.Error("ActiveSet must exclude expired")
 	}
@@ -119,18 +120,22 @@ func TestExpiryReactivatesPath(t *testing.T) {
 	}
 
 	// List shows both - lapsed decisions stay visible on the board.
-	if got := len(s.List("default")); got != 2 {
+	all, err := s.List(context.Background(), "default")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if got := len(all); got != 2 {
 		t.Errorf("List = %d, want 2 (incl. expired)", got)
 	}
 }
 
 func TestTenantIsolation(t *testing.T) {
 	s, _ := New("")
-	_, _ = s.Put(Record{PathID: "ap-1", Tenant: "globex", Owner: "alice", Reason: ReasonAcceptRisk})
-	if _, ok := s.Get("acme", "ap-1"); ok {
+	_, _ = s.Put(context.Background(), Record{PathID: "ap-1", Tenant: "globex", Owner: "alice", Reason: ReasonAcceptRisk})
+	if _, ok, _ := s.Get(context.Background(), "acme", "ap-1"); ok {
 		t.Error("suppression must not leak across tenants")
 	}
-	if _, ok := s.Get("globex", "ap-1"); !ok {
+	if _, ok, _ := s.Get(context.Background(), "globex", "ap-1"); !ok {
 		t.Error("suppression must be found under its own tenant")
 	}
 }
@@ -142,7 +147,7 @@ func TestPersistenceRoundtrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	exp := time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC)
-	if _, err := s.Put(Record{PathID: "ap-9", Owner: "secops", Reason: ReasonMitigatingControl, ExpiresAt: &exp}); err != nil {
+	if _, err := s.Put(context.Background(), Record{PathID: "ap-9", Owner: "secops", Reason: ReasonMitigatingControl, ExpiresAt: &exp}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -151,7 +156,7 @@ func TestPersistenceRoundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec, ok := s2.Get("default", "ap-9")
+	rec, ok, _ := s2.Get(context.Background(), "default", "ap-9")
 	if !ok {
 		t.Fatal("expected ap-9 to survive reload")
 	}
@@ -165,13 +170,13 @@ func TestPersistenceRoundtrip(t *testing.T) {
 
 func TestNilStoreIsNoop(t *testing.T) {
 	var s *Store
-	if s.List("default") != nil {
+	if l, _ := s.List(context.Background(), "default"); l != nil {
 		t.Error("nil store List should be nil")
 	}
-	if _, ok := s.Get("default", "ap-1"); ok {
+	if _, ok, _ := s.Get(context.Background(), "default", "ap-1"); ok {
 		t.Error("nil store Get should be false")
 	}
-	if s.ActiveSet("default") != nil {
+	if a, _ := s.ActiveSet(context.Background(), "default"); a != nil {
 		t.Error("nil store ActiveSet should be nil")
 	}
 	if s.Persistent() {

@@ -28,6 +28,11 @@ backend:
   # Move Prometheus /metrics off the API port, e.g. "127.0.0.1:9090". See
   # docs/OPERATIONS.md - the series carry a tenant label.
   metricsAddr: ""
+  # Reverse proxies in front of the backend (CIDRs or addresses, comma-separated).
+  # Empty = trust none: per-IP controls key on the peer and X-Forwarded-For is ignored.
+  # An ingress DOES sit in front in this chart, so set it to the ingress controller's
+  # pod CIDR if you want per-client rate limiting and lockout rather than per-ingress.
+  trustedProxyCidrs: ""
   authLockoutThreshold: ""
   exfilAlertThreshold: ""
   coverageStaleAfter: ""
@@ -274,6 +279,15 @@ persistence:
 # it (without it, the volume is root-owned and the first verdict/ticket/suppression
 # write fails - the reason persistence.enabled looked "durable" but silently broke).
 # runAsNonRoot pins the guarantee. Tune uid/gid to your cluster's PodSecurity policy.
+# Where triage decisions (suppressions) live.
+#
+#   file     - on the persistence PVC. One writer, so backend.replicas must stay 1 while
+#              persistence is on; the chart refuses to render otherwise.
+#   postgres - in POSTGRES_DSN, shared by every replica. The schema is created and
+#              upgraded on startup, under an advisory lock so several replicas starting
+#              together cannot collide.
+governanceBackend: file
+
 podSecurityContext:
   runAsNonRoot: true
   runAsUser: 65532

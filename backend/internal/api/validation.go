@@ -44,10 +44,28 @@ type validationRequest struct {
 // path scored 0.8 fire ~80% of the time). Viewer is enough.
 func (a *API) listValidations(w http.ResponseWriter, r *http.Request) {
 	tenant := tenantOf(r.Context())
+	list, err := a.validation.List(r.Context(), tenant)
+	if err != nil {
+		// These records are the evidence every calibration number is computed from.
+		// An empty board read from a broken store would read as "no verdicts yet",
+		// which is a claim about the engine's accuracy nobody made.
+		writeJSONError(w, http.StatusServiceUnavailable, "validation store unreachable: "+err.Error())
+		return
+	}
+	metrics, err := a.validation.Metrics(r.Context(), tenant)
+	if err != nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "validation store unreachable: "+err.Error())
+		return
+	}
+	cal, err := a.validation.Calibration(r.Context(), tenant)
+	if err != nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "validation store unreachable: "+err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"validations": a.validation.List(tenant),
-		"metrics":     a.validation.Metrics(tenant),
-		"calibration": a.validation.Calibration(tenant),
+		"validations": list,
+		"metrics":     metrics,
+		"calibration": cal,
 		"persistent":  a.validation.Persistent(),
 	})
 }
@@ -195,7 +213,7 @@ func (a *API) putValidation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenant := tenantOf(r.Context())
-	rec, err := a.validation.Put(a.buildRecord(tenant, verdictFields{
+	rec, err := a.validation.Put(r.Context(), a.buildRecord(tenant, verdictFields{
 		pathID: req.PathID, outcome: req.Outcome, scope: req.Scope, source: req.Source,
 		evidence: req.Evidence, route: req.Route, detected: req.Detected, weightBasis: req.WeightBasis,
 		predictedScore: req.PredictedScore, predictedCompromise: req.PredictedCompromise,
@@ -281,7 +299,7 @@ func (a *API) importValidations(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 		}
-		_, err := a.validation.Put(a.buildRecord(tenant, verdictFields{
+		_, err := a.validation.Put(r.Context(), a.buildRecord(tenant, verdictFields{
 			pathID: pathID, outcome: f.Outcome, scope: f.Scope, source: source,
 			evidence: f.Evidence, route: f.Route, detected: f.Detected, weightBasis: f.WeightBasis,
 			predictedScore: f.PredictedScore, predictedCompromise: f.PredictedCompromise,
@@ -317,7 +335,7 @@ func (a *API) deleteValidation(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusForbidden, "admin role required to delete validations")
 		return
 	}
-	if err := a.validation.Delete(tenantOf(r.Context()), r.PathValue("id")); err != nil {
+	if err := a.validation.Delete(r.Context(), tenantOf(r.Context()), r.PathValue("id")); err != nil {
 		if errors.Is(err, validation.ErrNotFound) {
 			writeJSONError(w, http.StatusNotFound, "validation not found")
 			return

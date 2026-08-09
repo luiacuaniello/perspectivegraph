@@ -9,6 +9,7 @@ import (
 	"errors"
 	"sort"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/graphql-go/graphql"
@@ -18,6 +19,7 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/attck"
 	"github.com/luiacuaniello/perspectivegraph/internal/audit"
 	"github.com/luiacuaniello/perspectivegraph/internal/auth"
+	"github.com/luiacuaniello/perspectivegraph/internal/clientip"
 	"github.com/luiacuaniello/perspectivegraph/internal/coverage"
 	"github.com/luiacuaniello/perspectivegraph/internal/detection"
 	"github.com/luiacuaniello/perspectivegraph/internal/exportsign"
@@ -38,6 +40,13 @@ import (
 // caller's tenant (from the authenticated principal; the default tenant when
 // auth is open).
 type API struct {
+	// readiness memoises the last store Ping, so a probe every few seconds does not
+	// become a database query per probe. See (*API).storeReachable.
+	readyMu   sync.Mutex
+	readyAt   time.Time
+	readyErr  error
+	readyOnce bool
+
 	coverage    *coverage.Store
 	manager     *graph.Manager
 	analyzer    *analyzer.Service
@@ -45,10 +54,10 @@ type API struct {
 	authn       auth.Authenticator
 	audit       audit.Recorder
 	limiter     *ratelimit.Limiter
-	suppress    *suppress.Store
-	history     *history.Store
-	ticket      *ticket.Store
-	validation  *validation.Store
+	suppress    suppress.Suppressions
+	history     history.Temporal
+	ticket      ticket.Tickets
+	validation  validation.Verdicts
 	corsOrigins []string
 	// degraded, when non-empty, is why this instance serves in a reduced mode;
 	// /healthz fails while it is set. See WithDegraded.
@@ -56,11 +65,12 @@ type API struct {
 	// metricsElsewhere drops GET /metrics from this mux; see WithMetricsElsewhere.
 	metricsElsewhere bool
 	exportSigner     *exportsign.Signer
-	exfil            *secwatch.Watcher // exfiltration detector (attack-map bulk reads)
-	authGuard        *secwatch.Watcher // auth brute-force lockout
-	authInfo         AuthInfo          // public auth config for the SPA login gate
-	prOpener         action.PROpener   // opens remediation pull requests (nil → disabled)
-	ai               ai.Client         // AI-native layer (nil/Nop → disabled)
+	exfil            *secwatch.Watcher  // exfiltration detector (attack-map bulk reads)
+	ips              *clientip.Resolver // how per-IP controls identify a client
+	authGuard        *secwatch.Watcher  // auth brute-force lockout
+	authInfo         AuthInfo           // public auth config for the SPA login gate
+	prOpener         action.PROpener    // opens remediation pull requests (nil → disabled)
+	ai               ai.Client          // AI-native layer (nil/Nop → disabled)
 }
 
 func New(manager *graph.Manager, svc *analyzer.Service, idx search.Indexer) *API {
@@ -85,7 +95,7 @@ func New(manager *graph.Manager, svc *analyzer.Service, idx search.Indexer) *API
 // WithValidation attaches the red-team/BAS validation store the API reads for
 // per-path verdicts and the precision/recall metric. A nil store keeps the
 // default in-memory one. Returns the API for chaining.
-func (a *API) WithValidation(v *validation.Store) *API {
+func (a *API) WithValidation(v validation.Verdicts) *API {
 	if v != nil {
 		a.validation = v
 	}
@@ -95,7 +105,7 @@ func (a *API) WithValidation(v *validation.Store) *API {
 // WithTickets attaches the remediation ticketing store (file-backed and/or
 // webhook-dispatching). A nil store leaves the default in-memory one in place.
 // Returns the API for chaining.
-func (a *API) WithTickets(t *ticket.Store) *API {
+func (a *API) WithTickets(t ticket.Tickets) *API {
 	if t != nil {
 		a.ticket = t
 	}
@@ -104,7 +114,7 @@ func (a *API) WithTickets(t *ticket.Store) *API {
 
 // WithSuppress attaches the (file-backed) triage/suppression store. A nil store
 // leaves the default in-memory one in place. Returns the API for chaining.
-func (a *API) WithSuppress(s *suppress.Store) *API {
+func (a *API) WithSuppress(s suppress.Suppressions) *API {
 	if s != nil {
 		a.suppress = s
 	}
@@ -122,7 +132,7 @@ func (a *API) WithCoverage(c *coverage.Store) *API {
 	return a
 }
 
-func (a *API) WithHistory(h *history.Store) *API {
+func (a *API) WithHistory(h history.Temporal) *API {
 	if h != nil {
 		a.history = h
 	}
@@ -425,7 +435,10 @@ func (a *API) Schema() (graphql.Schema, error) {
 				Description: "True when an in-force triage decision hides this path from the active board.",
 				Resolve: func(p graphql.ResolveParams) (any, error) {
 					ap := p.Source.(analyzer.AttackPath)
-					_, ok := a.suppress.Get(tenantOf(p.Context), ap.ID)
+					_, ok, err := a.suppress.Get(p.Context, tenantOf(p.Context), ap.ID)
+					if err != nil {
+						return nil, err
+					}
 					return ok, nil
 				},
 			},
@@ -434,7 +447,11 @@ func (a *API) Schema() (graphql.Schema, error) {
 				Description: "The triage decision in force for this path, if any.",
 				Resolve: func(p graphql.ResolveParams) (any, error) {
 					ap := p.Source.(analyzer.AttackPath)
-					if rec, ok := a.suppress.Get(tenantOf(p.Context), ap.ID); ok {
+					rec, ok, err := a.suppress.Get(p.Context, tenantOf(p.Context), ap.ID)
+					if err != nil {
+						return nil, err
+					}
+					if ok {
 						return rec, nil
 					}
 					return nil, nil
@@ -474,7 +491,11 @@ func (a *API) Schema() (graphql.Schema, error) {
 				Type:        ticketType,
 				Description: "The open remediation ticket for this path, if one has been raised.",
 				Resolve: func(p graphql.ResolveParams) (any, error) {
-					if tk, ok := a.ticket.OpenForPath(tenantOf(p.Context), p.Source.(analyzer.AttackPath).ID); ok {
+					tk, ok, err := a.ticket.OpenForPath(p.Context, tenantOf(p.Context), p.Source.(analyzer.AttackPath).ID)
+					if err != nil {
+						return nil, err
+					}
+					if ok {
 						return tk, nil
 					}
 					return nil, nil
@@ -484,7 +505,11 @@ func (a *API) Schema() (graphql.Schema, error) {
 				Type:        validationType,
 				Description: "The latest red-team/BAS verdict on whether this path is real, if it has been tested.",
 				Resolve: func(p graphql.ResolveParams) (any, error) {
-					if v, ok := a.validation.Get(tenantOf(p.Context), p.Source.(analyzer.AttackPath).ID); ok {
+					v, ok, err := a.validation.Get(p.Context, tenantOf(p.Context), p.Source.(analyzer.AttackPath).ID)
+					if err != nil {
+						return nil, err
+					}
+					if ok {
 						return v, nil
 					}
 					return nil, nil
@@ -1061,7 +1086,10 @@ func (a *API) Schema() (graphql.Schema, error) {
 					}
 					tenant := tenantOf(p.Context)
 					paths := a.scopedLatest(p.Context)
-					suppressed := a.suppress.ActiveSet(tenant)
+					suppressed, err := a.suppress.ActiveSet(p.Context, tenant)
+					if err != nil {
+						return nil, err
+					}
 					runtime := 0
 					suppressedCount := 0
 					kevOnPaths := map[string]bool{}
@@ -1102,14 +1130,14 @@ func (a *API) Schema() (graphql.Schema, error) {
 				Type:        validationMetricsType,
 				Description: "Red-team/BAS validation metrics - precision/recall over the tested subset. The evidence that the engine is grounded against reality, not just modeled.",
 				Resolve: func(p graphql.ResolveParams) (any, error) {
-					return a.validation.Metrics(tenantOf(p.Context)), nil
+					return a.validation.Metrics(p.Context, tenantOf(p.Context))
 				},
 			},
 			"calibration": &graphql.Field{
 				Type:        calibrationType,
 				Description: "Probability calibration over tested verdicts: does a path scored 0.8 actually confirm ~80% of the time? Brier/log-loss/ECE + a reliability diagram - the demo→production gate for trusting the scores as probabilities.",
 				Resolve: func(p graphql.ResolveParams) (any, error) {
-					return a.validation.Calibration(tenantOf(p.Context)), nil
+					return a.validation.Calibration(p.Context, tenantOf(p.Context))
 				},
 			},
 			"calibrationTrend": &graphql.Field{
@@ -1175,7 +1203,10 @@ func (a *API) Schema() (graphql.Schema, error) {
 					if iters > maxRiskIterations {
 						iters = maxRiskIterations
 					}
-					return analyzer.SimulateRisk(snap, iters, uint64(seed)), nil // #nosec G115 -- PRNG seed; any 64-bit value is acceptable
+					// p.Context, not Background: when the request is abandoned or its
+					// deadline passes, the simulation stops instead of running a core to
+					// completion for an answer nobody will read.
+					return analyzer.SimulateRisk(p.Context, snap, iters, uint64(seed)) // #nosec G115 -- PRNG seed; any 64-bit value is acceptable
 				},
 			},
 			"kShortestPaths": &graphql.Field{
@@ -1195,7 +1226,17 @@ func (a *API) Schema() (graphql.Schema, error) {
 					target := resolveNodeRef(snap, targetRef)
 					from, _ := p.Args["from"].(string)
 					k, _ := p.Args["k"].(int)
-					paths := analyzer.KShortestToTarget(snap, resolveNodeRef(snap, from), target, k)
+					// Clamp k. Yen's algorithm is O(k · n · (m + n log n)), so k is a
+					// direct multiplier on server work supplied by the caller - the same
+					// hazard `iterations` and `cuts` are already bounded against. It was
+					// the one cost argument left unbounded.
+					if k > maxShortestPaths {
+						k = maxShortestPaths
+					}
+					paths, err := analyzer.KShortestToTarget(p.Context, snap, resolveNodeRef(snap, from), target, k)
+					if err != nil {
+						return nil, err
+					}
 					a.auditView(p.Context, "view.attack_paths", map[string]any{
 						"query": "kShortestPaths", "target": targetRef, "count": len(paths), "paths": pathIDsCapped(paths, 200),
 					})
@@ -1221,7 +1262,7 @@ func (a *API) Schema() (graphql.Schema, error) {
 						iters = maxRiskIterations
 					}
 					seed, _ := p.Args["seed"].(int)
-					return analyzer.WhatIf(snap, cuts, iters, uint64(seed)), nil // #nosec G115 -- PRNG seed; any 64-bit value is acceptable
+					return analyzer.WhatIf(p.Context, snap, cuts, iters, uint64(seed)) // #nosec G115 -- PRNG seed; any 64-bit value is acceptable
 				},
 			},
 			"graph": &graphql.Field{
@@ -1267,6 +1308,11 @@ func field[T any](f func(T) any) graphql.FieldResolveFn {
 // can't turn a query into a CPU-exhaustion vector.
 const maxRiskIterations = 50000
 
+// maxShortestPaths caps k for Yen's algorithm, which is linear in k over a search that
+// is itself superlinear in the graph. 200 is far above any real "show me the alternate
+// routes" question and far below a number that turns one query into minutes of work.
+const maxShortestPaths = 200
+
 // verifyIterations bounds the Monte Carlo work for the per-remediation
 // verification, so selecting `verification` on a plan of several fixes stays
 // cheap while still giving a meaningful risk delta.
@@ -1285,9 +1331,12 @@ func (a *API) verifyCut(ctx context.Context, cut remediation.CutEdge) (any, erro
 	if err != nil {
 		return nil, err
 	}
-	res := analyzer.WhatIf(snap,
+	res, err := analyzer.WhatIf(ctx, snap,
 		[]analyzer.EdgeCut{{From: cut.From, To: cut.To, Type: ontology.EdgeType(cut.Type)}},
 		verifyIterations, 1)
+	if err != nil {
+		return nil, err
+	}
 	eliminated := len(res.Before) - len(res.After)
 	rr := res.RiskReduction()
 	return map[string]any{

@@ -17,12 +17,12 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"log/slog"
-	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/audit"
+	"github.com/luiacuaniello/perspectivegraph/internal/clientip"
 	"github.com/luiacuaniello/perspectivegraph/internal/secwatch"
 )
 
@@ -257,7 +257,9 @@ func bearer(r *http.Request) string {
 // on the context, audits the access, and calls next. OPTIONS passes through.
 // guard (nil-safe) locks out an IP that exceeds the failed-attempt threshold,
 // blunting credential brute force before the (constant-time) token check runs.
-func RequireRole(authn Authenticator, min Role, rec audit.Recorder, guard *secwatch.Watcher, next http.Handler) http.Handler {
+// ips decides which address the lockout keys on and which one the audit records. A nil
+// resolver trusts no proxy, which is the safe default rather than the spoofable one.
+func RequireRole(authn Authenticator, min Role, rec audit.Recorder, guard *secwatch.Watcher, ips *clientip.Resolver, next http.Handler) http.Handler {
 	if rec == nil {
 		rec = audit.Nop{}
 	}
@@ -266,7 +268,7 @@ func RequireRole(authn Authenticator, min Role, rec audit.Recorder, guard *secwa
 			next.ServeHTTP(w, r)
 			return
 		}
-		ip := clientIPHost(r)
+		ip := ips.Of(r)
 		if guard.Tripped(ip) {
 			rec.Record(r.Context(), "auth.locked", "unknown", "", "", map[string]any{"path": r.URL.Path, "remote": ip})
 			tooManyRequests(w)
@@ -305,21 +307,4 @@ func tooManyRequests(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusTooManyRequests)
 	_, _ = w.Write([]byte(`{"errors":[{"message":"too many failed attempts - temporarily locked out"}]}`))
-}
-
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return strings.TrimSpace(strings.Split(xff, ",")[0])
-	}
-	return r.RemoteAddr
-}
-
-// clientIPHost is clientIP without the source port, so a brute-forcer rotating
-// connections (each a new ephemeral port) is still keyed to one host for lockout.
-func clientIPHost(r *http.Request) string {
-	ip := clientIP(r)
-	if host, _, err := net.SplitHostPort(ip); err == nil {
-		return host
-	}
-	return ip
 }

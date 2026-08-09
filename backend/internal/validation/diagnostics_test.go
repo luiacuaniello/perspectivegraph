@@ -1,6 +1,7 @@
 package validation
 
 import (
+	"context"
 	"math"
 	"testing"
 )
@@ -163,11 +164,11 @@ func TestCalibrationEndToEndWithSegmentsAndDetection(t *testing.T) {
 		if i == 0 {
 			det = &yes
 		}
-		if _, err := s.Put(Record{Tenant: "acme", PathID: pathID("c", i), Outcome: Confirmed, Source: "bas", PredictedScore: 0.4, CorrelatedHops: true, Hops: 6, Detected: det}); err != nil {
+		if _, err := s.Put(context.Background(), Record{Tenant: "acme", PathID: pathID("c", i), Outcome: Confirmed, Source: "bas", PredictedScore: 0.4, CorrelatedHops: true, Hops: 6, Detected: det}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	cal := s.Calibration("acme")
+	cal, _ := s.Calibration(context.Background(), "acme")
 	if cal.Samples != 10 {
 		t.Fatalf("samples = %d, want 10", cal.Samples)
 	}

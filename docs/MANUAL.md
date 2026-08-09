@@ -1605,9 +1605,11 @@ helm install perspective deploy/helm/perspectivegraph \
   can forge scanner data on the open ingest port.
 - **`persistence.enabled`** - mounts a ReadWriteOnce PVC so suppressions, tickets,
   red-team validations, MTTR/posture history and the **tamper-evident audit log**
-  survive restarts (in-memory and lost otherwise). Because the stores are
-  single-writer, the chart **refuses to render with `backend.replicas > 1`** while
-  persistence is on - scale-out would split-brain them.
+  survive restarts (in-memory and lost otherwise). `GOVERNANCE_BACKEND=postgres` moves
+  **suppressions, tickets, history, validations and the KEV holdout** into the database,
+  where every replica reads the same rows. The audit log stays a single-writer hash
+  chain, so the chart **refuses to render with `backend.replicas > 1`** while persistence
+  is on - scale-out would split-brain it.
 - The release prints a ⚠ in `NOTES` whenever auth or persistence is left off, so
   an insecure exposure is never silent.
 - **Startup ordering** - the backend has `initContainers` that block on the bundled
@@ -2312,9 +2314,10 @@ inside a trusted cluster, but for anything reachable beyond it, turn the control
 on: `--set auth.apiTokens="$(openssl rand -hex 16):admin"` (bearer auth),
 `--set ingest.hmacSecret=…` (signed ingestion), and `--set persistence.enabled=true`
 so suppressions, tickets, validations, MTTR history and the **audit log** persist
-across restarts. The stores are single-writer, so the chart refuses to render with
-`backend.replicas > 1` while persistence is on, and the post-install notes flag any
-control you left off. Full hardening recipe: the "Hardening a real deployment"
+across restarts. All of those except the audit log can live in Postgres instead
+(`GOVERNANCE_BACKEND=postgres`, shared by every replica); the audit log is a
+single-writer hash chain, so the chart refuses to render with `backend.replicas > 1`
+while persistence is on, and the post-install notes flag any control you left off. Full hardening recipe: the "Hardening a real deployment"
 section of the README above.
 
 #### Keep it fresh (so it can't drift into fiction)

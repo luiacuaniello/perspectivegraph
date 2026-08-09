@@ -34,8 +34,16 @@ func (a *API) adminWritable(r *http.Request) bool {
 // listSuppressions handles GET /suppressions - the triage board for the tenant
 // (includes expired entries so lapsed decisions stay visible). Viewer is enough.
 func (a *API) listSuppressions(w http.ResponseWriter, r *http.Request) {
+	list, err := a.suppress.List(r.Context(), tenantOf(r.Context()))
+	if err != nil {
+		// Saying the store is unreachable beats returning an empty board: an analyst
+		// would read that as "nothing is suppressed" and re-triage decisions they
+		// already made.
+		writeJSONError(w, http.StatusServiceUnavailable, "suppression store unreachable: "+err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"suppressions": a.suppress.List(tenantOf(r.Context())),
+		"suppressions": list,
 		"persistent":   a.suppress.Persistent(),
 	})
 }
@@ -73,7 +81,7 @@ func (a *API) putSuppression(w http.ResponseWriter, r *http.Request) {
 		rec.ExpiresAt = &t
 	}
 
-	stored, err := a.suppress.Put(rec)
+	stored, err := a.suppress.Put(r.Context(), rec)
 	if err != nil {
 		// Validation failures (bad reason, missing owner/path) are client errors.
 		switch {
@@ -105,7 +113,7 @@ func (a *API) deleteSuppression(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "path id required")
 		return
 	}
-	if err := a.suppress.Delete(tenantOf(r.Context()), pathID); err != nil {
+	if err := a.suppress.Delete(r.Context(), tenantOf(r.Context()), pathID); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "could not delete suppression")
 		return
 	}

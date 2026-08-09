@@ -35,7 +35,7 @@ type memSink struct {
 	err  error
 }
 
-func (m *memSink) Put(r validation.Record) (validation.Record, error) {
+func (m *memSink) Put(_ context.Context, r validation.Record) (validation.Record, error) {
 	if m.err != nil {
 		return validation.Record{}, m.err
 	}

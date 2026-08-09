@@ -1,6 +1,7 @@
 package validation
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -91,7 +92,7 @@ func TestWritesDuringCompactionSurviveTheSwap(t *testing.T) {
 	}
 	wg.Wait()
 
-	want := len(s.List("acme"))
+	want := lenOf(s.List(context.Background(), "acme"))
 	if want != 75 {
 		t.Fatalf("live store holds %d records, expected 60 seeded + 15 concurrent", want)
 	}
@@ -99,7 +100,7 @@ func TestWritesDuringCompactionSurviveTheSwap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	got := reloaded.List("acme")
+	got, _ := reloaded.List(context.Background(), "acme")
 	if len(got) != want {
 		t.Fatalf("compacted log replays to %d records but the store holds %d - concurrent writes were lost", len(got), want)
 	}
@@ -130,8 +131,8 @@ func TestReadersAreNotBlockedByCompaction(t *testing.T) {
 
 	start := time.Now()
 	for i := 0; i < 50; i++ {
-		_ = s.List("acme")
-		_ = s.Metrics("acme")
+		_, _ = s.List(context.Background(), "acme")
+		_, _ = s.Metrics(context.Background(), "acme")
 	}
 	elapsed := time.Since(start)
 	wg.Wait()
@@ -154,7 +155,7 @@ func TestFailedCompactionLeavesTheLogIntact(t *testing.T) {
 		t.Fatal(err)
 	}
 	seed(t, s, 20)
-	before := s.List("acme")
+	before, _ := s.List(context.Background(), "acme")
 
 	sealer.mu.Lock()
 	sealer.n = 5 // the next compaction dies partway through its snapshot
@@ -172,7 +173,7 @@ func TestFailedCompactionLeavesTheLogIntact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the log is unreadable after a failed compaction: %v", err)
 	}
-	if got := len(reloaded.List("acme")); got != len(before) {
+	if got := lenOf(reloaded.List(context.Background(), "acme")); got != len(before) {
 		t.Fatalf("log holds %d records after a failed compaction, want %d", got, len(before))
 	}
 	if s.compacting {
@@ -230,7 +231,7 @@ func TestConcurrentWritersReadersAndCompaction(t *testing.T) {
 			for i := 0; i < 200; i++ {
 				// A fixed set of path ids keeps the live set small while the event
 				// count climbs - the shape that actually triggers compaction.
-				r, err := s.Put(Record{PathID: fmt.Sprintf("ap-%d", i%10), Outcome: Confirmed, Source: "w", Tenant: "acme"})
+				r, err := s.Put(context.Background(), Record{PathID: fmt.Sprintf("ap-%d", i%10), Outcome: Confirmed, Source: "w", Tenant: "acme"})
 				if err != nil {
 					t.Errorf("Put: %v", err)
 					return
@@ -246,9 +247,9 @@ func TestConcurrentWritersReadersAndCompaction(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < 400; i++ {
-				_ = s.List("acme")
-				_ = s.Metrics("acme")
-				_ = s.Calibration("acme")
+				_, _ = s.List(context.Background(), "acme")
+				_, _ = s.Metrics(context.Background(), "acme")
+				_, _ = s.Calibration(context.Background(), "acme")
 			}
 		}()
 	}
@@ -259,17 +260,20 @@ func TestConcurrentWritersReadersAndCompaction(t *testing.T) {
 	sample := ids[:5]
 	mu.Unlock()
 	for _, id := range sample {
-		if err := s.Delete("acme", id); err != nil && !errors.Is(err, ErrNotFound) {
+		if err := s.Delete(context.Background(), "acme", id); err != nil && !errors.Is(err, ErrNotFound) {
 			t.Errorf("Delete: %v", err)
 		}
 	}
 
-	live := s.List("acme")
+	live, _ := s.List(context.Background(), "acme")
 	reloaded, err := New(path)
 	if err != nil {
 		t.Fatalf("reload after concurrent load: %v", err)
 	}
-	if got := len(reloaded.List("acme")); got != len(live) {
+	if got := lenOf(reloaded.List(context.Background(), "acme")); got != len(live) {
 		t.Fatalf("log replays to %d records, store holds %d", got, len(live))
 	}
 }
+
+// lenOf counts a (slice, error) read in a test that only cares about the count.
+func lenOf[T any](v []T, _ error) int { return len(v) }

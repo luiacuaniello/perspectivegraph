@@ -20,8 +20,15 @@ type ticketRequest struct {
 // listTickets handles GET /tickets - the remediation work board for the tenant.
 // Viewer is enough.
 func (a *API) listTickets(w http.ResponseWriter, r *http.Request) {
+	list, err := a.ticket.List(r.Context(), tenantOf(r.Context()))
+	if err != nil {
+		// An empty board read from a broken database looks like "no outstanding work",
+		// and a team would open tickets that already exist.
+		writeJSONError(w, http.StatusServiceUnavailable, "ticket store unreachable: "+err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"tickets":    a.ticket.List(tenantOf(r.Context())),
+		"tickets":    list,
 		"persistent": a.ticket.Persistent(),
 		"dispatches": a.ticket.Dispatches(),
 	})
@@ -68,7 +75,7 @@ func (a *API) closeTicket(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusForbidden, "admin role required to close tickets")
 		return
 	}
-	tk, err := a.ticket.Close(tenantOf(r.Context()), r.PathValue("id"))
+	tk, err := a.ticket.Close(r.Context(), tenantOf(r.Context()), r.PathValue("id"))
 	if err != nil {
 		if errors.Is(err, ticket.ErrNotFound) {
 			writeJSONError(w, http.StatusNotFound, "ticket not found")

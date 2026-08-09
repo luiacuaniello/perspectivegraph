@@ -16,6 +16,7 @@ package validation
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -197,6 +198,51 @@ func New(path string, opts ...Option) (*Store, error) {
 	return s, nil
 }
 
+// Verdicts is what the API and the calibration reports depend on, so a deployment can
+// keep this evidence in a file (one replica) or in Postgres (many).
+//
+// These records are the most consequential in the product: every calibration number is
+// computed from them. A suppression that goes missing is noise; a verdict that goes
+// missing changes what the engine claims about its own accuracy, and nothing downstream
+// can tell it happened. So the reads return an error rather than an empty set.
+type Verdicts interface {
+	Put(ctx context.Context, r Record) (Record, error)
+	Delete(ctx context.Context, tenant, id string) error
+	Get(ctx context.Context, tenant, pathID string) (Record, bool, error)
+	List(ctx context.Context, tenant string) ([]Record, error)
+	Metrics(ctx context.Context, tenant string) (Metrics, error)
+	Calibration(ctx context.Context, tenant string) (Calibration, error)
+	Persistent() bool
+}
+
+// normalize validates a verdict and puts it in canonical form. Shared by both backends,
+// so evidence one accepts cannot be evidence the other would have refused - a difference
+// there would change the dataset a calibration is computed from, invisibly.
+func normalize(r Record, now func() time.Time, newID func() string) (Record, error) {
+	if !ValidOutcome(r.Outcome) {
+		return Record{}, fmt.Errorf("%w: %q", ErrInvalidOutcome, r.Outcome)
+	}
+	if !ValidScope(r.Scope) {
+		return Record{}, fmt.Errorf("%w: %q", ErrInvalidScope, r.Scope)
+	}
+	if r.Source == "" {
+		return Record{}, ErrMissingSource
+	}
+	if r.Outcome != Missed && r.PathID == "" && scopeOrDefault(r.Scope) != ScopeEdge {
+		return Record{}, ErrMissingPathID
+	}
+	r.Tenant = tenantKey(r.Tenant)
+	if r.TestedAt.IsZero() {
+		r.TestedAt = now().UTC()
+	} else {
+		r.TestedAt = r.TestedAt.UTC()
+	}
+	if r.ID == "" {
+		r.ID = newID()
+	}
+	return r, nil
+}
+
 func (s *Store) Persistent() bool { return s != nil && s.path != "" }
 
 func tenantKey(t string) string {
@@ -210,7 +256,7 @@ func tenantKey(t string) string {
 // path (PathID) and replaces any prior verdict for that path (latest test wins);
 // "missed" verdicts accumulate (each is a distinct false negative). Source is
 // always required - a verdict without provenance isn't evidence.
-func (s *Store) Put(r Record) (Record, error) {
+func (s *Store) Put(_ context.Context, r Record) (Record, error) {
 	if s == nil {
 		return Record{}, errors.New("validation: store not configured")
 	}
@@ -299,7 +345,7 @@ func (s *Store) applyDeleteLocked(tenant, id string) bool {
 }
 
 // Delete removes a verdict by id.
-func (s *Store) Delete(tenant, id string) error {
+func (s *Store) Delete(_ context.Context, tenant, id string) error {
 	if s == nil {
 		return errors.New("validation: store not configured")
 	}
@@ -321,44 +367,41 @@ func (s *Store) Delete(tenant, id string) error {
 }
 
 // Get returns the current verdict for a surfaced path, if any.
-func (s *Store) Get(tenant, pathID string) (Record, bool) {
+func (s *Store) Get(_ context.Context, tenant, pathID string) (Record, bool, error) {
 	if s == nil || pathID == "" {
-		return Record{}, false
+		return Record{}, false, nil
 	}
 	tenant = tenantKey(tenant)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, r := range s.byTenant[tenant] {
 		if r.Outcome != Missed && r.PathID == pathID {
-			return r, true
+			return r, true, nil
 		}
 	}
-	return Record{}, false
+	return Record{}, false, nil
 }
 
 // List returns a tenant's verdicts, newest first.
-func (s *Store) List(tenant string) []Record {
+func (s *Store) List(_ context.Context, tenant string) ([]Record, error) {
 	if s == nil {
-		return nil
+		return nil, nil
 	}
 	tenant = tenantKey(tenant)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := append([]Record(nil), s.byTenant[tenant]...)
 	sort.Slice(out, func(i, j int) bool { return out[i].TestedAt.After(out[j].TestedAt) })
-	return out
+	return out, nil
 }
 
 // Metrics rolls up precision/recall over the validated subset for a tenant.
-func (s *Store) Metrics(tenant string) Metrics {
-	if s == nil {
-		return Metrics{}
-	}
-	tenant = tenantKey(tenant)
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+// metricsOf computes precision and recall over a set of verdicts. Shared by both
+// backends: a precision that moved when a deployment changed where it stores evidence
+// would be indistinguishable from the engine getting better.
+func metricsOf(recs []Record) Metrics {
 	var m Metrics
-	for _, r := range s.byTenant[tenant] {
+	for _, r := range recs {
 		switch r.Outcome {
 		case Confirmed:
 			m.Confirmed++
@@ -380,6 +423,16 @@ func (s *Store) Metrics(tenant string) Metrics {
 		m.HasData = true
 	}
 	return m
+}
+
+func (s *Store) Metrics(_ context.Context, tenant string) (Metrics, error) {
+	if s == nil {
+		return Metrics{}, nil
+	}
+	tenant = tenantKey(tenant)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return metricsOf(s.byTenant[tenant]), nil
 }
 
 // ── persistence ─────────────────────────────────────────────────────
@@ -419,6 +472,8 @@ func (s *Store) load() error {
 	s.legacy = true
 	return nil
 }
+
+func newRecordID() string { return randID() }
 
 func randID() string {
 	var b [6]byte

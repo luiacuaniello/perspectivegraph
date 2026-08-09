@@ -12,6 +12,7 @@
 package suppress
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -107,6 +108,51 @@ func WithSealer(sealer cryptostore.Sealer) Option {
 	}
 }
 
+// Suppressions is what the API and the analyzer depend on, so a deployment can put these
+// decisions in a file (one replica, the demo) or in Postgres (many replicas) without
+// either caller knowing which.
+//
+// The reads take a context and return an error on purpose. The obvious alternative -
+// swallow a database failure and return nothing - fails in a direction that looks safe
+// and is not: an empty ActiveSet un-hides every suppressed path at once, so a board an
+// analyst had curated fills back up with decisions they already made, and nothing says
+// why. Better to say the store is unreachable.
+type Suppressions interface {
+	Put(ctx context.Context, r Record) (Record, error)
+	Delete(ctx context.Context, tenant, pathID string) error
+	Get(ctx context.Context, tenant, pathID string) (Record, bool, error)
+	List(ctx context.Context, tenant string) ([]Record, error)
+	ActiveSet(ctx context.Context, tenant string) (map[string]Record, error)
+	Persistent() bool
+}
+
+// normalize validates a record and puts it in canonical form: the accountability fields
+// are required, the reason must be one this product recognises, and every timestamp is
+// UTC. Shared by both backends so a suppression written to Postgres cannot be accepted
+// under rules the file store would have rejected, or the reverse.
+func normalize(r Record, now func() time.Time) (Record, error) {
+	if r.PathID == "" {
+		return Record{}, ErrMissingPathID
+	}
+	if r.Owner == "" {
+		return Record{}, ErrMissingOwner
+	}
+	if !ValidReason(r.Reason) {
+		return Record{}, fmt.Errorf("%w: %q", ErrInvalidReason, r.Reason)
+	}
+	r.Tenant = tenantKey(r.Tenant)
+	if r.CreatedAt.IsZero() {
+		r.CreatedAt = now().UTC()
+	} else {
+		r.CreatedAt = r.CreatedAt.UTC()
+	}
+	if r.ExpiresAt != nil {
+		e := r.ExpiresAt.UTC()
+		r.ExpiresAt = &e
+	}
+	return r, nil
+}
+
 // New builds a store. When path is non-empty it is loaded from disk (a missing
 // file is fine - it's created on first write) and every mutation is persisted.
 func New(path string, opts ...Option) (*Store, error) {
@@ -134,28 +180,13 @@ func (s *Store) Persistent() bool { return s != nil && s.path != "" }
 // Put stores (creating or replacing) a suppression. It validates the reason and
 // the accountable fields, stamps CreatedAt when unset, normalizes the tenant, and
 // persists. A zero *Store is a no-op error so misconfiguration is loud.
-func (s *Store) Put(r Record) (Record, error) {
+func (s *Store) Put(_ context.Context, r Record) (Record, error) {
 	if s == nil {
 		return Record{}, errors.New("suppress: store not configured")
 	}
-	if r.PathID == "" {
-		return Record{}, ErrMissingPathID
-	}
-	if r.Owner == "" {
-		return Record{}, ErrMissingOwner
-	}
-	if !ValidReason(r.Reason) {
-		return Record{}, fmt.Errorf("%w: %q", ErrInvalidReason, r.Reason)
-	}
-	r.Tenant = tenantKey(r.Tenant)
-	if r.CreatedAt.IsZero() {
-		r.CreatedAt = s.now().UTC()
-	} else {
-		r.CreatedAt = r.CreatedAt.UTC()
-	}
-	if r.ExpiresAt != nil {
-		e := r.ExpiresAt.UTC()
-		r.ExpiresAt = &e
+	r, err := normalize(r, s.now)
+	if err != nil {
+		return Record{}, err
 	}
 
 	s.mu.Lock()
@@ -173,7 +204,7 @@ func (s *Store) Put(r Record) (Record, error) {
 
 // Delete removes a suppression (un-suppresses the path). Removing one that does
 // not exist is not an error - the desired end state is reached either way.
-func (s *Store) Delete(tenant, pathID string) error {
+func (s *Store) Delete(_ context.Context, tenant, pathID string) error {
 	if s == nil {
 		return errors.New("suppress: store not configured")
 	}
@@ -188,25 +219,25 @@ func (s *Store) Delete(tenant, pathID string) error {
 
 // Get returns the suppression for a path if one exists and is still in force.
 // Expired suppressions are reported as absent - the path is active again.
-func (s *Store) Get(tenant, pathID string) (Record, bool) {
+func (s *Store) Get(_ context.Context, tenant, pathID string) (Record, bool, error) {
 	if s == nil {
-		return Record{}, false
+		return Record{}, false, nil
 	}
 	tenant = tenantKey(tenant)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	r, ok := s.byTenant[tenant][pathID]
 	if !ok || r.Expired(s.now()) {
-		return Record{}, false
+		return Record{}, false, nil
 	}
-	return r, true
+	return r, true, nil
 }
 
 // List returns every suppression for a tenant - including expired ones, so the
 // triage board can show lapsed decisions - newest first.
-func (s *Store) List(tenant string) []Record {
+func (s *Store) List(_ context.Context, tenant string) ([]Record, error) {
 	if s == nil {
-		return nil
+		return nil, nil
 	}
 	tenant = tenantKey(tenant)
 	s.mu.RLock()
@@ -216,14 +247,14 @@ func (s *Store) List(tenant string) []Record {
 		out = append(out, r)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
-	return out
+	return out, nil
 }
 
 // ActiveSet returns the in-force suppressions for a tenant keyed by path id, for
 // cheap O(1) decoration of a path list. Expired entries are excluded.
-func (s *Store) ActiveSet(tenant string) map[string]Record {
+func (s *Store) ActiveSet(_ context.Context, tenant string) (map[string]Record, error) {
 	if s == nil {
-		return nil
+		return nil, nil
 	}
 	tenant = tenantKey(tenant)
 	now := s.now()
@@ -235,7 +266,7 @@ func (s *Store) ActiveSet(tenant string) map[string]Record {
 			out[id] = r
 		}
 	}
-	return out
+	return out, nil
 }
 
 // ── persistence ─────────────────────────────────────────────────────
