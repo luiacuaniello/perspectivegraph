@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1](https://github.com/luiacuaniello/perspectivegraph/compare/v1.5.0...v1.5.1) (2026-08-09)
+
+
+### Bug Fixes
+
+* stop attacker-suppressible audit records, restore sealed logging, harden the web surface ([#131](https://github.com/luiacuaniello/perspectivegraph/issues/131)) ([b97c6a7](https://github.com/luiacuaniello/perspectivegraph/commit/b97c6a7e94312a1bd4b422780a9364ab9035f2fd))
+
 ## [1.5.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.4.3...v1.5.0) (2026-08-09)
 
 
