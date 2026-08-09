@@ -49,7 +49,26 @@ type PGLog struct {
 	done      chan struct{}
 	closed    chan struct{}
 	closeOnce sync.Once
+
+	// now exists so a test can pin the clock. The platform's clock granularity is
+	// load-bearing here (see storedPrecision), and on a host whose clock is already
+	// coarse the bug this guards against is invisible.
+	now func() time.Time
 }
+
+// storedPrecision is the resolution PostgreSQL keeps in a timestamptz column.
+//
+// The record's hash covers its timestamp, so the hash MUST be computed over the value
+// the database will actually return - not the one Go happened to read from the clock.
+// Go's time.Now() carries nanoseconds on Linux; timestamptz keeps microseconds. Hashing
+// the untruncated value therefore produced a record that could never re-verify: every
+// entry came back reporting "contents do not match its hash - it was altered", on a log
+// nobody had touched. A tamper-evident log that cries wolf on every record is worse than
+// none, because the one time it is right, nobody is listening.
+//
+// It was invisible on macOS, whose clock is already microsecond-granular, and it took a
+// Linux CI run to surface it.
+const storedPrecision = time.Microsecond
 
 // queueDepth bounds the buffer. Deep enough to absorb a burst of denials, shallow enough
 // that a database outage surfaces as loud drops within seconds rather than as unbounded
@@ -72,6 +91,7 @@ func OpenPG(db *sql.DB, opts ...Option) (*PGLog, error) {
 	}
 	l := &PGLog{
 		db:     db,
+		now:    time.Now,
 		sealer: sealerFrom(opts),
 		queue:  make(chan Record, queueDepth),
 		done:   make(chan struct{}),
@@ -126,7 +146,7 @@ func (l *PGLog) Record(_ context.Context, action, subject, role, tenant string, 
 	if l == nil || l.db == nil {
 		return
 	}
-	rec := Record{Time: time.Now().UTC(), Action: action, Subject: subject, Role: role, Tenant: tenant, Fields: fields}
+	rec := Record{Time: l.now().UTC().Truncate(storedPrecision), Action: action, Subject: subject, Role: role, Tenant: tenant, Fields: fields}
 	select {
 	case <-l.closed:
 		slog.Error("audit: record NOT written, the log is closed", "action", action, "subject", subject)

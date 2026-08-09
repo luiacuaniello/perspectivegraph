@@ -391,7 +391,7 @@ func (s *Store) List(_ context.Context, tenant string) ([]Record, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := append([]Record(nil), s.byTenant[tenant]...)
-	sort.Slice(out, func(i, j int) bool { return out[i].TestedAt.After(out[j].TestedAt) })
+	sortRecords(out)
 	return out, nil
 }
 
@@ -479,4 +479,24 @@ func randID() string {
 	var b [6]byte
 	_, _ = rand.Read(b[:])
 	return "vd-" + hex.EncodeToString(b[:])
+}
+
+// sortRecords puts verdicts newest first, breaking ties on id.
+//
+// "Newest first" alone is not a total order: verdicts recorded in the same instant tie,
+// and sort.Slice is not stable, so the surviving order was arbitrary - different between
+// the two backends, and potentially different between two calls to the same one. That is
+// visible in more than a list: Brier and ECE are sums over these records, and floating
+// point addition is not associative, so a reordering moves the last bits of a published
+// accuracy number. The backends disagreed in exactly that digit on Linux.
+//
+// The id is unique per record, so this is a genuine total order and both backends can
+// implement it identically.
+func sortRecords(out []Record) {
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].TestedAt.Equal(out[j].TestedAt) {
+			return out[i].TestedAt.After(out[j].TestedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
 }

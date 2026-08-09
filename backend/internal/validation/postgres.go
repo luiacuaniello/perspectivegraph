@@ -95,7 +95,7 @@ func (p *PGStore) Get(ctx context.Context, tenant, pathID string) (Record, bool,
 		return Record{}, false, errors.New("validation: store not configured")
 	}
 	const q = selectCols + `
-		FROM validations WHERE tenant = $1 AND path_id = $2 ORDER BY tested_at DESC LIMIT 1`
+		FROM validations WHERE tenant = $1 AND path_id = $2 ORDER BY tested_at DESC, id LIMIT 1`
 	r, err := scanRecord(p.db.QueryRowContext(ctx, q, tenantKey(tenant), pathID))
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -137,7 +137,10 @@ func (p *PGStore) Calibration(ctx context.Context, tenant string) (Calibration, 
 }
 
 func (p *PGStore) records(ctx context.Context, tenant string) ([]Record, error) {
-	const q = selectCols + ` FROM validations WHERE tenant = $1 ORDER BY tested_at DESC`
+	// Ties broken on id, matching the file backend: without it the order among verdicts
+	// recorded in the same instant is whatever the plan produces, and the calibration
+	// sums computed from it move in their last bits.
+	const q = selectCols + ` FROM validations WHERE tenant = $1 ORDER BY tested_at DESC, id`
 	rows, err := p.db.QueryContext(ctx, q, tenantKey(tenant))
 	if err != nil {
 		return nil, fmt.Errorf("validation: read %s: %w", tenant, err)

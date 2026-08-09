@@ -235,3 +235,36 @@ func TestRecordAfterCloseDoesNotPanic(t *testing.T) {
 	settled(t, l)
 	l.Record(context.Background(), "auth.deny", "mallory", "", "acme", nil)
 }
+
+// The bug a Linux CI run caught and this Mac hid.
+//
+// The hash covers the record's timestamp. Go's clock carries nanoseconds on Linux;
+// PostgreSQL's timestamptz keeps microseconds. Hashing the untruncated value produced
+// records that could never re-verify - every one of them came back "contents do not
+// match its hash - it was altered", on a log nobody had touched.
+//
+// The clock is pinned rather than read, so this fails on any host: on a platform whose
+// clock is already microsecond-granular (macOS) the defect is otherwise invisible, which
+// is exactly how it reached CI.
+func TestNanosecondTimestampsStillVerify(t *testing.T) {
+	l, db := pgLog(t)
+	// A time with nanoseconds Postgres cannot keep: ...123456789 truncates to ...123456.
+	pinned := time.Date(2026, 8, 9, 12, 0, 0, 123456789, time.UTC)
+	l.now = func() time.Time { return pinned }
+
+	l.Record(context.Background(), "auth.deny", "mallory", "", "acme", map[string]any{"i": 1})
+	settled(t, l)
+
+	if _, err := VerifyPG(context.Background(), db); err != nil {
+		t.Fatalf("a record written with a nanosecond clock does not verify: %v", err)
+	}
+
+	// And the stored instant must be the truncated one, not a rounded or shifted one.
+	var got time.Time
+	if err := db.QueryRow(`SELECT at FROM audit_log WHERE seq = 1`).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if want := pinned.Truncate(time.Microsecond); !got.UTC().Equal(want) {
+		t.Errorf("stored %s, want %s", got.UTC().Format(time.RFC3339Nano), want.Format(time.RFC3339Nano))
+	}
+}
