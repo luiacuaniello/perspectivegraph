@@ -1,6 +1,7 @@
 package validation
 
 import (
+	"context"
 	"errors"
 	"math"
 	"strings"
@@ -10,7 +11,7 @@ import (
 // put is a test helper that records a scored verdict for tenant "acme".
 func put(t *testing.T, s *Store, pathID string, outcome Outcome, score float64) {
 	t.Helper()
-	if _, err := s.Put(Record{Tenant: "acme", PathID: pathID, Outcome: outcome, Source: "test", PredictedScore: score}); err != nil {
+	if _, err := s.Put(context.Background(), Record{Tenant: "acme", PathID: pathID, Outcome: outcome, Source: "test", PredictedScore: score}); err != nil {
 		t.Fatalf("put(%s,%s,%v): %v", pathID, outcome, score, err)
 	}
 }
@@ -25,7 +26,7 @@ func newStore(t *testing.T) *Store {
 }
 
 func TestCalibrationEmpty(t *testing.T) {
-	cal := newStore(t).Calibration("acme")
+	cal, _ := newStore(t).Calibration(context.Background(), "acme")
 	if cal.HasData {
 		t.Errorf("empty store: HasData = true, want false")
 	}
@@ -36,7 +37,11 @@ func TestCalibrationEmpty(t *testing.T) {
 		t.Errorf("empty store: %d bins, want %d", len(cal.Bins), reliabilityBins)
 	}
 	// A nil *Store must not panic and must report a well-formed empty report.
-	if (*Store)(nil).Calibration("x").HasData {
+	nilCal, err := (*Store)(nil).Calibration(context.Background(), "x")
+	if err != nil {
+		t.Errorf("nil store returned an error: %v", err)
+	}
+	if nilCal.HasData {
 		t.Errorf("nil store: HasData = true, want false")
 	}
 }
@@ -46,7 +51,7 @@ func TestCalibrationBrierExact(t *testing.T) {
 	put(t, s, "p1", Confirmed, 0.8) // (0.8-1)^2 = 0.04
 	put(t, s, "p2", Refuted, 0.2)   // (0.2-0)^2 = 0.04
 
-	cal := s.Calibration("acme")
+	cal, _ := s.Calibration(context.Background(), "acme")
 	if cal.Samples != 2 {
 		t.Fatalf("Samples = %d, want 2", cal.Samples)
 	}
@@ -77,7 +82,7 @@ func TestCalibrationWellCalibrated(t *testing.T) {
 		put(t, s, pathID("c", i), Confirmed, 0.5)
 		put(t, s, pathID("r", i), Refuted, 0.5)
 	}
-	cal := s.Calibration("acme")
+	cal, _ := s.Calibration(context.Background(), "acme")
 	if cal.Samples != 10 {
 		t.Fatalf("Samples = %d, want 10", cal.Samples)
 	}
@@ -103,7 +108,7 @@ func TestCalibrationOverconfident(t *testing.T) {
 	for i := 0; i < 6; i++ {
 		put(t, s, pathID("r", i), Refuted, 0.9)
 	}
-	cal := s.Calibration("acme")
+	cal, _ := s.Calibration(context.Background(), "acme")
 	if cal.Verdict != "overconfident" {
 		t.Errorf("Verdict = %q, want overconfident", cal.Verdict)
 	}
@@ -120,14 +125,14 @@ func TestCalibrationExcludesUnscoredAndMissed(t *testing.T) {
 	s := newStore(t)
 	put(t, s, "scored", Confirmed, 0.7)
 	// Unscored verdict (predicted score unknown / pre-calibration) is excluded.
-	if _, err := s.Put(Record{Tenant: "acme", PathID: "unscored", Outcome: Confirmed, Source: "test"}); err != nil {
+	if _, err := s.Put(context.Background(), Record{Tenant: "acme", PathID: "unscored", Outcome: Confirmed, Source: "test"}); err != nil {
 		t.Fatal(err)
 	}
 	// A "missed" verdict is a false negative with no surfaced path - not a sample.
-	if _, err := s.Put(Record{Tenant: "acme", Outcome: Missed, Source: "test", Route: "x->y", PredictedScore: 0.9}); err != nil {
+	if _, err := s.Put(context.Background(), Record{Tenant: "acme", Outcome: Missed, Source: "test", Route: "x->y", PredictedScore: 0.9}); err != nil {
 		t.Fatal(err)
 	}
-	cal := s.Calibration("acme")
+	cal, _ := s.Calibration(context.Background(), "acme")
 	if cal.Samples != 1 {
 		t.Errorf("Samples = %d, want 1 (only the scored, non-missed verdict)", cal.Samples)
 	}
@@ -144,7 +149,7 @@ func TestCalibrationScopeSplit(t *testing.T) {
 	s := newStore(t)
 	// 3 path-scoped verdicts, each with S(P)=0.9.
 	for i, o := range []Outcome{Confirmed, Confirmed, Refuted} {
-		if _, err := s.Put(Record{Tenant: "acme", PathID: pathID("p", i), Outcome: o,
+		if _, err := s.Put(context.Background(), Record{Tenant: "acme", PathID: pathID("p", i), Outcome: o,
 			Source: "test", Scope: ScopePath, PredictedScore: 0.9}); err != nil {
 			t.Fatal(err)
 		}
@@ -152,12 +157,12 @@ func TestCalibrationScopeSplit(t *testing.T) {
 	// 2 target-scoped verdicts: S(P)=0.9 but compromise=0.4. The target track must
 	// grade 0.4, NOT the 0.9 path score.
 	for i, o := range []Outcome{Confirmed, Refuted} {
-		if _, err := s.Put(Record{Tenant: "acme", PathID: pathID("t", i), Outcome: o,
+		if _, err := s.Put(context.Background(), Record{Tenant: "acme", PathID: pathID("t", i), Outcome: o,
 			Source: "test", Scope: ScopeTarget, PredictedScore: 0.9, PredictedCompromise: 0.4}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	cal := s.Calibration("acme")
+	cal, _ := s.Calibration(context.Background(), "acme")
 
 	if cal.Samples != 3 {
 		t.Errorf("path track samples = %d, want 3 (only path-scoped)", cal.Samples)
@@ -183,11 +188,11 @@ func TestCalibrationScopeSplit(t *testing.T) {
 // is excluded from the target track and must never leak into the path track.
 func TestCalibrationTargetScopeExcludedWithoutCompromise(t *testing.T) {
 	s := newStore(t)
-	if _, err := s.Put(Record{Tenant: "acme", PathID: "t1", Outcome: Confirmed,
+	if _, err := s.Put(context.Background(), Record{Tenant: "acme", PathID: "t1", Outcome: Confirmed,
 		Source: "test", Scope: ScopeTarget, PredictedScore: 0.9}); err != nil {
 		t.Fatal(err)
 	}
-	cal := s.Calibration("acme")
+	cal, _ := s.Calibration(context.Background(), "acme")
 	if cal.HasData {
 		t.Error("path track HasData = true; a target-scoped verdict must not feed the path track")
 	}
@@ -204,7 +209,7 @@ func TestPerBasisRecalibrationBeatsGlobal(t *testing.T) {
 	s := newStore(t)
 	put := func(i int, basis string, y Outcome) {
 		id := basis + string(rune('a'+i))
-		if _, err := s.Put(Record{Tenant: "acme", PathID: id, Outcome: y,
+		if _, err := s.Put(context.Background(), Record{Tenant: "acme", PathID: id, Outcome: y,
 			Source: "test", PredictedScore: 0.6, WeightBasis: basis}); err != nil {
 			t.Fatal(err)
 		}
@@ -224,7 +229,7 @@ func TestPerBasisRecalibrationBeatsGlobal(t *testing.T) {
 		put(i, "heuristic", Confirmed)
 	}
 
-	cal := s.Calibration("acme")
+	cal, _ := s.Calibration(context.Background(), "acme")
 	if cal.Samples != 30 {
 		t.Fatalf("samples = %d, want 30", cal.Samples)
 	}
@@ -264,7 +269,7 @@ func TestPerBasisRecalibrationBeatsGlobal(t *testing.T) {
 
 func TestPutRejectsInvalidScope(t *testing.T) {
 	s := newStore(t)
-	_, err := s.Put(Record{Tenant: "acme", PathID: "p1", Outcome: Confirmed, Source: "test", Scope: "bogus"})
+	_, err := s.Put(context.Background(), Record{Tenant: "acme", PathID: "p1", Outcome: Confirmed, Source: "test", Scope: "bogus"})
 	if !errors.Is(err, ErrInvalidScope) {
 		t.Errorf("Put with bogus scope: err = %v, want ErrInvalidScope", err)
 	}

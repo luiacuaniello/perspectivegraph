@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -23,7 +24,7 @@ func TestRequireRoleLockout(t *testing.T) {
 	ts := NewTokenStore("admin-tok:admin")
 	guard := secwatch.New(2, time.Minute, time.Minute, func(string, int) {})
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-	h := RequireRole(ts, RoleViewer, audit.Nop{}, guard, next)
+	h := RequireRole(ts, RoleViewer, audit.Nop{}, guard, nil, next)
 
 	call := func(token, remote string) int {
 		rec := httptest.NewRecorder()
@@ -62,7 +63,7 @@ func TestLockoutIgnoresAnonymousAndInsufficientRole(t *testing.T) {
 	ts := NewTokenStore("viewer-tok:viewer,admin-tok:admin")
 	guard := secwatch.New(2, time.Minute, time.Minute, func(string, int) {})
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-	h := RequireRole(ts, RoleAdmin, audit.Nop{}, guard, next) // endpoint needs admin
+	h := RequireRole(ts, RoleAdmin, audit.Nop{}, guard, nil, next) // endpoint needs admin
 
 	call := func(token, remote string) int {
 		rec := httptest.NewRecorder()
@@ -94,7 +95,7 @@ func TestLockoutIgnoresAnonymousAndInsufficientRole(t *testing.T) {
 }
 
 func TestHMACPerTenant(t *testing.T) {
-	v := NewHMACVerifier(map[string]string{"acme": "acme-secret", DefaultTenant: "default-secret"}, 1<<20)
+	v := NewHMACVerifier(map[string]string{"acme": "acme-secret", DefaultTenant: "default-secret"}, 1<<20, nil)
 	got := ""
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got = PrincipalFromContext(r.Context()).Tenant
@@ -162,7 +163,7 @@ func TestTokenStoreRoleAndTenant(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/graphql", nil)
 	req.Header.Set("Authorization", "Bearer admin")
-	RequireRole(ts, RoleAdmin, audit.Nop{}, nil, next).ServeHTTP(rec, req)
+	RequireRole(ts, RoleAdmin, audit.Nop{}, nil, nil, next).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || rec.Header().Get("X-Tenant-Seen") != "globex" {
 		t.Errorf("admin: code=%d tenant=%q, want 200/globex", rec.Code, rec.Header().Get("X-Tenant-Seen"))
 	}
@@ -170,7 +171,7 @@ func TestTokenStoreRoleAndTenant(t *testing.T) {
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/graphql", nil)
 	req.Header.Set("Authorization", "Bearer read")
-	RequireRole(ts, RoleAdmin, audit.Nop{}, nil, next).ServeHTTP(rec, req)
+	RequireRole(ts, RoleAdmin, audit.Nop{}, nil, nil, next).ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("viewer/admin: got %d, want 401", rec.Code)
 	}
@@ -359,5 +360,67 @@ func TestChainTriesEach(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer tok")
 	if p, ok := chain.Authenticate(req); !ok || p.Role != RoleViewer {
 		t.Errorf("chain auth = %+v,%v, want viewer/true", p, ok)
+	}
+}
+
+// The lockout must not be steerable by the caller.
+//
+// It used to key on the first entry of X-Forwarded-For, taken unconditionally. Rotating
+// that header therefore produced a fresh key per attempt and the lockout never fired -
+// demonstrated against a running instance: twelve failed logins passed unblocked where
+// six from a fixed source were blocked.
+func TestRotatingForwardedForDoesNotEvadeTheLockout(t *testing.T) {
+	ts := NewTokenStore("good-token:admin")
+	guard := secwatch.New(2, time.Minute, time.Minute, func(string, int) {})
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	// No trusted proxy configured - the default posture.
+	h := RequireRole(ts, RoleAdmin, audit.Nop{}, guard, nil, next)
+
+	locked := false
+	for i := 0; i < 6; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.RemoteAddr = "203.0.113.9:5555"
+		req.Header.Set("X-Forwarded-For", fmt.Sprintf("198.51.100.%d", i)) // a new "client" each time
+		req.Header.Set("Authorization", "Bearer wrong-guess")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code == http.StatusTooManyRequests {
+			locked = true
+			break
+		}
+	}
+	if !locked {
+		t.Fatal("six failed attempts with a rotating X-Forwarded-For never tripped the lockout - brute force is unbounded")
+	}
+}
+
+// The same header let an attacker aim the lockout: the guard runs BEFORE authentication,
+// so locking a victim's address rejects that victim's valid credentials too.
+func TestForwardedForCannotLockOutSomeoneElse(t *testing.T) {
+	ts := NewTokenStore("good-token:admin")
+	guard := secwatch.New(2, time.Minute, time.Minute, func(string, int) {})
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	h := RequireRole(ts, RoleAdmin, audit.Nop{}, guard, nil, next)
+
+	// The attacker fails repeatedly while claiming to be the victim.
+	for i := 0; i < 6; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.RemoteAddr = "203.0.113.9:5555"
+		req.Header.Set("X-Forwarded-For", "198.51.100.50") // the victim
+		req.Header.Set("Authorization", "Bearer wrong-guess")
+		h.ServeHTTP(httptest.NewRecorder(), req)
+	}
+
+	// The victim, with a VALID credential, must still be served.
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "198.51.100.50:4444"
+	req.Header.Set("Authorization", "Bearer good-token")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code == http.StatusTooManyRequests {
+		t.Fatal("an attacker locked out a third party by naming them in X-Forwarded-For")
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the victim's valid credential got %d, want 200", rec.Code)
 	}
 }

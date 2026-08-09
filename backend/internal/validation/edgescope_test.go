@@ -1,11 +1,13 @@
 package validation
 
+import "context"
+
 import "testing"
 
 // putEdge files an edge-scoped verdict - the shape internal/kevholdout produces.
 func putEdge(t *testing.T, s *Store, cve string, outcome Outcome, predicted float64) {
 	t.Helper()
-	if _, err := s.Put(Record{
+	if _, err := s.Put(context.Background(), Record{
 		Tenant:         "acme",
 		Outcome:        outcome,
 		Scope:          ScopeEdge,
@@ -32,7 +34,7 @@ func TestEdgeVerdictsDoNotEnterThePathTrack(t *testing.T) {
 		putEdge(t, s, cve, outcome, 0.5)
 	}
 
-	cal := s.Calibration("acme")
+	cal, _ := s.Calibration(context.Background(), "acme")
 	if cal.Samples != 2 {
 		t.Fatalf("path track has %d samples, want the 2 path verdicts only", cal.Samples)
 	}
@@ -61,7 +63,7 @@ func TestEdgeTrackPublishesNoRescale(t *testing.T) {
 		putEdge(t, s, string(rune('A'+i))+"-cve", outcome, 0.6)
 	}
 
-	cal := s.Calibration("acme")
+	cal, _ := s.Calibration(context.Background(), "acme")
 	if cal.Edge == nil || !cal.Edge.HasData {
 		t.Fatal("edge track absent or empty")
 	}
@@ -90,7 +92,7 @@ func TestEdgeVerdictsAccumulateRatherThanReplace(t *testing.T) {
 	putEdge(t, s, "CVE-2024-0001", Refuted, 0.35) // window 2: still did not
 	putEdge(t, s, "CVE-2024-0001", Confirmed, 0.40)
 
-	cal := s.Calibration("acme")
+	cal, _ := s.Calibration(context.Background(), "acme")
 	if cal.Edge == nil {
 		t.Fatal("edge track missing")
 	}

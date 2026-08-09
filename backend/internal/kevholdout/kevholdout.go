@@ -159,13 +159,23 @@ func (s *Store) flush() error {
 // Sink is the part of the validation store this package needs: somewhere to file a
 // matured verdict. Narrowed to an interface so the holdout can be tested without one.
 type Sink interface {
-	Put(validation.Record) (validation.Record, error)
+	Put(context.Context, validation.Record) (validation.Record, error)
+}
+
+// Holdout is the sealed-forecast store the runner needs. Narrowed to an interface so a
+// deployment can keep the seals in a file (one replica) or in Postgres (many) - and so
+// the runner can be tested without either.
+type Holdout interface {
+	Pending() []Snapshot
+	seal(Snapshot) bool
+	drop(tenant, cve string)
+	flush() error
 }
 
 // Runner seals forecasts and grades the ones that have come due.
 type Runner struct {
 	intel  threatintel.Source
-	store  *Store
+	store  Holdout
 	sink   Sink
 	window time.Duration
 	now    func() time.Time
@@ -173,7 +183,7 @@ type Runner struct {
 }
 
 // NewRunner wires a holdout run. window <= 0 uses DefaultWindow.
-func NewRunner(intel threatintel.Source, store *Store, sink Sink, window time.Duration, log *slog.Logger) *Runner {
+func NewRunner(intel threatintel.Source, store Holdout, sink Sink, window time.Duration, log *slog.Logger) *Runner {
 	if window <= 0 {
 		window = DefaultWindow
 	}
@@ -237,7 +247,7 @@ func (r *Runner) Run(ctx context.Context, tenant string, cves []string) (Result,
 			Evidence: fmt.Sprintf("sealed %s, graded after %s: %s KEV at grading time",
 				snap.SealedAt.UTC().Format(time.RFC3339), r.window, boolWord(in.KEV)),
 		}
-		if _, err := r.sink.Put(rec); err != nil {
+		if _, err := r.sink.Put(ctx, rec); err != nil {
 			// A failed file must not drop the forecast: leaving it pending means the
 			// next pass retries rather than silently losing the only labelled sample.
 			r.log.Warn("kev holdout: filing verdict failed, forecast left pending", "cve", cve, "err", err)

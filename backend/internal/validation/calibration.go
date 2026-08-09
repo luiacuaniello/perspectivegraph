@@ -22,7 +22,10 @@ package validation
 // the artifact that lets an operator stand behind "55%" as a probability, not a
 // vibe.
 
-import "math"
+import (
+	"context"
+	"math"
+)
 
 // reliabilityBins is the number of equal-width buckets in the reliability diagram
 // over [0,1]. Five keeps each bucket populated on the modest verdict counts a real
@@ -153,15 +156,13 @@ func observedOutcome(o Outcome) (y float64, isSample bool) {
 // path's S(P) against an any-route outcome - would bias the report, so the scope on
 // each verdict routes it to the correct track. A nil *Store and an empty dataset
 // both yield a well-formed, zero-valued report (HasData false).
-func (s *Store) Calibration(tenant string) Calibration {
-	if s == nil {
-		return Calibration{Bins: emptyBins(), Verdict: "insufficient-data"}
-	}
-	persistent := s.Persistent()
-	tenant = tenantKey(tenant)
-
-	s.mu.RLock()
-	records := s.byTenant[tenant]
+// calibrationOf computes the calibration report from a set of verdicts. Shared by both
+// backends, so how well the engine says it is calibrated cannot depend on where the
+// evidence happens to be stored.
+//
+// persistent is passed in rather than read from a store, because it changes the VERDICT
+// text: an in-memory deployment is told its numbers vanish on restart.
+func calibrationOf(records []Record, persistent bool) Calibration {
 	detection := detectionStats(records)
 	pathSamples := make([]calSample, 0, len(records))
 	targetSamples := make([]calSample, 0, len(records))
@@ -190,7 +191,6 @@ func (s *Store) Calibration(tenant string) Calibration {
 				calSample{p: clampTop(r.PredictedScore), y: y, correlated: r.CorrelatedHops, hops: r.Hops, basis: r.WeightBasis})
 		}
 	}
-	s.mu.RUnlock()
 
 	// Detection spans all confirmed verdicts (scope-agnostic) and must be set before
 	// diagnose(), so each track's diagnosis can raise the detection axis (#7).
@@ -220,6 +220,28 @@ func (s *Store) Calibration(tenant string) Calibration {
 // computeCalibration grades a set of (prediction, outcome) samples - the shared core
 // behind both the path-scoped and target-scoped tracks. detection is attached before
 // diagnose() so the detection axis (#7) can fire; the caller attaches Target.
+// Calibration reports the reliability of the engine's own scores for a tenant.
+func (s *Store) Calibration(_ context.Context, tenant string) (Calibration, error) {
+	if s == nil {
+		return Calibration{Bins: emptyBins(), Verdict: "insufficient-data"}, nil
+	}
+	persistent := s.Persistent()
+	tenant = tenantKey(tenant)
+	s.mu.RLock()
+	records := append([]Record(nil), s.byTenant[tenant]...)
+	s.mu.RUnlock()
+	// The store's defined order, not insertion order.
+	//
+	// This read used to bypass it, so the file backend graded its evidence oldest-first
+	// while the Postgres one graded the same evidence newest-first. Brier and ECE are
+	// sums over those records and floating point addition is not associative, so two
+	// backends holding identical evidence published accuracy numbers that differed in
+	// their last bits. Order is not an implementation detail once the result is a
+	// number somebody reports.
+	sortRecords(records)
+	return calibrationOf(records, persistent), nil
+}
+
 func computeCalibration(samples []calSample, detection *DetectionStats, persistent bool) Calibration {
 	cal := Calibration{Bins: emptyBins(), Verdict: "insufficient-data", Persistent: persistent, Detection: detection}
 	n := len(samples)

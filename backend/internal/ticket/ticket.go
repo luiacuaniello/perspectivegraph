@@ -81,6 +81,33 @@ func WithSealer(sealer cryptostore.Sealer) Option {
 	}
 }
 
+// Tickets is what the API depends on, so a deployment can keep remediation work in a
+// file (one replica) or in Postgres (many) without the handler knowing which.
+//
+// Reads take a context and return an error for the same reason the suppression store's
+// do: an empty list read from a broken database looks exactly like "no outstanding
+// work", and a team would re-open tickets that already exist.
+type Tickets interface {
+	Create(ctx context.Context, t Ticket) (Ticket, error)
+	Close(ctx context.Context, tenant, id string) (Ticket, error)
+	List(ctx context.Context, tenant string) ([]Ticket, error)
+	OpenForPath(ctx context.Context, tenant, pathID string) (Ticket, bool, error)
+	Persistent() bool
+	Dispatches() bool
+}
+
+// validate enforces the accountable minimum, shared by both backends so a ticket one
+// accepts cannot be one the other would refuse.
+func validate(t Ticket) error {
+	if t.PathID == "" {
+		return ErrMissingPathID
+	}
+	if t.Owner == "" {
+		return ErrMissingOwner
+	}
+	return nil
+}
+
 // New builds a store. path enables file persistence; webhookURL enables external
 // dispatch (empty → dry-run, the ticket is logged and tracked locally only).
 func New(path, webhookURL string, opts ...Option) (*Store, error) {
@@ -151,7 +178,7 @@ func (s *Store) Create(ctx context.Context, t Ticket) (Ticket, error) {
 	s.byTenant[t.Tenant][t.ID] = t
 	s.mu.Unlock()
 
-	s.dispatch(ctx, t)
+	dispatchTicket(ctx, s.webhookURL, t)
 	if err := s.persist(); err != nil {
 		return Ticket{}, err
 	}
@@ -159,7 +186,7 @@ func (s *Store) Create(ctx context.Context, t Ticket) (Ticket, error) {
 }
 
 // Close marks a ticket done (the path was remediated).
-func (s *Store) Close(tenant, id string) (Ticket, error) {
+func (s *Store) Close(_ context.Context, tenant, id string) (Ticket, error) {
 	if s == nil {
 		return Ticket{}, errors.New("ticket: store not configured")
 	}
@@ -184,9 +211,9 @@ func (s *Store) Close(tenant, id string) (Ticket, error) {
 }
 
 // List returns a tenant's tickets, newest first.
-func (s *Store) List(tenant string) []Ticket {
+func (s *Store) List(_ context.Context, tenant string) ([]Ticket, error) {
 	if s == nil {
-		return nil
+		return nil, nil
 	}
 	tenant = tenantKey(tenant)
 	s.mu.RLock()
@@ -196,19 +223,20 @@ func (s *Store) List(tenant string) []Ticket {
 		out = append(out, t)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
-	return out
+	return out, nil
 }
 
 // OpenForPath returns the open ticket for a path, if any - what the dashboard
 // reads to show a "ticketed" badge.
-func (s *Store) OpenForPath(tenant, pathID string) (Ticket, bool) {
+func (s *Store) OpenForPath(_ context.Context, tenant, pathID string) (Ticket, bool, error) {
 	if s == nil {
-		return Ticket{}, false
+		return Ticket{}, false, nil
 	}
 	tenant = tenantKey(tenant)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.openForPath(tenant, pathID)
+	t, ok := s.openForPath(tenant, pathID)
+	return t, ok, nil
 }
 
 // openForPath assumes the caller holds the lock.
@@ -223,8 +251,18 @@ func (s *Store) openForPath(tenant, pathID string) (Ticket, bool) {
 
 // dispatch POSTs a newly created ticket to the external tracker, or logs it in
 // dry-run. Best-effort: a tracker outage never fails the local create.
-func (s *Store) dispatch(ctx context.Context, t Ticket) {
-	if s.webhookURL == "" {
+// dispatchTicket posts a newly created ticket to the configured webhook. Shared by both
+// backends: where the ticket is stored has nothing to do with who is told about it.
+func dispatchTicket(ctx context.Context, webhookURL string, t Ticket) {
+	dispatchWith(ctx, dispatchClient, webhookURL, t)
+}
+
+// dispatchClient is the shared outbound client. A ticket webhook must never be able to
+// hold a request handler open, so the timeout is short and explicit.
+var dispatchClient = &http.Client{Timeout: 10 * time.Second}
+
+func dispatchWith(ctx context.Context, client *http.Client, webhookURL string, t Ticket) {
+	if webhookURL == "" {
 		slog.Info("ticket created (dry-run - set TICKET_WEBHOOK_URL to dispatch)",
 			"id", t.ID, "path", t.PathID, "owner", t.Owner)
 		return
@@ -233,12 +271,12 @@ func (s *Store) dispatch(ctx context.Context, t Ticket) {
 	if err != nil {
 		return
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.webhookURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, bytes.NewReader(body))
 	if err != nil {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := s.httpClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		slog.Warn("ticket dispatch failed (tracked locally)", "id", t.ID, "err", err)
 		return

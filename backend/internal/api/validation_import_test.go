@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -42,7 +43,7 @@ func TestImportValidationsMatchesAndCounts(t *testing.T) {
 		t.Errorf("recorded=%d unmatched=%d, want 1/1", resp.Recorded, resp.Unmatched)
 	}
 
-	got, ok := vs.Get(auth.DefaultTenant, pathID)
+	got, ok, _ := vs.Get(context.Background(), auth.DefaultTenant, pathID)
 	if !ok {
 		t.Fatal("the matched finding was not recorded against the live path")
 	}

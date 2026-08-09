@@ -99,10 +99,18 @@ that sentence matter:
   advisory lock, so if the leader dies its connection drops, the lock releases, and another
   replica takes over on its next check. No external coordinator. This is active whenever the
   store backend is `apache-age`.
-- **The file-backed governance stores are single-writer.** Validations, suppressions,
-  tickets, history and the KEV holdout persist to files owned by one process; two replicas
-  writing the same volume would clobber each other. So with any `*_PATH` set, keep
-  `backend.replicas: 1` (this is what `values-production.yaml` already pins, and why).
+- **The governance stores can live in the database.** `GOVERNANCE_BACKEND=postgres`
+  moves **suppressions, tickets, posture history, red-team validations and the KEV
+  holdout** into PostgreSQL, where every replica reads the same rows. The schema is
+  created and upgraded on startup under an advisory lock, so replicas starting together
+  during a rolling update cannot collide, and a release rolled back onto a database a
+  newer one migrated refuses to start rather than writing a schema it does not
+  understand.
+- **The audit log is still single-writer.** It is a tamper-evident hash chain, and the
+  chain's integrity depends on ordered appends by one process - moving it needs a design,
+  not the same port repeated. So while `AUDIT_LOG_PATH` is set, keep
+  `backend.replicas: 1` (this is what `values-production.yaml` pins, and why). That is
+  now the only thing holding the ceiling in place.
 
 In practice: run one replica when you want the governance state to survive restarts, or run
 N replicas with those stores in memory and the graph in a shared AGE. Moving them onto

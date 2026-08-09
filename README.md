@@ -334,7 +334,12 @@ patch - see the [API stability policy](docs/API-STABILITY.md). What's next is in
   API and ingest are authenticated - the permissive default cannot be reached by forgetting
   to configure it. A production rollout still needs your own hardening beyond that: an
   external managed PostgreSQL+AGE, secrets in a manager (not env vars), TLS on by default,
-  backups, and HA for the leader-gated scheduler. For people use OIDC, so revoking access is
+  backups, and HA for the leader-gated scheduler. **If you terminate at a reverse proxy or
+  ingress, set `TRUSTED_PROXY_CIDRS`** to it: per-IP controls (rate limit, brute-force
+  lockout, the address in the audit trail) otherwise key on the connecting peer - correct
+  and unspoofable, but behind a proxy that is one key for everybody, so one attacker's
+  failed logins lock out every user. `X-Forwarded-For` is believed only from the proxies
+  named there, and only the hops they added. For people use OIDC, so revoking access is
   your IdP's job rather than a token rotation - see the
   [operations & hardening runbook](docs/OPERATIONS.md), [`SECURITY.md`](SECURITY.md), and the
   [threat model](docs/THREAT-MODEL.md).

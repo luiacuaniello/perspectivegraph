@@ -33,7 +33,7 @@ func TestCreateValidationAndIdempotency(t *testing.T) {
 	if again.ID != first.ID || again.Owner != "alice" {
 		t.Fatalf("create should be idempotent per open path; got %+v", again)
 	}
-	if got, ok := s.OpenForPath("default", "ap-1"); !ok || got.ID != first.ID {
+	if got, ok, _ := s.OpenForPath(context.Background(), "default", "ap-1"); !ok || got.ID != first.ID {
 		t.Fatalf("OpenForPath mismatch: %+v ok=%v", got, ok)
 	}
 }
@@ -43,14 +43,14 @@ func TestCloseReopensPath(t *testing.T) {
 	s, _ := New("", "")
 	tk, _ := s.Create(ctx, Ticket{PathID: "ap-1", Owner: "alice"})
 
-	closed, err := s.Close("default", tk.ID)
+	closed, err := s.Close(context.Background(), "default", tk.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if closed.Status != StatusClosed || closed.ClosedAt == nil {
 		t.Fatalf("ticket should be closed, got %+v", closed)
 	}
-	if _, ok := s.OpenForPath("default", "ap-1"); ok {
+	if _, ok, _ := s.OpenForPath(context.Background(), "default", "ap-1"); ok {
 		t.Error("no open ticket should remain after close")
 	}
 	// Path can be ticketed again once the prior one is closed.
@@ -58,7 +58,7 @@ func TestCloseReopensPath(t *testing.T) {
 	if reopened.ID == tk.ID {
 		t.Error("a new ticket should be created after the prior closed")
 	}
-	if _, err := s.Close("default", "nope"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Close(context.Background(), "default", "nope"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("closing a missing ticket should be ErrNotFound, got %v", err)
 	}
 }
@@ -89,7 +89,7 @@ func TestWebhookDispatchAndPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, ok := s2.OpenForPath("globex", "ap-9")
+	got, ok, _ := s2.OpenForPath(context.Background(), "globex", "ap-9")
 	if !ok || got.ID != tk.ID || got.Owner != "secops" {
 		t.Fatalf("ticket should survive reload; got %+v ok=%v", got, ok)
 	}
@@ -97,10 +97,10 @@ func TestWebhookDispatchAndPersistence(t *testing.T) {
 
 func TestNilStoreIsNoop(t *testing.T) {
 	var s *Store
-	if s.List("default") != nil || s.Persistent() || s.Dispatches() {
+	if l, _ := s.List(context.Background(), "default"); l != nil || s.Persistent() || s.Dispatches() {
 		t.Error("nil store should be empty/no-op")
 	}
-	if _, ok := s.OpenForPath("default", "ap-1"); ok {
+	if _, ok, _ := s.OpenForPath(context.Background(), "default", "ap-1"); ok {
 		t.Error("nil store OpenForPath should be false")
 	}
 }

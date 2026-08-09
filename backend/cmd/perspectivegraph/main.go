@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -25,6 +26,7 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/audit"
 	"github.com/luiacuaniello/perspectivegraph/internal/auth"
 	"github.com/luiacuaniello/perspectivegraph/internal/broker"
+	"github.com/luiacuaniello/perspectivegraph/internal/clientip"
 	"github.com/luiacuaniello/perspectivegraph/internal/config"
 	"github.com/luiacuaniello/perspectivegraph/internal/connector"
 	awsconn "github.com/luiacuaniello/perspectivegraph/internal/connector/aws"
@@ -43,6 +45,7 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/metrics"
 	"github.com/luiacuaniello/perspectivegraph/internal/normalization"
 	"github.com/luiacuaniello/perspectivegraph/internal/notify"
+	"github.com/luiacuaniello/perspectivegraph/internal/pgmigrate"
 	"github.com/luiacuaniello/perspectivegraph/internal/policy"
 	"github.com/luiacuaniello/perspectivegraph/internal/ratelimit"
 	"github.com/luiacuaniello/perspectivegraph/internal/reqid"
@@ -306,6 +309,14 @@ func checkSecretConfig(cfg config.Config) error {
 		". Fix the path or the file's permissions, or unset the *_FILE variable to read the value from the environment")
 }
 
+// Governance pool ceiling. Six stores share this pool; the analyzer and the API are the
+// only writers and their work is short. 16 is comfortably above what they need and far
+// enough below a default max_connections that several replicas coexist without tuning.
+const (
+	govMaxOpenConns = 16
+	govMaxIdleConns = 4
+)
+
 func run(ctx context.Context, cfg config.Config) error {
 	// Validate the deployment profile before touching any dependency.
 	if err := checkProductionConfig(cfg); err != nil {
@@ -412,9 +423,52 @@ func run(ctx context.Context, cfg config.Config) error {
 
 	// ── Temporal history (optional file backing) ─────────────────────
 	// One store, shared: the analyzer writes each pass, the API reads it.
-	historyStore, err := history.New(cfg.HistoryPath, history.WithSealer(sealer))
-	if err != nil {
-		return fmt.Errorf("history store: %w", err)
+	// One pool for every governance store, not one each: they share a database, and a
+	// pool per store multiplies connections by the number of stores for no benefit.
+	// govDB is nil when the file backend is in use, which is what the stores below
+	// branch on.
+	var govDB *sql.DB
+	if cfg.GovernanceBackend == "postgres" {
+
+		db, derr := sql.Open("postgres", cfg.PostgresDSN)
+		if derr != nil {
+			return fmt.Errorf("governance store: %w", derr)
+		}
+		defer func() { _ = db.Close() }()
+		// Bound the pool. database/sql defaults to UNLIMITED open connections, so a
+		// traffic spike across N replicas can open more connections than Postgres will
+		// accept (max_connections is 100 out of the box) - and the failure lands on
+		// every replica at once, including the ones that were healthy. A ceiling turns
+		// that into local queuing instead of a cluster-wide outage.
+		db.SetMaxOpenConns(govMaxOpenConns)
+		db.SetMaxIdleConns(govMaxIdleConns)
+		// Recycle connections so a failover or a rotated credential is picked up without
+		// a restart, and so idle ones do not sit against the server indefinitely.
+		db.SetConnMaxLifetime(30 * time.Minute)
+		db.SetConnMaxIdleTime(5 * time.Minute)
+
+		applied, merr := pgmigrate.Apply(ctx, db)
+		if merr != nil {
+			return fmt.Errorf("governance store: %w", merr)
+		}
+		slog.Info("governance stores: postgres-backed (replicas may exceed 1)", "migrations_applied", applied)
+		govDB = db
+	}
+
+	var historyStore history.Temporal
+	if govDB != nil {
+		pgHistory, herr := history.NewPG(govDB, 0, 0)
+		if herr != nil {
+			return fmt.Errorf("history store: %w", herr)
+		}
+		historyStore = pgHistory
+		slog.Info("history store: postgres-backed")
+	} else {
+		fileHistory, herr := history.New(cfg.HistoryPath, history.WithSealer(sealer))
+		if herr != nil {
+			return fmt.Errorf("history store: %w", herr)
+		}
+		historyStore = fileHistory
 	}
 	if historyStore.Persistent() {
 		slog.Info("history store: file-backed", "path", cfg.HistoryPath)
@@ -460,14 +514,33 @@ func run(ctx context.Context, cfg config.Config) error {
 
 	// ── Audit (optional; tamper-evident hash-chained log) ────────────
 	var auditRec audit.Recorder = audit.Nop{}
-	if cfg.AuditLogPath != "" {
-		alog, err := audit.Open(cfg.AuditLogPath, audit.WithSealer(sealer))
-		if err != nil {
-			return err
+	// With the Postgres governance backend the chain lives in the database, so it does
+	// not need a path. Gating on the path alone would have switched the audit log OFF
+	// for anyone moving to Postgres - silently, which is the worst way to lose an audit
+	// trail.
+	if cfg.AuditLogPath != "" || govDB != nil {
+		if govDB != nil {
+			// Shared chain: appends serialise on an advisory lock, so several
+			// replicas append to ONE chain rather than forking it.
+			alog, aerr := audit.OpenPG(govDB, audit.WithSealer(sealer))
+			if aerr != nil {
+				return aerr
+			}
+			// Closing drains what is still queued: the log appends asynchronously so a
+			// burst of denials cannot stall the request path, and a shutdown that
+			// skipped this would discard the tail of the trail.
+			defer func() { _ = alog.Close() }()
+			auditRec = alog
+			slog.Info("audit log enabled (postgres, shared chain)")
+		} else {
+			alog, aerr := audit.Open(cfg.AuditLogPath, audit.WithSealer(sealer))
+			if aerr != nil {
+				return aerr
+			}
+			defer func() { _ = alog.Close() }()
+			auditRec = alog
+			slog.Info("audit log enabled", "path", cfg.AuditLogPath)
 		}
-		defer alog.Close()
-		auditRec = alog
-		slog.Info("audit log enabled", "path", cfg.AuditLogPath)
 	}
 
 	// ── Abuse watchers: exfiltration of the attack map + auth brute force ──
@@ -498,7 +571,23 @@ func run(ctx context.Context, cfg config.Config) error {
 	}
 
 	// ── Auth (optional; open with a loud warning when unset) ─────────
-	hmac := auth.NewHMACVerifier(hmacSecrets(cfg), 32<<20)
+	// One resolver decides which address every per-IP control keys on - the rate
+	// limiter, the brute-force lockout and the audit trail alike. They used to decide
+	// separately and disagreed, which is how a spoofed header walked past the lockout.
+	ips, err := clientip.New(cfg.TrustedProxyCIDRs)
+	if err != nil {
+		return err
+	}
+	if ips.TrustsAny() {
+		slog.Info("trusted proxies configured: X-Forwarded-For is honoured from them",
+			"cidrs", cfg.TrustedProxyCIDRs)
+	} else {
+		// Not a warning: this is the safe setting. It is worth saying out loud only
+		// because a deployment that IS behind a proxy and forgot to say so will key
+		// every client on the proxy's address.
+		slog.Info("no trusted proxies configured: per-IP controls key on the peer address and X-Forwarded-For is ignored (set TRUSTED_PROXY_CIDRS when behind a proxy)")
+	}
+	hmac := auth.NewHMACVerifier(hmacSecrets(cfg), 32<<20, ips)
 	if hmac.Enabled() {
 		slog.Info("ingest auth: per-tenant HMAC signature required")
 	} else {
@@ -522,27 +611,53 @@ func run(ctx context.Context, cfg config.Config) error {
 
 	// Per-IP rate limiters (0 disables). burst = 2×rps + 1 absorbs short bursts
 	// (a `make seed` fires several POSTs back-to-back) without throttling.
-	ingestLimiter := ratelimit.New(cfg.IngestRateRPS, int(cfg.IngestRateRPS*2)+1)
-	apiLimiter := ratelimit.New(cfg.APIRateRPS, int(cfg.APIRateRPS*2)+1)
+	ingestLimiter := ratelimit.New(cfg.IngestRateRPS, int(cfg.IngestRateRPS*2)+1).WithClientIP(ips)
+	apiLimiter := ratelimit.New(cfg.APIRateRPS, int(cfg.APIRateRPS*2)+1).WithClientIP(ips)
 	if ingestLimiter.Enabled() || apiLimiter.Enabled() {
 		slog.Info("rate limiting enabled", "ingest_rps", cfg.IngestRateRPS, "api_rps", cfg.APIRateRPS)
 	}
 
-	// ── Triage/suppression store (optional file backing) ─────────────
-	suppressStore, err := suppress.New(cfg.SuppressionsPath, suppress.WithSealer(sealer))
-	if err != nil {
-		return fmt.Errorf("suppression store: %w", err)
-	}
-	if suppressStore.Persistent() {
-		slog.Info("suppression store: file-backed", "path", cfg.SuppressionsPath)
+	// ── Triage/suppression store ─────────────────────────────────────
+	//
+	// GOVERNANCE_BACKEND=postgres puts these decisions where every replica can read
+	// them, which is what lifts the single-replica ceiling: the file store keeps its
+	// records in memory and rewrites the whole set on each change, so a second writer
+	// would neither see the first's decisions nor stop overwriting them.
+	var suppressStore suppress.Suppressions
+	if govDB != nil {
+		pgSuppress, serr := suppress.NewPG(govDB)
+		if serr != nil {
+			return fmt.Errorf("suppression store: %w", serr)
+		}
+		suppressStore = pgSuppress
 	} else {
-		slog.Warn("suppression store: in-memory only - triage decisions are lost on restart (set SUPPRESSIONS_PATH to persist)")
+		fileSuppress, serr := suppress.New(cfg.SuppressionsPath, suppress.WithSealer(sealer))
+		if serr != nil {
+			return fmt.Errorf("suppression store: %w", serr)
+		}
+		suppressStore = fileSuppress
+		if fileSuppress.Persistent() {
+			slog.Info("suppression store: file-backed - single writer, keep replicas at 1", "path", cfg.SuppressionsPath)
+		} else {
+			slog.Warn("suppression store: in-memory only - triage decisions are lost on restart (set SUPPRESSIONS_PATH, or GOVERNANCE_BACKEND=postgres)")
+		}
 	}
 
 	// ── Remediation ticketing (optional file backing + webhook) ──────
-	ticketStore, err := ticket.New(cfg.TicketsPath, cfg.TicketWebhookURL, ticket.WithSealer(sealer))
-	if err != nil {
-		return fmt.Errorf("ticket store: %w", err)
+	var ticketStore ticket.Tickets
+	if govDB != nil {
+		pgTickets, terr := ticket.NewPG(govDB, cfg.TicketWebhookURL)
+		if terr != nil {
+			return fmt.Errorf("ticket store: %w", terr)
+		}
+		ticketStore = pgTickets
+		slog.Info("ticket store: postgres-backed")
+	} else {
+		fileTickets, terr := ticket.New(cfg.TicketsPath, cfg.TicketWebhookURL, ticket.WithSealer(sealer))
+		if terr != nil {
+			return fmt.Errorf("ticket store: %w", terr)
+		}
+		ticketStore = fileTickets
 	}
 	if ticketStore.Dispatches() {
 		slog.Info("ticketing: dispatching new tickets to external tracker", "webhook", cfg.TicketWebhookURL)
@@ -551,9 +666,20 @@ func run(ctx context.Context, cfg config.Config) error {
 	}
 
 	// ── Red-team / BAS validation store (optional file backing) ──────
-	validationStore, err := validation.New(cfg.ValidationsPath, validation.WithSealer(sealer))
-	if err != nil {
-		return fmt.Errorf("validation store: %w", err)
+	var validationStore validation.Verdicts
+	if govDB != nil {
+		pgVerdicts, verr := validation.NewPG(govDB)
+		if verr != nil {
+			return fmt.Errorf("validation store: %w", verr)
+		}
+		validationStore = pgVerdicts
+		slog.Info("validation store: postgres-backed")
+	} else {
+		fileVerdicts, verr := validation.New(cfg.ValidationsPath, validation.WithSealer(sealer))
+		if verr != nil {
+			return fmt.Errorf("validation store: %w", verr)
+		}
+		validationStore = fileVerdicts
 	}
 	if !validationStore.Persistent() {
 		slog.Warn("validation store: in-memory only - red-team/BAS verdicts (and the calibration dataset built from them) reset on restart; set VALIDATIONS_PATH to persist for a real calibration program")
@@ -568,9 +694,19 @@ func run(ctx context.Context, cfg config.Config) error {
 		case !intel.Enabled():
 			slog.Warn("kev holdout: ignored - it forecasts from EPSS, so it needs THREATINTEL=true")
 		default:
-			hstore, err := kevholdout.NewStore(cfg.KEVHoldoutPath)
-			if err != nil {
-				return fmt.Errorf("kev holdout store: %w", err)
+			var hstore kevholdout.Holdout
+			if govDB != nil {
+				pgHoldout, herr := kevholdout.NewPGStore(govDB)
+				if herr != nil {
+					return fmt.Errorf("kev holdout store: %w", herr)
+				}
+				hstore = pgHoldout
+			} else {
+				fileHoldout, herr := kevholdout.NewStore(cfg.KEVHoldoutPath)
+				if herr != nil {
+					return fmt.Errorf("kev holdout store: %w", herr)
+				}
+				hstore = fileHoldout
 			}
 			if cfg.KEVHoldoutPath == "" {
 				slog.Warn("kev holdout: in-memory only - a window outlives most uptimes, so no forecast will ever mature; set KEV_HOLDOUT_PATH")
@@ -583,7 +719,11 @@ func run(ctx context.Context, cfg config.Config) error {
 	// Sample the calibration trend each analyzer pass, so the dashboard can show the
 	// evidence accumulating over a calibration program (Brier/ECE/samples over time).
 	analyzerSvc.WithCalibrator(func(tenant string) (float64, float64, int) {
-		c := validationStore.Calibration(tenant)
+		c, cerr := validationStore.Calibration(ctx, tenant)
+		if cerr != nil {
+			slog.Warn("calibration sample skipped", "tenant", tenant, "err", cerr)
+			return 0, 0, 0
+		}
 		return c.Brier, c.ECE, c.Samples
 	})
 
@@ -605,7 +745,7 @@ func run(ctx context.Context, cfg config.Config) error {
 		provider, model := ai.Provider(aiCfg)
 		slog.Info("AI-native layer enabled", "provider", provider, "model", model)
 	}
-	apiHandler, err := buildAPI(manager, analyzerSvc, indexer, authn, auditRec, apiLimiter, suppressStore, historyStore, ticketStore, validationStore, cfg.CORSAllowedOrigins, exportSigner, exfilWatcher, authGuard, authInfoFromConfig(cfg, authn.Enabled()), prOpener, aiClient, coverageStore, degradedReason(backend, cfg.Env), cfg.MetricsAddr != "")
+	apiHandler, err := buildAPI(manager, analyzerSvc, indexer, authn, auditRec, apiLimiter, suppressStore, historyStore, ticketStore, validationStore, cfg.CORSAllowedOrigins, exportSigner, exfilWatcher, authGuard, authInfoFromConfig(cfg, authn.Enabled()), prOpener, aiClient, coverageStore, degradedReason(backend, cfg.Env), cfg.MetricsAddr != "", ips)
 	if err != nil {
 		return err
 	}
@@ -845,8 +985,8 @@ func authInfoFromConfig(cfg config.Config, authEnabled bool) api.AuthInfo {
 	return info
 }
 
-func buildAPI(manager *graph.Manager, svc *analyzer.Service, idx search.Indexer, authn auth.Authenticator, rec audit.Recorder, limiter *ratelimit.Limiter, suppressStore *suppress.Store, historyStore *history.Store, ticketStore *ticket.Store, validationStore *validation.Store, corsOrigins []string, exportSigner *exportsign.Signer, exfilWatcher, authGuard *secwatch.Watcher, authInfo api.AuthInfo, prOpener action.PROpener, aiClient ai.Client, coverageStore *coverage.Store, degraded string, metricsElsewhere bool) (http.Handler, error) {
-	return api.New(manager, svc, idx).WithAuth(authn, rec).WithRateLimit(limiter).WithSuppress(suppressStore).WithHistory(historyStore).WithTickets(ticketStore).WithValidation(validationStore).WithCORSOrigins(corsOrigins).WithExportSigner(exportSigner).WithAbuseWatchers(exfilWatcher, authGuard).WithAuthInfo(authInfo).WithRemediationPR(prOpener).WithAI(aiClient).WithCoverage(coverageStore).WithDegraded(degraded).WithMetricsElsewhere(metricsElsewhere).Handler()
+func buildAPI(manager *graph.Manager, svc *analyzer.Service, idx search.Indexer, authn auth.Authenticator, rec audit.Recorder, limiter *ratelimit.Limiter, suppressStore suppress.Suppressions, historyStore history.Temporal, ticketStore ticket.Tickets, validationStore validation.Verdicts, corsOrigins []string, exportSigner *exportsign.Signer, exfilWatcher, authGuard *secwatch.Watcher, authInfo api.AuthInfo, prOpener action.PROpener, aiClient ai.Client, coverageStore *coverage.Store, degraded string, metricsElsewhere bool, ips *clientip.Resolver) (http.Handler, error) {
+	return api.New(manager, svc, idx).WithAuth(authn, rec).WithRateLimit(limiter).WithSuppress(suppressStore).WithHistory(historyStore).WithTickets(ticketStore).WithValidation(validationStore).WithCORSOrigins(corsOrigins).WithExportSigner(exportSigner).WithAbuseWatchers(exfilWatcher, authGuard).WithClientIP(ips).WithAuthInfo(authInfo).WithRemediationPR(prOpener).WithAI(aiClient).WithCoverage(coverageStore).WithDegraded(degraded).WithMetricsElsewhere(metricsElsewhere).Handler()
 }
 
 func serveHTTP(ctx context.Context, wg *sync.WaitGroup, name string, srv *http.Server, certFile, keyFile string) {

@@ -107,7 +107,7 @@ func TestAdminCanSuppressAndUnsuppress(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("create: status %d: %s", rec.Code, rec.Body)
 	}
-	if got := st.List("acme"); len(got) != 1 || got[0].PathID != "p1" {
+	if got, _ := st.List(context.Background(), "acme"); len(got) != 1 || got[0].PathID != "p1" {
 		t.Fatalf("store holds %+v", got)
 	}
 
@@ -115,7 +115,7 @@ func TestAdminCanSuppressAndUnsuppress(t *testing.T) {
 	if rec := serve(t, a, asRole(http.MethodDelete, "/suppressions/p1", "", auth.RoleAdmin)); rec.Code != http.StatusNoContent {
 		t.Fatalf("delete: status %d: %s", rec.Code, rec.Body)
 	}
-	if got := st.List("acme"); len(got) != 0 {
+	if got, _ := st.List(context.Background(), "acme"); len(got) != 0 {
 		t.Fatalf("record survived the delete: %+v", got)
 	}
 }
@@ -159,7 +159,7 @@ func TestTTLDaysSetsAnExpiry(t *testing.T) {
 	if rec := serve(t, a, httptest.NewRequest(http.MethodPost, "/suppressions", strings.NewReader(body))); rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
-	got := st.List("")
+	got, _ := st.List(context.Background(), "")
 	if len(got) != 1 || got[0].ExpiresAt == nil {
 		t.Fatalf("no expiry recorded: %+v", got)
 	}

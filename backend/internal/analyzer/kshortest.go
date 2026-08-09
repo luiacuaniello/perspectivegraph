@@ -14,6 +14,7 @@ package analyzer
 // random numbers so the before/after risk delta reflects the cut, not noise.
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"sort"
@@ -221,19 +222,26 @@ func (g *wgraph) toAttackPath(seq []string) AttackPath {
 
 // KShortestPaths returns up to k highest-probability loopless paths from src to
 // dst (node IDs), best first.
-func KShortestPaths(snap graph.Snapshot, src, dst string, k int) []AttackPath {
+//
+// Yen's algorithm is O(k · n · (m + n log n)): k is a multiplier on real work, and it
+// comes straight from the caller. Cancellation is the backstop that keeps a hostile k
+// from outliving the request that asked for it - the api layer bounds k itself.
+func KShortestPaths(ctx context.Context, snap graph.Snapshot, src, dst string, k int) ([]AttackPath, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	g := newWGraph(snap)
 	cands := g.kShortest(src, dst, k)
 	out := make([]AttackPath, 0, len(cands))
 	for _, c := range cands {
 		out = append(out, g.toAttackPath(c.nodes))
 	}
-	return out
+	return out, nil
 }
 
 // KShortestToTarget enumerates the top-k routes to dst from every internet seed
 // (or from `from` when non-empty), merged and ranked best-first.
-func KShortestToTarget(snap graph.Snapshot, from, dst string, k int) []AttackPath {
+func KShortestToTarget(ctx context.Context, snap graph.Snapshot, from, dst string, k int) ([]AttackPath, error) {
 	var seeds []string
 	if from != "" {
 		seeds = []string{from}
@@ -249,13 +257,19 @@ func KShortestToTarget(snap graph.Snapshot, from, dst string, k int) []AttackPat
 		if s == dst {
 			continue
 		}
-		all = append(all, KShortestPaths(snap, s, dst, k)...)
+		// One Yen run per internet seed: the loop multiplies k by the number of seeds,
+		// so the check belongs here rather than only at the top.
+		found, err := KShortestPaths(ctx, snap, s, dst, k)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, found...)
 	}
 	sort.SliceStable(all, func(i, j int) bool { return all[i].Score > all[j].Score })
 	if k > 0 && len(all) > k {
 		all = all[:k]
 	}
-	return all
+	return all, nil
 }
 
 // ── what-if ─────────────────────────────────────────────────────────
@@ -287,15 +301,25 @@ func (r WhatIfResult) RiskReduction() float64 {
 // NOT a true common-random-numbers variance reduction (the two graphs have
 // different edge sets, so the same RNG draws map to different edges) - so make
 // the delta meaningful by running enough iterations, not by relying on CRN.
-func WhatIf(snap graph.Snapshot, cuts []EdgeCut, iterations int, seed uint64) WhatIfResult {
+// It runs TWO full simulations - before and after - so it costs twice what a plain
+// risk simulation does, and an abandoned request must stop both.
+func WhatIf(ctx context.Context, snap graph.Snapshot, cuts []EdgeCut, iterations int, seed uint64) (WhatIfResult, error) {
 	reduced := cutEdges(snap, cuts)
+	before, err := SimulateRisk(ctx, snap, iterations, seed)
+	if err != nil {
+		return WhatIfResult{}, err
+	}
+	after, err := SimulateRisk(ctx, reduced, iterations, seed)
+	if err != nil {
+		return WhatIfResult{}, err
+	}
 	return WhatIfResult{
 		RemovedEdges: len(snap.Edges) - len(reduced.Edges),
 		Before:       FindCriticalPaths(snap),
 		After:        FindCriticalPaths(reduced),
-		BeforeRisk:   SimulateRisk(snap, iterations, seed),
-		AfterRisk:    SimulateRisk(reduced, iterations, seed),
-	}
+		BeforeRisk:   before,
+		AfterRisk:    after,
+	}, nil
 }
 
 func cutEdges(snap graph.Snapshot, cuts []EdgeCut) graph.Snapshot {

@@ -71,6 +71,13 @@ jobs:
       # Exercises the real, hand-written Cypher path (injection-sensitive) that
       # unit tests with the in-memory store can't cover.
       PERSPECTIVE_TEST_POSTGRES_DSN: "host=localhost port=5432 user=perspective password=perspective dbname=perspectivegraph sslmode=disable"
+      # The governance stores and the migration runner skip themselves without a database,
+      # so in the Backend job - which has none - every one of their tests is a silent skip:
+      # six stores holding suppressions, tickets, history, verdicts, KEV holdout and the
+      # audit chain, none of them exercised anywhere. Set at job level rather than on a
+      # single step so the coverage gate below measures them too; otherwise their files
+      # count as uncovered code that nothing ever ran.
+      PERSPECTIVE_TEST_MIGRATE_DSN: "postgres://perspective:perspective@localhost:5432/perspectivegraph?sslmode=disable"
     services:
       postgres:
         image: apache/age:release_PG16_1.6.0@sha256:16aa423d20a31aed36a3313244bf7aa00731325862f20ed584510e381f2feaed
@@ -127,6 +134,16 @@ jobs:
       - name: Run broker delivery integration tests
         working-directory: ./backend
         run: go test -run 'TestPublishedEventReachesTheHandler|TestFailedHandlerSeesTheEventAgain|TestMalformedMessageIsTerminatedNotRedelivered' -v -timeout 240s ./internal/broker/...
+
+      # The governance stores, against a real database. Their failure modes are all
+      # concurrency ones - two replicas forking the audit hash chain, a re-seal moving a
+      # KEV grading date, a migration racing another replica's - so an in-memory stand-in
+      # would assert nothing that matters. Run explicitly rather than left to the coverage
+      # step so a failure here names the store that broke.
+      - name: Run governance store integration tests
+        run: |
+          go test -count=1 ./internal/pgmigrate/... ./internal/audit/... ./internal/suppress/... \
+            ./internal/ticket/... ./internal/history/... ./internal/validation/... ./internal/kevholdout/...
 
       - name: Coverage gate (libraries ≥ 80%)
         run: ../scripts/coverage-gate.sh 80

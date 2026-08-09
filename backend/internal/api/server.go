@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/graphql-go/graphql/language/ast"
 	"github.com/graphql-go/graphql/language/parser"
@@ -14,6 +15,7 @@ import (
 	"github.com/graphql-go/handler"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/auth"
+	"github.com/luiacuaniello/perspectivegraph/internal/clientip"
 	"github.com/luiacuaniello/perspectivegraph/internal/exportsign"
 	"github.com/luiacuaniello/perspectivegraph/internal/graph"
 	"github.com/luiacuaniello/perspectivegraph/internal/metrics"
@@ -74,6 +76,15 @@ func (a *API) WithDegraded(reason string) *API {
 // a nil limiter is a no-op.
 func (a *API) WithRateLimit(l *ratelimit.Limiter) *API {
 	a.limiter = l
+	return a
+}
+
+// WithClientIP sets how the API identifies a client for the brute-force lockout and the
+// audit trail. Nil (the default) trusts no proxy and uses the connecting peer. Pass the
+// SAME resolver the rate limiter got: the two controls disagreeing is what let a spoofed
+// X-Forwarded-For evade the lockout.
+func (a *API) WithClientIP(r *clientip.Resolver) *API {
+	a.ips = r
 	return a
 }
 
@@ -143,7 +154,7 @@ func (a *API) Handler() (http.Handler, error) {
 	// dropped before any work.
 	secured := func(name string, h http.Handler) http.Handler {
 		if a.authEnabled() {
-			h = auth.RequireRole(a.authn, auth.RoleViewer, a.audit, a.authGuard, h)
+			h = auth.RequireRole(a.authn, auth.RoleViewer, a.audit, a.authGuard, a.ips, h)
 		}
 		return a.limiter.Middleware(counting(name, h))
 	}
@@ -331,8 +342,9 @@ func selectionSetCost(ss *ast.SelectionSet, fragments map[string]*ast.FragmentDe
 		switch s := sel.(type) {
 		case *ast.Field:
 			child := selectionSetCost(s.SelectionSet, fragments, memo, visiting)
-			// Each field - each ALIAS of a field - is one resolution of its own.
-			c = cost{depth: 1 + child.depth, selections: 1 + child.selections}
+			// Each field - each ALIAS of a field - is one resolution of its own, and a
+			// resolution is charged what it actually costs (see fieldWeight).
+			c = cost{depth: 1 + child.depth, selections: fieldWeight(s) + child.selections}
 		case *ast.InlineFragment:
 			c = selectionSetCost(s.SelectionSet, fragments, memo, visiting)
 		case *ast.FragmentSpread:
@@ -349,6 +361,70 @@ func selectionSetCost(ss *ast.SelectionSet, fragments map[string]*ast.FragmentDe
 		}
 	}
 	return out
+}
+
+// Per-field cost weights.
+//
+// Counting every field as 1 assumes they all cost about the same, and in this schema they
+// emphatically do not: `aiEnabled` returns a bool from memory, while `riskSimulation`
+// runs up to 50 000 Monte Carlo trials over the whole graph. Under a flat count, 200
+// aliases of the expensive one came to ~400 "selections" - a fifth of the budget - and
+// took 91 seconds of CPU on one unauthenticated 13 KB request. The budget was never the
+// binding constraint, so the guard let through exactly the amplification its own comment
+// warns about.
+//
+// The weights are in the same units as the budget, so N of a field is admissible only
+// while N·weight stays under maxQuerySelections. Charging by NAME is deliberate: this
+// runs before execution, on a parsed document with no schema attached, so a type-aware
+// price is not available here. A cheap field that happens to share a name with an
+// expensive one is over-charged, which is the safe direction to be wrong in.
+const (
+	// weightSimulation prices one full-graph Monte Carlo run (~0.4 s measured at the
+	// 50 000-iteration cap). 200 leaves room for ten per document, which is generous for
+	// anything a human asks and far short of an amplifier.
+	weightSimulation = 200
+	// weightKShortest prices one Yen enumeration, superlinear in the graph and linear in
+	// a k the caller chooses.
+	weightKShortest = 200
+	// weightVerification prices a remediation's what-if proof: two simulations, but at
+	// verifyIterations (800) rather than the cap. Deliberately modest - the dashboard
+	// asks for `verification` across a whole plan in one document, and pricing it like a
+	// full simulation would reject the product's own legitimate query.
+	weightVerification = 5
+)
+
+// fieldWeight returns what one resolution of f costs, in the budget's units.
+func fieldWeight(f *ast.Field) int {
+	if f.Name == nil {
+		return 1
+	}
+	switch f.Name.Value {
+	case "riskSimulation":
+		// Bare `riskSimulation` is served from the simulation the analyzer already ran
+		// for this pass - a map lookup, genuinely cheap, and what the dashboard polls.
+		// Only an explicit iterations/seed recomputes, so only that is charged. Passing
+		// `iterations: 0` is charged too, which costs the caller nothing they need.
+		if hasArg(f, "iterations") || hasArg(f, "seed") {
+			return weightSimulation
+		}
+		return 1
+	case "whatIf":
+		return weightSimulation
+	case "kShortestPaths":
+		return weightKShortest
+	case "verification":
+		return weightVerification
+	}
+	return 1
+}
+
+func hasArg(f *ast.Field, name string) bool {
+	for _, a := range f.Arguments {
+		if a.Name != nil && a.Name.Value == name {
+			return true
+		}
+	}
+	return false
 }
 
 func fragmentCost(name string, fragments map[string]*ast.FragmentDefinition, memo map[string]cost, visiting map[string]bool) cost {
@@ -457,6 +533,53 @@ func (a *API) writeHealth(w http.ResponseWriter) {
 		_, _ = io.WriteString(w, "degraded: "+a.degraded+"\n")
 		return
 	}
+	// The startup reason above is a judgement made ONCE, at construction. On its own it
+	// let the process report "ok" for as long as it stayed up while its database was
+	// gone and every query returned an error - so an orchestrator kept routing to it,
+	// and any alert built on this probe never fired. Readiness has to be asked now.
+	if err := a.storeReachable(); err != nil {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, "graph store unreachable: "+err.Error()+"\n")
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("ok"))
+}
+
+// readinessTTL is how long a store Ping is trusted. Long enough that a kubelet probing
+// every few seconds does not put a query on the database each time; short enough that an
+// outage is reflected within one probe interval.
+const readinessTTL = 3 * time.Second
+
+// readinessTimeout bounds the Ping. A database that accepts the connection and then
+// stops answering must not hold the probe open past the kubelet's own timeout, or the
+// probe neither succeeds nor fails and the pod sits in limbo.
+const readinessTimeout = 2 * time.Second
+
+// storeReachable reports whether the graph store answers, memoised for readinessTTL.
+func (a *API) storeReachable() error {
+	a.readyMu.Lock()
+	defer a.readyMu.Unlock()
+	if a.readyOnce && time.Since(a.readyAt) < readinessTTL {
+		return a.readyErr
+	}
+
+	if a.manager == nil {
+		// No store to ask. Only reachable from a unit test that built an API directly;
+		// a running server always has one. Handled rather than dereferenced, because a
+		// panic in the probe handler is the worst possible place for one.
+		a.readyOnce, a.readyAt, a.readyErr = true, time.Now(), nil
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), readinessTimeout)
+	defer cancel()
+	store, err := a.manager.For(ctx, graph.DefaultTenant)
+	if err == nil {
+		err = store.Ping(ctx)
+	}
+
+	a.readyOnce, a.readyAt, a.readyErr = true, time.Now(), err
+	return err
 }

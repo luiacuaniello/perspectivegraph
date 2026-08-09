@@ -1,5 +1,5 @@
-{{- if and .Values.persistence.enabled (gt (int .Values.backend.replicas) 1) -}}
-{{- fail "persistence.enabled stores governance state (suppressions/tickets/validations/history/audit) on a single-writer ReadWriteOnce volume; set backend.replicas to 1 while it is on - multiple replicas would split-brain the stores and cannot co-mount an RWO PVC." -}}
+{{- if and .Values.persistence.enabled (gt (int .Values.backend.replicas) 1) (ne .Values.governanceBackend "postgres") -}}
+{{- fail "persistence.enabled stores governance state (suppressions/tickets/validations/history/audit) on a single-writer ReadWriteOnce volume; set backend.replicas to 1, or set governanceBackend to \"postgres\" so every replica shares one database instead. Multiple replicas on the file backend would split-brain the stores and cannot co-mount an RWO PVC." -}}
 {{- end -}}
 apiVersion: apps/v1
 kind: Deployment

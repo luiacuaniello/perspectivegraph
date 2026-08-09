@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/luiacuaniello/perspectivegraph/internal/graph"
 	"os"
 	"path/filepath"
 	"sort"
@@ -139,6 +140,7 @@ func New(path string, opts ...Option) (*Store, error) {
 func (s *Store) Persistent() bool { return s != nil && s.path != "" }
 
 func (s *Store) tenant(t string) *tenantHistory {
+	t = tenantKey(t)
 	th := s.byTenant[t]
 	if th == nil {
 		th = &tenantHistory{paths: map[string]*PathRecord{}}
@@ -271,7 +273,7 @@ func (s *Store) Get(tenant, id string) (PathRecord, bool) {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if th := s.byTenant[tenant]; th != nil {
+	if th := s.byTenant[tenantKey(tenant)]; th != nil {
 		if rec, ok := th.paths[id]; ok {
 			return *rec, true
 		}
@@ -287,7 +289,7 @@ func (s *Store) Trend(tenant string, limit int) []PosturePoint {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	th := s.byTenant[tenant]
+	th := s.byTenant[tenantKey(tenant)]
 	if th == nil {
 		return nil
 	}
@@ -308,7 +310,7 @@ func (s *Store) CalibrationTrend(tenant string, limit int) []CalibrationSample {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	th := s.byTenant[tenant]
+	th := s.byTenant[tenantKey(tenant)]
 	if th == nil {
 		return nil
 	}
@@ -322,19 +324,113 @@ func (s *Store) CalibrationTrend(tenant string, limit int) []CalibrationSample {
 }
 
 // Stats rolls up the tenant's temporal summary (open count, MTTR, oldest-open).
+// Temporal is what the API and the analyzer depend on, so a deployment can keep the
+// trend in a file (one replica) or in Postgres (many) without either caller knowing.
+//
+// The reads return zero values rather than errors, unlike the suppression and ticket
+// stores. That difference is deliberate: history is observability. A blank trend chart
+// is a visibly missing chart, not a decision an analyst might act on - whereas an empty
+// suppression list reads as "nothing is suppressed" and would have them re-triage work
+// they already did.
+type Temporal interface {
+	ObservePass(tenant string, open []Observation, riskPct float64)
+	SampleTrend(tenant string, criticalPaths int, riskPct float64)
+	SampleCalibration(tenant string, brier, ece float64, samples int)
+	Get(tenant, id string) (PathRecord, bool)
+	Trend(tenant string, limit int) []PosturePoint
+	CalibrationTrend(tenant string, limit int) []CalibrationSample
+	Stats(tenant string) Stats
+	Persistent() bool
+}
+
+// tenantKey mirrors the other governance stores: an empty tenant is the default one.
+//
+// The file store used the raw string as its map key, so "" and "default" were two
+// different tenants there. Both backends now agree, and the analyzer already passes a
+// normalised tenant - this closes the gap for anything that does not.
+func tenantKey(t string) string {
+	if t == "" {
+		return graph.DefaultTenant
+	}
+	return t
+}
+
+// statsOf aggregates path records into the MTTR panel. Shared by both backends so the
+// number cannot shift when a deployment changes where its history lives - an MTTR that
+// moved on a config change would be indistinguishable from the team getting faster.
+func statsOf(recs []PathRecord) Stats {
+	var st Stats
+	var total float64
+	for _, rec := range recs {
+		if rec.Open {
+			st.OpenPaths++
+			if st.OldestOpenSince == nil || rec.FirstSeen.Before(*st.OldestOpenSince) {
+				fs := rec.FirstSeen
+				st.OldestOpenSince = &fs
+			}
+		}
+		if rec.ResolvedAt != nil {
+			st.ResolvedPaths++
+			total += rec.ResolvedAt.Sub(rec.FirstSeen).Seconds()
+			st.MTTRCount++
+		}
+	}
+	if st.MTTRCount > 0 {
+		st.MTTRSeconds = total / float64(st.MTTRCount)
+	}
+	return st
+}
+
+// Timeouts for the Postgres backend. History is observability: a slow database must
+// never hold an analyzer pass or an API request open waiting for a trend point.
+const (
+	writeTimeout = 5 * time.Second
+	readTimeout  = 5 * time.Second
+)
+
+// pqStrings renders a string slice as a Postgres text[] literal. Written here rather
+// than pulled in with lib/pq's Array so the dependency list stays where it is.
+func pqStrings(vals []string) string {
+	if len(vals) == 0 {
+		return "{}"
+	}
+	out := make([]byte, 0, len(vals)*16)
+	out = append(out, '{')
+	for i, v := range vals {
+		if i > 0 {
+			out = append(out, ',')
+		}
+		out = append(out, '"')
+		for _, c := range []byte(v) {
+			if c == '"' || c == '\\' {
+				out = append(out, '\\')
+			}
+			out = append(out, c)
+		}
+		out = append(out, '"')
+	}
+	return string(append(out, '}'))
+}
+
 func (s *Store) Stats(tenant string) Stats {
 	if s == nil {
 		return Stats{}
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	th := s.byTenant[tenant]
+	th := s.byTenant[tenantKey(tenant)]
 	if th == nil {
 		return Stats{}
 	}
 	var st Stats
 	var total float64
-	for _, rec := range th.paths {
+	// Iterated in id order rather than map order. MTTR is a mean - a float sum divided
+	// by a count - and floating point addition is not associative, so ranging over a Go
+	// map (whose order is deliberately randomised) let the SAME store report an MTTR
+	// that differed in its last bits between two consecutive calls. The Postgres
+	// backend, which reads without an ORDER BY, could differ from it again. A published
+	// number has to be reproducible.
+	for _, rec := range sortedPaths(th.paths) {
 		if rec.Open {
 			st.OpenPaths++
 			if st.OldestOpenSince == nil || rec.FirstSeen.Before(*st.OldestOpenSince) {
@@ -473,4 +569,19 @@ func (s *Store) persist() error {
 		return err
 	}
 	return os.Rename(tmp, s.path)
+}
+
+// sortedPaths returns the records in a stable, backend-independent order: by id, which
+// is unique, so this is a total order both backends can implement identically.
+func sortedPaths(m map[string]*PathRecord) []*PathRecord {
+	ids := make([]string, 0, len(m))
+	for id := range m {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	out := make([]*PathRecord, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, m[id])
+	}
+	return out
 }

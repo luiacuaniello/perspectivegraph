@@ -1,6 +1,7 @@
 package validation
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -17,7 +18,7 @@ func rec(pathID string, o Outcome) Record {
 
 func mustPut(t *testing.T, s *Store, r Record) Record {
 	t.Helper()
-	got, err := s.Put(r)
+	got, err := s.Put(context.Background(), r)
 	if err != nil {
 		t.Fatalf("Put: %v", err)
 	}
@@ -76,17 +77,17 @@ func TestLogRoundTripsThroughReload(t *testing.T) {
 	mustPut(t, s, rec("ap-1", Partial)) // supersedes the ap-1 verdict above
 	doomed := mustPut(t, s, rec("ap-3", Confirmed))
 	mustPut(t, s, rec("", Missed))
-	if err := s.Delete("acme", doomed.ID); err != nil {
+	if err := s.Delete(context.Background(), "acme", doomed.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 
-	before := s.List("acme")
+	before, _ := s.List(context.Background(), "acme")
 
 	reloaded, err := New(path)
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	after := reloaded.List("acme")
+	after, _ := reloaded.List(context.Background(), "acme")
 
 	if len(before) != len(after) {
 		t.Fatalf("reloaded %d records, live store had %d", len(after), len(before))
@@ -135,7 +136,7 @@ func TestLogStaysSealedAtRest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload with the same key: %v", err)
 	}
-	if got := reloaded.List("acme"); len(got) != 1 || got[0].Evidence != "TOTALLY-SECRET-EVIDENCE" {
+	if got, _ := reloaded.List(context.Background(), "acme"); len(got) != 1 || got[0].Evidence != "TOTALLY-SECRET-EVIDENCE" {
 		t.Fatalf("sealed round-trip lost the record: %+v", got)
 	}
 }
@@ -160,7 +161,7 @@ func TestLegacyFileLoadsAndMigratesOnFirstWrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loading a v1 file: %v", err)
 	}
-	if got := len(s.List("acme")); got != 2 {
+	if got := lenOf(s.List(context.Background(), "acme")); got != 2 {
 		t.Fatalf("loaded %d legacy records, want 2", got)
 	}
 	if after, _ := os.ReadFile(path); string(after) != string(b) {
@@ -177,7 +178,7 @@ func TestLegacyFileLoadsAndMigratesOnFirstWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := len(reloaded.List("acme")); got != 3 {
+	if got := lenOf(reloaded.List(context.Background(), "acme")); got != 3 {
 		t.Fatalf("after migration the store holds %d records, want 3 (2 legacy + 1 new)", got)
 	}
 }
@@ -208,7 +209,7 @@ func TestLogCompactsAsItGrows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := len(reloaded.List("acme")); got != 1 {
+	if got := lenOf(reloaded.List(context.Background(), "acme")); got != 1 {
 		t.Fatalf("compacted log replays to %d records, want 1", got)
 	}
 }
@@ -234,7 +235,7 @@ func TestTornFinalLineIsTolerated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a torn tail made the whole store unreadable: %v", err)
 	}
-	if got := len(reloaded.List("acme")); got != 2 {
+	if got := lenOf(reloaded.List(context.Background(), "acme")); got != 2 {
 		t.Fatalf("recovered %d records after a torn tail, want 2", got)
 	}
 }

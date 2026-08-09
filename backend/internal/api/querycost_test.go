@@ -224,3 +224,85 @@ func quoteJSON(s string) string {
 	b.WriteByte('"')
 	return b.String()
 }
+
+// THE finding this weighting exists for, reproduced as a unit.
+//
+// Against a running instance, 200 aliases of riskSimulation - a 13 KB unauthenticated
+// request - held a core for 91 seconds. Under a flat count they came to ~400 selections,
+// a fifth of the budget, so the guard passed them: it was counting fields when the thing
+// that had to be bounded was work.
+func TestAliasedSimulationsExhaustTheBudget(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("{")
+	for i := 0; i < 200; i++ {
+		fmt.Fprintf(&b, " a%d: riskSimulation(iterations: 50000) { anyCompromiseProbability }", i)
+	}
+	b.WriteString(" }")
+
+	c, err := queryCost(b.String())
+	if err != nil {
+		t.Fatalf("queryCost: %v", err)
+	}
+	if c.selections <= maxQuerySelections {
+		t.Fatalf("200 aliased simulations cost %d, still inside the %d budget - the amplification is not bounded",
+			c.selections, maxQuerySelections)
+	}
+}
+
+// The bound has to bite well before 200: ten full simulations is already seconds of work,
+// so eleven must be refused.
+func TestElevenSimulationsAreRefused(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("{")
+	for i := 0; i < 11; i++ {
+		fmt.Fprintf(&b, " a%d: riskSimulation(seed: %d) { anyCompromiseProbability }", i, i)
+	}
+	b.WriteString(" }")
+	c, err := queryCost(b.String())
+	if err != nil {
+		t.Fatalf("queryCost: %v", err)
+	}
+	if c.selections <= maxQuerySelections {
+		t.Fatalf("eleven simulations cost %d, inside the %d budget", c.selections, maxQuerySelections)
+	}
+}
+
+// ...and the dashboard must still work. Its poll asks for riskSimulation with NO
+// arguments, which is served from the pass the analyzer already ran - a map lookup. If
+// that were charged like a fresh simulation, the product's own hot path would be
+// rejected, which is how a security control gets turned off in production.
+func TestTheDashboardPollIsNotCharged(t *testing.T) {
+	const dashboard = `{
+		posture { criticalPaths activePaths nodes edges }
+		riskSimulation {
+			iterations anyCompromiseProbability anyCiLow anyCiHigh
+			crownJewels { id name label compromiseProbability }
+		}
+		attackPaths(limit: 50) { id score confidence steps { probability } }
+	}`
+	c, err := queryCost(dashboard)
+	if err != nil {
+		t.Fatalf("queryCost: %v", err)
+	}
+	if c.selections > maxQuerySelections {
+		t.Fatalf("the dashboard poll costs %d, over the %d budget - the guard would break the product", c.selections, maxQuerySelections)
+	}
+}
+
+// A remediation plan asks for `verification` across every fix in one document. It is
+// genuinely expensive per fix, but pricing it like a full simulation would reject the
+// dashboard's own on-demand proof query, so it is charged modestly and the real backstop
+// for it is cancellation.
+func TestAPlanWideVerificationStillFits(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("{ remediationPlan {")
+	b.WriteString(" title verification { removedEdges pathsEliminated verified }")
+	b.WriteString(" } }")
+	c, err := queryCost(b.String())
+	if err != nil {
+		t.Fatalf("queryCost: %v", err)
+	}
+	if c.selections > maxQuerySelections {
+		t.Fatalf("a plan with verification costs %d, over the %d budget", c.selections, maxQuerySelections)
+	}
+}

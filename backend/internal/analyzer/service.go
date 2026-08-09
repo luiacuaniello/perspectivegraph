@@ -100,7 +100,7 @@ type Service struct {
 	ttl        time.Duration // staleness TTL; 0 disables pruning
 	pruneEvery time.Duration // how often to run the (leader-only) pruner
 
-	history *history.Store // temporal store (path lifecycle + posture trend)
+	history history.Temporal // temporal store (path lifecycle + posture trend)
 	// calibrator, when set, returns a tenant's current calibration headline so each
 	// pass can sample the calibration trend into history. Injected (the analyzer
 	// doesn't depend on the validation store directly).
@@ -158,7 +158,7 @@ func (s *Service) WithTTL(d time.Duration) *Service {
 // WithHistory attaches the temporal store; each pass records the open paths'
 // lifecycle (for age/MTTR/reopens) and a posture sample (for the trend). A nil
 // store is a no-op. Returns the service for chaining.
-func (s *Service) WithHistory(h *history.Store) *Service {
+func (s *Service) WithHistory(h history.Temporal) *Service {
 	s.history = h
 	return s
 }
@@ -393,7 +393,16 @@ func (s *Service) runTenant(ctx context.Context, tenant string) {
 	}
 	// Quantified risk is computed once per pass and cached, so the dashboard
 	// reads it without triggering a fresh Monte Carlo on every poll.
-	risk := SimulateRisk(snap, DefaultRiskIterations, riskSeed)
+	//
+	// The pass's context carries the cancellation, so a shutdown no longer waits for a
+	// full simulation to finish. Abandoning the pass is right: the risk figure is
+	// recomputed from scratch on the next one, and publishing a half-run simulation
+	// would put a wrong probability in the cache every replica then reads.
+	risk, err := SimulateRisk(ctx, snap, DefaultRiskIterations, riskSeed)
+	if err != nil {
+		slog.Warn("analyzer: risk simulation abandoned", "tenant", tenant, "err", err)
+		return
+	}
 
 	metrics.AnalyzerPasses.Inc()
 	metrics.AnalyzerPassSeconds.Observe(time.Since(start).Seconds())

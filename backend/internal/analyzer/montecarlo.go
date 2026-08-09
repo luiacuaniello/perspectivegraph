@@ -25,6 +25,7 @@ package analyzer
 //     it qualitatively. (Field names SensitivityLow/High are kept for the API.)
 
 import (
+	"context"
 	"math"
 	"math/rand/v2"
 	"sort"
@@ -151,7 +152,18 @@ func comonotonicPresent(rng *rand.Rand, causeU map[string]float64) func(probEdge
 // SimulateRisk runs `iterations` Monte Carlo trials over the snapshot. seed makes
 // a run reproducible, so the dashboard sees stable numbers between polls and a
 // repeated what-if comparison doesn't jitter.
-func SimulateRisk(snap graph.Snapshot, iterations int, seed uint64) RiskSimulation {
+//
+// It stops early when ctx is done, and then returns the error rather than a result.
+// That distinction matters: a run cut short has fewer trials than it was asked for, so
+// its probabilities are not the estimate anyone requested - they are a noisier one, and
+// nothing on the wire would say so. A caller that got a truncated simulation back would
+// publish it as fact. An abandoned request must therefore produce an error, not a number.
+//
+// Without this the work was uninterruptible: a request that had already exceeded the
+// server's write timeout, or whose client had hung up, kept a core busy to completion.
+// That is what made aliasing this field an amplifier - see the query guard in the api
+// package, which charges for it accordingly.
+func SimulateRisk(ctx context.Context, snap graph.Snapshot, iterations int, seed uint64) (RiskSimulation, error) {
 	if iterations <= 0 {
 		iterations = DefaultRiskIterations
 	}
@@ -180,7 +192,7 @@ func SimulateRisk(snap graph.Snapshot, iterations int, seed uint64) RiskSimulati
 
 	sim := RiskSimulation{Iterations: iterations}
 	if len(seeds) == 0 || len(jewels) == 0 {
-		return sim // nothing to reach, or nothing to reach from
+		return sim, nil // nothing to reach, or nothing to reach from
 	}
 
 	rng := rand.New(rand.NewPCG(seed, 0x9e3779b97f4a7c15)) // #nosec G404 -- deterministic PRNG for reproducible Monte Carlo, not security-sensitive
@@ -194,6 +206,14 @@ func SimulateRisk(snap graph.Snapshot, iterations int, seed uint64) RiskSimulati
 	present := comonotonicPresent(rng, causeU)
 
 	for it := 0; it < iterations; it++ {
+		// Checked on a stride rather than every trial: a context check is cheap but not
+		// free, and a trial is cheaper still, so testing each one would show up in the
+		// hot loop. 256 bounds the overshoot to well under a millisecond.
+		if it&(cancelCheckStride-1) == 0 {
+			if err := ctx.Err(); err != nil {
+				return RiskSimulation{}, err
+			}
+		}
 		clear(causeU)
 		reachTrial(seeds, adj, visited, present)
 
@@ -219,10 +239,17 @@ func SimulateRisk(snap graph.Snapshot, iterations int, seed uint64) RiskSimulati
 	// posterior and re-run reachability, so the UI can show how much the headline
 	// rests on soft inputs - tight where the evidence is strong, wide where it's a
 	// guess. Kept in the SensitivityLow/High fields to preserve the API.
-	sim.SensitivityLow, sim.SensitivityHigh = anyCompromiseCredibleBand(seeds, jewels, adj, seed, sim.AnyCompromiseProbability)
+	var err error
+	sim.SensitivityLow, sim.SensitivityHigh, err = anyCompromiseCredibleBand(ctx, seeds, jewels, adj, seed, sim.AnyCompromiseProbability)
+	if err != nil {
+		return RiskSimulation{}, err
+	}
 	// Correlation-aware headline: marginalize the reachability over the attacker-profile
 	// mixture, so it's consistent with the per-path mixture score (see the field docs).
-	sim.MixtureCompromiseProbability, sim.ProfileCompromise = mixtureCompromise(seeds, jewels, adj, iterations, seed)
+	sim.MixtureCompromiseProbability, sim.ProfileCompromise, err = mixtureCompromise(ctx, seeds, jewels, adj, iterations, seed)
+	if err != nil {
+		return RiskSimulation{}, err
+	}
 	for _, j := range jewels {
 		node := nodes[j]
 		lo, hi := wilson(hits[j], iterations)
@@ -237,7 +264,7 @@ func SimulateRisk(snap graph.Snapshot, iterations int, seed uint64) RiskSimulati
 		}
 		return sim.CrownJewels[i].ID < sim.CrownJewels[j].ID
 	})
-	return sim
+	return sim, nil
 }
 
 // anyCompromiseCredibleBand returns the 5th-95th percentile credible interval on
@@ -248,9 +275,9 @@ func SimulateRisk(snap graph.Snapshot, iterations int, seed uint64) RiskSimulati
 // evidence justifies. Deterministic from `seed`. `nominal` is the point estimate,
 // used only to guarantee the band brackets it (the reachability function is
 // nonlinear, so the resampled mean can drift slightly off the point estimate).
-func anyCompromiseCredibleBand(seeds, jewels []string, adj map[string][]probEdge, seed uint64, nominal float64) (lo, hi float64) {
+func anyCompromiseCredibleBand(ctx context.Context, seeds, jewels []string, adj map[string][]probEdge, seed uint64, nominal float64) (lo, hi float64, err error) {
 	if len(seeds) == 0 || len(jewels) == 0 {
-		return 0, 0
+		return 0, 0, nil
 	}
 	outerRng := rand.New(rand.NewPCG(seed, 0xa5a5a5a5a5a5a5a5))            // #nosec G404 -- deterministic PRNG for reproducible Monte Carlo, not security-sensitive
 	innerRng := rand.New(rand.NewPCG(seed^0x5bd1e995, 0x9e3779b97f4a7c15)) // #nosec G404 -- deterministic PRNG for reproducible Monte Carlo, not security-sensitive
@@ -266,6 +293,9 @@ func anyCompromiseCredibleBand(seeds, jewels []string, adj map[string][]probEdge
 	present := comonotonicPresent(innerRng, causeU)
 	rates := make([]float64, bandOuter)
 	for o := 0; o < bandOuter; o++ {
+		if e := ctx.Err(); e != nil {
+			return 0, 0, e
+		}
 		for k, es := range adj {
 			dst := sampled[k]
 			for i, e := range es {
@@ -303,7 +333,7 @@ func anyCompromiseCredibleBand(seeds, jewels []string, adj map[string][]probEdge
 	if hi > 1 {
 		hi = 1
 	}
-	return lo, hi
+	return lo, hi, nil
 }
 
 // mixtureCompromise marginalizes the any-compromise reachability over the attacker
@@ -313,10 +343,10 @@ func anyCompromiseCredibleBand(seeds, jewels []string, adj map[string][]probEdge
 // conditioning on the shared c introduces the graph-wide positive correlation the
 // independent headline drops - the same latent-capability mechanism as the per-path
 // mixture, so the two are consistent. Deterministic from `seed`.
-func mixtureCompromise(seeds, jewels []string, adj map[string][]probEdge, iterations int, seed uint64) (float64, []ProfileCompromise) {
+func mixtureCompromise(ctx context.Context, seeds, jewels []string, adj map[string][]probEdge, iterations int, seed uint64) (float64, []ProfileCompromise, error) {
 	profs := currentProfiles()
 	if iterations <= 0 || len(seeds) == 0 || len(jewels) == 0 || len(profs) == 0 {
-		return 0, nil
+		return 0, nil, nil
 	}
 	// A reusable copy of the adjacency with per-profile conditioned probabilities.
 	cond := make(map[string][]probEdge, len(adj))
@@ -351,7 +381,7 @@ func mixtureCompromise(seeds, jewels []string, adj map[string][]probEdge, iterat
 		out = append(out, ProfileCompromise{Profile: c.Name, Prior: c.Prior, Probability: rc})
 		mixture += c.Prior * rc
 	}
-	return mixture, out
+	return mixture, out, nil
 }
 
 // wilson returns the 95% Wilson score interval for a binomial proportion. It
@@ -376,3 +406,7 @@ func wilson(successes, n int) (low, high float64) {
 	}
 	return low, high
 }
+
+// cancelCheckStride is how often a Monte Carlo loop looks at its context. A power of two
+// so the test is a mask rather than a division.
+const cancelCheckStride = 256

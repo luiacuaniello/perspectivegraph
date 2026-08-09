@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/audit"
+	"github.com/luiacuaniello/perspectivegraph/internal/clientip"
 )
 
 // SignatureHeader carries "sha256=<hex>"; TenantHeader selects the tenant whose
@@ -44,10 +45,12 @@ func verify(secret, header string, body []byte) bool {
 type HMACVerifier struct {
 	secrets map[string]string // tenant -> secret
 	maxBody int64
+	ips     *clientip.Resolver
 }
 
-func NewHMACVerifier(secrets map[string]string, maxBody int64) *HMACVerifier {
-	return &HMACVerifier{secrets: secrets, maxBody: maxBody}
+// ips resolves the address recorded in the audit trail. Nil trusts no proxy.
+func NewHMACVerifier(secrets map[string]string, maxBody int64, ips *clientip.Resolver) *HMACVerifier {
+	return &HMACVerifier{secrets: secrets, maxBody: maxBody, ips: ips}
 }
 
 func (h *HMACVerifier) Enabled() bool { return len(h.secrets) > 0 }
@@ -65,7 +68,7 @@ func (h *HMACVerifier) Require(rec audit.Recorder, next http.Handler) http.Handl
 		}
 		secret, ok := h.secrets[tenant]
 		if !ok {
-			rec.Record(r.Context(), "auth.deny", "hmac", "", tenant, map[string]any{"reason": "unknown tenant", "remote": clientIP(r)})
+			rec.Record(r.Context(), "auth.deny", "hmac", "", tenant, map[string]any{"reason": "unknown tenant", "remote": h.ips.Of(r)})
 			unauthorized(w, "unknown tenant")
 			return
 		}
@@ -75,12 +78,12 @@ func (h *HMACVerifier) Require(rec audit.Recorder, next http.Handler) http.Handl
 			return
 		}
 		if !verify(secret, r.Header.Get(SignatureHeader), body) {
-			rec.Record(r.Context(), "auth.deny", "hmac", "", tenant, map[string]any{"reason": "bad signature", "remote": clientIP(r)})
+			rec.Record(r.Context(), "auth.deny", "hmac", "", tenant, map[string]any{"reason": "bad signature", "remote": h.ips.Of(r)})
 			unauthorized(w, "invalid or missing "+SignatureHeader)
 			return
 		}
 		restoreBody(r, body)
-		rec.Record(r.Context(), "ingest", "hmac", "", tenant, map[string]any{"path": r.URL.Path, "remote": clientIP(r)})
+		rec.Record(r.Context(), "ingest", "hmac", "", tenant, map[string]any{"path": r.URL.Path, "remote": h.ips.Of(r)})
 		p := Principal{Subject: "hmac", Tenant: tenant}
 		next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), p)))
 	})

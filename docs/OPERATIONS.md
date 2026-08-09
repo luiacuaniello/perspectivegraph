@@ -242,11 +242,17 @@ Two changes close that:
 ## 7. High availability
 
 The analyzer/scheduler and connectors are **leader-gated** - extra replicas do not
-duplicate work or multiply API calls, but there is no automatic failover of the leader
-yet. For availability today: run the API/ingest stateless tier with multiple replicas
-behind a load balancer, keep the database HA at the managed-Postgres layer, and treat the
-single active analyzer as a restart-tolerant component (its state is derivable from the
-graph). Track true leader-election/failover as a roadmap item.
+duplicate work or multiply API calls - and leadership **fails over on its own**. The
+election is a session-scoped PostgreSQL advisory lock: when the holder dies its
+connection drops, the lock is released server-side, and another replica takes it on its
+next check. No external coordinator, and no operator action.
+
+What still pins you to one replica is the governance state, not the election. With
+`GOVERNANCE_BACKEND=postgres` the suppressions, tickets, posture history, validations and
+KEV holdout are all shared. The **audit log** is not: it is a tamper-evident hash chain
+whose integrity depends on ordered appends by one process, so while `AUDIT_LOG_PATH` is
+set keep `backend.replicas: 1`. The chart enforces that. Keep the database HA at the
+managed-Postgres layer.
 
 ## 8. Pre-production checklist
 

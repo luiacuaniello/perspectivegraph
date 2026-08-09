@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -80,7 +81,7 @@ func TestAdminCanOpenAndCloseATicket(t *testing.T) {
 	if created.ID == "" {
 		t.Fatalf("no ticket id returned, so the caller cannot close it later: %s", rec.Body)
 	}
-	if got := tk.List("acme"); len(got) != 1 {
+	if got, _ := tk.List(context.Background(), "acme"); len(got) != 1 {
 		t.Fatalf("store holds %d tickets, want 1", len(got))
 	}
 
@@ -170,7 +171,7 @@ func TestAdminCanRecordAndDeleteAValidation(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil || created.ID == "" {
 		t.Fatalf("no verdict id returned: %v (%s)", err, rec.Body)
 	}
-	if got := vs.List("acme"); len(got) != 1 {
+	if got, _ := vs.List(context.Background(), "acme"); len(got) != 1 {
 		t.Fatalf("store holds %d verdicts, want 1", len(got))
 	}
 
@@ -178,7 +179,7 @@ func TestAdminCanRecordAndDeleteAValidation(t *testing.T) {
 	if rec.Code != http.StatusNoContent && rec.Code != http.StatusOK {
 		t.Fatalf("delete: status %d: %s", rec.Code, rec.Body)
 	}
-	if got := vs.List("acme"); len(got) != 0 {
+	if got, _ := vs.List(context.Background(), "acme"); len(got) != 0 {
 		t.Fatalf("verdict survived the delete: %+v", got)
 	}
 }
@@ -218,7 +219,7 @@ func TestEveryScopeIsAcceptedOverTheWire(t *testing.T) {
 			t.Errorf("scope %q rejected with %d: %s", scope, rec.Code, rec.Body)
 		}
 	}
-	if got := vs.List(""); len(got) != 3 {
+	if got, _ := vs.List(context.Background(), ""); len(got) != 3 {
 		t.Errorf("stored %d verdicts, want one per scope", len(got))
 	}
 }

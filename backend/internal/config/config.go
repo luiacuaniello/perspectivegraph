@@ -162,6 +162,9 @@ type Config struct {
 	// / mitigating-control / duplicate, with owner + optional expiry) persist
 	// here as JSON. Empty → in-memory only (lost on restart).
 	SuppressionsPath string
+	// GovernanceBackend picks where triage decisions live: "file" (default, one
+	// writer) or "postgres" (shared, so the backend can run more than one replica).
+	GovernanceBackend string
 
 	// History store (optional; file-backed). When set, per-path lifecycle
 	// (first/last seen, open/resolved, reopens → MTTR) and the posture trend
@@ -239,6 +242,18 @@ type Config struct {
 	// local Vite dev server + the docker-compose dashboard. Set to "*" to allow any
 	// origin (not recommended), or to your dashboard's real origin in production.
 	CORSAllowedOrigins []string
+
+	// TrustedProxyCIDRs lists the reverse proxies / ingresses in front of this service,
+	// as CIDRs or bare addresses. It decides whether X-Forwarded-For may be believed.
+	//
+	// Empty (the default) means no proxy: per-IP controls key on the connecting peer and
+	// the header is ignored. That is the safe default - a client can write any header it
+	// likes, so trusting one unconditionally let a brute force rotate the header to evade
+	// the account lockout, and let it name a victim's address to lock that victim out.
+	//
+	// Set it when a proxy really is in front, or every request will look like it came
+	// from the proxy and one attacker's failures will lock out everybody at once.
+	TrustedProxyCIDRs []string
 
 	// StoreEncryptionKey encrypts the file-backed governance stores and the audit
 	// log at rest (AES-256-GCM). A 64-hex-char value is the raw key; anything else
@@ -349,12 +364,13 @@ func Load() Config {
 		OIDCScopes:    getenv("OIDC_SCOPES", "openid profile email"),
 		OIDCLogoutURL: getenv("OIDC_LOGOUT_URL", ""),
 
-		AuditLogPath:     getenv("AUDIT_LOG_PATH", ""),
-		SuppressionsPath: getenv("SUPPRESSIONS_PATH", ""),
-		HistoryPath:      getenv("HISTORY_PATH", ""),
-		TicketsPath:      getenv("TICKETS_PATH", ""),
-		TicketWebhookURL: sec.get("TICKET_WEBHOOK_URL", ""),
-		ValidationsPath:  getenv("VALIDATIONS_PATH", ""),
+		AuditLogPath:      getenv("AUDIT_LOG_PATH", ""),
+		SuppressionsPath:  getenv("SUPPRESSIONS_PATH", ""),
+		GovernanceBackend: getenv("GOVERNANCE_BACKEND", "file"),
+		HistoryPath:       getenv("HISTORY_PATH", ""),
+		TicketsPath:       getenv("TICKETS_PATH", ""),
+		TicketWebhookURL:  sec.get("TICKET_WEBHOOK_URL", ""),
+		ValidationsPath:   getenv("VALIDATIONS_PATH", ""),
 
 		AlertWebhookURL:    sec.get("ALERT_WEBHOOK_URL", ""),
 		AlertWebhookFormat: getenv("ALERT_WEBHOOK_FORMAT", "slack"),
@@ -378,6 +394,7 @@ func Load() Config {
 		AzureFixturesDir:   getenv("AZURE_FIXTURES_DIR", ""),
 
 		CORSAllowedOrigins: getlist("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000"),
+		TrustedProxyCIDRs:  getlist("TRUSTED_PROXY_CIDRS", ""),
 
 		StoreEncryptionKey: sec.get("STORE_ENCRYPTION_KEY", ""),
 		ExportSigningKey:   sec.get("EXPORT_SIGNING_KEY", ""),

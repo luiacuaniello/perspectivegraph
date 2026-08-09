@@ -1,5 +1,7 @@
 package validation
 
+import "context"
+
 import "testing"
 
 // TestCalibrationScenarioDiagnosesEndToEnd is the CI guard for the diagnostics: for
@@ -17,7 +19,7 @@ func TestCalibrationScenarioDiagnosesEndToEnd(t *testing.T) {
 				t.Fatalf("unknown scenario %q", sc.Name)
 			}
 			for _, v := range verdicts {
-				if _, err := s.Put(Record{
+				if _, err := s.Put(context.Background(), Record{
 					Tenant: "acme", PathID: v.PathID, Outcome: v.Outcome, Source: "selftest",
 					PredictedScore: v.PredictedScore, Hops: v.Hops, CorrelatedHops: v.CorrelatedHops,
 					WeightBasis: v.WeightBasis, Detected: v.Detected,
@@ -25,7 +27,7 @@ func TestCalibrationScenarioDiagnosesEndToEnd(t *testing.T) {
 					t.Fatalf("put: %v", err)
 				}
 			}
-			cal := s.Calibration("acme")
+			cal, _ := s.Calibration(context.Background(), "acme")
 			if !contains(cal.Diagnosis, sc.WantInDiag) {
 				t.Errorf("scenario %q: diagnosis %q does not contain %q (verdict=%s, brierRecal=%.3f, samples=%d)",
 					sc.Name, cal.Diagnosis, sc.WantInDiag, cal.Verdict, cal.BrierRecalibrated, cal.Samples)

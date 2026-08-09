@@ -5,17 +5,20 @@
 package ratelimit
 
 import (
-	"net"
 	"net/http"
 	"sync"
 	"time"
 
 	"golang.org/x/time/rate"
+
+	"github.com/luiacuaniello/perspectivegraph/internal/clientip"
 )
 
 // Limiter is a per-IP token-bucket rate limiter. Idle clients are evicted so the
 // client map cannot grow without bound.
 type Limiter struct {
+	ips *clientip.Resolver
+
 	rate  rate.Limit
 	burst int
 	ttl   time.Duration
@@ -126,7 +129,7 @@ func (l *Limiter) Middleware(next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !l.allow(clientIP(r)) {
+		if !l.allow(l.ips.Of(r)) {
 			w.Header().Set("Retry-After", "1")
 			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 			return
@@ -135,13 +138,16 @@ func (l *Limiter) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// clientIP uses the connecting peer's address. We deliberately do NOT trust
-// X-Forwarded-For (spoofable); terminate TLS/proxy in front and the peer is the
-// proxy, which is the right unit to limit anyway for a single-tenant edge.
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
+// WithClientIP sets how the limiter identifies a client. Nil (the default) trusts no
+// proxy and keys on the connecting peer.
+//
+// The limiter and the brute-force lockout MUST resolve the address the same way. They
+// did not once before: the limiter used the peer while the lockout read
+// X-Forwarded-For, and rotating that header walked straight past the lockout. Sharing
+// one resolver is what keeps the two from drifting apart again.
+func (l *Limiter) WithClientIP(r *clientip.Resolver) *Limiter {
+	if l != nil {
+		l.ips = r
 	}
-	return host
+	return l
 }

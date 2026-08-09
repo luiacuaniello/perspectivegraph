@@ -1,8 +1,11 @@
 package analyzer
 
 import (
+	"context"
+	"errors"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/graph"
 	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
@@ -59,11 +62,11 @@ func sharedCauseSnap(cause string) graph.Snapshot {
 // sampling reports P(jewel) = 1-(1-0.5)² = 0.75; the common-cause coupling reports the
 // honest 0.5 (one weakness: it holds or it doesn't, and both routes go with it).
 func TestSharedCauseCouplesReachability(t *testing.T) {
-	indep := SimulateRisk(sharedCauseSnap(""), 20000, 1).AnyCompromiseProbability
+	indep := mustSimulate(t, sharedCauseSnap(""), 20000, 1).AnyCompromiseProbability
 	if math.Abs(indep-0.75) > 0.02 {
 		t.Errorf("independent routes: P(jewel) = %.4f, want ≈ 0.75", indep)
 	}
-	coupled := SimulateRisk(sharedCauseSnap("CVE-X"), 20000, 1).AnyCompromiseProbability
+	coupled := mustSimulate(t, sharedCauseSnap("CVE-X"), 20000, 1).AnyCompromiseProbability
 	if math.Abs(coupled-0.5) > 0.02 {
 		t.Errorf("common-cause routes: P(jewel) = %.4f, want ≈ 0.50 (they fail together)", coupled)
 	}
@@ -73,7 +76,7 @@ func TestSharedCauseCouplesReachability(t *testing.T) {
 }
 
 func TestSimulateRiskUnionExceedsBestPath(t *testing.T) {
-	sim := SimulateRisk(twoRouteSnap(), 20000, 1)
+	sim := mustSimulate(t, twoRouteSnap(), 20000, 1)
 	if len(sim.CrownJewels) != 1 {
 		t.Fatalf("expected 1 crown jewel, got %d", len(sim.CrownJewels))
 	}
@@ -96,7 +99,7 @@ func TestSimulateRiskUnionExceedsBestPath(t *testing.T) {
 }
 
 func TestSimulateRiskSensitivityBand(t *testing.T) {
-	sim := SimulateRisk(twoRouteSnap(), 20000, 1)
+	sim := mustSimulate(t, twoRouteSnap(), 20000, 1)
 	// The credible band (per-edge Beta resampling) must bracket the nominal estimate
 	// and be visibly wide, since these inputs are heuristic/severity-derived (low
 	// basis confidence ⇒ loose posteriors ⇒ a wide band).
@@ -112,7 +115,7 @@ func TestSimulateRiskSensitivityBand(t *testing.T) {
 
 func TestMixtureCompromiseByProfile(t *testing.T) {
 	SetAttackerProfilePriors("") // built-in defaults (commodity/criminal/apt)
-	sim := SimulateRisk(twoRouteSnap(), 20000, 1)
+	sim := mustSimulate(t, twoRouteSnap(), 20000, 1)
 	if len(sim.ProfileCompromise) != 3 {
 		t.Fatalf("expected 3 profiles, got %d", len(sim.ProfileCompromise))
 	}
@@ -139,15 +142,15 @@ func TestMixtureCompromiseByProfile(t *testing.T) {
 }
 
 func TestSimulateRiskReproducible(t *testing.T) {
-	a := SimulateRisk(twoRouteSnap(), 5000, 42)
-	b := SimulateRisk(twoRouteSnap(), 5000, 42)
+	a := mustSimulate(t, twoRouteSnap(), 5000, 42)
+	b := mustSimulate(t, twoRouteSnap(), 5000, 42)
 	if a.AnyCompromiseProbability != b.AnyCompromiseProbability {
 		t.Errorf("same seed must be reproducible: %v vs %v", a.AnyCompromiseProbability, b.AnyCompromiseProbability)
 	}
 }
 
 func TestKShortestPathsEnumeratesBothRoutes(t *testing.T) {
-	paths := KShortestPaths(twoRouteSnap(), "lb", "role", 5)
+	paths := mustKShortest(t, twoRouteSnap(), "lb", "role", 5)
 	if len(paths) != 2 {
 		t.Fatalf("expected 2 loopless paths, got %d", len(paths))
 	}
@@ -165,7 +168,7 @@ func TestKShortestPathsEnumeratesBothRoutes(t *testing.T) {
 func TestWhatIfCuttingExploitEdgeLowersRisk(t *testing.T) {
 	snap := twoRouteSnap()
 	cuts := []EdgeCut{{From: "cve", To: "role", Type: ontology.EdgeExploits}}
-	r := WhatIf(snap, cuts, 20000, 7)
+	r := mustWhatIf(t, snap, cuts, 20000, 7)
 
 	if r.RemovedEdges != 1 {
 		t.Fatalf("expected 1 edge removed, got %d", r.RemovedEdges)
@@ -183,5 +186,83 @@ func TestWhatIfCuttingExploitEdgeLowersRisk(t *testing.T) {
 	}
 	if math.Abs(r.AfterRisk.AnyCompromiseProbability-0.18) > 0.02 {
 		t.Errorf("post-cut risk = %.4f, want ≈ 0.18", r.AfterRisk.AnyCompromiseProbability)
+	}
+}
+
+// The analyzer's expensive entry points take a context and return an error so an
+// abandoned request stops the work (see SimulateRisk). These helpers keep the tests
+// reading as before while still exercising the real signature.
+func mustSimulate(t *testing.T, snap graph.Snapshot, iterations int, seed uint64) RiskSimulation {
+	t.Helper()
+	sim, err := SimulateRisk(context.Background(), snap, iterations, seed)
+	if err != nil {
+		t.Fatalf("SimulateRisk: %v", err)
+	}
+	return sim
+}
+
+func mustKShortest(t *testing.T, snap graph.Snapshot, src, dst string, k int) []AttackPath {
+	t.Helper()
+	paths, err := KShortestPaths(context.Background(), snap, src, dst, k)
+	if err != nil {
+		t.Fatalf("KShortestPaths: %v", err)
+	}
+	return paths
+}
+
+func mustWhatIf(t *testing.T, snap graph.Snapshot, cuts []EdgeCut, iterations int, seed uint64) WhatIfResult {
+	t.Helper()
+	res, err := WhatIf(context.Background(), snap, cuts, iterations, seed)
+	if err != nil {
+		t.Fatalf("WhatIf: %v", err)
+	}
+	return res
+}
+
+// A simulation must stop when its request is abandoned. Before this, the work was
+// uninterruptible: a query that had already blown the server's write timeout, or whose
+// client had hung up, kept a core busy until the last trial. That is what made aliasing
+// the field an amplifier rather than merely a slow query.
+func TestSimulateRiskStopsWhenTheRequestIsCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // the client is already gone
+
+	start := time.Now()
+	_, err := SimulateRisk(ctx, twoRouteSnap(), 50_000_000, 1)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("a cancelled simulation returned a result - a truncated Monte Carlo would be published as fact")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("got %v, want context.Canceled", err)
+	}
+	// 50M trials would take minutes; cancellation must land in milliseconds.
+	if elapsed > 2*time.Second {
+		t.Fatalf("cancellation took %v - the work is not actually interruptible", elapsed)
+	}
+}
+
+// The deadline case, which is what the HTTP write timeout produces.
+func TestSimulateRiskHonoursADeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, err := SimulateRisk(ctx, twoRouteSnap(), 50_000_000, 1)
+	if err == nil {
+		t.Fatal("a simulation outran its deadline and returned a result anyway")
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("overran the deadline by %v", d)
+	}
+}
+
+// WhatIf runs two simulations; both must be interruptible, not just the first.
+func TestWhatIfStopsWhenCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := WhatIf(ctx, twoRouteSnap(), nil, 50_000_000, 1); err == nil {
+		t.Fatal("a cancelled what-if returned a result")
 	}
 }
