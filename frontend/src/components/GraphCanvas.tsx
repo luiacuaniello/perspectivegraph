@@ -1,15 +1,27 @@
 import { useEffect, useRef, useState } from "react";
 import cytoscape, { type Core, type ElementDefinition, type StylesheetJson } from "cytoscape";
 import type { Edge, Node } from "../api/client";
-import { useTheme, type Theme } from "../theme";
+import { useTheme } from "../theme";
 import { category, CATEGORY_STYLE, labelColor, type Category } from "./graphColors";
 
 
 // Small SVG glyph matching each category's node shape, for the legend.
+//
+// Outlined in the same neutral the canvas draws a node in, not filled with a category
+// colour: the nodes stopped being tinted by category (colour is reserved for entry,
+// jewel, runtime and cut), so a coloured swatch here would name a colour the map no
+// longer draws. The SHAPE is the category, and the legend now says exactly that.
 function ShapeGlyph({ cat }: { cat: Category }) {
-  const { color, shape } = CATEGORY_STYLE[cat];
+  const { shape } = CATEGORY_STYLE[cat];
   return (
-    <svg viewBox="0 0 14 14" className="h-3 w-3 shrink-0" fill={color} aria-hidden="true">
+    <svg
+      viewBox="0 0 14 14"
+      className="h-3 w-3 shrink-0"
+      fill="#1a2430"
+      stroke="#3d4c5c"
+      strokeWidth="1.4"
+      aria-hidden="true"
+    >
       {shape === "round-rectangle" && <rect x="1.5" y="3" width="11" height="8" rx="2" />}
       {shape === "barrel" && (
         <path d="M2.5 4.2C2.5 2.6 4.5 2 7 2s4.5.6 4.5 2.2v5.6c0 1.6-2 2.2-4.5 2.2s-4.5-.6-4.5-2.2Z" />
@@ -21,7 +33,7 @@ function ShapeGlyph({ cat }: { cat: Category }) {
   );
 }
 
-// Theme-dependent canvas colors: the structural tones (labels, the ring around a
+// Canvas colors. No longer theme-dependent: the structural tones (labels, the ring around a
 // node, resting edges) must flip with light/dark, while the category fills and
 // the seed/jewel/KEV/highlight accent rings read on both and stay fixed.
 interface GraphPalette {
@@ -29,13 +41,23 @@ interface GraphPalette {
   nodeBorder: string; // ring color = the canvas/panel bg, so fills read cleanly
   edgeLabel: string;
   edgeLine: string;
-  hlNodeLabel: string;
 }
 
-function graphPalette(theme: Theme): GraphPalette {
-  return theme === "dark"
-    ? { nodeLabel: "#c2ccdc", nodeBorder: "#171c26", edgeLabel: "#97a5ba", edgeLine: "#3a465a", hlNodeLabel: "#edf1f8" }
-    : { nodeLabel: "#33404f", nodeBorder: "#ffffff", edgeLabel: "#5b6675", edgeLine: "#c2cad6", hlNodeLabel: "#1f2430" };
+// The map keeps its own night, in both themes.
+//
+// Everywhere else the product moved to a paper ground; the graph did not follow. On a
+// light canvas these four semantic colours have to be muddied to hold contrast against
+// white, and this is the one surface where colour carries meaning that cannot be
+// recovered from shape or position - so it gets a dark, inset surface instead, the way a
+// chart is inset into a printed report. One palette, no theme branch: the map looks the
+// same to two people comparing screens.
+function graphPalette(): GraphPalette {
+  return {
+    nodeLabel: "#dfe7ef",
+    nodeBorder: "#0a0f14",
+    edgeLabel: "#7b8896",
+    edgeLine: "#3a4756",
+  };
 }
 
 function buildStyle(p: GraphPalette): StylesheetJson {
@@ -44,26 +66,37 @@ function buildStyle(p: GraphPalette): StylesheetJson {
       selector: "node",
       style: {
         shape: "data(shape)" as never,
-        "background-color": "data(color)",
-        "background-opacity": 0.95,
+        // Direction C's node: a translucent fill with the category colour as its OUTLINE,
+        // rather than a solid puck. On the dark canvas the fill reads as volume and the
+        // stroke carries the identity, so a node looks like a thing occupying space in a
+        // map instead of a dot on a chart - and the semantic rings below (entry, jewel,
+        // runtime) sit on the same stroke without fighting a saturated fill underneath.
+        // Neutral by default. Category still drives the SHAPE, but no longer the
+        // colour: when every node was tinted by what it is, the four colours that mean
+        // something - entry, jewel, runtime, cut - had to compete with a canvas already
+        // full of hues. A hop is now a quiet slate box, and colour appears only where it
+        // carries a fact.
+        "background-color": "#1a2430",
+        "background-opacity": 1,
+        "border-color": "#3d4c5c",
         label: "data(label)",
         color: p.nodeLabel,
-        "font-size": 10,
-        "font-weight": 600,
+        // Monospace, like the rest of the map's chrome: these are identifiers - image
+        // digests, role names, CIDRs - and a proportional face makes them read as prose.
+        "font-family": "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+        "font-size": 9.5,
+        "font-weight": 400,
         "text-valign": "bottom",
-        "text-margin-y": 6,
+        "text-margin-y": 7,
         "text-wrap": "wrap",
         "text-max-width": "120",
-        // A halo in the canvas colour keeps labels legible over the dot grid and
-        // any edges that pass beneath them.
-        "text-outline-width": 2.5,
-        "text-outline-color": p.nodeBorder,
-        "text-outline-opacity": 1,
+        // No halo. It existed to lift labels off the dot grid; the grid is gone, and the
+        // outline was thickening every glyph into a smudge at this size.
+        "text-outline-width": 0,
         "min-zoomed-font-size": 7, // hide labels when zoomed far out → less clutter
         width: 30,
         height: 30,
-        "border-width": 2,
-        "border-color": p.nodeBorder, // clean ring separating the fill from the canvas
+        "border-width": 1.6,
         "transition-property": "width height border-width",
         "transition-duration": 150 as never,
       },
@@ -80,9 +113,9 @@ function buildStyle(p: GraphPalette): StylesheetJson {
         "text-outline-width": 2,
         "text-outline-color": p.nodeBorder,
         "text-outline-opacity": 1,
-        width: 1.4,
+        width: 1.1,
         "line-color": p.edgeLine,
-        opacity: 0.6, // resting structure recedes so highlighted paths pop
+        opacity: 0.75, // thin and quiet, but readable: the mockup's hairline
         "target-arrow-color": p.edgeLine,
         "target-arrow-shape": "triangle",
         "arrow-scale": 0.85,
@@ -90,62 +123,82 @@ function buildStyle(p: GraphPalette): StylesheetJson {
         "text-rotation": "autorotate",
       },
     },
+    // ── The map's four colours, one meaning each ────────────────────────────────
+    // Order matters: Cytoscape applies later rules over earlier ones, so this reads
+    // runtime < entry < jewel - a crown jewel that is also an entry point shows as a
+    // jewel, which is the fact that decides what you do about it.
     {
-      // Actively exploited at runtime (Falco) - a warm "live" ring. The seed /
-      // jewel / KEV rings below take precedence for nodes that are also those.
+      // Being walked right now (Falco). The product's one red, same as the flag in the
+      // lists - so "this is live" looks identical wherever you meet it.
       selector: "node.runtime",
-      style: { "border-color": "#e0683a", "border-width": 3 },
+      style: { "border-color": "#e2685f", "border-width": 2.4, "background-color": "#2a1c1c" },
     },
     {
-      // Where attacks start: a green ring marks internet-exposed entry points.
+      // Where an attack starts: internet-exposed.
       selector: "node.seed",
-      style: { "border-color": "#2f9e5f", "border-width": 3 },
+      style: { "border-color": "#35c5e8", "border-width": 2.4, "background-color": "#12303c" },
     },
     {
-      // Where attacks aim: a gold ring marks crown jewels (the targets).
+      // Where it aims. The heaviest ring on the canvas: the jewel is the only node whose
+      // loss is the thing being prevented.
       selector: "node.jewel",
-      style: { "border-color": "#caa53a", "border-width": 3.5 },
+      style: {
+        "border-color": "#e3a33a",
+        "border-width": 2.6,
+        "background-color": "#2b2213",
+        // The jewel is the only node whose label is coloured: it names the thing whose
+        // loss is what all of this exists to prevent.
+        color: "#e3c48a",
+      },
     },
     {
-      // KEV - exploited in the wild: a warm amber ring even when not on the
-      // selected path, so it stands out at a glance.
+      // Known exploited in the wild. Not a jewel and not live, but not theoretical
+      // either - it keeps the red, at a lighter weight than an active runtime hit.
       selector: "node.kev",
-      style: { "border-color": "#e0a03a", "border-width": 3 },
+      style: { "border-color": "#e2685f", "border-width": 1.8 },
     },
+    // The route under inspection is marked by LIGHT, not by hue.
+    //
+    // It used to be drawn in red - the same red that means "being walked in runtime" -
+    // so selecting a dormant path made it look live. Selection is not a severity: it
+    // gets brightness and size, which leaves all four semantic colours free to keep
+    // meaning what they mean even inside the highlighted chain.
     {
+      // Selection adds SIZE and a glow. It deliberately sets neither border-color nor
+      // label colour: these rules apply after the semantic ones, so a white ring here
+      // repainted every node on the route you were inspecting - the crown jewel lost its
+      // gold at exactly the moment you were looking at it. Selection now says "this one",
+      // and the four colours keep saying what they mean underneath it.
       selector: "node.hl",
       style: {
-        "border-color": "#d23f38",
-        "border-width": 3.5,
+        "border-width": 3,
         width: 38,
         height: 38,
-        color: p.hlNodeLabel,
-        "font-size": 11,
-        "font-weight": 700,
-        // A soft red glow makes the highlighted chain unmistakable.
-        "underlay-color": "#d23f38",
-        "underlay-opacity": 0.18,
-        "underlay-padding": 8,
+        "font-size": 10.5,
+        "font-weight": 600,
+        "underlay-color": "#ffffff",
+        "underlay-opacity": 0.07,
+        "underlay-padding": 7,
         "z-index": 10,
       },
     },
     {
       selector: "edge.hl",
       style: {
-        "line-color": "#d23f38",
-        "target-arrow-color": "#d23f38",
-        width: 3.2,
+        "line-color": "#c8d4e0",
+        "target-arrow-color": "#c8d4e0",
+        width: 2.6,
         opacity: 1,
         "text-opacity": 1,
         "font-size": 9,
         "font-weight": 600 as never,
-        color: "#d2554f",
+        color: "#c8d4e0",
         "z-index": 9,
       },
     },
     {
       selector: ".faded",
-      style: { opacity: 0.12 },
+      style: { opacity: 0.22 },
     },
   ];
 }
@@ -231,7 +284,7 @@ export default function GraphCanvas({ nodes, edges, highlightNodes, highlightEdg
     const cy = cytoscape({
       container: containerRef.current,
       elements,
-      style: buildStyle(graphPalette(themeRef.current)),
+      style: buildStyle(graphPalette()),
       layout: { name: "breadthfirst", directed: true, spacingFactor: 1.55, padding: 36, avoidOverlap: true, grid: false },
     });
 
@@ -258,7 +311,7 @@ export default function GraphCanvas({ nodes, edges, highlightNodes, highlightEdg
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy || cy.destroyed()) return;
-    cy.style(buildStyle(graphPalette(theme)));
+    cy.style(buildStyle(graphPalette()));
   }, [theme, cyVersion]);
 
   // Tracks the last-fitted selection so we only re-center when it actually
@@ -310,11 +363,11 @@ export default function GraphCanvas({ nodes, edges, highlightNodes, highlightEdg
     <div className="relative h-full w-full">
       <div
         ref={containerRef}
-        className="graph-canvas-bg h-full w-full rounded-xl border border-edge bg-panel shadow-card"
+        className="graph-canvas-bg h-full w-full rounded-xl border border-[#1c2632] bg-[#0a0f14] shadow-card"
       />
 
       {/* Zoom / fit controls */}
-      <div className="absolute right-3 top-3 flex flex-col overflow-hidden rounded-lg border border-edge bg-panel/95 shadow-card backdrop-blur-sm">
+      <div className="absolute right-3 top-3 flex flex-col overflow-hidden rounded-lg border border-[#1c2632] bg-[#101821]/95 text-[#dfe7ef] shadow-card backdrop-blur-sm">
         <GraphControl onClick={() => zoomBy(1.25)} title="Zoom in" label="Zoom in">
           <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round">
             <path d="M10 5v10M5 10h10" />
@@ -331,7 +384,7 @@ export default function GraphCanvas({ nodes, edges, highlightNodes, highlightEdg
           </svg>
         </GraphControl>
       </div>
-      <div className="pointer-events-none absolute bottom-3 left-3 rounded-lg border border-edge bg-panel/90 px-2.5 py-2 text-[10px] text-slate-500 shadow-card backdrop-blur-sm">
+      <div className="pointer-events-none absolute bottom-3 left-3 rounded-lg border border-[#1c2632] bg-[#101821]/92 px-2.5 py-2 text-[10px] text-[#7b8896] shadow-card backdrop-blur-sm">
         <div className="grid grid-cols-2 gap-x-3 gap-y-1">
           {(Object.keys(CATEGORY_STYLE) as Category[]).map((cat) => (
             <span key={cat} className="flex items-center gap-1.5">
@@ -340,17 +393,19 @@ export default function GraphCanvas({ nodes, edges, highlightNodes, highlightEdg
             </span>
           ))}
         </div>
-        <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 border-t border-edge pt-1.5">
+        {/* The rings, in the order they override each other on the canvas. A legend that
+            names a colour the canvas no longer draws is worse than no legend. */}
+        <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 border-t border-[#1c2632] pt-1.5">
           <span className="flex items-center gap-1.5">
-            <span className="h-3 w-3 rounded-full border-2" style={{ borderColor: "#2f9e5f" }} />
+            <span className="h-3 w-3 rounded-full border-2" style={{ borderColor: "#35c5e8" }} />
             entry
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="h-3 w-3 rounded-full border-2" style={{ borderColor: "#caa53a" }} />
+            <span className="h-3 w-3 rounded-full border-2" style={{ borderColor: "#e3a33a" }} />
             sensitive asset
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="h-3 w-3 rounded-full border-2" style={{ borderColor: "#e0683a" }} />
+            <span className="h-3 w-3 rounded-full border-2" style={{ borderColor: "#e2685f" }} />
             runtime
           </span>
         </div>

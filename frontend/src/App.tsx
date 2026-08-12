@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { exportUrl, fetchDashboard, fetchGraph, fetchHistory, fetchStatus, type Dashboard, type GraphData, type History } from "./api/client";
 import Sidebar, { type View } from "./components/Sidebar";
 import AttackPathList from "./components/AttackPathList";
+import { orderForDisplay } from "./components/routeChannels";
 import TodayView from "./components/TodayView";
 import TrustView from "./components/TrustView";
 import AttackPathDetail from "./components/AttackPathDetail";
@@ -193,7 +194,7 @@ export default function App() {
   // The list hides triaged-off (suppressed) paths unless the analyst opts in.
   const allPaths = useMemo(() => data?.attackPaths ?? [], [data]);
   const visiblePaths = useMemo(
-    () => (showSuppressed ? allPaths : allPaths.filter((p) => !p.suppressed)),
+    () => orderForDisplay(showSuppressed ? allPaths : allPaths.filter((p) => !p.suppressed)),
     [allPaths, showSuppressed],
   );
   const suppressedCount = useMemo(() => allPaths.filter((p) => p.suppressed).length, [allPaths]);
@@ -386,7 +387,7 @@ export default function App() {
                 <TodayView
                   posture={data.posture}
                   risk={data.riskSimulation}
-                  paths={data.attackPaths}
+                  paths={visiblePaths}
                   plan={data.remediationPlan}
                   violations={data.invariantViolations}
                   calibration={data.calibration}
@@ -419,6 +420,7 @@ export default function App() {
                     paths={visiblePaths}
                     selectedId={selected?.id ?? null}
                     onSelect={(p) => setSelectedPathId(p.id)}
+                    onChanged={() => setReloadKey((k) => k + 1)}
                   />
                 </div>
                 <div className="min-h-0 lg:col-span-8 lg:overflow-y-auto lg:pr-1">

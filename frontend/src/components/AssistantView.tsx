@@ -59,7 +59,7 @@ export default function AssistantView() {
           </button>
         </div>
         <p className="mt-1 text-[12px] text-slate-500">A board-ready brief of the current posture.</p>
-        {summaryErr && <p className="mt-3 text-[13px] text-red-600">{summaryErr}</p>}
+        {summaryErr && <p className="mt-3 text-[13px] text-flag">{summaryErr}</p>}
         {summary && (
           <>
             <p className="mt-3 whitespace-pre-wrap text-[14px] leading-relaxed text-slate-700">{summary.answer}</p>
@@ -90,7 +90,7 @@ export default function AssistantView() {
             {answerBusy ? "Thinking…" : "Ask"}
           </button>
         </div>
-        {answerErr && <p className="mt-3 text-[13px] text-red-600">{answerErr}</p>}
+        {answerErr && <p className="mt-3 text-[13px] text-flag">{answerErr}</p>}
         {answer && (
           <>
             <p className="mt-3 whitespace-pre-wrap text-[14px] leading-relaxed text-slate-700">{answer.answer}</p>

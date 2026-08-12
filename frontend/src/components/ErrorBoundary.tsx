@@ -27,7 +27,7 @@ export default class ErrorBoundary extends Component<
             The dashboard hit an unexpected error. The backend and your data are unaffected - reload to
             recover.
           </p>
-          <pre className="mt-3 max-h-40 overflow-auto rounded-lg bg-ink p-3 text-left font-mono text-[11px] text-red-700">
+          <pre className="mt-3 max-h-40 overflow-auto rounded-lg bg-ink p-3 text-left font-mono text-[11px] text-flag">
             {String(this.state.error.message || this.state.error)}
           </pre>
           <button

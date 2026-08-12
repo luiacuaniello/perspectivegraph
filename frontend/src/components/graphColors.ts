@@ -32,13 +32,18 @@ export function category(label: string): Category {
   }
 }
 
-// Cool, saturated-enough corporate tones that read on a light canvas.
+// Tuned for the graph's own dark surface (see graphPalette): the canvas is inset and
+// night-dark in both themes, so these no longer have to survive a white background.
+//
+// The SHAPE is the primary encoding and the colour is the reinforcement, not the other
+// way round - the same asset reads correctly on a projector, in print, and to a reader
+// who cannot separate the hues.
 export const CATEGORY_STYLE: Record<Category, { color: string; shape: string; name: string }> = {
-  infra: { color: "#4f78b3", shape: "round-rectangle", name: "Infrastructure" },
-  data: { color: "#c79a3a", shape: "barrel", name: "Data store" },
-  code: { color: "#2f9488", shape: "hexagon", name: "Code & artifacts" },
-  identity: { color: "#7e8ca0", shape: "ellipse", name: "Identity" },
-  finding: { color: "#d2554f", shape: "round-diamond", name: "Finding" },
+  infra: { color: "#5b8fc9", shape: "round-rectangle", name: "Infrastructure" },
+  data: { color: "#c9a959", shape: "barrel", name: "Data store" },
+  code: { color: "#3fae9e", shape: "hexagon", name: "Code & artifacts" },
+  identity: { color: "#93a3b8", shape: "ellipse", name: "Identity" },
+  finding: { color: "#e2685f", shape: "round-diamond", name: "Finding" },
 };
 
 // Shared with the search view's result chips.

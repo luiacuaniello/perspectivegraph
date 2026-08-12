@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import TodayView from "./TodayView";
 import type { AttackPath, Dashboard, Fix, RiskSimulation } from "../api/client";
@@ -57,12 +57,6 @@ const path = (id: string, runtimeConfirmed = false): AttackPath => ({
   detections: [],
 });
 
-function metricValue(label: string): string {
-  const card = screen.getByText(label).closest("div")?.parentElement;
-  if (!card) throw new Error(`metric card not found for ${label}`);
-  return within(card).getByText(/^[0-9]+%?$/).textContent ?? "";
-}
-
 function renderToday(over: Partial<Parameters<typeof TodayView>[0]> = {}) {
   return render(
     <TodayView
@@ -84,29 +78,49 @@ describe("TodayView", () => {
     renderToday();
     expect(screen.getByText("Do these 3 things")).toBeInTheDocument();
     expect(screen.getByText("Scope down IAM role web-admin")).toBeInTheDocument();
-    // 31 + 20 + 11 = 62% of risk, across 10 of 14 routes. It reads both as the
-    // headline metric and in the sentence under the heading.
-    expect(metricValue("Exposure removable today")).toBe("62%");
+    // 31 + 20 + 11 = 62% of risk, across 10 of 14 routes. The briefing states it as a
+    // sentence rather than a KPI tile, but it is the same arithmetic - the point of the
+    // redesign was to stop THREE numbers competing, not to stop reporting them.
+    // The sentence interleaves <span>s around the numbers, so match on the briefing's
+    // full text rather than on a single text node.
+    const briefing = screen.getByRole("heading", { level: 1 }).parentElement;
+    expect(briefing?.textContent).toMatch(/close 10 of your 14 open routes/);
+    expect(briefing?.textContent).toMatch(/62% of reachable risk/);
     expect(screen.getByText(/across 10 of your 14 routes/)).toBeInTheDocument();
   });
 
   it("counts only the sensitive assets actually reachable", () => {
-    // Three crown jewels exist but one is unreachable, so the headline is 2. This
-    // is the number that ticks down as routes are cut - unlike a compromise
-    // percentage pinned at 100, which can never show progress.
+    // Three crown jewels exist but one is unreachable, so the briefing says 2. This is
+    // the number that ticks down as routes are cut - unlike a compromise percentage
+    // pinned at 100, which can never show progress.
     renderToday();
-    expect(metricValue("Sensitive assets reachable")).toBe("2");
-    expect(screen.getByText(/worst: account-admin at 97%/)).toBeInTheDocument();
+    expect(screen.getByText(/2 sensitive assets are reachable/)).toBeInTheDocument();
+    expect(screen.getByText(/Worst reachable: account-admin at 97%/)).toBeInTheDocument();
   });
 
   it("interrupts for routes that are being exercised right now", () => {
     renderToday({ paths: [path("p1", true), path("p2", true), path("p3")] });
-    expect(screen.getByText(/2 routes are being exercised right now/)).toBeInTheDocument();
+    // The headline IS the interruption now: no separate red banner above it.
+    expect(screen.getByRole("heading", { name: /2 routes are being walked/ })).toBeInTheDocument();
+  });
+
+  it("names the asset being walked into, without its access qualifier", () => {
+    // The engine appends "(AdministratorAccess)" to the node name. A headline names the
+    // thing; the qualifier is detail and belongs in the path view.
+    const qualified = path("p1", true);
+    qualified.nodes = [
+      qualified.nodes[0],
+      { ...qualified.nodes[1], name: "payments-admin (AdministratorAccess)" },
+    ];
+    renderToday({ paths: [qualified] });
+    const head = screen.getByRole("heading", { name: /being walked/ });
+    expect(head.textContent).toContain("payments-admin");
+    expect(head.textContent).not.toContain("AdministratorAccess");
   });
 
   it("stays quiet when nothing is runtime-confirmed", () => {
     renderToday();
-    expect(screen.queryByText(/being exercised right now/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/being walked/)).not.toBeInTheDocument();
   });
 
   it("surfaces the trust verdict instead of hiding it in diagnostics", () => {

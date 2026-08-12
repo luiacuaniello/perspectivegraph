@@ -163,7 +163,7 @@ export default function Sidebar({
                   className={`rounded-full px-2 py-0.5 text-[10px] font-semibold tabular-nums ${
                     it.badgeTone === "warn"
                       ? "bg-amber-500/15 text-amber-700"
-                      : "bg-red-500/15 text-red-700"
+                      : "bg-red-500/15 text-flag"
                   }`}
                 >
                   {it.badge}

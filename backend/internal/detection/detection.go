@@ -6,6 +6,7 @@
 package detection
 
 import (
+	"crypto/sha1" // #nosec G505 -- RFC 4122 mandates SHA-1 for UUIDv5; a rule identifier, not a security primitive
 	"fmt"
 	"strings"
 
@@ -79,7 +80,7 @@ func sigmaRule(w, target ontology.Node, cveNote, pathID string) Detection {
 	name := w.Name
 	content := fmt.Sprintf(`# PerspectiveGraph detection-as-code - host/EDR companion to the Falco rule.
 title: Suspicious process in attack-path workload %s
-id: perspectivegraph-%s
+id: %s
 status: experimental
 description: >
   Process execution in %q, a workload on a reachable attack path to crown jewel
@@ -105,7 +106,8 @@ tags:
   - perspectivegraph
   - attack.execution
   - attack.t1059
-`, name, sanitize(pathID), name, target.Name, cveNote)
+  - perspectivegraph.path.%s
+`, name, sigmaID(pathID), name, target.Name, cveNote, sanitize(pathID))
 
 	return Detection{
 		Kind:      "sigma",
@@ -114,6 +116,45 @@ tags:
 		Content:   content,
 		Rationale: "A SIEM-portable companion detection for the same workload; deploy where you don't run Falco.",
 	}
+}
+
+// sigmaID turns a path id into the UUID the Sigma specification requires.
+//
+// Sigma defines `id` as a UUID and converters validate it, so the previous
+// "perspectivegraph-ap-edge-alb-payments-admin-9ebc68f4" was self-describing but not
+// loadable everywhere - and a rule a SIEM refuses is worse than one with an opaque
+// identifier.
+//
+// Version 5 keeps both properties. It is a real UUID, and it is DERIVED from the path
+// id, so the same route always yields the same rule id: re-issuing a rule updates it in
+// place instead of accumulating copies. What the UUID costs in legibility the tag gives
+// back - the readable path id moves into `tags:` (as the Falco rule already did), which
+// is where an analyst correlates an alert to the route that predicted it.
+func sigmaID(pathID string) string {
+	return uuidV5(urlNamespace, "https://github.com/luiacuaniello/perspectivegraph/rules/"+pathID)
+}
+
+// RFC 4122's URL namespace. The standard one rather than a minted project UUID, so the
+// derivation is reproducible by anyone: given the path id, the rule id can be recomputed
+// with any UUID library, which is what makes it auditable rather than magic.
+var urlNamespace = [16]byte{
+	0x6b, 0xa7, 0xb8, 0x11, 0x9d, 0xad, 0x11, 0xd1,
+	0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8,
+}
+
+func uuidV5(ns [16]byte, name string) string {
+	// SHA-1 because RFC 4122 defines version 5 that way. This is a name, not a signature:
+	// SHA-1's weakness to chosen-prefix collisions has no bearing on an identifier whose
+	// input is our own path id.
+	h := sha1.New() // #nosec G401 -- see the import: RFC 4122 mandates SHA-1 for UUIDv5
+	h.Write(ns[:])
+	h.Write([]byte(name))
+	sum := h.Sum(nil)
+	var u [16]byte
+	copy(u[:], sum[:16])
+	u[6] = (u[6] & 0x0f) | 0x50 // version 5
+	u[8] = (u[8] & 0x3f) | 0x80 // RFC 4122 variant
+	return fmt.Sprintf("%x-%x-%x-%x-%x", u[0:4], u[4:6], u[6:8], u[8:10], u[10:16])
 }
 
 // firstOf returns the first node on the path matching any of the labels.

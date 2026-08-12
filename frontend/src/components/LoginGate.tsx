@@ -136,7 +136,7 @@ export default function LoginGate({ children }: { children: ReactNode }) {
           className="mt-1 w-full rounded-lg border border-edge bg-ink px-3 py-2 text-sm text-slate-800 outline-hidden focus:border-accent"
           autoFocus={!ssoAvailable}
         />
-        {error && <p className="mt-2 text-[12px] text-red-600">{error}</p>}
+        {error && <p className="mt-2 text-[12px] text-flag">{error}</p>}
         <button
           onClick={submitToken}
           className="mt-3 w-full rounded-lg border border-edge bg-ink px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-accent/50"

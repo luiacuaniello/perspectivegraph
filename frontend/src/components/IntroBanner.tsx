@@ -63,14 +63,14 @@ export default function IntroBanner({ onDismiss }: { onDismiss: () => void }) {
 
       <ul className="mt-4 grid gap-x-6 gap-y-2 text-[12.5px] text-slate-600 sm:grid-cols-2">
         <li className="flex gap-2">
-          <span className="font-semibold text-red-600">%</span>
+          <span className="font-semibold text-flag">%</span>
           <span>
             The percentage is the <span className="font-medium text-slate-800">exploit likelihood</span> of that whole
             route - higher means easier for an attacker. Start at the top.
           </span>
         </li>
         <li className="flex gap-2">
-          <ZapIcon className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
+          <ZapIcon className="mt-0.5 h-4 w-4 shrink-0 text-flag" />
           <span>
             A live-activity marker means the path is <span className="font-medium text-slate-800">runtime-confirmed</span> -
             something is exploiting it right now, not just in theory.
