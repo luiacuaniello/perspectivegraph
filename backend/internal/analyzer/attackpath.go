@@ -22,6 +22,7 @@ import (
 	"math"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -363,7 +364,11 @@ func assembleAttackPath(nodes []ontology.Node, steps []Step) AttackPath {
 		}
 	}
 	conf, label := pathConfidence(steps)
-	id := fmt.Sprintf("ap-%s-%s", shortID(nodes[0].ID), shortID(nodes[len(nodes)-1].ID))
+	seq := make([]string, len(nodes))
+	for i, n := range nodes {
+		seq[i] = n.ID
+	}
+	id := pathID(seq)
 	postMean, ciLo, ciHi := unifiedScorePosterior(id, steps, currentProfiles(), score)
 	mix, profs := attackerMixture(steps)
 	return AttackPath{
@@ -689,13 +694,51 @@ func reconstruct(seed, jewel string, prev map[string]Step, nodes map[string]onto
 // SAME id - so suppressing one suppressed the other, and a verdict on one graded the
 // other. Trailing words like -admin, -db and -prod are the norm in this domain, not the
 // exception. An identifier is allowed to be ugly; it is not allowed to be ambiguous.
-func shortID(id string) string {
-	const maxRunes = 12
+// stem is the human-readable half of a path id.
+//
+// It used to keep the LAST 12 runes of the whole node id, which cut through both parts of
+// a "<Label>:<name>" identifier: "IAM_Role:payments-admin" came out as "yments-admin" and
+// "LoadBalancer:edge-alb" as "cer:edge-alb". Those strings are not internal - they are
+// embedded in the id: of the generated Sigma rule and the tags: of the Falco rule, so the
+// file a user deploys into their SIEM carried a fragment that reads as corrupted.
+//
+// This is a LABEL, not an identity. pathID appends a hash of the whole route, which is
+// what makes an id unique, so the stem is free to be lossy as long as it stays legible.
+func stem(id string) string {
+	// Node ids are "<Label>:<name>"; the name is the part a person recognises.
+	if i := strings.LastIndex(id, ":"); i >= 0 && i+1 < len(id) {
+		id = id[i+1:]
+	}
+	const maxRunes = 16
 	r := []rune(id)
 	if len(r) <= maxRunes {
 		return id
 	}
-	return string(r[len(r)-maxRunes:])
+	cut := string(r[:maxRunes])
+	// Prefer ending on a separator over slicing through the middle of a word - but not
+	// at the cost of a stem too short to recognise.
+	if i := strings.LastIndexAny(cut, "-._/"); i >= 6 {
+		return cut[:i]
+	}
+	return cut
+}
+
+// pathID names a route: two readable endpoints, plus a hash of the whole path.
+//
+// The hash is not decoration. The critical-path builder used to compose an id from the
+// two endpoints ALONE, so two assets whose names shorten alike - "IAM_Role:payments-admin"
+// and "ServiceAccount:payments-admin" - produced the same id for different routes.
+// Suppressions, tickets, validation verdicts, audit records and the generated detection
+// rules all key on it, so a collision silently merges two findings: suppress one and the
+// other disappears with it.
+//
+// Both builders call this, so the two cannot drift apart again - which is how they
+// diverged in the first place, one carrying a hash and one not.
+func pathID(seq []string) string {
+	if len(seq) == 0 {
+		return "ap-empty"
+	}
+	return fmt.Sprintf("ap-%s-%s-%s", stem(seq[0]), stem(seq[len(seq)-1]), shortHash(pathKey(seq)))
 }
 
 // ── priority queue ──────────────────────────────────────────────────

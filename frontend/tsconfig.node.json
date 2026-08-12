@@ -1,11 +1,24 @@
 {
+  // This project exists only to typecheck vite.config.ts.
+  //
+  // outDir is load-bearing, not tidiness. `composite` forces declaration emit and
+  // TypeScript refuses `noEmit` in a referenced project (TS6310), so `tsc -b` HAS to
+  // write something - and by default it wrote vite.config.js beside the source. Vite
+  // resolves vite.config.js BEFORE vite.config.ts, so every build left a stale compiled
+  // copy that silently shadowed the real config: edits to vite.config.ts stopped having
+  // any effect, and the dev proxy quietly served the SPA for paths it was supposed to
+  // forward. Sending the output to node_modules keeps the shadow from ever existing.
   "compilerOptions": {
     "composite": true,
     "skipLibCheck": true,
     "module": "ESNext",
     "moduleResolution": "bundler",
     "allowSyntheticDefaultImports": true,
-    "strict": true
+    "strict": true,
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
+    "outDir": "./node_modules/.tmp/tsc-node"
   },
-  "include": ["vite.config.ts"]
+  "include": [
+    "vite.config.ts"
+  ]
 }

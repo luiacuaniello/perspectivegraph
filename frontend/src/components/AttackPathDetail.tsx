@@ -113,7 +113,7 @@ function TriageControl({ path, onTriaged }: { path: AttackPath; onTriaged?: () =
           </Button>
         </div>
         {s.note && <div className="mt-1 italic text-slate-500">“{s.note}”</div>}
-        {err && <div className="mt-1 text-red-600">{err}</div>}
+        {err && <div className="mt-1 text-flag">{err}</div>}
       </div>
     );
   }
@@ -164,7 +164,7 @@ function TriageControl({ path, onTriaged }: { path: AttackPath; onTriaged?: () =
           <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="why is this being suppressed?" className={fieldClass} />
         </label>
       </div>
-      {err && <div className="mt-2 text-red-600">{err}</div>}
+      {err && <div className="mt-2 text-flag">{err}</div>}
       <div className="mt-3 flex items-center gap-2">
         <Button variant="primary" onClick={submit} disabled={busy}>
           {busy ? "Suppressing…" : "Suppress path"}
@@ -231,7 +231,7 @@ function TicketControl({ path, onChanged }: { path: AttackPath; onChanged?: () =
         <Button variant="ghost" onClick={close} disabled={busy} className="text-emerald-700 hover:bg-emerald-500/10">
           {busy ? "…" : "close"}
         </Button>
-        {err && <span className="text-red-600">{err}</span>}
+        {err && <span className="text-flag">{err}</span>}
       </div>
     );
   }
@@ -257,7 +257,7 @@ function TicketControl({ path, onChanged }: { path: AttackPath; onChanged?: () =
       >
         Cancel
       </Button>
-      {err && <span className="text-[11px] text-red-600">{err}</span>}
+      {err && <span className="text-[11px] text-flag">{err}</span>}
     </div>
   );
 }
@@ -283,7 +283,7 @@ function AiExplainControl({ path }: { path: AttackPath }) {
       <Button variant="secondary" onClick={explain} disabled={busy} title="Explain this path in plain English with Claude">
         {busy ? "Explaining…" : text ? "Re-explain (AI)" : "Explain (AI)"}
       </Button>
-      {err && <span className="text-[12px] text-red-600">{err}</span>}
+      {err && <span className="text-[12px] text-flag">{err}</span>}
       {text && (
         <div className="basis-full rounded-lg border border-edge bg-ink px-3 py-2">
           <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-slate-700">{text.answer}</p>
@@ -333,7 +333,7 @@ function RemediationPRControl({ path }: { path: AttackPath }) {
       >
         {busy ? "Opening PR…" : "Open fix PR"}
       </Button>
-      {err && <span className="text-[11px] text-red-600">{err}</span>}
+      {err && <span className="text-[11px] text-flag">{err}</span>}
     </span>
   );
 }
@@ -408,7 +408,7 @@ function ValidationControl({ path, onChanged }: { path: AttackPath; onChanged?: 
           <input value={evidence} onChange={(e) => setEvidence(e.target.value)} placeholder="link to the run / notes" className={fieldClass} />
         </label>
       </div>
-      {err && <div className="mt-2 text-red-600">{err}</div>}
+      {err && <div className="mt-2 text-flag">{err}</div>}
       <div className="mt-3 flex items-center gap-2">
         <Button variant="primary" onClick={submit} disabled={busy}>
           {busy ? "Recording…" : "Record verdict"}
@@ -540,10 +540,16 @@ function ArtifactCard({ r, tone = "emerald" }: { r: Artifact; tone?: "emerald" |
 }
 
 
+// Priority bands by WEIGHT, not by hue.
+//
+// These were a red / amber / grey ramp, which put severity back in the colour channel
+// that now carries lifecycle state - the overload the redesign set out to remove. P1
+// still reads first: it is the only one that inverts, and inversion is a stronger signal
+// at a glance than a colour is.
 const PRIORITY_TONE: Record<string, string> = {
-  P1: "bg-red-600 text-white",
-  P2: "bg-amber-500/20 text-amber-700",
-  P3: "bg-slate-500/15 text-slate-600",
+  P1: "bg-slate-900 text-panel",
+  P2: "bg-slate-200 text-slate-900",
+  P3: "bg-slate-100 text-slate-600",
 };
 
 // BASIS_META maps a hop's weight provenance to a short label and whether it is
@@ -633,7 +639,7 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
           </div>
           <div className="flex shrink-0 flex-col items-end gap-1.5 text-right">
             <div>
-              <div className="text-3xl font-semibold leading-none tabular-nums text-red-600">
+              <div className="text-3xl font-semibold leading-none tabular-nums text-slate-900">
                 {(path.score * 100).toFixed(0)}%
               </div>
               <div className="mt-1 flex items-center justify-end gap-1 text-[10px] text-muted">
@@ -641,9 +647,39 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
                 <InfoTip text="How likely an attacker can walk this whole route - the product of each hop's probability (p). Higher = easier to exploit." />
               </div>
             </div>
-            <div className="flex flex-col items-end gap-0.5 text-[10px] tabular-nums text-muted">
+          </div>
+        </div>
+
+        {/* The evidence, on request.
+            
+            All of this used to sit at full weight next to the title: a 90% credible
+            interval, a correlation ceiling, three attacker profiles and a blended
+            average, before the reader had been told what the route even was. The
+            honesty is the product's best property and none of it is removed - but it
+            answers "should I believe this number", which is the second question, not
+            the first. Closed by default, one click away, and it stays open once opened
+            for the reader who always wants it. */}
+        <details className="group rounded-lg border border-edge bg-panel-2/60 px-3 py-2">
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[11px] text-muted transition hover:text-slate-700">
+            <svg
+              viewBox="0 0 12 12"
+              className="h-2.5 w-2.5 shrink-0 transition-transform group-open:rotate-90"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M4 2l4 4-4 4" />
+            </svg>
+            Evidence for this score
+          </summary>
+
+          <div className="mt-2.5 flex flex-col gap-2 border-t border-edge pt-2.5">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] tabular-nums text-muted">
               {path.scoreCiLow != null && path.scoreCiHigh != null && path.scoreCiHigh - path.scoreCiLow > 0.02 ? (
-                <span title="90% credible interval from per-edge evidence (epistemic): tight = trust the number, wide = a rough estimate. Distinct from the correlation ceiling below.">
+                <span title="90% credible interval from per-edge evidence (epistemic): tight = trust the number, wide = a rough estimate. Distinct from the correlation ceiling.">
                   90% CI {(path.scoreCiLow * 100).toFixed(0)}-{(path.scoreCiHigh * 100).toFixed(0)}%
                   {path.confidenceLabel ? ` · ${path.confidenceLabel} confidence` : ""}
                 </span>
@@ -651,24 +687,18 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
                 path.confidenceLabel && <span>{path.confidenceLabel} confidence</span>
               )}
               {path.correlatedHops && path.scoreUpperBound != null && path.scoreUpperBound - path.score > 0.05 && (
-                <span
-                  className="text-amber-700"
-                  title="The score multiplies hops as if independent; if two or more share a cause, the real value could be as high as the weakest hop (the Fréchet ceiling)."
-                >
+                <span title="The score multiplies hops as if independent; if two or more share a cause, the real value could be as high as the weakest hop (the Fréchet ceiling).">
                   up to {(path.scoreUpperBound * 100).toFixed(0)}% if correlated
                 </span>
               )}
             </div>
-          </div>
-        </div>
-
-        {path.profileScores && path.profileScores.length > 0 && (
+            {path.profileScores && path.profileScores.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="flex items-center gap-1 text-[10px] text-muted">
               by attacker profile
               <InfoTip text="Success probability per attacker class (commodity / criminal / APT); 'blended' averages them by threat-model prior. Easy for an APT can be hard for a commodity actor." />
             </span>
-            {path.profileScores.map((p) => {
+                {path.profileScores.map((p) => {
               const label = p.profile === "apt" ? "APT" : p.profile.charAt(0).toUpperCase() + p.profile.slice(1);
               return (
                 <span
@@ -688,8 +718,11 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
                 blended {(path.mixtureScore * 100).toFixed(0)}%
               </span>
             )}
+              </div>
+            )}
+
           </div>
-        )}
+        </details>
 
         {hasStatus && (
           <div className="flex flex-wrap items-center gap-1.5">

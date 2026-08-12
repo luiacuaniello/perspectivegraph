@@ -12,6 +12,16 @@
   --color-accent-soft: rgb(var(--c-accent-soft));
   --color-muted: rgb(var(--c-muted));
 
+  /* "Happening right now". One colour, one meaning - see --c-flag. */
+  --color-flag: rgb(var(--c-flag));
+  --color-flag-soft: rgb(var(--c-flag-soft));
+
+  /* Lifecycle, not severity. Severity is a bar and a number. */
+  --color-status-new: rgb(var(--c-status-new));
+  --color-status-triaged: rgb(var(--c-status-triaged));
+  --color-status-fixing: rgb(var(--c-status-fixing));
+  --color-status-verified: rgb(var(--c-status-verified));
+
   --color-slate-50: rgb(var(--c-slate-50));
   --color-slate-100: rgb(var(--c-slate-100));
   --color-slate-200: rgb(var(--c-slate-200));
@@ -58,98 +68,150 @@
    values are exactly the previous theme, so the light UI is unchanged.
    ───────────────────────────────────────────────────────────────────────── */
 :root {
-  /* Surfaces & accent (light: a clean, bright variant of the mission-control look) */
-  --c-ink: 238 242 248; /* #eef2f8 canvas */
+  /* ── Direction A: "Briefing" ────────────────────────────────────────────
+     A paper ground, not a screen. The old palette put an electric indigo and a
+     sky-cyan gradient behind everything, which made every surface compete with
+     the data on it. Here the ground is a warm porcelain and the ONLY accent is a
+     fir green, used for the thing you should do next and nothing else.
+
+     Severity is deliberately NOT in this ramp. It arrives as a bar and a number
+     (see the status tokens below), so the page still reads for someone who
+     cannot separate a red from a green. */
+  --c-ink: 245 243 239; /* #f5f3ef porcelain canvas */
   --c-panel: 255 255 255; /* #ffffff cards */
-  --c-panel-2: 244 247 252; /* #f4f7fc raised/inset */
-  --c-edge: 221 227 237; /* #dde3ed hairline */
-  --c-accent: 79 70 229; /* #4f46e5 indigo - the single accent (matches dark) */
-  --c-accent-strong: 67 56 202; /* #4338ca */
-  --c-accent-soft: 238 238 252; /* #eeeefc accent tint surface */
-  /* Logo mark palette. Saturated so it reads on the light chip (the chip follows
-     the theme; these follow the chip). */
-  --logo-entry: #0ea5e9; /* internet-exposed entry (sky) */
-  --logo-hub: #4f46e5; /* hub (indigo accent) */
-  --logo-gem: #d97706; /* crown jewel (deep amber) */
-  --logo-gem-hi: #f59e0b; /* jewel highlight */
-  --logo-tile: #4f46e5; /* faint isometric plane */
-  --logo-off: #94a0b3; /* off-path edges/node */
-  --c-muted: 100 116 139; /* #64748b secondary text */
-  --c-shadow: 31 41 55; /* shadow base */
-  /* Brand gradient (logo mark, primary CTA, glows) - sky-cyan to indigo */
-  --c-grad-from: 14 165 233; /* #0ea5e9 sky */
-  --c-grad-to: 79 70 229; /* #4f46e5 indigo */
-  --c-canvas-glow: 14 165 233; /* radial tint behind the app */
-  --canvas-glow-alpha: 0.06;
-  --c-grid: 15 23 42; /* tactical grid line tint */
-  --grid-alpha: 0.04;
-  --glass-alpha: 0.78;
-  --glass-blur: 14px;
+  --c-panel-2: 238 235 228; /* #eeebe4 raised/inset */
+  --c-edge: 227 222 214; /* #e3ded6 hairline */
+  --c-accent: 31 95 87; /* #1f5f57 fir - the single accent */
+  --c-accent-strong: 22 74 68; /* #164a44 */
+  --c-accent-soft: 230 239 237; /* #e6efed accent tint surface */
+  --c-muted: 111 106 98; /* #6f6a62 secondary text */
+  --c-fg: 25 23 19; /* #191713 base text */
 
-  /* Slate ramp (Tailwind defaults) */
-  --c-slate-50: 248 250 252;
-  --c-slate-100: 241 245 249;
-  --c-slate-200: 226 232 240;
-  --c-slate-300: 203 213 225;
-  --c-slate-400: 148 163 184;
-  --c-slate-500: 100 116 139;
-  --c-slate-600: 71 85 105;
-  --c-slate-700: 51 65 85;
-  --c-slate-800: 30 41 59;
-  --c-slate-900: 15 23 42;
+  /* The product's only red. It means "wrong, now": a route being walked in runtime,
+     and the error text under a control whose action just failed. Nothing else may
+     borrow it - severity in particular is a bar and a number, not a hue. */
+  --c-flag: 156 59 33; /* #9c3b21 clay */
+  --c-flag-soft: 250 238 233; /* #faeee9 */
 
-  /* Effects */
-  --c-fg: 31 39 51; /* #1f2733 base text */
+  /* ── Direction B: status is a channel of its own ────────────────────────
+     Colour encodes WHERE A ROUTE IS in its lifecycle - not how bad it is. Those
+     were the same hue before, which is why nothing could be read at a glance. */
+  --c-status-new: 180 112 12; /* #b4700c untriaged */
+  --c-status-triaged: 47 111 208; /* #2f6fd0 seen, decided */
+  --c-status-fixing: 107 70 193; /* #6b46c1 a fix is open */
+  --c-status-verified: 23 121 94; /* #17795e proven cut */
+
+  /* Logo mark. Follows the graph's semantics (entry / hub / jewel) so the mark
+     is a legend for the product rather than decoration. */
+  --logo-entry: #2c9fc4;
+  --logo-hub: #1f5f57;
+  --logo-gem: #b8811f;
+  --logo-gem-hi: #e3a33a;
+  --logo-tile: #1f5f57;
+  --logo-off: #a9a196;
+  --c-shadow: 40 34 26;
+  --c-grad-from: 44 159 196; /* #2c9fc4 */
+  --c-grad-to: 31 95 87; /* #1f5f57 */
+  --c-canvas-glow: 31 95 87;
+  --canvas-glow-alpha: 0.03;
+  --c-grid: 40 34 26;
+  --grid-alpha: 0.03;
+  --glass-alpha: 0.9;
+  --glass-blur: 8px;
+
+  /* Warm neutral ramp, replacing the cool slate. Same names so no component had
+     to change; every border, label and heading in the app moves with it. */
+  --c-slate-50: 250 249 246;
+  --c-slate-100: 242 239 233;
+  --c-slate-200: 230 225 216;
+  --c-slate-300: 211 204 191;
+  --c-slate-400: 169 161 150;
+  --c-slate-500: 111 106 98;
+  --c-slate-600: 86 81 74;
+  --c-slate-700: 64 60 54;
+  --c-slate-800: 42 39 35;
+  --c-slate-900: 25 23 19;
+
   --skeleton-sheen: 255 255 255;
-  --skeleton-sheen-alpha: 0.65;
-  --graph-dot: 214 221 231; /* #d6dde7 canvas dot grid */
+  --skeleton-sheen-alpha: 0.7;
+  --graph-dot: 214 221 231;
   color-scheme: light;
 }
 
 .dark {
-  /* Mission-control: near-black canvas, electric cyan-blue accent, glass panels */
-  --c-ink: 7 10 17; /* #070a11 deep space canvas */
-  --c-panel: 15 20 31; /* #0f141f glass card base */
-  --c-panel-2: 21 28 42; /* #151c2a raised/inset */
-  --c-edge: 39 51 73; /* #273349 lit hairline */
-  --c-accent: 109 108 240; /* #6d6cf0 refined indigo - the single accent */
-  --c-accent-strong: 157 156 245; /* #9d9cf5 */
-  --c-accent-soft: 29 30 54; /* #1d1e36 indigo-tinted surface */
-  /* Logo mark palette (bright on the dark chip). */
-  --logo-entry: #38c8ff;
-  --logo-hub: #6d6cf0;
-  --logo-gem: #f59e0b;
-  --logo-gem-hi: #ffe08a;
-  --logo-tile: #6d6cf0;
-  --logo-off: #8a93a6;
-  --c-muted: 144 160 184; /* secondary text */
+  /* The same paper, at night: warm rather than the old blue-black, so the two
+     themes feel like one product seen under different light. */
+  --c-ink: 20 19 15; /* #14130f */
+  --c-panel: 28 27 22; /* #1c1b16 */
+  --c-panel-2: 36 34 27; /* #24221b */
+  --c-edge: 47 44 36; /* #2f2c24 */
+  --c-accent: 111 191 174; /* #6fbfae fir, lifted to carry on a dark ground */
+  --c-accent-strong: 143 212 197; /* #8fd4c5 */
+  --c-accent-soft: 26 39 36; /* #1a2724 */
+  --c-muted: 156 150 139; /* #9c968b */
+  --c-fg: 240 236 228; /* #f0ece4 */
+
+  --c-flag: 217 132 106; /* #d9846a */
+  --c-flag-soft: 43 28 22; /* #2b1c16 */
+
+  --c-status-new: 224 165 74; /* #e0a54a */
+  --c-status-triaged: 122 174 245; /* #7aaef5 */
+  --c-status-fixing: 177 149 240; /* #b195f0 */
+  --c-status-verified: 88 201 165; /* #58c9a5 */
+
+  --logo-entry: #53d0ef;
+  --logo-hub: #6fbfae;
+  --logo-gem: #e3a33a;
+  --logo-gem-hi: #f5cd7e;
+  --logo-tile: #6fbfae;
+  --logo-off: #7d766a;
   --c-shadow: 0 0 0;
-  --c-grad-from: 56 200 255; /* #38c8ff cyan */
-  --c-grad-to: 99 102 241; /* #6366f1 indigo */
-  --c-canvas-glow: 56 200 255;
-  --canvas-glow-alpha: 0.14;
-  --c-grid: 120 170 230; /* tactical grid line tint */
-  --grid-alpha: 0.05;
-  --glass-alpha: 0.62;
-  --glass-blur: 16px;
+  --c-grad-from: 83 208 239;
+  --c-grad-to: 111 191 174;
+  --c-canvas-glow: 111 191 174;
+  --canvas-glow-alpha: 0.05;
+  --c-grid: 200 190 170;
+  --grid-alpha: 0.04;
+  --glass-alpha: 0.72;
+  --glass-blur: 12px;
 
-  /* Slate ramp inverted: 900 = lightest (headings), 400 = faint */
-  --c-slate-50: 26 32 43;
-  --c-slate-100: 31 38 51;
-  --c-slate-200: 42 51 67;
-  --c-slate-300: 58 70 90;
-  --c-slate-400: 124 138 158;
-  --c-slate-500: 150 164 186;
-  --c-slate-600: 174 185 204;
-  --c-slate-700: 195 205 221;
-  --c-slate-800: 220 227 239;
-  --c-slate-900: 237 241 248;
+  /* Inverted: 900 = lightest (headings), 400 = faint */
+  --c-slate-50: 32 30 24;
+  --c-slate-100: 38 36 29;
+  --c-slate-200: 50 47 38;
+  --c-slate-300: 68 63 52;
+  --c-slate-400: 125 118 106;
+  --c-slate-500: 156 150 139;
+  --c-slate-600: 179 173 161;
+  --c-slate-700: 200 194 182;
+  --c-slate-800: 221 216 205;
+  --c-slate-900: 240 236 228;
 
-  --c-fg: 224 230 240;
   --skeleton-sheen: 255 255 255;
   --skeleton-sheen-alpha: 0.06;
   --graph-dot: 38 46 61;
   color-scheme: dark;
+}
+
+/* ── Direction C: the graph keeps its own night ──────────────────────────
+   The map is a dark, spatial surface in BOTH themes - inset into the page the
+   way a chart is inset into a printed report. That is deliberate: on the paper
+   ground the four graph colours below would have to be muddied to hold contrast,
+   and they are the only place in the product where colour carries meaning that
+   cannot be recovered from shape or position.
+
+   Four colours, one meaning each. Nothing else may use them. */
+:root, .dark {
+  --g-canvas: #0a0f14;
+  --g-panel: #101821;
+  --g-edge: #1c2632;
+  --g-ink: #dfe7ef;
+  --g-muted: #7b8896;
+  --g-entry: #35c5e8; /* internet-exposed entry point */
+  --g-jewel: #e3a33a; /* crown jewel */
+  --g-cut: #45c08a; /* an edge the selected fix removes */
+  --g-runtime: #e2685f; /* confirmed in runtime, not theoretical */
+  --g-off: #5d6c7c; /* everything not on the path under inspection */
 }
 
 /* Status colors stay Tailwind defaults in light; in dark the dark `-600/-700`
@@ -333,9 +395,12 @@ input,
 }
 
 /* The environment-graph canvas dot grid, themed. */
+/* The map has no grid.
+   It used to carry a dot grid, which on a dark canvas reads as texture competing with
+   the graph drawn on top of it - and it was the reason node labels needed a halo to stay
+   legible. Removing both left the nodes and edges as the only marks on the surface. */
 .graph-canvas-bg {
-  background-image: radial-gradient(circle, rgb(var(--graph-dot)) 1px, transparent 1px);
-  background-size: 22px 22px;
+  background-image: none;
 }
 
 /* Slim, theme-matched scrollbars */

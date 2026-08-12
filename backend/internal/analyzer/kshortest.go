@@ -210,7 +210,7 @@ func (g *wgraph) toAttackPath(seq []string) AttackPath {
 	}
 	conf, label := pathConfidence(steps)
 	return AttackPath{
-		ID:               fmt.Sprintf("ap-%s-%s-%s", shortID(seq[0]), shortID(seq[len(seq)-1]), shortHash(pathKey(seq))),
+		ID:               pathID(seq),
 		Score:            score,
 		Nodes:            pathNodes,
 		Steps:            steps,

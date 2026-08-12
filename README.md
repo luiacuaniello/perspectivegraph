@@ -29,8 +29,8 @@ pull request.**
 ![PerspectiveGraph: from the day's exploitable routes to a generated fix](docs/demo.gif)
 
 *Twenty seconds of `make demo`: what is exploitable now → the ranked routes → one route's
-kill chain and its generated Terraform fix → whether the scores can be trusted. Sample
-scanner output and seeded verdicts, not a real environment.*
+kill chain and the fix it generates → whether the scores can be trusted. Sample scanner
+output and seeded verdicts, not a real environment.*
 
 > ### What this has not done yet
 >

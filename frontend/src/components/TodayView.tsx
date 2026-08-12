@@ -1,5 +1,7 @@
 import type { AttackPath, Calibration, Dashboard, Fix, History, IngestSource, RiskSimulation } from "../api/client";
 import InfoTip from "./InfoTip";
+import { routeStatus, verdictSource } from "./routeChannels";
+import { SeverityBar, StatusPill, TargetIcon , NodeName } from "./routeChannelViews";
 import { ZapIcon } from "./icons";
 
 // Today is the decision surface. The old overview opened with a tutorial, then a
@@ -48,42 +50,31 @@ export default function TodayView({
   const reachable = risk.crownJewels.filter((j) => j.compromiseProbability > 0);
   const worst = reachable[0];
   const live = paths.filter((p) => p.runtimeConfirmed);
-  const prev = history?.trend?.length ? history.trend[history.trend.length - 2] : undefined;
+  // The previous analysis pass, so the briefing can say which way the number moved.
+  // The old KPI tile showed this as "+0 since last analysis"; a direction is worth
+  // more than a delta of zero dressed as news.
+  const prevOpen = history?.trend?.length && history.trend.length > 1
+    ? history.trend[history.trend.length - 2].criticalPaths
+    : undefined;
 
   // The scroll container is the wrapper App renders around this view (it also holds
   // the intro banner); repeating `overflow-y-auto h-full` here nested a second
   // scroller inside the first for no gain.
   return (
     <div className="flex flex-col gap-4">
-      {live.length > 0 && <LiveStrip paths={live} onOpenPath={onOpenPath} />}
-
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <Metric
-          label="Sensitive assets reachable"
-          value={String(reachable.length)}
-          tone="danger"
-          note={worst ? `worst: ${worst.name} at ${Math.round(worst.compromiseProbability * 100)}%` : "nothing reachable"}
-          hint="Distinct crown jewels an attacker can reach by some route today. It drops as you cut paths, so progress is visible - unlike a saturated overall risk percentage."
-        />
-        <Metric
-          label="Exposure removable today"
-          value={`${Math.round(removable * 100)}%`}
-          tone="accent"
-          note={topFixes.length ? `with the ${topFixes.length} changes below` : "no fixes generated"}
-          hint="Share of critical-path risk the top changes below eliminate, measured by the same engine that found the paths."
-        />
-        <Metric
-          label="Open routes"
-          value={String(posture.activePaths)}
-          tone={posture.activePaths > 0 ? "warn" : "muted"}
-          note={
-            prev
-              ? `${posture.activePaths - prev.criticalPaths >= 0 ? "+" : ""}${posture.activePaths - prev.criticalPaths} since last analysis`
-              : `${posture.nodes} assets mapped`
-          }
-          hint="Routes from internet exposure to a sensitive asset that are currently open. Suppressed routes are excluded."
-        />
-      </div>
+      <Briefing
+        live={live}
+        reachable={reachable.length}
+        worst={worst}
+        openRoutes={posture.activePaths}
+        fixes={topFixes.length}
+        closes={pathsCovered}
+        removable={removable}
+        prevOpen={prevOpen}
+        calibration={calibration}
+        onOpenPath={onOpenPath}
+        onOpenTrust={onOpenTrust}
+      />
 
       <CoverageStrip coverage={coverage} openRoutes={posture.activePaths} />
 
@@ -156,17 +147,17 @@ function CoverageStrip({ coverage, openRoutes }: { coverage?: IngestSource[] | n
   return (
     <div
       className={`rounded-xl border px-4 py-2.5 text-[11px] ${
-        alarming ? "border-amber-500/40 bg-amber-500/[0.07]" : "border-edge bg-panel"
+        alarming ? "border-slate-400 bg-panel" : "border-edge bg-panel"
       }`}
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className={alarming ? "font-medium text-amber-700" : "text-muted"}>
+        <span className={alarming ? "font-semibold text-slate-900" : "text-muted"}>
           {alarming ? "Nothing found - but some sources have gone quiet" : "Built from"}
         </span>
         {coverage.map((c) => (
-          <span key={c.source} className={c.stale ? "text-amber-700" : "text-slate-600"}>
+          <span key={c.source} className={c.stale ? "font-medium text-slate-900" : "text-slate-600"}>
             {c.source}
-            <span className={c.stale ? "text-amber-700/75" : "text-slate-400"}>
+            <span className={c.stale ? "text-slate-600" : "text-slate-400"}>
               {" "}
               {c.stale ? `silent ${c.silentFor}` : "current"}
             </span>
@@ -174,7 +165,7 @@ function CoverageStrip({ coverage, openRoutes }: { coverage?: IngestSource[] | n
         ))}
       </div>
       {alarming && (
-        <p className="mt-1 text-[11px] leading-relaxed text-amber-700/80">
+        <p className="mt-1 text-[11px] leading-relaxed text-slate-700">
           An empty board only means "no reachable path" for the parts of the estate that were actually
           reported. A source that stopped reporting cannot show you a route it never sent.
         </p>
@@ -183,56 +174,170 @@ function CoverageStrip({ coverage, openRoutes }: { coverage?: IngestSource[] | n
   );
 }
 
-// LiveStrip is the only thing allowed above the fold besides the metrics: a route
-// that runtime confirms is being exercised is not a backlog item, it is now.
-function LiveStrip({ paths, onOpenPath }: { paths: AttackPath[]; onOpenPath: (id: string) => void }) {
-  return (
-    <button
-      onClick={() => onOpenPath(paths[0].id)}
-      className="flex items-center gap-3 rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-left transition hover:border-red-500/70"
-    >
-      <ZapIcon className="h-4 w-4 shrink-0 text-red-600" />
-      <span className="flex-1 text-[13px] text-red-700">
-        <span className="font-semibold">
-          {paths.length} route{paths.length === 1 ? " is" : "s are"} being exercised right now
-        </span>
-        <span className="text-red-700/75"> - runtime confirmed, not theoretical</span>
-      </span>
-      <span className="shrink-0 text-[11px] text-red-700/80">investigate →</span>
-    </button>
-  );
-}
-
-function Metric({
-  label,
-  value,
-  note,
-  tone,
-  hint,
+// The briefing: one sentence and one number.
+//
+// This replaced a red banner plus three competing KPI tiles - "sensitive assets
+// reachable", "exposure removable", "open routes" - each with its own colour. Three
+// numbers at equal weight is three answers to "how bad is it", and the eye picked
+// whichever was reddest rather than whichever was actionable. The same facts are all
+// still here; they are a sentence now, so they can only be read in one order.
+//
+// Red appears here and nowhere else on the page: it means a route is being walked in
+// runtime, right now. Reserving it is what makes it mean something.
+function Briefing({
+  live,
+  reachable,
+  worst,
+  openRoutes,
+  fixes,
+  closes,
+  removable,
+  prevOpen,
+  calibration,
+  onOpenPath,
+  onOpenTrust,
 }: {
-  label: string;
-  value: string;
-  note: string;
-  tone: "danger" | "accent" | "warn" | "muted";
-  hint: string;
+  live: AttackPath[];
+  reachable: number;
+  worst?: { name: string; compromiseProbability: number };
+  openRoutes: number;
+  fixes: number;
+  closes: number;
+  removable: number;
+  prevOpen?: number;
+  calibration?: Calibration;
+  onOpenPath: (id: string) => void;
+  onOpenTrust: () => void;
 }) {
-  const toneClass =
-    tone === "danger" ? "text-red-600" : tone === "accent" ? "text-accent" : tone === "warn" ? "text-amber-600" : "text-slate-700";
+  const delta = prevOpen === undefined ? 0 : openRoutes - prevOpen;
+  // Who, if anyone, has a recorded verdict on the routes that runtime says are live.
+  //
+  // "2 routes are being walked right now" reads as an intrusion, and the reader has no
+  // way to tell it from their own purple team exercising the same path - which is very
+  // often what runtime traffic on a tested route actually is. Those two readings call
+  // for opposite responses, and guessing between them is not something to leave to the
+  // person on call at 3am. The engine already stores who recorded each verdict; this
+  // just says it out loud.
+  const testers = [...new Set(live.map(verdictSource).filter(Boolean))] as string[];
+  // The other half of the live sentence, and the half nobody was saying.
+  //
+  // "2 routes are being walked right now" answers whether it is happening. The trust
+  // page separately knows that 9 of 10 confirmed-exploitable routes were walked without
+  // the detection stack noticing. Put together they mean: it is happening, and probably
+  // nobody is watching - which is the thing a reader most needs and neither page said.
+  const det = calibration?.detection;
+  const blind = det && det.tested > 0 ? det.tested - det.detected : 0;
+  // Provisional carries over from the trust verdict. The percentages below are computed
+  // from scores the engine itself currently rates mis-scaled, and asserting 61% in bold
+  // while that caveat lives two screens away is the page believing its own output more
+  // than its own measurement does.
+  const provisional = calibration?.hasData ? calibration.samples < 30 : false;
+  // The asset's own name, without the trailing "(AdministratorAccess)" qualifier the
+  // engine appends. A headline names the thing; the qualifier belongs in the detail.
+  const target = live[0]?.nodes?.[live[0].nodes.length - 1]?.name?.replace(/\s*\(.*\)\s*$/, "");
   return (
-    <div className="rounded-2xl border border-edge bg-panel px-4 py-3.5">
-      <div className="flex items-center gap-1 text-[11px] text-muted">
-        {label}
-        <InfoTip text={hint} />
-      </div>
-      <div className={`mt-1.5 text-[30px] font-semibold leading-none tabular-nums ${toneClass}`}>{value}</div>
-      <div className="mt-1.5 text-[11px] text-muted">{note}</div>
-    </div>
+    <section className="flex flex-col gap-2">
+      <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Today</p>
+
+      {live.length > 0 ? (
+        <h1 className="max-w-[34ch] text-[22px] font-semibold leading-[1.25] tracking-[-0.02em] text-slate-900">
+          {live.length} route{live.length === 1 ? " is" : "s are"} being walked
+          {target ? (
+            <>
+              {" "}into{" "}
+              <button
+                onClick={() => onOpenPath(live[0].id)}
+                className="text-flag underline-offset-4 hover:underline"
+              >
+                {target}
+              </button>
+            </>
+          ) : null}{" "}
+          right now.
+        </h1>
+      ) : (
+        <h1 className="max-w-[34ch] text-[22px] font-semibold leading-[1.25] tracking-[-0.02em] text-slate-900">
+          {reachable === 0
+            ? "Nothing sensitive is reachable today."
+            : `${reachable} sensitive asset${reachable === 1 ? " is" : "s are"} reachable today.`}
+        </h1>
+      )}
+
+      {live.length > 0 && (
+        <p className="max-w-[62ch] text-[12.5px] leading-relaxed">
+          {testers.length > 0 ? (
+            <span className="text-slate-700">
+              {live.length === 1 ? "It carries" : "They carry"} a recorded verdict from{" "}
+              <span className="font-medium text-slate-900">{testers.join(" and ")}</span> - so this
+              traffic may be your own test, not an intruder.
+            </span>
+          ) : (
+            <span className="text-flag">
+              No test verdict is recorded against {live.length === 1 ? "it" : "them"}. Nobody has
+              claimed this traffic.
+            </span>
+          )}
+          {blind > 0 && det && (
+            <span className="text-slate-700">
+              {" "}Of the routes tested end to end, {det.detected} of {det.tested}{" "}
+              {det.detected === 1 ? "was" : "were"} caught by detection - so a route like this one
+              is likely to run{" "}
+              <button onClick={onOpenTrust} className="font-medium text-slate-900 underline-offset-4 hover:underline">
+                unseen
+              </button>
+              .
+            </span>
+          )}
+        </p>
+      )}
+
+      <p className="max-w-[62ch] text-[13px] leading-relaxed text-muted">
+        {live.length > 0 && reachable > 0 && (
+          <>
+            {reachable} sensitive asset{reachable === 1 ? " is" : "s are"} reachable in total.{" "}
+          </>
+        )}
+        {fixes > 0 ? (
+          <>
+            The {fixes === 1 ? "change" : `${fixes} changes`} below close{fixes === 1 ? "s" : ""}{" "}
+            <span className="font-medium text-slate-700">{closes}</span> of your{" "}
+            <span className="font-medium text-slate-700">{openRoutes}</span> open route
+            {openRoutes === 1 ? "" : "s"} - {Math.round(removable * 100)}% of reachable risk
+            {provisional ? (
+              <>
+                {" "}
+                <button
+                  onClick={onOpenTrust}
+                  className="underline decoration-dotted underline-offset-2 hover:text-slate-700"
+                  title={`That percentage rests on scores the engine currently rates provisional, measured on ${calibration?.samples ?? 0} recorded outcomes. The ranking holds; the scale is what is uncertain.`}
+                >
+                  (provisional)
+                </button>
+              </>
+            ) : null}
+            .
+          </>
+        ) : (
+          <>
+            {openRoutes} route{openRoutes === 1 ? " is" : "s are"} open and no fix was generated for them.
+          </>
+        )}
+        {worst ? (
+          <>
+            {" "}Worst reachable: {worst.name} at {Math.round(worst.compromiseProbability * 100)}%.
+          </>
+        ) : null}
+        {delta !== 0 ? (
+          <>
+            {" "}
+            {Math.abs(delta)} {delta > 0 ? "more" : "fewer"} than the last analysis.
+          </>
+        ) : null}
+      </p>
+    </section>
   );
 }
 
-// On a wide screen the title sat far left and the percentage far right with dead
-// space between, which made 31% / 20% / 11% hard to weigh against each other. The
-// gutter now carries the comparison itself.
 function FixRow({ fix, rank }: { fix: Fix; rank: number }) {
   const pct = Math.round(fix.coveragePct * 100);
   return (
@@ -263,42 +368,27 @@ function FixRow({ fix, rank }: { fix: Fix; rank: number }) {
 function PathRow({ path, onOpen }: { path: AttackPath; onOpen: () => void }) {
   const from = path.nodes[0]?.name ?? "?";
   const to = path.nodes[path.nodes.length - 1]?.name ?? "?";
-  // -700 shades: amber-600 at this size measures 3.2:1 on the light canvas and fails
-  // WCAG AA. index.css re-lightens the -700 text shades for dark mode.
-  const band =
-    path.priorityLabel === "P1" ? "text-red-700" : path.priorityLabel === "P2" ? "text-amber-700" : "text-slate-600";
   return (
     <li>
       <button
         onClick={onOpen}
         className="flex w-full items-center gap-3 rounded-xl border border-edge bg-panel px-4 py-2.5 text-left transition hover:border-accent/50"
       >
-        {path.runtimeConfirmed && <ZapIcon className="h-3.5 w-3.5 shrink-0 text-red-600" />}
-        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-[12.5px] text-slate-800">
-          <span className="min-w-[3.75rem] truncate [flex-shrink:3]">{from}</span>
-          <span className="shrink-0 text-muted">→</span>
-          <span className="min-w-[5rem] truncate [flex-shrink:1]">{to}</span>
-        </span>
-        <span className="shrink-0 text-[11px] tabular-nums text-muted">exploit {Math.round(path.score * 100)}%</span>
-        {path.priority != null ? (
-          <span
-            className={`shrink-0 text-[13px] font-semibold tabular-nums ${band}`}
-            title={`Triage priority ${path.priority.toFixed(0)}/100 (${path.priorityLabel ?? "unbanded"}) - this is what ranks the list`}
-          >
-            {path.priority.toFixed(0)}
-          </span>
-        ) : (
-          <span className="shrink-0 text-[12px] font-semibold tabular-nums text-red-600">
-            {Math.round(path.score * 100)}%
-          </span>
+        <StatusPill status={routeStatus(path)} />
+        {path.runtimeConfirmed && (
+          <ZapIcon className="h-3.5 w-3.5 shrink-0 text-flag" aria-label="being walked in runtime" />
         )}
+        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-[12.5px] text-slate-800">
+          <NodeName name={from} className="min-w-[3.75rem] truncate [flex-shrink:3]" />
+          <span className="shrink-0 text-muted">→</span>
+          <TargetIcon path={path} />
+          <NodeName name={to} className="min-w-[5rem] truncate [flex-shrink:1]" />
+        </span>
+        <SeverityBar priority={path.priority} score={path.score} />
       </button>
     </li>
   );
 }
-
-// TrustCard is the honesty layer as a headline, not a footnote: one sentence a
-// non-statistician can act on, with the diagnostics one click away.
 function TrustCard({ calibration, onOpen }: { calibration?: Calibration; onOpen: () => void }) {
   const has = calibration?.hasData;
   const verdict = calibration?.verdict ?? "not measured";
@@ -325,10 +415,14 @@ function TrustCard({ calibration, onOpen }: { calibration?: Calibration; onOpen:
 function ViolationCard({ count, violations }: { count: number; violations: Dashboard["invariantViolations"] }) {
   const ids = [...new Set(violations.map((v) => v.invariantId))].slice(0, 3).join(", ");
   return (
-    <div className="rounded-2xl border border-amber-500/30 bg-amber-500/[0.07] px-4 py-3.5">
-      <div className="text-[11px] text-amber-700/80">Policy invariants broken</div>
-      <div className="mt-1.5 text-[17px] font-semibold leading-none text-amber-700">{count}</div>
-      <div className="mt-1.5 truncate text-[11px] text-amber-700/75">{ids}</div>
+    // Amber now means "New" in the status channel, so it cannot also mean "warning"
+    // here - that overload is what made colour unreadable across the page. This is a
+    // fact about the estate, not an alarm: it gets the same quiet card as everything
+    // else, and earns attention by its number rather than by its border.
+    <div className="rounded-2xl border border-edge bg-panel px-4 py-3.5">
+      <div className="text-[11px] text-muted">Policy invariants broken</div>
+      <div className="mt-1.5 text-[17px] font-semibold leading-none text-slate-900">{count}</div>
+      <div className="mt-1.5 truncate text-[11px] text-muted">{ids}</div>
     </div>
   );
 }

@@ -31,7 +31,7 @@ function Sparkline({ values, tone }: { values: number[]; tone: string }) {
 // green when scores match reality, red/amber when they don't.
 const VERDICT_STYLE: Record<string, { label: string; cls: string }> = {
   "well-calibrated": { label: "well-calibrated", cls: "bg-emerald-500/15 text-emerald-700" },
-  overconfident: { label: "overconfident", cls: "bg-red-500/15 text-red-700" },
+  overconfident: { label: "overconfident", cls: "bg-red-500/15 text-flag" },
   underconfident: { label: "underconfident", cls: "bg-amber-500/15 text-amber-700" },
   "insufficient-data": { label: "insufficient data", cls: "bg-slate-400/15 text-slate-500" },
 };
@@ -132,8 +132,8 @@ export function CalibrationPanel({ calibration, trend }: { calibration: Calibrat
         <ReliabilityDiagram bins={calibration.bins} />
         <div className="flex flex-col gap-4">
           <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
-            <Stat label="Brier" value={calibration.brier.toFixed(3)} tone={calibration.brier <= 0.1 ? "text-emerald-600" : calibration.brier <= 0.25 ? "text-amber-600" : "text-red-600"} />
-            <Stat label="ECE" value={calibration.ece.toFixed(3)} tone={calibration.ece <= 0.1 ? "text-emerald-600" : calibration.ece <= 0.2 ? "text-amber-600" : "text-red-600"} />
+            <Stat label="Brier" value={calibration.brier.toFixed(3)} tone={calibration.brier <= 0.1 ? "text-emerald-600" : calibration.brier <= 0.25 ? "text-amber-600" : "text-flag"} />
+            <Stat label="ECE" value={calibration.ece.toFixed(3)} tone={calibration.ece <= 0.1 ? "text-emerald-600" : calibration.ece <= 0.2 ? "text-amber-600" : "text-flag"} />
             <Stat label="Predicted" value={pct(calibration.meanPredicted)} />
             <Stat label="Observed" value={pct(calibration.observedRate)} tone="text-accent" />
             <Stat label="Samples" value={String(calibration.samples)} />
@@ -145,10 +145,10 @@ export function CalibrationPanel({ calibration, trend }: { calibration: Calibrat
             <div className="flex items-center gap-3 border-t border-edge/60 pt-3">
               <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted">Brier over time</span>
               <div className="h-6 max-w-[260px] flex-1">
-                <Sparkline values={brierSeries} tone="rgb(109 108 240)" />
+                <Sparkline values={brierSeries} tone="rgb(var(--c-accent))" />
               </div>
               <span className="shrink-0 text-[10px] tabular-nums text-muted">
-                {brierSeries.length} samples · now {calibration.brier.toFixed(3)}
+                {brierSeries.length} passes · now {calibration.brier.toFixed(3)}
               </span>
             </div>
           )}
@@ -187,15 +187,13 @@ export function CalibrationPanel({ calibration, trend }: { calibration: Calibrat
                   </span>
                 );
               })}
-            {calibration.detection && (
-              <span
-                className="rounded-md bg-slate-500/10 px-1.5 py-0.5 text-[10px] tabular-nums text-slate-600"
-                title="Of reachable (confirmed) paths carrying a detection report, how many were caught/blocked - the detection-axis (#7) evidence."
-              >
-                detection {calibration.detection.detected}/{calibration.detection.tested} caught
-                {calibration.detection.highScoreTested > 0 ? ` · ${pct(calibration.detection.highScoreDetectionRate)} on high-score` : ""}
-              </span>
-            )}
+            {/* The detection statistic used to sit here, as one more grey chip beside
+                "long-path · insufficient data". It is not the same kind of statement:
+                those are notes about how much evidence a segment has, and this is a
+                finding about the estate - of the routes that were confirmed exploitable,
+                how many the detection stack caught. It needs no statistics to act on and
+                it is the most alarming number on the page, so it now has its own row.
+                See DetectionRow in TrustView. */}
           </div>
         </div>
       )}
