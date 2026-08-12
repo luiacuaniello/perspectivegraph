@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.5.1...v1.6.0) (2026-08-12)
+
+
+### Features
+
+* **frontend:** redesign the dashboard around the answer, and fix the ids that leave it ([#136](https://github.com/luiacuaniello/perspectivegraph/issues/136)) ([d93ef3c](https://github.com/luiacuaniello/perspectivegraph/commit/d93ef3ce1ac4b656cd0c00c116c15b97334d3e97))
+
 ## [1.5.1](https://github.com/luiacuaniello/perspectivegraph/compare/v1.5.0...v1.5.1) (2026-08-09)
 
 
