@@ -579,7 +579,23 @@ func run(ctx context.Context, cfg config.Config) error {
 		auditRec.Record(context.Background(), "auth.lockout.alert", "secwatch", "", "", map[string]any{"remote": key, "count": count})
 	})
 	if authGuard.Enabled() {
-		slog.Info("auth brute-force lockout enabled", "threshold_failures_per_5m", cfg.AuthLockoutThreshold)
+		// Durable lockouts when there is a database to keep them in. Without one the
+		// lockout is per-process and per-replica, so a deploy - a schedule anyone can
+		// read - hands a brute-forcer a clean slate. Only the lockout is stored, never
+		// the per-failure counter: a write per failed login would let the abuse drive
+		// the writes.
+		if govDB != nil {
+			trips, terr := secwatch.NewPGTrips(ctx, govDB)
+			if terr != nil {
+				return fmt.Errorf("auth lockout store: %w", terr)
+			}
+			authGuard.WithTripStore(trips)
+			slog.Info("auth brute-force lockout enabled (durable, shared across replicas)",
+				"threshold_failures_per_5m", cfg.AuthLockoutThreshold)
+		} else {
+			slog.Info("auth brute-force lockout enabled (in-memory: cleared on restart, per-replica)",
+				"threshold_failures_per_5m", cfg.AuthLockoutThreshold)
+		}
 	}
 
 	// ── Auth (optional; open with a loud warning when unset) ─────────

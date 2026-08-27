@@ -70,10 +70,18 @@ Two ready-to-use hardened profiles apply all of the above:
     --set postgres.externalHost=db.internal --set ingress.host=pg.example.com
   ```
 
-  The chart installs from the registry, so a production cluster needs no git checkout -
-  only the values file, which is the one part that is yours. It is cosign-signed; verify
-  it before it runs (see the [manual](MANUAL.md#deploy-to-kubernetes)). From a checkout,
-  swap the `oci://…` reference for `deploy/helm/perspectivegraph`.
+  The chart installs from the registry, so a production cluster needs no git checkout.
+  The profiles ship **inside** the chart, so neither does getting them - pull it once and
+  the values files are there to edit and keep under your own change control:
+
+  ```bash
+  helm pull oci://ghcr.io/luiacuaniello/charts/perspectivegraph --untar
+  ls perspectivegraph/values-*.yaml   # production, ha, sso-demo
+  ```
+
+  It is cosign-signed; verify it before it runs (see the
+  [manual](MANUAL.md#deploy-to-kubernetes)). From a git checkout instead, swap the
+  `oci://…` reference for `deploy/helm/perspectivegraph`.
 
 - **Docker Compose (single host / on-prem):** `.env.production.example` (copy to `.env`,
   fill in, `chmod 600`) plus the `docker-compose.prod.yml` override for the in-app TLS cert
@@ -340,9 +348,8 @@ that out from a stuck rollout.
 four decisions rather than a second copy of the whole file:
 
 ```bash
-helm upgrade --install perspectivegraph deploy/helm/perspectivegraph \
-  -f deploy/helm/perspectivegraph/values-production.yaml \
-  -f deploy/helm/perspectivegraph/values-ha.yaml \
+helm upgrade --install perspectivegraph oci://ghcr.io/luiacuaniello/charts/perspectivegraph \
+  -f values-production.yaml -f values-ha.yaml \
   --set postgres.externalHost=db.internal --set ingress.host=pg.example.com \
   --set nats.externalUrl=nats://nats.internal:4222
 ```
