@@ -18,7 +18,7 @@ WIDTH=${WIDTH:-800}
 FANOUT=${FANOUT:-4}
 INGEST_URL=${INGEST_URL:-http://localhost:8081/ingest/events}
 API_URL=${API_URL:-http://localhost:8080}
-GO=${GO:-go}; export GOTOOLCHAIN=${GOTOOLCHAIN:-go1.25.13}
+GO=${GO:-go}; export GOTOOLCHAIN=${GOTOOLCHAIN:-go1.26.7}
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 die() { echo "ERROR: $*" >&2; exit 1; }
 

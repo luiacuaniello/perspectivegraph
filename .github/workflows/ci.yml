@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.25.13"
+          go-version: "1.26.7"
           cache-dependency-path: backend/go.sum
       - run: go build ./...
       - run: go vet ./...
@@ -43,8 +43,13 @@ jobs:
       # conditions or misused stdlib. staticcheck does, and on introduction it found a
       # real one: a body-size constant left unused while the literal it was meant to
       # name was written out twice, so changing the constant would have done nothing.
+      # Pinned, not @latest, for the same reason Trivy is: `@latest` re-resolves on
+      # every run, so the gate can change under a pull request that did not touch it.
+      # It did exactly that - staticcheck 0.8 raised its floor to Go 1.26 and, with
+      # GOTOOLCHAIN=local, the step failed to build the tool rather than the code. Bump
+      # this deliberately, alongside the toolchain.
       - name: staticcheck
-        run: go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
 
   secrets:
     name: Secret scan (gitleaks)
@@ -94,7 +99,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.25.13"
+          go-version: "1.26.7"
           cache-dependency-path: backend/go.sum
       # The contract test creates the AGE extension + graph itself; just run it.
       # JetStream cannot be a service container: GitHub gives no way to pass the -js

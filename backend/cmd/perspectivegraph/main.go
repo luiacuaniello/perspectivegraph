@@ -107,6 +107,12 @@ func main() {
 	// puts a sensitive asset within reach. Blocks on attack paths, not on CVE counts. Its
 	// exit code is its interface, so it exits itself rather than returning. See runGate.
 	if len(os.Args) >= 2 && os.Args[1] == "gate" {
+		// staticcheck is right that this can only be true: runGate reaches every verdict
+		// through reportAndExit, which exits, so the `return nil` below it is unreachable
+		// and the only returns left are failures. The check stays anyway - it is what
+		// makes a future path that DOES return nil fail closed instead of exiting 0 on a
+		// verdict nobody produced, which on a merge gate is the whole ballgame.
+		//lint:ignore SA4023 deliberate: a gate must fail closed if it ever returns.
 		if err := runGate(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "gate:", err)
 			os.Exit(gateExitError)
