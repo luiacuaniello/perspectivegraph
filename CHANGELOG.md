@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.8.0...v1.9.0) (2026-08-27)
+
+
+### Features
+
+* map SSO groups to roles, and publish the Helm chart ([#147](https://github.com/luiacuaniello/perspectivegraph/issues/147)) ([b0ce98e](https://github.com/luiacuaniello/perspectivegraph/commit/b0ce98e83fadaedd12d99fa1b2d4b49fc39e4650))
+
 ## [1.8.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.7.0...v1.8.0) (2026-08-27)
 
 
