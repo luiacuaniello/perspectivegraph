@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.7.0...v1.8.0) (2026-08-27)
+
+
+### Features
+
+* ingest a multi-account AWS estate, and make the HA profile real ([#145](https://github.com/luiacuaniello/perspectivegraph/issues/145)) ([1a203aa](https://github.com/luiacuaniello/perspectivegraph/commit/1a203aa2b0cb44d9218f95d6ee8b94cc640a5cc4))
+
 ## [1.7.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.6.0...v1.7.0) (2026-08-27)
 
 
