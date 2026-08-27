@@ -4,6 +4,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"crypto/tls"
 	"database/sql"
@@ -604,14 +605,45 @@ func run(ctx context.Context, cfg config.Config) error {
 	} else {
 		slog.Warn("ingest auth DISABLED - webhook endpoints are open (set INGEST_HMAC_SECRET)")
 	}
+	// Group -> role mapping. A malformed entry is dropped and said out loud: silently
+	// ignoring it would leave a group granting nothing, which reads as a working
+	// configuration to whoever wrote it and as a broken login to whoever is locked out.
+	groupRoles, mapErrs := auth.ParseGroupRoles(cfg.OIDCGroupRoles)
+	for _, e := range mapErrs {
+		slog.Error("OIDC_GROUP_ROLES: entry ignored", "problem", e)
+	}
+	if len(groupRoles) > 0 {
+		slog.Info("OIDC group mapping active", "groups", len(groupRoles), "claim", cmp.Or(cfg.OIDCGroupsClaim, "groups"))
+	}
+
+	// A default role is how an operator says "anyone my IdP authenticates may look".
+	// It stays none unless they say it: passing the IdP proves identity, not that the
+	// subject may read a map of how to attack the organisation.
+	var defaultRole auth.Role
+	if cfg.OIDCDefaultRole != "" {
+		r, ok := auth.ParseRole(cfg.OIDCDefaultRole)
+		if !ok {
+			return fmt.Errorf("OIDC_DEFAULT_ROLE %q is not viewer|operator|admin", cfg.OIDCDefaultRole)
+		}
+		defaultRole = r
+		slog.Warn("OIDC_DEFAULT_ROLE is set: EVERY subject this IdP authenticates gets this role",
+			"role", r.String())
+	}
+
 	// The iss/aud fail-closed rule is enforced by checkAuthConfig, before this
 	// function runs and before the process touches any dependency.
 	authn := auth.Chain{
 		auth.NewTokenStore(cfg.APITokens),
 		auth.NewJWTAuthenticator(auth.JWTConfig{
-			JWKSURL:  cfg.OIDCJWKSURL,
-			Issuer:   cfg.OIDCIssuer,
-			Audience: cfg.OIDCAudience,
+			JWKSURL:     cfg.OIDCJWKSURL,
+			Issuer:      cfg.OIDCIssuer,
+			Audience:    cfg.OIDCAudience,
+			RoleClaim:   cfg.OIDCRoleClaim,
+			GroupsClaim: cfg.OIDCGroupsClaim,
+			TenantClaim: cfg.OIDCTenantClaim,
+			AppsClaim:   cfg.OIDCAppsClaim,
+			GroupRoles:  groupRoles,
+			DefaultRole: defaultRole,
 		}),
 	}
 	if authn.Enabled() {

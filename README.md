@@ -103,6 +103,14 @@ docker pull ghcr.io/luiacuaniello/perspectivegraph:v1.8.0 # x-release-please-ver
 docker pull ghcr.io/luiacuaniello/perspectivegraph-dashboard:v1.8.0 # x-release-please-version
 ```
 
+On Kubernetes, the Helm chart is published the same way - no clone needed, and a version
+you can pin and verify:
+
+```bash
+helm install perspectivegraph oci://ghcr.io/luiacuaniello/charts/perspectivegraph \
+  --version 1.8.0 # x-release-please-version
+```
+
 They are signed with cosign keyless and carry an SPDX SBOM plus a SLSA build
 provenance attestation - verify before you run, rather than taking the supply chain
 on trust:

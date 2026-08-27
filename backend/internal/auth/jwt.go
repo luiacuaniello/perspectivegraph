@@ -34,7 +34,26 @@ type JWTConfig struct {
 	RoleClaim   string // claim holding the role (default "role")
 	TenantClaim string // claim holding the tenant (default "tenant")
 	AppsClaim   string // claim holding the application allowlist (default "apps")
-	DefaultRole Role   // role when the token has no role claim
+
+	// GroupsClaim and GroupRoles map directory groups onto roles, because that is
+	// where enterprise IdPs actually keep authorisation. Okta and Entra hand out
+	// `groups: ["sec-eng", "pg-admins"]`; neither mints a `role` claim unless someone
+	// builds a custom mapping in the IdP first. Without this, every SSO user arrived
+	// with no role and saw nothing, and the fix lived in a system this project does
+	// not own.
+	//
+	// GroupRoles is group -> role. A subject in several mapped groups gets the
+	// HIGHEST role among them, which is what group membership already means to the
+	// people who grant it: adding someone to the admins group is not expected to be
+	// undone by their also being in viewers.
+	GroupsClaim string // claim holding the group list (default "groups")
+	GroupRoles  map[string]Role
+
+	// DefaultRole is the role for a token that matches nothing above. It stays
+	// RoleNone unless an operator sets it: authenticating at the IdP proves who
+	// someone is, not that they may read a map of how to attack the organisation.
+	// Granting everyone the IdP admits a role has to be a decision somebody makes.
+	DefaultRole Role
 }
 
 // JWTAuthenticator verifies RS256 JWTs against a cached JWKS and maps the
@@ -53,6 +72,9 @@ func NewJWTAuthenticator(cfg JWTConfig) *JWTAuthenticator {
 	}
 	if cfg.AppsClaim == "" {
 		cfg.AppsClaim = "apps"
+	}
+	if cfg.GroupsClaim == "" {
+		cfg.GroupsClaim = "groups"
 	}
 	return &JWTAuthenticator{cfg: cfg, keys: newJWKSCache(cfg.JWKSURL)}
 }
@@ -79,12 +101,7 @@ func (j *JWTAuthenticator) Authenticate(r *http.Request) (Principal, bool) {
 		return Principal{}, false
 	}
 
-	role := j.cfg.DefaultRole
-	if v, ok := claims[j.cfg.RoleClaim].(string); ok {
-		if parsed, ok := parseRole(v); ok {
-			role = parsed
-		}
-	}
+	role := j.roleFrom(claims)
 	tenant := DefaultTenant
 	if v, ok := claims[j.cfg.TenantClaim].(string); ok && v != "" {
 		tenant = v
@@ -94,6 +111,32 @@ func (j *JWTAuthenticator) Authenticate(r *http.Request) (Principal, bool) {
 		sub = "jwt"
 	}
 	return Principal{Subject: "jwt:" + sub, Role: role, Tenant: tenant, Apps: parseAppsClaim(claims[j.cfg.AppsClaim])}, true
+}
+
+// roleFrom resolves the role a token grants, from the role claim and the group claim
+// together. The highest role any source grants wins, and nothing granting anything means
+// DefaultRole - which is RoleNone unless an operator deliberately widened it.
+//
+// Both sources are read from the same signed token, so preferring one over the other
+// would buy no security, only surprise: a subject who is in the admins group AND carries
+// role=viewer is someone whose directory says admin, and the directory is what the
+// people granting access actually edit.
+func (j *JWTAuthenticator) roleFrom(claims jwt.MapClaims) Role {
+	role := j.cfg.DefaultRole
+	if v, ok := claims[j.cfg.RoleClaim].(string); ok {
+		if parsed, ok := parseRole(v); ok && parsed > role {
+			role = parsed
+		}
+	}
+	if len(j.cfg.GroupRoles) == 0 {
+		return role
+	}
+	for _, g := range parseAppsClaim(claims[j.cfg.GroupsClaim]) {
+		if mapped, ok := j.cfg.GroupRoles[g]; ok && mapped > role {
+			role = mapped
+		}
+	}
+	return role
 }
 
 // parseAppsClaim accepts the apps allowlist as a JSON array of strings or as a

@@ -16,6 +16,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -63,6 +64,40 @@ func parseRole(s string) (Role, bool) {
 	}
 	return RoleNone, false
 }
+
+// ParseGroupRoles parses the "group=role,group=role" mapping an operator configures.
+//
+// An entry that does not parse is DROPPED and named in the returned errors rather than
+// quietly ignored: a typo in a role name would otherwise mean the group grants nothing,
+// which looks exactly like a working config to whoever wrote it and exactly like a
+// broken login to whoever is locked out.
+func ParseGroupRoles(spec string) (map[string]Role, []string) {
+	out := map[string]Role{}
+	var errs []string
+	for _, entry := range strings.Split(spec, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		group, roleName, ok := strings.Cut(entry, "=")
+		group, roleName = strings.TrimSpace(group), strings.TrimSpace(roleName)
+		if !ok || group == "" || roleName == "" {
+			errs = append(errs, fmt.Sprintf("%q is not group=role", entry))
+			continue
+		}
+		role, ok := parseRole(roleName)
+		if !ok {
+			errs = append(errs, fmt.Sprintf("%q: unknown role %q (want viewer|operator|admin)", entry, roleName))
+			continue
+		}
+		out[group] = role
+	}
+	return out, errs
+}
+
+// ParseRole exposes role parsing for configuration, where an unparseable value must be
+// reported rather than silently treated as no access.
+func ParseRole(s string) (Role, bool) { return parseRole(s) }
 
 // Principal is the authenticated identity on a request.
 type Principal struct {

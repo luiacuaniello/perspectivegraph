@@ -144,6 +144,14 @@ services:
       # Auth (optional) - pass through when set; open with a loud warning otherwise.
       INGEST_HMAC_SECRET: ${INGEST_HMAC_SECRET:-}
       API_TOKENS: ${API_TOKENS:-}
+      # Who gets which role after SSO. Without a mapping an SSO subject with no role
+      # claim gets no access - see .env.example.
+      OIDC_GROUP_ROLES: ${OIDC_GROUP_ROLES:-}
+      OIDC_ROLE_CLAIM: ${OIDC_ROLE_CLAIM:-}
+      OIDC_GROUPS_CLAIM: ${OIDC_GROUPS_CLAIM:-}
+      OIDC_TENANT_CLAIM: ${OIDC_TENANT_CLAIM:-}
+      OIDC_APPS_CLAIM: ${OIDC_APPS_CLAIM:-}
+      OIDC_DEFAULT_ROLE: ${OIDC_DEFAULT_ROLE:-}
       # Triage/suppression persistence (optional). Empty → in-memory only. To
       # persist, point this at a path on a writable volume (the backend rootfs is
       # read-only) and mount one, e.g. a named volume at /var/lib/perspectivegraph.

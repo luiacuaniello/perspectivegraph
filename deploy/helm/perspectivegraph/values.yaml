@@ -265,6 +265,24 @@ auth:
     scopes: "openid profile email"
     # IdP end-session endpoint → "Sign out" performs an RP-initiated logout.
     logoutUrl: ""
+    # Directory groups → roles, e.g. "pg-viewers=viewer,pg-admins=admin". This is how
+    # an SSO subject gets a role at all: enterprise IdPs keep authorisation in group
+    # membership, and neither Okta nor Entra mints a "role" claim on its own - so
+    # without a mapping (or defaultRole) people sign in successfully and see nothing.
+    # A subject in several mapped groups gets the highest of them.
+    groupRoles: ""
+    # Grants a role to EVERY subject the IdP authenticates, including those in no
+    # mapped group. Empty = no access without an explicit grant, which is the default
+    # because signing in proves identity, not entitlement to a map of how to attack
+    # the org. Set it when the IdP application is already restricted to the right
+    # people; startup logs a warning either way.
+    defaultRole: ""
+    # Claim names, for directories that namespace them (Auth0, Entra). Empty keeps
+    # role / groups / tenant / apps.
+    roleClaim: ""
+    groupsClaim: ""
+    tenantClaim: ""
+    appsClaim: ""
   # Per-client-IP rate limits (requests/sec). 0 ⇒ disabled.
   apiRateRps: 60
   ingestRateRps: 30
