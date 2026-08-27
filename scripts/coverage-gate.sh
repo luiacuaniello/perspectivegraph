@@ -27,7 +27,7 @@ profile="$(mktemp -t pg-cover.XXXXXX)"
 trap 'rm -f "$profile"' EXIT
 
 echo "→ running tests with cross-package coverage attribution…"
-GOTOOLCHAIN="${GOTOOLCHAIN:-go1.25.12}" CGO_ENABLED=0 \
+GOTOOLCHAIN="${GOTOOLCHAIN:-go1.25.13}" CGO_ENABLED=0 \
   # -count=1 disables the test cache. Without it the gate can report a stale number:
   # a package whose integration tests skipped earlier (database down, env var unset)
   # keeps that degraded result in the cache, and the gate happily grades it. That

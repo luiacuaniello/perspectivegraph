@@ -186,7 +186,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.25.12"
+          go-version: "1.25.13"
           cache-dependency-path: backend/go.sum
 
       # CGO off so each binary is static and runs on any host of its platform - no
