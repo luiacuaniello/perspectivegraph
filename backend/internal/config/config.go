@@ -154,6 +154,18 @@ type Config struct {
 	// of just dropping the local token and silently re-logging in on the next click.
 	OIDCLogoutURL string
 
+	// OIDC claim names and the group -> role mapping. Enterprise IdPs keep
+	// authorisation in group membership, not in a bespoke "role" claim, so without
+	// these an SSO user arrives with no role and sees nothing until someone builds a
+	// custom claim mapping inside the IdP. OIDCDefaultRole stays empty (= no access)
+	// unless an operator widens it on purpose.
+	OIDCRoleClaim   string
+	OIDCGroupsClaim string
+	OIDCTenantClaim string
+	OIDCAppsClaim   string
+	OIDCGroupRoles  string // "group=role,group=role"
+	OIDCDefaultRole string
+
 	// Audit (optional; tamper-evident hash-chained log file)
 	AuditLogPath string
 
@@ -378,6 +390,13 @@ func Load() Config {
 		OIDCTokenURL:  getenv("OIDC_TOKEN_URL", ""),
 		OIDCScopes:    getenv("OIDC_SCOPES", "openid profile email"),
 		OIDCLogoutURL: getenv("OIDC_LOGOUT_URL", ""),
+
+		OIDCRoleClaim:   getenv("OIDC_ROLE_CLAIM", ""),
+		OIDCGroupsClaim: getenv("OIDC_GROUPS_CLAIM", ""),
+		OIDCTenantClaim: getenv("OIDC_TENANT_CLAIM", ""),
+		OIDCAppsClaim:   getenv("OIDC_APPS_CLAIM", ""),
+		OIDCGroupRoles:  getenv("OIDC_GROUP_ROLES", ""),
+		OIDCDefaultRole: getenv("OIDC_DEFAULT_ROLE", ""),
 
 		AuditLogPath:      getenv("AUDIT_LOG_PATH", ""),
 		AuditRetention:    getdur("AUDIT_RETENTION", 0),

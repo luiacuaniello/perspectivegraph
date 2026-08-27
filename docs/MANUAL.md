@@ -1447,6 +1447,35 @@ Issuer and audience are mandatory when JWKS is set - the backend refuses to star
 without them, because a verifier that skips `iss`/`aud` accepts any RS256 token the
 IdP ever minted, including ones meant for a different relying party.
 
+**Then decide who gets which role, because signing in does not.** A token proves who
+someone is; this tool's data is a map of how to attack the organisation, so an SSO
+subject with no role gets **no access** until something grants it. Enterprise IdPs keep
+that decision in group membership - neither Okta nor Entra mints a `role` claim unless
+somebody builds a custom mapping inside the IdP first - so map the groups you already
+have:
+
+```bash
+OIDC_GROUP_ROLES=pg-viewers=viewer,pg-secops=operator,pg-admins=admin
+```
+
+- A subject in **several** mapped groups gets the **highest** role among them, which is
+  what adding someone to the admins group already means to whoever granted it.
+- A `role` claim, if your IdP does mint one, still works and is taken together with the
+  groups - the higher of the two wins. Both come from the same signed token, so
+  preferring one would buy no security, only surprise.
+- An entry that does not parse is **dropped and logged at error level**. Silently
+  ignoring `pg-admins=administrator` would leave the group granting nothing, which reads
+  as a working configuration to whoever wrote it and as a broken login to whoever is
+  locked out.
+- Claim names are configurable for directories that namespace them
+  (`OIDC_GROUPS_CLAIM=https://acme.example/groups`, and the same for `OIDC_ROLE_CLAIM`,
+  `OIDC_TENANT_CLAIM`, `OIDC_APPS_CLAIM`). The group claim is read whether it arrives as
+  a JSON array or a delimited string.
+- `OIDC_DEFAULT_ROLE=viewer` grants a role to **everyone the IdP authenticates**. That is
+  a legitimate configuration when the IdP application is already restricted to the right
+  people, and a serious widening otherwise - so it is off by default and startup warns
+  when it is on.
+
 **For machines, use static tokens** - CI jobs, an ingest sender, a scripted
 integration. Give each one its own entry so it can be withdrawn alone, always set an
 expiry, and store the hash rather than the value:
@@ -1579,17 +1608,37 @@ Beyond the container surface, the backend itself is built defensively:
 
 ## Deploy to Kubernetes
 
-A Helm chart bundles the backend, dashboard, Postgres+AGE, and NATS:
+A Helm chart bundles the backend, dashboard, Postgres+AGE, and NATS. It is published as
+an OCI artifact, so installing it needs no clone of this repository - and gives you a
+version you can pin, verify and name in a change record:
 
 ```bash
-# Build & push images (or use your registry / prebuilt ones)
-docker build -t ghcr.io/luiacuaniello/perspectivegraph:latest backend
-docker build -t ghcr.io/luiacuaniello/perspectivegraph-dashboard:latest frontend
-
-# Install
-helm install perspective deploy/helm/perspectivegraph \
+# Install a pinned release straight from the registry
+helm install perspective oci://ghcr.io/luiacuaniello/charts/perspectivegraph \
   --set github.token=$GITHUB_TOKEN \
-  --set opensearch.url=""           # optional full-text index
+  --set opensearch.url="" \
+  --version 1.8.0 # x-release-please-version
+```
+
+The chart is cosign-signed like the images. Verify it before it templates anything into
+your cluster - a chart is a description of what will run with cluster credentials, so an
+unverified one is a larger hole than an unverified image:
+
+```bash
+cosign verify \
+  --certificate-identity-regexp 'https://github.com/luiacuaniello/perspectivegraph/.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/luiacuaniello/charts/perspectivegraph:1.8.0 # x-release-please-version
+```
+
+The chart declares `kubeVersion: >= 1.21.0-0` (the floor is `policy/v1`
+PodDisruptionBudget), so an older cluster is refused at install time rather than halfway
+through. Working from a git checkout instead is still supported everywhere below - swap
+the `oci://…` reference for `deploy/helm/perspectivegraph`:
+
+```bash
+helm install perspective deploy/helm/perspectivegraph \
+  --set github.token=$GITHUB_TOKEN
 ```
 
 Bring your own Postgres/NATS by disabling the bundled ones and pointing the chart at

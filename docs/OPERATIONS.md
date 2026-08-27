@@ -65,10 +65,15 @@ Two ready-to-use hardened profiles apply all of the above:
   (`secrets.existingSecret`, e.g. Vault / Sealed Secrets / External Secrets).
 
   ```bash
-  helm upgrade --install perspectivegraph deploy/helm/perspectivegraph \
-    -f deploy/helm/perspectivegraph/values-production.yaml \
+  helm upgrade --install perspectivegraph oci://ghcr.io/luiacuaniello/charts/perspectivegraph \
+    -f values-production.yaml \
     --set postgres.externalHost=db.internal --set ingress.host=pg.example.com
   ```
+
+  The chart installs from the registry, so a production cluster needs no git checkout -
+  only the values file, which is the one part that is yours. It is cosign-signed; verify
+  it before it runs (see the [manual](MANUAL.md#deploy-to-kubernetes)). From a checkout,
+  swap the `oci://…` reference for `deploy/helm/perspectivegraph`.
 
 - **Docker Compose (single host / on-prem):** `.env.production.example` (copy to `.env`,
   fill in, `chmod 600`) plus the `docker-compose.prod.yml` override for the in-app TLS cert
