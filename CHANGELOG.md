@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.9.0...v1.10.0) (2026-08-27)
+
+
+### Features
+
+* make the brute-force lockout survive a restart ([#150](https://github.com/luiacuaniello/perspectivegraph/issues/150)) ([aeb3f95](https://github.com/luiacuaniello/perspectivegraph/commit/aeb3f953ae61dc83f6ec44f53f9313c60e9478d5))
+
 ## [1.9.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.8.0...v1.9.0) (2026-08-27)
 
 
