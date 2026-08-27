@@ -67,6 +67,22 @@ spec:
               done
         {{- end }}
       {{- end }}
+      {{- /* Spreading and disruption budgets are what turn `replicas: N` into
+      availability. Both are opt-in and empty by default, so an existing release
+      renders byte-identically - a template comment, not a YAML one, so that stays
+      true of the output too. values-ha.yaml sets them. */}}
+      {{- with .Values.backend.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.backend.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.backend.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: perspectivegraph
           image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"

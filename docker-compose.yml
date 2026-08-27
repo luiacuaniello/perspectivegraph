@@ -222,6 +222,8 @@ services:
       AWS_CONNECTOR_MODE: ${AWS_CONNECTOR_MODE:-fixtures}
       AWS_FIXTURES_DIR: ${AWS_FIXTURES_DIR:-}
       AWS_REGION: ${AWS_REGION:-}
+      # One role, or several comma-separated - one per account - to pull a
+      # multi-account estate in a single pass. See .env.example.
       AWS_ROLE_ARN: ${AWS_ROLE_ARN:-}
       AZURE_CONNECTOR_MODE: ${AZURE_CONNECTOR_MODE:-fixtures}
       AZURE_FIXTURES_DIR: ${AZURE_FIXTURES_DIR:-}

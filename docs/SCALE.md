@@ -119,6 +119,10 @@ every replica reads the same governance rows and appends to the same audit chain
 leader election keeps the side effects at once each. On the file backend, stay at one
 replica.
 
+`values-ha.yaml` is that shape ready to apply, as an overlay on the production profile:
+it sets both, raises the replicas, spreads them across nodes and adds a disruption budget
+(see [OPERATIONS §7](OPERATIONS.md#7-high-availability)).
+
 The chart holds that line for you. `persistence.enabled` with more than one replica
 **fails to render**, and the message names the reason it is refusing: on the file backend
 the stores would split-brain, and on the Postgres backend the PVC holds nothing yet its

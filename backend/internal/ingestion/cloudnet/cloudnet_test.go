@@ -292,3 +292,74 @@ func TestDiscoversReachability(t *testing.T) {
 		t.Error("missing VPC peering CONNECTS_TO edge")
 	}
 }
+
+// The reason the account dimension exists. Instance ids are unique within an account,
+// not across them, so ingesting two accounts that each have an i-shared has to produce
+// two machines. Keyed on the id alone they merged into one node - and a merged node
+// inherits both accounts' edges, which manufactures paths that cross an account boundary
+// nothing actually crosses.
+func TestSameInstanceIdInTwoAccountsStaysTwoMachines(t *testing.T) {
+	const bundle = `{
+	  "provider": "aws",
+	  "security_groups": [ { "GroupId": "sg-open", "IpPermissions": [ { "IpRanges": [ { "CidrIp": "0.0.0.0/0" } ] } ] } ],
+	  "instances": [ { "InstanceId": "i-shared", "SecurityGroups": [ { "GroupId": "sg-open" } ] } ]
+	}`
+
+	ids := map[string]string{}
+	for _, account := range []string{"111111111111", "222222222222"} {
+		evs, err := New().Parse(strings.NewReader(bundle), ingestion.Options{Account: account})
+		if err != nil {
+			t.Fatalf("parse (%s): %v", account, err)
+		}
+		for _, ev := range evs {
+			for _, n := range ev.Nodes {
+				if n.Label != ontology.LabelVirtualMachine {
+					continue
+				}
+				ids[account] = n.ID
+				if got := n.Properties[ontology.PropAccount]; got != account {
+					t.Errorf("account %s: node carries account %v, want %s", account, got, account)
+				}
+			}
+		}
+	}
+	if len(ids) != 2 {
+		t.Fatalf("expected a machine from each account, got %v", ids)
+	}
+	if ids["111111111111"] == ids["222222222222"] {
+		t.Error("the same instance id in two accounts produced ONE node - the accounts merged")
+	}
+}
+
+// An estate that sends no account must keep the ids it already has. Otherwise this
+// change would silently orphan every existing node in every deployment on upgrade.
+func TestWithoutAnAccountTheIdsAreUnchanged(t *testing.T) {
+	const bundle = `{
+	  "provider": "aws",
+	  "security_groups": [ { "GroupId": "sg-open", "IpPermissions": [ { "IpRanges": [ { "CidrIp": "0.0.0.0/0" } ] } ] } ],
+	  "instances": [ { "InstanceId": "i-legacy", "SecurityGroups": [ { "GroupId": "sg-open" } ] } ]
+	}`
+	evs, err := New().Parse(strings.NewReader(bundle), ingestion.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := ontology.NewID(ontology.LabelVirtualMachine, "i-legacy")
+	var found bool
+	for _, ev := range evs {
+		for _, n := range ev.Nodes {
+			if n.Label != ontology.LabelVirtualMachine {
+				continue
+			}
+			found = true
+			if n.ID != want {
+				t.Errorf("id changed for a single-account estate: got %s, want %s", n.ID, want)
+			}
+			if _, ok := n.Properties[ontology.PropAccount]; ok {
+				t.Error("an account property was invented for a report that carried none")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no machine parsed")
+	}
+}

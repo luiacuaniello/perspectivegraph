@@ -12,6 +12,7 @@ import (
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 
 	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
 )
@@ -95,6 +96,12 @@ func (fakeEC2) DescribeSubnets(context.Context, *ec2.DescribeSubnetsInput, ...fu
 // GetPolicy/GetPolicyVersion - never in the bundle's Policies list. That is the real
 // account's shape: a boundary policy attached to nothing else need not come back with
 // the authorization details, so a connector that does not fetch it cannot intersect it.
+type fakeSTS struct{ account string }
+
+func (f fakeSTS) GetCallerIdentity(context.Context, *sts.GetCallerIdentityInput, ...func(*sts.Options)) (*sts.GetCallerIdentityOutput, error) {
+	return &sts.GetCallerIdentityOutput{Account: aws.String(f.account)}, nil
+}
+
 type fakeIAM struct{}
 
 const (
@@ -163,7 +170,7 @@ func (fakeIAM) GetAccountAuthorizationDetails(context.Context, *iam.GetAccountAu
 // a fake client: the EC2 describe-* maps into cloudnet events (incl. the
 // 0.0.0.0/0 → internet-exposed node) and GAAD maps into iam events - no real AWS.
 func TestSDKMapping(t *testing.T) {
-	c := New(&sdkTransport{ec2: fakeEC2{}, iam: fakeIAM{}})
+	c := New(&sdkTransport{ec2: fakeEC2{}, iam: fakeIAM{}, sts: fakeSTS{account: "123456789012"}})
 	if c.Mode() != "sdk" {
 		t.Fatalf("mode = %q, want sdk", c.Mode())
 	}

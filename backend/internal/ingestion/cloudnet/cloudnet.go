@@ -145,7 +145,7 @@ type Collector struct{}
 func New() *Collector             { return &Collector{} }
 func (*Collector) Source() string { return "cloudnet" }
 
-func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, error) {
+func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event, error) {
 	var b bundle
 	if err := json.NewDecoder(r).Decode(&b); err != nil {
 		return nil, fmt.Errorf("decode cloudnet bundle: %w", err)
@@ -239,15 +239,20 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 		profileRoles[p.Arn] = roleRef{arn: p.Roles[0].Arn, name: p.Roles[0].RoleName}
 	}
 
-	g := &builder{nodes: map[string]ontology.Node{}}
+	g := &builder{nodes: map[string]ontology.Node{}, account: opts.Account}
 	instancesBySG := map[string][]string{} // sg -> [instance node id…]
 
 	for _, inst := range b.Instances {
 		if inst.InstanceID == "" {
 			continue
 		}
-		id := ontology.NewID(ontology.LabelVirtualMachine, inst.InstanceID)
+		// Account-scoped: two accounts can hand out the same instance id, and merging
+		// them would invent a machine that spans both - and the paths through it.
+		id := ontology.ScopedID(ontology.LabelVirtualMachine, opts.Account, inst.InstanceID)
 		props := map[string]any{}
+		if opts.Account != "" {
+			props[ontology.PropAccount] = opts.Account
+		}
 		tags := map[string]string{}
 		for _, t := range inst.Tags {
 			tags[t.Key] = t.Value
@@ -357,6 +362,10 @@ func internetReachable(subnetID string, subnetRT, subnetNacl map[string]string, 
 type builder struct {
 	nodes map[string]ontology.Node
 	edges []ontology.Edge
+	// account qualifies the ids of assets whose native identifiers are unique only
+	// within one cloud account. Empty for a single-account estate, which keeps the
+	// ids this collector has always produced.
+	account string
 }
 
 func (b *builder) upsert(n ontology.Node) {
@@ -376,10 +385,18 @@ func (b *builder) upsert(n ontology.Node) {
 	b.nodes[n.ID] = n
 }
 
+// stub creates a placeholder node for something referenced but not described in the
+// bundle (a peered VPC, say). Account-scoped like the assets it stands in for: vpc-abc in
+// two accounts is two VPCs, and a peering between them is precisely the case where
+// merging them would erase the boundary the peering crosses.
 func (b *builder) stub(label ontology.Label, name string) string {
-	id := ontology.NewID(label, name)
+	id := ontology.ScopedID(label, b.account, name)
 	if _, ok := b.nodes[id]; !ok {
-		b.nodes[id] = ontology.Node{ID: id, Label: label, Name: name}
+		n := ontology.Node{ID: id, Label: label, Name: name}
+		if b.account != "" {
+			n.Properties = map[string]any{ontology.PropAccount: b.account}
+		}
+		b.nodes[id] = n
 	}
 	return id
 }

@@ -26,6 +26,12 @@ type Options struct {
 	RepoSlug  string // "owner/name"
 	PRNumber  int
 	CommitSHA string
+
+	// Account is the cloud account the report describes, for sources whose output
+	// carries native identifiers (i-…, sg-…) that are unique only within one account.
+	// Empty keeps the pre-multi-account behaviour, so an estate that ingests from a
+	// single account is unaffected by this existing at all.
+	Account string
 }
 
 // PRProps returns the PR-context node properties carried by these options, or

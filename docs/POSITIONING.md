@@ -58,8 +58,11 @@ section for the same reason.
 - **The scores are not field-calibrated.** They are expert estimates. What ships is
   the instrument to calibrate them against your environment, not a universal
   constant - which does not exist, since exploitability depends on the environment.
-- **One cloud is genuinely connected.** AWS is live; Azure is fixtures only; there
-  is no GCP connector and no AWS Organizations multi-account ingestion.
+- **One cloud is genuinely connected.** AWS is live; Azure is fixtures only; there is
+  no GCP connector. Several AWS *accounts* can be pulled in one pass and are kept
+  distinct, but that has been exercised on fixtures, not yet against real accounts, and
+  the accounts are listed rather than discovered - there is no AWS Organizations
+  integration and no SCP evaluation.
 - **It does not replace a CNAPP.** It answers the reachable-path question inside the
   developer workflow; it is not a scanner, an inventory or a compliance product.
 - **Coverage is not the strength.** Cartography has more connectors, BloodHound
