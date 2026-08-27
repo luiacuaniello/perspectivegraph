@@ -34,8 +34,9 @@ can build on it and know what a version bump means.
    [`.env.example`](../.env.example). A new opt-in knob with a safe default is minor;
    renaming or removing a variable, or changing a default in a way that alters behavior, is
    breaking.
-5. **CLI.** The documented subcommands and their core flags: `healthz`, `verify-audit`,
-   `ingestreal`, `importverdicts`, `awscollect`, `genload`, `genverdicts`.
+5. **CLI.** The documented subcommands and their core flags: `healthz`, `verify-audit`
+   (`<file>` or `-postgres`), `ingestreal`, `importverdicts`, `awscollect`, `genload`,
+   `genverdicts`.
 
 ## Not covered (may change without a major bump)
 

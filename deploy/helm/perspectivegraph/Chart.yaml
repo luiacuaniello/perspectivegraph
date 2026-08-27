@@ -2,8 +2,8 @@ apiVersion: v2
 name: perspectivegraph
 description: PerspectiveGraph - The Open DevSecOps Context Engine
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+version: 1.6.0 # x-release-please-version
+appVersion: "1.6.0" # x-release-please-version
 keywords:
   - security
   - devsecops

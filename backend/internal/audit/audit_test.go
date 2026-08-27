@@ -181,3 +181,50 @@ func TestRecordDoesNotMutateTheCallersFields(t *testing.T) {
 		t.Error("Record wrote request_id into the caller's own map")
 	}
 }
+
+// The file-backed chain has no retention of its own: it is rotated the way an operator
+// rotates any other log file. This pins the procedure the runbook documents, because the
+// obvious alternatives quietly break it - `logrotate` with copytruncate leaves the process
+// writing at its old offset into a truncated file, and a live `mv` leaves it writing into
+// the file that was supposed to be retired (the handle follows the inode).
+//
+// So: stop, move the file aside, start. Each retired file is then a complete chain that
+// verifies on its own, and the new one starts a fresh chain.
+func TestRotatingTheFileLogLeavesBothChainsVerifiable(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "audit.log")
+
+	log, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		log.Record(context.Background(), "view.attack_paths", "alice", "viewer", "acme", nil)
+	}
+	if err := log.Close(); err != nil { // the "stop" in stop-move-start
+		t.Fatal(err)
+	}
+
+	retired := filepath.Join(dir, "audit.log.1")
+	if err := os.Rename(path, retired); err != nil {
+		t.Fatal(err)
+	}
+
+	log2, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log2.Record(context.Background(), "export.oscal", "bob", "admin", "acme", nil)
+	if err := log2.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// The retired file still verifies whole, which is what makes archiving it worth
+	// anything - and the archive is where its integrity now lives.
+	if n, err := Verify(retired); err != nil || n != 3 {
+		t.Errorf("retired file: %d records, err=%v; want 3 and no error", n, err)
+	}
+	if n, err := Verify(path); err != nil || n != 1 {
+		t.Errorf("current file: %d records, err=%v; want 1 and no error", n, err)
+	}
+}
