@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.6.0...v1.7.0) (2026-08-27)
+
+
+### Features
+
+* run on managed PostgreSQL, bound the audit log, and state the s… ([#143](https://github.com/luiacuaniello/perspectivegraph/issues/143)) ([15be8ff](https://github.com/luiacuaniello/perspectivegraph/commit/15be8fffd89fddde6d848bbe460495502efca6d1))
+
+
+### Bug Fixes
+
+* an append after a full prune restarted the sequence at 1 and broke the ([15be8ff](https://github.com/luiacuaniello/perspectivegraph/commit/15be8fffd89fddde6d848bbe460495502efca6d1))
+
 ## [1.6.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.5.1...v1.6.0) (2026-08-12)
 
 
