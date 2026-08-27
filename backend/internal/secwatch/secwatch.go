@@ -34,6 +34,20 @@ type event struct {
 // cap alone would let long-dead keys hold the budget against live ones.
 const DefaultMaxKeys = 50_000
 
+// TripStore persists the one fact worth surviving a restart: that a key is locked out
+// until some time. Counting stays in memory - a write per failed login would turn the
+// control into a way to hammer the database - so what a restart still forgives is
+// PARTIAL progress toward the threshold, not a lockout already earned.
+//
+// Implementations must be safe for concurrent use and must never block the request
+// path: Locked is consulted on every pre-auth request.
+type TripStore interface {
+	// Trip records that key is locked until the given time.
+	Trip(key string, until time.Time)
+	// Locked reports whether key is currently locked according to durable state.
+	Locked(key string) bool
+}
+
 // Watcher is safe for concurrent use.
 type Watcher struct {
 	mu        sync.Mutex
@@ -46,6 +60,16 @@ type Watcher struct {
 	onAlert   func(key string, count int)
 	maxKeys   int
 	lastSweep time.Time
+	trips     TripStore
+}
+
+// WithTripStore makes lockouts durable: a trip is written to the store as well as held
+// in memory, and Tripped consults the store for lockouts this process did not see -
+// one set by another replica, or by this one before it restarted. A nil store leaves
+// the in-memory behaviour untouched.
+func (w *Watcher) WithTripStore(s TripStore) *Watcher {
+	w.trips = s
+	return w
 }
 
 // New builds a Watcher. threshold <= 0 disables it (every method is a no-op).
@@ -184,6 +208,9 @@ func (w *Watcher) Observe(key string, n int) bool {
 		return false // already alerted recently - stay quiet
 	}
 	w.lastAlert[key] = now
+	if w.trips != nil {
+		w.trips.Trip(key, now.Add(w.cooldown))
+	}
 	if w.onAlert != nil {
 		w.onAlert(key, sum)
 	}
@@ -197,7 +224,14 @@ func (w *Watcher) Tripped(key string) bool {
 		return false
 	}
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	last, ok := w.lastAlert[key]
-	return ok && w.now().Sub(last) < w.cooldown
+	locked := ok && w.now().Sub(last) < w.cooldown
+	store := w.trips
+	w.mu.Unlock()
+	if locked || store == nil {
+		return locked
+	}
+	// Not locked as far as THIS process knows - which is also what it would say about a
+	// lockout another replica set, or one it set itself before restarting.
+	return store.Locked(key)
 }
