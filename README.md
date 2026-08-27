@@ -333,7 +333,9 @@ patch - see the [API stability policy](docs/API-STABILITY.md). What's next is in
   demo defaults are otherwise deliberately open. Set **`PG_ENV=production`** and the backend **refuses to start** unless both the
   API and ingest are authenticated - the permissive default cannot be reached by forgetting
   to configure it. A production rollout still needs your own hardening beyond that: an
-  external managed PostgreSQL+AGE, secrets in a manager (not env vars), TLS on by default,
+  external PostgreSQL+AGE - **managed only on Azure, self-managed on AWS and GCP, because
+  neither offers the AGE extension** ([the matrix](docs/OPERATIONS.md#3-the-database-postgresql--apache-age)) -
+  secrets in a manager (not env vars), TLS on by default,
   backups, and HA for the leader-gated scheduler. **If you terminate at a reverse proxy or
   ingress, set `TRUSTED_PROXY_CIDRS`** to it: per-IP controls (rate limit, brute-force
   lockout, the address in the audit trail) otherwise key on the connecting peer - correct
@@ -343,6 +345,13 @@ patch - see the [API stability policy](docs/API-STABILITY.md). What's next is in
   your IdP's job rather than a token rotation - see the
   [operations & hardening runbook](docs/OPERATIONS.md), [`SECURITY.md`](SECURITY.md), and the
   [threat model](docs/THREAT-MODEL.md).
+- **Support: the newest release, and nothing behind it.** There are no backports and no LTS
+  branch - at six minor releases in the eight days after 1.0, a maintenance branch would be
+  a promise one maintainer breaks. What is promised instead is a clock on security fixes
+  (Critical 7 days, High 30, from confirmation) and an upgrade specified rather than hoped
+  for: semver over an enumerated stable surface, a drift-guarded schema, no migration step,
+  and rollback by redeploying the previous digest. [SUPPORT.md](SUPPORT.md) is the policy,
+  including how to run this where change control applies.
 - **Scope.** It answers the reachable attack-path question in the developer workflow. It is
   not a scanner, a CNAPP, or a compliance product, and it does not replace them.
 
@@ -365,6 +374,7 @@ environment.
 
 - [Manual](docs/MANUAL.md) - architecture, scoring, quick start, deploy, operate
 - [Positioning](docs/POSITIONING.md) - what is claimed, what is **not**, and how to check
+- [Support](SUPPORT.md) - which versions get fixes, how fast, and how to run this under change control
 - [Roadmap](ROADMAP.md) - what's next, and what it deliberately isn't becoming
 - [Threat model](docs/THREAT-MODEL.md) · [Operations](docs/OPERATIONS.md) · [API stability](docs/API-STABILITY.md) · [Scale](docs/SCALE.md)
 - [Attack-path benchmark](backend/testdata/cloudgoat/README.md) - the CI-gated precision/recall battery

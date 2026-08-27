@@ -276,6 +276,13 @@ persistence:
   storageClass: ""
   mountPath: /data
 
+# How long audit records are kept, e.g. "2160h" (90 days). Empty keeps them forever,
+# which is the absence of a retention policy rather than one - set it deliberately.
+# It prunes only with governanceBackend "postgres", where the oldest records can be
+# removed and checkpointed so the rest still verifies; on the file backend the log is
+# rotated instead (stop, move aside, start - see docs/OPERATIONS.md).
+auditRetention: ""
+
 # Pod security context for the backend. The distroless image runs as the nonroot
 # user 65532; fsGroup makes a freshly-provisioned persistence PVC group-writable by
 # it (without it, the volume is root-owned and the first verdict/ticket/suppression
@@ -285,9 +292,13 @@ persistence:
 #
 #   file     - on the persistence PVC. One writer, so backend.replicas must stay 1 while
 #              persistence is on; the chart refuses to render otherwise.
-#   postgres - in POSTGRES_DSN, shared by every replica. The schema is created and
-#              upgraded on startup, under an advisory lock so several replicas starting
-#              together cannot collide.
+#   postgres - in POSTGRES_DSN, shared by every replica, and the audit chain moves there
+#              with them (appends serialise on an advisory lock, so replicas share one
+#              chain instead of forking it). The schema is created and upgraded on
+#              startup, under an advisory lock so several replicas starting together
+#              cannot collide. This is what lifts the single-replica ceiling - set
+#              persistence.enabled: false alongside it, since the PVC then holds nothing
+#              and its ReadWriteOnce mode would still pin the pods to one node.
 governanceBackend: file
 
 podSecurityContext:

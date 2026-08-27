@@ -68,19 +68,15 @@ var subcommands = []string{
 }
 
 func main() {
-	// Operator utility: verify the audit log's hash chain and exit.
-	if len(os.Args) >= 3 && os.Args[1] == "verify-audit" {
-		sealer, err := cryptostore.New(os.Getenv("STORE_ENCRYPTION_KEY"))
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "verify-audit:", err)
+	// Operator utility: verify the audit log's hash chain and exit. Dispatching on the
+	// subcommand alone - not on it plus an argument - is deliberate: `verify-audit` with
+	// nothing after it used to fall through every other case and START THE SERVER, so a
+	// typo in a verification step became a running process nobody meant to launch.
+	if len(os.Args) >= 2 && os.Args[1] == "verify-audit" {
+		if err := runVerifyAudit(os.Args[2:], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		n, err := audit.Verify(os.Args[2], audit.WithSealer(sealer))
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "audit chain INVALID after %d records: %v\n", n, err)
-			os.Exit(1)
-		}
-		fmt.Printf("audit chain OK: %d records verified\n", n)
 		return
 	}
 
@@ -111,6 +107,12 @@ func main() {
 	// puts a sensitive asset within reach. Blocks on attack paths, not on CVE counts. Its
 	// exit code is its interface, so it exits itself rather than returning. See runGate.
 	if len(os.Args) >= 2 && os.Args[1] == "gate" {
+		// staticcheck is right that this can only be true: runGate reaches every verdict
+		// through reportAndExit, which exits, so the `return nil` below it is unreachable
+		// and the only returns left are failures. The check stays anyway - it is what
+		// makes a future path that DOES return nil fail closed instead of exiting 0 on a
+		// verdict nobody produced, which on a merge gate is the whole ballgame.
+		//lint:ignore SA4023 deliberate: a gate must fail closed if it ever returns.
 		if err := runGate(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "gate:", err)
 			os.Exit(gateExitError)
@@ -532,7 +534,16 @@ func run(ctx context.Context, cfg config.Config) error {
 			defer func() { _ = alog.Close() }()
 			auditRec = alog
 			slog.Info("audit log enabled (postgres, shared chain)")
+			if cfg.AuditRetention > 0 {
+				go auditRetention(ctx, alog, cfg.AuditRetention, elector)
+				slog.Info("audit retention enabled - records older than this are pruned, oldest first (leader only)",
+					"retention", cfg.AuditRetention)
+			}
 		} else {
+			if cfg.AuditRetention > 0 {
+				slog.Warn("AUDIT_RETENTION is set but the audit log is file-backed, so nothing prunes it - " +
+					"rotate the file (see docs/OPERATIONS.md) or set GOVERNANCE_BACKEND=postgres")
+			}
 			alog, aerr := audit.Open(cfg.AuditLogPath, audit.WithSealer(sealer))
 			if aerr != nil {
 				return aerr
@@ -845,6 +856,45 @@ func run(ctx context.Context, cfg config.Config) error {
 // scheduler. Unknown names are skipped with a warning, and a connector that fails
 // to initialize is skipped (not fatal) so one misconfigured source can't block
 // boot. The scheduler is a no-op when nothing is enabled.
+// auditRetention prunes audit records older than the retention window, until ctx ends.
+//
+// Leader-gated for the same reason every other side effect is: N replicas pruning the
+// same chain would serialise on the audit lock and do the same work N times. The cadence
+// is derived from the window rather than configured - a sixth of it, so a 90-day
+// retention checks in daily - and clamped so neither a very short nor a very long window
+// turns into a hot loop or a prune that effectively never runs.
+func auditRetention(ctx context.Context, log *audit.PGLog, window time.Duration, elector analyzer.Leader) {
+	every := window / 6
+	if every < time.Hour {
+		every = time.Hour
+	}
+	if every > 24*time.Hour {
+		every = 24 * time.Hour
+	}
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if !elector.IsLeader(ctx) {
+				continue
+			}
+			removed, err := log.PruneBefore(ctx, time.Now().Add(-window))
+			if err != nil {
+				slog.Error("audit retention: prune failed", "err", err)
+				continue
+			}
+			if removed > 0 {
+				metrics.AuditPrunedRecords.Add(float64(removed))
+				slog.Info("audit retention: pruned records older than the window",
+					"removed", removed, "retention", window)
+			}
+		}
+	}
+}
+
 func buildConnectors(ctx context.Context, cfg config.Config, pub connector.Publisher, elector connector.Leader) *connector.Scheduler {
 	var conns []connector.Connector
 	for _, name := range cfg.ConnectorsEnabled {

@@ -113,15 +113,24 @@ choice.
 
 - **Graph**: bounded. `GRAPH_TTL` prunes nodes and edges not re-observed within the
   window, so an identity that leaves your estate leaves the graph.
-- **Audit log**: **append-only, with no retention policy and no rotation.** Set one. It is
-  the gap most likely to be raised in review, and today the answer is "it grows forever".
+- **Audit log**: bounded **when you set a window**, and unbounded until you do. On the
+  Postgres-backed chain, `AUDIT_RETENTION` prunes records older than the window. On the
+  file-backed chain there is no automatic pruning: rotate it (see the
+  [operations runbook](OPERATIONS.md#retention-and-rotation)).
 
 The tension worth naming rather than hiding: the audit log is **hash-chained** so that
-tampering is detectable, which means **deleting a single record breaks every hash after
-it**. Erasure (Art. 17) and tamper-evidence pull in opposite directions. The workable
-answer is rotation, not surgery - retire whole files on a schedule and archive or destroy
-them intact - which is also why the subjects are pseudonymous in the first place: there is
-far less to erase.
+tampering is detectable, which means **deleting a record from the middle breaks every hash
+after it**. Erasure (Art. 17) and tamper-evidence pull in opposite directions.
+
+The answer is truncation, not surgery. Retention removes a **prefix** - the oldest records,
+in the order they arrived - and writes a checkpoint holding the sequence number and hash of
+the last record it removed. Verification then starts at the first surviving record and
+checks that it still links to that hash, so the retained window is exactly as tamper-evident
+as the whole chain was. Deleting one record out of the middle remains impossible to do
+invisibly, which is the property the chain exists for; the prune itself is recorded in the
+chain it shortened. The file-backed chain does the same thing at file granularity: retire
+whole files and archive or destroy them intact. Both of which are also why the subjects are
+pseudonymous in the first place - there is far less to erase.
 
 ### Transfers outside the EEA
 

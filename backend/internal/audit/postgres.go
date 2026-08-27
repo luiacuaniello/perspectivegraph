@@ -231,7 +231,18 @@ func (l *PGLog) append(rec Record) error {
 	)
 	err = tx.QueryRowContext(ctx,
 		`SELECT seq, hash FROM audit_log ORDER BY seq DESC LIMIT 1`).Scan(&lastSeq, &lastHash)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		// An empty table is not necessarily a new chain. Retention may have pruned every
+		// record, and then the chain continues from the checkpoint rather than restarting
+		// at 1 - restarting would leave the verifier expecting a sequence the log no
+		// longer has, and reporting the honest gap as tampering.
+		if cerr := tx.QueryRowContext(ctx,
+			`SELECT pruned_through_seq, pruned_through_hash FROM audit_log_checkpoint`).
+			Scan(&lastSeq, &lastHash); cerr != nil && !errors.Is(cerr, sql.ErrNoRows) {
+			return fmt.Errorf("read retention checkpoint: %w", cerr)
+		}
+	case err != nil:
 		return fmt.Errorf("read chain tail: %w", err)
 	}
 
@@ -304,16 +315,136 @@ func (l *PGLog) Close() error {
 	return nil
 }
 
+// Checkpoint records how far retention has pruned the chain, and the hash of the last
+// record it removed. A log that has never been pruned has no checkpoint.
+type Checkpoint struct {
+	PrunedThroughSeq  int64
+	PrunedThroughHash string
+	PrunedRecords     int64
+	PrunedAt          time.Time
+}
+
+// ReadCheckpointPG returns the retention checkpoint, or ok=false if the log has never
+// been pruned. Callers use it to say what a verification actually covered: "N records
+// verified" means something different when M older ones were deliberately removed.
+func ReadCheckpointPG(ctx context.Context, db *sql.DB) (cp Checkpoint, ok bool, err error) {
+	if db == nil {
+		return Checkpoint{}, false, errors.New("audit: nil database handle")
+	}
+	err = db.QueryRowContext(ctx, `
+		SELECT pruned_through_seq, pruned_through_hash, pruned_records, pruned_at
+		FROM audit_log_checkpoint`).
+		Scan(&cp.PrunedThroughSeq, &cp.PrunedThroughHash, &cp.PrunedRecords, &cp.PrunedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Checkpoint{}, false, nil
+	}
+	if err != nil {
+		return Checkpoint{}, false, err
+	}
+	return cp, true, nil
+}
+
+// PruneBefore deletes records older than cutoff and moves the retention checkpoint,
+// reporting how many it removed.
+//
+// It prunes a PREFIX of the chain and nothing else. That restriction is the whole design:
+// records leave in the order they arrived, the checkpoint keeps the hash of the last one
+// removed, and what survives still verifies link-by-link back to that checkpoint. Deleting
+// from the middle would be indistinguishable from an attacker erasing their own entry, so
+// it is not offered.
+//
+// It takes the same advisory lock an append does, so retention cannot run between an
+// appender reading the tail and writing its record.
+func (l *PGLog) PruneBefore(ctx context.Context, cutoff time.Time) (removed int64, err error) {
+	if l == nil || l.db == nil {
+		return 0, nil
+	}
+	tx, err := l.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, auditLockKey); err != nil {
+		return 0, fmt.Errorf("acquire audit lock: %w", err)
+	}
+
+	// The newest record that is old enough to go. Everything at or below its seq leaves,
+	// and its hash becomes what the survivors chain back to.
+	var (
+		throughSeq  int64
+		throughHash string
+	)
+	err = tx.QueryRowContext(ctx,
+		`SELECT seq, hash FROM audit_log WHERE at < $1 ORDER BY seq DESC LIMIT 1`, cutoff.UTC()).
+		Scan(&throughSeq, &throughHash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil // nothing old enough
+	}
+	if err != nil {
+		return 0, fmt.Errorf("find retention cutoff: %w", err)
+	}
+
+	res, err := tx.ExecContext(ctx, `DELETE FROM audit_log WHERE seq <= $1`, throughSeq)
+	if err != nil {
+		return 0, fmt.Errorf("prune audit log: %w", err)
+	}
+	removed, err = res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO audit_log_checkpoint (id, pruned_through_seq, pruned_through_hash, pruned_records, pruned_at)
+		VALUES (true, $1, $2, $3, now())
+		ON CONFLICT (id) DO UPDATE SET
+			pruned_through_seq  = EXCLUDED.pruned_through_seq,
+			pruned_through_hash = EXCLUDED.pruned_through_hash,
+			pruned_records      = audit_log_checkpoint.pruned_records + EXCLUDED.pruned_records,
+			pruned_at           = EXCLUDED.pruned_at`,
+		throughSeq, throughHash, removed); err != nil {
+		return 0, fmt.Errorf("move retention checkpoint: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+
+	// The prune is itself an auditable act, so it goes into the chain it just shortened -
+	// after the commit, because Record queues and would otherwise deadlock on the lock
+	// this transaction is holding.
+	l.Record(ctx, "audit.prune", "retention", "", "", map[string]any{
+		"removed": removed, "through_seq": throughSeq, "cutoff": cutoff.UTC().Format(time.RFC3339),
+	})
+	return removed, nil
+}
+
 // VerifyPG walks the chain and reports how many records held.
 //
 // It recomputes each record's hash from its contents and checks that every link points
 // at the record before it, which is what makes a deletion visible: removing a record
 // leaves the next one pointing at a hash that is no longer there.
+//
+// Retention is the one deletion that is allowed, and it is not taken on trust: the chain
+// is expected to start at record 1 unless a checkpoint says a prefix was pruned, in which
+// case it must resume exactly where the checkpoint left off, at the hash it recorded. A
+// forged checkpoint therefore cannot hide a deletion - it can only move where the chain is
+// expected to start, and the survivors still have to link to the hash it names.
 func VerifyPG(ctx context.Context, db *sql.DB, opts ...Option) (records int, err error) {
 	if db == nil {
 		return 0, errors.New("audit: nil database handle")
 	}
 	sealer := sealerFrom(opts)
+
+	prev := ""
+	var expectSeq int64 = 1
+	cp, pruned, err := ReadCheckpointPG(ctx, db)
+	if err != nil {
+		return 0, fmt.Errorf("read retention checkpoint: %w", err)
+	}
+	if pruned {
+		expectSeq = cp.PrunedThroughSeq + 1
+		prev = cp.PrunedThroughHash
+	}
 
 	rows, err := db.QueryContext(ctx, `
 		SELECT seq, at, action, subject, role, tenant, fields, prev_hash, hash
@@ -323,8 +454,6 @@ func VerifyPG(ctx context.Context, db *sql.DB, opts ...Option) (records int, err
 	}
 	defer func() { _ = rows.Close() }()
 
-	prev := ""
-	var expectSeq int64 = 1
 	for rows.Next() {
 		var (
 			rec    Record

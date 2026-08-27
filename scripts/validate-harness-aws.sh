@@ -35,7 +35,7 @@ INGEST_URL=${INGEST_URL:-http://localhost:8081}
 SG_ID=${SG_ID:-}
 OUTCOME=${OUTCOME:-}                       # confirmed|refuted → record a verdict for the found path
 ANALYZER_WAIT=${ANALYZER_WAIT:-35}
-GO=${GO:-go}; export GOTOOLCHAIN=${GOTOOLCHAIN:-go1.25.12}
+GO=${GO:-go}; export GOTOOLCHAIN=${GOTOOLCHAIN:-go1.26.7}
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
 say()  { printf '\n\033[1;36m== %s\033[0m\n' "$*"; }

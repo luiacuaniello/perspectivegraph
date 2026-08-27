@@ -1,5 +1,9 @@
-{{- if and .Values.persistence.enabled (gt (int .Values.backend.replicas) 1) (ne .Values.governanceBackend "postgres") -}}
+{{- if and .Values.persistence.enabled (gt (int .Values.backend.replicas) 1) -}}
+{{- if ne .Values.governanceBackend "postgres" -}}
 {{- fail "persistence.enabled stores governance state (suppressions/tickets/validations/history/audit) on a single-writer ReadWriteOnce volume; set backend.replicas to 1, or set governanceBackend to \"postgres\" so every replica shares one database instead. Multiple replicas on the file backend would split-brain the stores and cannot co-mount an RWO PVC." -}}
+{{- else -}}
+{{- fail "governanceBackend \"postgres\" already puts the stores AND the audit chain in the database, so the persistence PVC holds nothing - but it is still ReadWriteOnce, and the replicas scheduled onto other nodes will hang on FailedAttachVolume. Set persistence.enabled to false: it costs you nothing here, and it is what lets replicas exceed 1." -}}
+{{- end -}}
 {{- end -}}
 apiVersion: apps/v1
 kind: Deployment

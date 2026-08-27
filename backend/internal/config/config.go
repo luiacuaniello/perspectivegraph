@@ -157,6 +157,14 @@ type Config struct {
 	// Audit (optional; tamper-evident hash-chained log file)
 	AuditLogPath string
 
+	// AuditRetention bounds how long audit records are kept. Zero (the default) keeps
+	// them forever, which is the behaviour every release so far has had - a retention
+	// policy is a decision about someone's records, so it is opted into, not imposed by
+	// an upgrade. It applies to the POSTGRES-backed chain, where the engine can prune a
+	// prefix and leave a checkpoint that keeps what remains verifiable; the file-backed
+	// chain is rotated by whatever rotates your other log files (see OPERATIONS.md).
+	AuditRetention time.Duration
+
 	// Triage/suppression store (optional; file-backed). When set, analyst
 	// decisions to suppress a specific attack path (accept-risk / false-positive
 	// / mitigating-control / duplicate, with owner + optional expiry) persist
@@ -372,6 +380,7 @@ func Load() Config {
 		OIDCLogoutURL: getenv("OIDC_LOGOUT_URL", ""),
 
 		AuditLogPath:      getenv("AUDIT_LOG_PATH", ""),
+		AuditRetention:    getdur("AUDIT_RETENTION", 0),
 		SuppressionsPath:  getenv("SUPPRESSIONS_PATH", ""),
 		GovernanceBackend: getenv("GOVERNANCE_BACKEND", "file"),
 		HistoryPath:       getenv("HISTORY_PATH", ""),

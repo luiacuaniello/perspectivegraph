@@ -1,8 +1,10 @@
 // Package age implements graph.Store on top of PostgreSQL + Apache AGE.
 //
 // AGE exposes openCypher via the ag_catalog.cypher() set-returning function.
-// Each session must LOAD 'age' and put ag_catalog on the search_path, so every
-// operation runs inside a short transaction that performs that setup first.
+// Each session needs the AGE library loaded and ag_catalog on the search_path, so
+// every operation runs inside a short transaction that performs that setup first.
+// How the library gets loaded depends on the server, and that difference decides
+// whether this store works on a managed PostgreSQL at all - see resolveLoadMode.
 //
 // Injection model. AGE cannot bind labels/edge-types as parameters and its
 // agtype value binding is awkward, so values are inlined into the Cypher text.
@@ -33,7 +35,7 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 	"github.com/luiacuaniello/perspectivegraph/internal/graph"
 	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
 )
@@ -51,6 +53,13 @@ var graphNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 type Store struct {
 	db    *sql.DB
 	graph string
+
+	// loadOnce resolves, at most once per store, how this server wants the AGE
+	// library loaded; skipLoad and loadErr are its result and are read only after
+	// it has run.
+	loadOnce sync.Once
+	skipLoad bool
+	loadErr  error
 
 	// indexed memoizes which label tables already have an id index this process,
 	// so the (idempotent) CREATE INDEX runs at most once per label.
@@ -571,15 +580,85 @@ func (s *Store) ensureLabelIndex(ctx context.Context, tx *sql.Tx, label ontology
 	}
 }
 
+// resolveLoadMode works out, once per store, whether this server needs an explicit
+// `LOAD 'age'` at the start of every transaction.
+//
+// The classic AGE recipe is to LOAD per session, and that is what the bundled demo
+// database wants - it connects as a superuser. PostgreSQL only lets a superuser LOAD
+// a shared library, though, and NO managed PostgreSQL hands out superuser: on Azure
+// Database for PostgreSQL, the one managed service that offers AGE at all, the role
+// you get is not one and the library is preloaded through shared_preload_libraries
+// instead. There `LOAD 'age'` fails with 42501 - and this store used to take that as
+// fatal, which meant it could run on a laptop and on nothing a customer would buy.
+//
+// So a privilege error is not fatal on its own. It is fatal only if AGE also turns
+// out to be unusable, which is what the probe settles.
+func (s *Store) resolveLoadMode(ctx context.Context) error {
+	s.loadOnce.Do(func() {
+		var loadErr error
+		if _, err := s.db.ExecContext(ctx, `LOAD 'age'`); err != nil {
+			loadErr = err
+		}
+		s.skipLoad, s.loadErr = decideLoadMode(loadErr, func() error {
+			// Casting to agtype calls a C function from the AGE library, so it
+			// answers the only question that matters - "is AGE usable on this
+			// connection?" - without needing a graph to exist yet. The value is
+			// scanned as nullable and then discarded: what is being tested is
+			// whether the call errors, and an agtype that renders as SQL NULL is
+			// a working AGE, not a missing one.
+			var probe sql.NullString
+			return s.db.QueryRowContext(ctx, `SELECT '1'::ag_catalog.agtype::text`).Scan(&probe)
+		})
+	})
+	return s.loadErr
+}
+
+// decideLoadMode turns the outcome of `LOAD 'age'` into a policy, and is kept
+// separate from the database plumbing so both of its branches can be tested without
+// a server that has AGE preloaded - a configuration a test container cannot easily
+// produce.
+func decideLoadMode(loadErr error, probe func() error) (skipLoad bool, err error) {
+	if loadErr == nil {
+		return false, nil
+	}
+	if !isInsufficientPrivilege(loadErr) {
+		return false, fmt.Errorf("load age: %w", loadErr)
+	}
+	if probeErr := probe(); probeErr != nil {
+		return false, fmt.Errorf(
+			"this role may not LOAD the AGE library (%w) and AGE is not preloaded either (%v): "+
+				"add `age` to shared_preload_libraries and restart the server (on Azure Database for "+
+				"PostgreSQL, set the azure.extensions and shared_preload_libraries parameters), or "+
+				"connect as a superuser", loadErr, probeErr)
+	}
+	slog.Info("age: library is preloaded; skipping per-transaction LOAD (this role may not LOAD)")
+	return true, nil
+}
+
+// isInsufficientPrivilege reports whether err is PostgreSQL's 42501, which is what a
+// non-superuser gets back from LOAD.
+func isInsufficientPrivilege(err error) bool {
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == "42501"
+}
+
 // withAGE runs fn inside a transaction that has AGE loaded and on the search path.
 func (s *Store) withAGE(ctx context.Context, fn func(*sql.Tx) error) error {
+	// Resolved before the work transaction opens, deliberately: a failed LOAD
+	// aborts the transaction it runs in, so a probe that followed it there would
+	// only ever report "current transaction is aborted".
+	if err := s.resolveLoadMode(ctx); err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `LOAD 'age'`); err != nil {
-		_ = tx.Rollback()
-		return fmt.Errorf("load age: %w", err)
+	if !s.skipLoad {
+		if _, err := tx.ExecContext(ctx, `LOAD 'age'`); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("load age: %w", err)
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `SET search_path = ag_catalog, "$user", public`); err != nil {
 		_ = tx.Rollback()

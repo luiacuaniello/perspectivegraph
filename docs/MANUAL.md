@@ -518,7 +518,8 @@ findings correlate into the top ranked attack path with its fix:
 make demo           # needs Docker + jq; then open http://localhost:3000
 ```
 
-See the [90-second demo](#demo-90-seconds) above (and how to turn the fix into a real PR).
+The [README's walk-through](../README.md#see-the-whole-engine-in-90-seconds) shows what
+that prints, and how to turn the fix into a real PR.
 
 **Or step by step (everything in containers):**
 
@@ -930,6 +931,45 @@ derivation is unit-tested). The credential lives only in the tab's `sessionStora
 and rides as a Bearer - never written to disk or the bundle. Token validation
 stays on the JWKS / issuer / audience the backend already enforces (fail-closed:
 it refuses to start with a JWKS URL but no `iss`/`aud`).
+
+#### Trying SSO end-to-end on a laptop (the bundled Keycloak)
+
+An opt-in compose profile stands up a demo IdP, so the login gate can be exercised
+without a cloud tenant:
+
+```bash
+docker compose --profile app --profile sso up -d   # realm "demo", user demo/demo
+```
+
+Then point the backend at it and open <http://localhost:3000> → **Sign in with SSO**:
+
+```bash
+# Server-side validation - fetched by the BACKEND, over the compose network.
+OIDC_JWKS_URL=http://keycloak:8080/realms/demo/protocol/openid-connect/certs
+OIDC_ISSUER=http://localhost:8088/realms/demo
+OIDC_AUDIENCE=perspectivegraph
+# SPA-facing coordinates - used by the BROWSER, on the published port.
+OIDC_CLIENT_ID=perspectivegraph
+OIDC_AUTHORIZE_URL=http://localhost:8088/realms/demo/protocol/openid-connect/auth
+OIDC_TOKEN_URL=http://localhost:8088/realms/demo/protocol/openid-connect/token
+OIDC_LOGOUT_URL=http://localhost:8088/realms/demo/protocol/openid-connect/logout
+```
+
+**The two hosts differ on purpose**, and it is the step people get wrong. The JWKS is
+fetched by the backend inside the compose network, so it uses the service name
+(`keycloak:8080`). The issuer is a string *inside the token*, which Keycloak mints from
+the address the browser used (`localhost:8088`) - so it has to match that one. They are
+independent settings and they are meant to disagree. The Helm equivalent is
+`values-sso-demo.yaml`, which splits them the same way.
+
+**Where the role comes from.** RBAC is read off the token's `role` claim; a token without
+one is `RoleNone` and sees nothing. The demo realm supplies it with a hardcoded claim
+mapper (`role: admin`) - and that is the piece a real IdP has to provide too, mapping the
+group or app role your directory already has onto a `role` claim of `viewer`, `operator`
+or `admin`. There is no group-to-role mapping inside the engine, by design: the IdP is
+where that decision belongs.
+
+Demo only: Keycloak runs `start-dev` with an in-memory database and an imported realm.
 
 ### Validated against reality (precision & recall)
 
@@ -1344,7 +1384,19 @@ Every door is open by default for zero-config local dev - and the backend
   ```bash
   perspectivegraph verify-audit /var/log/perspectivegraph/audit.log
   # → audit chain OK: N records verified
+
+  # Under GOVERNANCE_BACKEND=postgres the chain lives in the database instead (which is
+  # what lets replicas exceed 1). Same check, addressed through POSTGRES_DSN / POSTGRES_*
+  # rather than an argument, so the password stays out of the process list:
+  perspectivegraph verify-audit -postgres
   ```
+
+  **Retention.** Left alone the chain grows forever. `AUDIT_RETENTION=2160h` (90 days)
+  prunes the database-backed chain, oldest records first, leaving a checkpoint so the
+  survivors still verify against the hash of the last record removed - deleting from the
+  middle stays impossible to do invisibly, which is the point of a chain. The file-backed
+  chain is rotated instead. Both are in the
+  [operations runbook](OPERATIONS.md#retention-and-rotation).
 
 ```bash
 # Single-tenant, signed + token-gated, with an audit trail:
@@ -1526,8 +1578,11 @@ helm install perspective deploy/helm/perspectivegraph \
   --set opensearch.url=""           # optional full-text index
 ```
 
-Bring your own managed Postgres/NATS by disabling the bundled ones and pointing
-the chart at the external endpoints:
+Bring your own Postgres/NATS by disabling the bundled ones and pointing the chart at
+the external endpoints. Read
+[the database matrix](OPERATIONS.md#3-the-database-postgresql--apache-age) before you
+pick one: Apache AGE is a managed offering on Azure only, so on AWS and GCP "external"
+means an instance you run.
 
 ```bash
 helm install perspective deploy/helm/perspectivegraph \
@@ -1579,8 +1634,8 @@ make seed   # and make seed-discovery - they post to localhost:8081 (the ingest 
 ```
 
 Full walk-through (incl. why the OIDC URLs differ) in
-the SSO demo section above. Demo only: locally-built images + Keycloak in
-`start-dev`.
+[Trying SSO end-to-end on a laptop](#trying-sso-end-to-end-on-a-laptop-the-bundled-keycloak).
+Demo only: locally-built images + Keycloak in `start-dev`.
 
 ### Hardening a real deployment (beyond a trusted cluster)
 
@@ -2307,8 +2362,10 @@ Start narrow - one app with a known internet entry point and a known sensitive
 store - confirm a path end-to-end, *then* widen the scanners' scope.
 
 **Deploying it on Kubernetes.** The Helm chart in `deploy/helm/perspectivegraph`
-brings up backend + dashboard + Postgres+AGE + NATS in one command (or point it at
-managed Postgres/NATS with `postgres.enabled=false`/`nats.enabled=false`). The
+brings up backend + dashboard + Postgres+AGE + NATS in one command (or point it at an
+external Postgres/NATS with `postgres.enabled=false`/`nats.enabled=false` - see
+[the database matrix](OPERATIONS.md#3-the-database-postgresql--apache-age) for which
+services can host AGE at all). The
 default install is *unauthenticated with in-memory governance* - fine for a demo
 inside a trusted cluster, but for anything reachable beyond it, turn the controls
 on: `--set auth.apiTokens="$(openssl rand -hex 16):admin"` (bearer auth),
