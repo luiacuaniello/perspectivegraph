@@ -450,6 +450,11 @@ function NodeBadges({ node }: { node: Node }) {
           sensitive asset{inferredJewel ? " (inferred)" : classifiedJewel ? " (classified)" : ""}
         </Badge>
       )}
+      {node.account && (
+        <Badge tone="neutral" title={`Cloud account ${node.account}. Identifiers like i-… and sg-… are unique only within an account, so this is what tells two same-named assets apart.`}>
+          {node.account}
+        </Badge>
+      )}
       {node.classification && (
         <Badge tone="danger" title={`Data classification: ${node.classification.toUpperCase()} (from a real classifier - Macie/DLP/tag policy).`}>
           {node.classification.toLowerCase()}
@@ -584,6 +589,15 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
   const entry = path.nodes[0];
   const target = path.nodes[path.nodes.length - 1];
 
+  // The accounts this route passes through, in order and de-duplicated. Empty or
+  // single on an estate that ingests one account - which is why nothing below renders
+  // there: the multi-account affordance costs a single-account user no screen space.
+  const crossedAccounts = path.nodes.reduce<string[]>((acc, n) => {
+    const a = n.account?.trim();
+    if (a && acc[acc.length - 1] !== a && !acc.includes(a)) acc.push(a);
+    return acc;
+  }, []);
+
   // What-if: cut one edge of this path and show the residual quantified risk.
   const [whatIf, setWhatIf] = useState<{ step: Step; result: WhatIfResult } | null>(null);
   const [cutting, setCutting] = useState<string | null>(null);
@@ -618,7 +632,20 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
               <span className="text-muted">→</span>
               <span>{target?.name}</span>
             </h2>
-            <div className="mt-1 text-xs text-muted">{path.steps.length} hops</div>
+            <div className="mt-1 text-xs text-muted">
+              {path.steps.length} hops
+              {crossedAccounts.length > 1 && (
+                <>
+                  {" · "}
+                  <span
+                    className="font-semibold text-slate-900"
+                    title={`This route does not stay in one account: it runs through ${crossedAccounts.join(" → ")}. A boundary an org chart treats as a wall is being crossed by the path.`}
+                  >
+                    crosses {crossedAccounts.length} accounts
+                  </span>
+                </>
+              )}
+            </div>
             {path.priorityLabel && (
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 <span

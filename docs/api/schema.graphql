@@ -178,6 +178,7 @@ type IngestSource {
 }
 
 type Node {
+  account: String
   classification: String
   crownJewel: Boolean
   crownJewelBasis: String

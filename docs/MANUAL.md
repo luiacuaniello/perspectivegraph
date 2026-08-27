@@ -630,10 +630,24 @@ CONNECTORS_ENABLED=aws AWS_CONNECTOR_MODE=sdk AWS_REGION=us-east-1 \
 # iam:GetPolicy + iam:GetPolicyVersion (to resolve permissions-boundary documents)
 # (all covered by the AWS-managed SecurityAudit policy - verified against a live account)
 
+# Multi-account: one role per account, comma-separated, pulled in a single pass.
+CONNECTORS_ENABLED=aws AWS_CONNECTOR_MODE=sdk AWS_REGION=us-east-1 \
+  AWS_ROLE_ARN=arn:aws:iam::111111111111:role/perspectivegraph-readonly,arn:aws:iam::222222222222:role/perspectivegraph-readonly
+
 # See what the live connector discovers before wiring it in (describe-* only):
 AWS_REGION=us-east-1 ROLE_ARN=arn:aws:iam::<account>:role/perspectivegraph-readonly \
   make validate-aws       # internet-exposed seeds vs SG-open-but-suppressed, with reasons
 ```
+
+**Several accounts, one estate.** `AWS_ROLE_ARN` takes a list, and each account's assets
+are qualified with the account id AWS reports for its own credentials
+(`sts:GetCallerIdentity` - no extra grant, it is allowed to every principal). That
+qualification is not cosmetic: `i-…` and `sg-…` are unique only *within* an account, so
+without it two accounts that happen to share an identifier collapse into one asset, and
+the engine reports paths through a machine that exists in neither. An account whose role
+has expired costs that account's assets for the pass and nothing more - the others are
+still collected, and `GET /connectors` reports the error. No AWS Organization is needed:
+a role in each account trusting the one the engine runs as is enough.
 
 Connectors are **leader-only** (replicas don't multiply API calls), interval-driven
 (`CONNECTOR_INTERVAL`), and observable via `GET /connectors` plus
@@ -1888,6 +1902,14 @@ arrived yet are retried), but this is the logical flow:
 | 7 | Cloud network | `POST /ingest/cloudnet` | **reachability**: internet-facing SGs, SG-to-SG, VPC peering |
 | 8 | IAM authorization | `POST /ingest/iam` | **privilege escalation**: `CAN_ESCALATE_TO` edges to account-admin, public-trust roles |
 
+> **Ingesting more than one cloud account?** Add `?account=<id>` to the cloud sources.
+> Identifiers like `i-…` and `sg-…` are unique only *within* an account, so without it
+> two accounts that happen to share one merge into a single asset - and the engine then
+> reports paths running through a machine that does not exist. Identities need no flag
+> (an ARN already carries its account). Leave it off for a single-account estate and
+> every id stays exactly as it is today.
+
+
 Sources 6–8 are the **discovery** collectors: they extract the network/exposure
 topology and IAM privilege-escalation graph automatically, so paths form without
 hand-stitched ids.
@@ -2045,7 +2067,8 @@ heuristic applies (backward-compatible).
 # Optional precision: add describe-subnets / describe-route-tables /
 # describe-network-acls as "subnets"/"route_tables"/"network_acls" (each instance
 # carries its "SubnetId").
-curl -sS -X POST "$INGEST_URL/ingest/cloudnet" -H 'Content-Type: application/json' --data-binary @cloudnet.json
+curl -sS -X POST "$INGEST_URL/ingest/cloudnet?account=123456789012" \
+  -H 'Content-Type: application/json' --data-binary @cloudnet.json
 ```
 
 #### IAM privilege-escalation graph (auto-discovered)
@@ -2063,7 +2086,8 @@ sensitive asset. A role whose trust policy admits `"Principal":"*"` is marked
 ```bash
 # One call dumps every user, role, group and policy in the account.
 aws iam get-account-authorization-details > iam.json
-curl -sS -X POST "$INGEST_URL/ingest/iam" -H 'Content-Type: application/json' --data-binary @iam.json
+curl -sS -X POST "$INGEST_URL/ingest/iam?account=123456789012" \
+  -H 'Content-Type: application/json' --data-binary @iam.json
 ```
 
 > **Read-only & honest about scope.** The collector needs only the read-only

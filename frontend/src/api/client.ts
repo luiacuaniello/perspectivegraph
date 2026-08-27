@@ -11,6 +11,10 @@ export interface Node {
   crownJewel: boolean;
   crownJewelBasis?: string | null;
   classification?: string | null;
+  // Cloud account the asset lives in. Present once the estate ingests more than one:
+  // native identifiers (i-…, sg-…) are unique only within an account, so this is what
+  // tells two same-named assets apart on a multi-account estate.
+  account?: string | null;
   // True when a secret value was redacted out of this node's properties at ingest
   // (data hygiene - the attack map keeps the finding, not the credential).
   secretsScrubbed?: boolean | null;
@@ -402,7 +406,7 @@ export interface WhatIfResult {
   after: { id: string }[];
 }
 
-const NODE_FIELDS = `id label name internetExposed crownJewel crownJewelBasis classification secretsScrubbed runtimeAlert severity cvss kev epss resolutionMethod resolutionConfidence resolutionAlias signed slsaLevel sbomComponents`;
+const NODE_FIELDS = `id label name account internetExposed crownJewel crownJewelBasis classification secretsScrubbed runtimeAlert severity cvss kev epss resolutionMethod resolutionConfidence resolutionAlias signed slsaLevel sbomComponents`;
 
 // PATH_LIMIT bounds how many attack paths the dashboard pulls per refresh. The
 // analyzer returns them priority-first, so this is the Top-N a human can actually

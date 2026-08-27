@@ -119,3 +119,45 @@ describe("AttackPathDetail probability display", () => {
     expect(screen.getByText("ACTIVELY EXPLOITED")).toBeInTheDocument();
   });
 });
+
+// Multi-account estates. The account is not decoration: `i-…` and `sg-…` are unique
+// only within an account, so on an estate that ingests several, "which account" is
+// what tells two same-named assets apart - and a route that leaves the account it
+// started in is the finding, not a detail. Neither may cost a single-account user
+// screen space, which is the half that breaks silently.
+describe("AttackPathDetail account display", () => {
+  const crossAccount = path({
+    nodes: [
+      { id: "lb", label: "LoadBalancer", name: "edge-lb", properties: {}, account: "111111111111" },
+      { id: "role", label: "IAM_Role", name: "admin-role", properties: {}, account: "222222222222" },
+    ],
+  });
+
+  it("names the accounts a route runs through", () => {
+    render(<AttackPathDetail path={crossAccount} />);
+    expect(screen.getByText("111111111111")).toBeInTheDocument();
+    expect(screen.getByText("222222222222")).toBeInTheDocument();
+  });
+
+  it("calls out a route that crosses an account boundary", () => {
+    render(<AttackPathDetail path={crossAccount} />);
+    expect(screen.getByText(/crosses 2 accounts/)).toBeInTheDocument();
+  });
+
+  it("says nothing about accounts when the whole route is in one", () => {
+    const single = path({
+      nodes: [
+        { id: "lb", label: "LoadBalancer", name: "edge-lb", properties: {}, account: "111111111111" },
+        { id: "role", label: "IAM_Role", name: "admin-role", properties: {}, account: "111111111111" },
+      ],
+    });
+    render(<AttackPathDetail path={single} />);
+    expect(screen.queryByText(/crosses/)).not.toBeInTheDocument();
+  });
+
+  it("shows nothing at all on a single-account estate", () => {
+    render(<AttackPathDetail path={base} />);
+    expect(screen.queryByText(/crosses/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^\d{12}$/)).not.toBeInTheDocument();
+  });
+});

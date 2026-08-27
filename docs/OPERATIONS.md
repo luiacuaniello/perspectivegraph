@@ -329,9 +329,37 @@ So the Kubernetes recipe for more than one backend is `governanceBackend: postgr
 `persistence.enabled: false` - the PVC then holds nothing, and its ReadWriteOnce mode would
 otherwise leave every pod scheduled off the first node hanging on `FailedAttachVolume`. The
 chart refuses to render `persistence.enabled` with `replicas > 1` rather than let you find
-that out from a stuck rollout. `values-production.yaml` ships the other shape - one replica
-on the file backend - because it is the smaller moving-parts count, not because replicas are
-unavailable; switch both settings to scale it out.
+that out from a stuck rollout.
+
+`values-ha.yaml` is that recipe as an overlay on top of the production profile, so HA is
+four decisions rather than a second copy of the whole file:
+
+```bash
+helm upgrade --install perspectivegraph deploy/helm/perspectivegraph \
+  -f deploy/helm/perspectivegraph/values-production.yaml \
+  -f deploy/helm/perspectivegraph/values-ha.yaml \
+  --set postgres.externalHost=db.internal --set ingress.host=pg.example.com \
+  --set nats.externalUrl=nats://nats.internal:4222
+```
+
+It sets the two settings above, raises the backend to three replicas and the dashboard to
+two, spreads them one-per-node, and adds a **PodDisruptionBudget** - because `replicas: 3`
+that a drain can evict all at once, or that the scheduler stacks on one node, is three
+copies of a single failure domain rather than availability. `values-production.yaml` keeps
+the single-replica shape on the file backend: fewer moving parts, and the audit chain in a
+file you can archive.
+
+Two single points of failure it does **not** remove, and neither is hidden:
+
+- **The database.** Every replica shares one Postgres+AGE. Use a managed instance with a
+  replica and automatic failover - §3 covers where AGE is actually available, which is
+  narrower than it looks.
+- **The event bus.** The bundled NATS is one replica whose JetStream store lives in the
+  container's writable layer, so a restart drops in-flight events. The HA overlay therefore
+  refuses to inherit it: it sets `nats.enabled: false` and the chart will not render until
+  `nats.externalUrl` points at a NATS you run clustered. What that outage costs is the
+  events in flight, not the graph - the graph is derived and the feeds re-ingest it - but
+  the analyzer is blind for the duration.
 
 ### Retention and rotation
 

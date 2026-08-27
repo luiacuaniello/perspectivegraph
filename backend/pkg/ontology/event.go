@@ -65,6 +65,22 @@ func NewID(label Label, keyParts ...string) string {
 	return string(label) + ":" + hex.EncodeToString(h.Sum(nil))[:16]
 }
 
+// ScopedID builds a node ID for an asset whose natural key is unique only within one
+// cloud account, qualifying it with that account.
+//
+// Callers pass the account through unchanged when they do not know it (the empty string),
+// which yields exactly the id NewID would have produced. That is deliberate: an operator
+// who has not started sending accounts keeps the graph they already have, and one who
+// starts sending them gets new nodes for the newly-distinguishable assets rather than a
+// silent merge. Both are correct; a mix is what would be wrong, and it cannot happen for
+// a given asset because the account either arrives with it or does not.
+func ScopedID(label Label, account string, keyParts ...string) string {
+	if account == "" {
+		return NewID(label, keyParts...)
+	}
+	return NewID(label, append([]string{"account=" + account}, keyParts...)...)
+}
+
 // Bool reads a boolean node property, defaulting to false.
 func (n Node) Bool(key string) bool {
 	v, ok := n.Properties[key].(bool)

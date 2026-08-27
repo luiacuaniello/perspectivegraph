@@ -24,10 +24,18 @@ The engine correlates any cloud into the same graph; the limit is how many cloud
 have a live connector. The connector framework is agentless and pull-based, so
 adding one is a bounded piece of work, not a rewrite.
 
-- **AWS Organizations, multi-account.** Today one account is ingested at a time. Real
-  estates are multi-account under an Organization, read through a single role. This
-  is the most-requested gap and the one a real prospect hits first. *(not started -
-  needs an Organization to build and test against, which the demo environment lacks)*
+- **Multi-account AWS: collection done, Organizations discovery not.** `AWS_ROLE_ARN`
+  takes one role per account and a pass pulls them all, each account's assets qualified
+  with the id AWS reports for its own credentials (`sts:GetCallerIdentity`) - so
+  identifiers that are unique only *within* an account (`i-…`, `sg-…`) no longer collapse
+  two machines into one, and a route that crosses an account boundary says so. An account
+  whose role fails costs that account's assets for the pass, not the estate's. No
+  Organization is required: a read-only role in each account is enough. *(done - see
+  `internal/connector/aws`, verified on fixtures; not yet exercised against real
+  accounts)*
+  What is still open is **discovery** - enumerating the accounts with
+  `organizations:ListAccounts` instead of listing their roles - and it is gated on having
+  an Organization to build against. *(not started)*
 - **GCP live connector.** No GCP today. The ontology and analyzer are
   provider-neutral; this is a new collector against the GCP asset APIs. *(not started)*
 - **Azure live connector.** Azure exists as fixtures only - the mapper is there, the
