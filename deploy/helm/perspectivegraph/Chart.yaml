@@ -2,8 +2,23 @@ apiVersion: v2
 name: perspectivegraph
 description: PerspectiveGraph - The Open DevSecOps Context Engine
 type: application
-version: 1.7.0 # x-release-please-version
-appVersion: "1.7.0" # x-release-please-version
+version: 1.10.0 # x-release-please-version
+appVersion: "1.10.0" # x-release-please-version
+# The floor is policy/v1 PodDisruptionBudget, which went GA in 1.21; everything else
+# here (networking.k8s.io/v1, seccompProfile, topologySpreadConstraints) is older.
+#
+# The `-0` is not decoration, and which Helm you run decides whether it matters.
+# Managed distributions report versions like "v1.21.0-eks-1234", which SemVer reads as
+# a PRE-RELEASE of 1.21.0. Measured against both:
+#
+#   helm 3.16.4  ">= 1.21.0"    vs v1.21.0-eks-1234  ->  REFUSED
+#   helm 3.16.4  ">= 1.21.0-0"  vs v1.21.0-eks-1234  ->  accepted
+#   helm 4.2.2   either                              ->  accepted
+#
+# So without the suffix the chart installs on kind and refuses on EKS for anyone still
+# on Helm 3 - which is what this repository's own CI pins. Keep it.
+kubeVersion: ">= 1.21.0-0"
+icon: https://raw.githubusercontent.com/luiacuaniello/perspectivegraph/main/docs/logo.svg
 keywords:
   - security
   - devsecops

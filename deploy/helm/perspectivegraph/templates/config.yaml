@@ -91,6 +91,15 @@ data:
   OIDC_TOKEN_URL: {{ .Values.auth.oidc.tokenUrl | quote }}
   OIDC_SCOPES: {{ .Values.auth.oidc.scopes | quote }}
   OIDC_LOGOUT_URL: {{ .Values.auth.oidc.logoutUrl | quote }}
+  # Who gets which role once signed in. Empty groupRoles + empty defaultRole means an
+  # SSO subject with no role claim has no access - deliberately, since signing in
+  # proves identity, not entitlement to the attack map.
+  OIDC_GROUP_ROLES: {{ .Values.auth.oidc.groupRoles | quote }}
+  OIDC_DEFAULT_ROLE: {{ .Values.auth.oidc.defaultRole | quote }}
+  OIDC_ROLE_CLAIM: {{ .Values.auth.oidc.roleClaim | quote }}
+  OIDC_GROUPS_CLAIM: {{ .Values.auth.oidc.groupsClaim | quote }}
+  OIDC_TENANT_CLAIM: {{ .Values.auth.oidc.tenantClaim | quote }}
+  OIDC_APPS_CLAIM: {{ .Values.auth.oidc.appsClaim | quote }}
   # Dev workflow: dashboard link embedded in PR comments / merge-gate status.
   DASHBOARD_URL: {{ .Values.github.dashboardUrl | quote }}
   # Data hygiene: redact secrets out of scanner output before the store.

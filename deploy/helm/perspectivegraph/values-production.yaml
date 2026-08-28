@@ -15,7 +15,10 @@
 backend:
   # Refuse to start unless both the API and ingest are authenticated.
   env: production
-  replicas: 1 # keep 1 while persistence is on (the governance stores are single-writer)
+  # 1 because persistence is on below: the file-backed governance stores and audit chain
+  # are single-writer. To scale out, add -f values-ha.yaml, which moves both into Postgres
+  # and turns the PVC off (the chart refuses the combination that would not work).
+  replicas: 1
   logLevel: info
   # A production deployment ships its logs somewhere that parses them.
   logFormat: json

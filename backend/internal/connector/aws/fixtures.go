@@ -33,6 +33,11 @@ func Fixtures(dir string) transport {
 
 func (f *fixturesTransport) Mode() string { return "fixtures" }
 
+// Account returns "" - fixtures describe no particular account, and the demo's node
+// ids must stay what they have always been. Inventing an id here would fork every
+// demo asset into a second copy on the first upgrade.
+func (f *fixturesTransport) Account(context.Context) string { return "" }
+
 func (f *fixturesTransport) Fetch(_ context.Context, feed Feed) ([]byte, error) {
 	name, ok := f.files[feed]
 	if !ok {

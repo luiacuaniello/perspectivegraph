@@ -1,0 +1,85 @@
+# High-availability overlay. Applied ON TOP of values-production.yaml, not instead of
+# it - HA is production plus four decisions, and duplicating the rest would create a
+# second copy to keep in sync:
+#
+#   helm upgrade --install perspectivegraph deploy/helm/perspectivegraph \
+#     -f deploy/helm/perspectivegraph/values-production.yaml \
+#     -f deploy/helm/perspectivegraph/values-ha.yaml \
+#     --set postgres.externalHost=db.internal --set ingress.host=pg.example.com \
+#     --set nats.externalUrl=nats://nats.internal:4222
+#
+# What makes more than one replica possible at all: the analyzer, the connectors and
+# every other at-most-once side effect are leader-gated on a PostgreSQL advisory lock,
+# so N replicas do not duplicate work, and leadership fails over on its own when the
+# holder dies. Reads and analysis then scale horizontally.
+#
+# You still need the database to be HA. Every replica shares one Postgres+AGE, so it is
+# the single point of failure this overlay does NOT remove - use a managed instance with
+# a replica and automatic failover (docs/OPERATIONS.md §3 covers where AGE is actually
+# available, which is narrower than it looks).
+
+backend:
+  replicas: 3
+  # One pod per node, and refuse to schedule rather than silently stack two on one node -
+  # `replicas: 3` in a single failure domain is three copies of the same outage. Relax to
+  # ScheduleAnyway if your cluster is smaller than the replica count.
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: DoNotSchedule
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/component: backend
+
+frontend:
+  replicas: 2
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/component: frontend
+
+# Voluntary disruption - drains, upgrades, autoscaler scale-down - may never take the
+# last replica. Without this a single `kubectl drain` can empty the whole deployment,
+# which is the failure mode people discover during their first cluster upgrade.
+disruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# THE two settings that make replicas legal, and the reason this file exists.
+#
+# governanceBackend "postgres" moves the suppressions, tickets, posture history,
+# validations and KEV holdout into the database, where every replica reads the same
+# rows - and takes the tamper-evident audit chain with them, serialised on an advisory
+# lock so replicas extend ONE chain instead of forking it.
+#
+# persistence must then be off: with governance in the database the PVC holds nothing,
+# but it is still ReadWriteOnce, so the replicas scheduled onto other nodes would hang
+# on FailedAttachVolume. The chart refuses that combination rather than let you find out
+# from a stuck rollout.
+governanceBackend: postgres
+persistence:
+  enabled: false
+
+# The bundled NATS is ONE replica whose JetStream store lives in the container's
+# writable layer: a pod restart drops in-flight events, and while it is down nothing
+# ingests. That is a fine trade for the demo and a single point of failure in a file
+# called "high availability", so this overlay refuses to inherit it - the chart will not
+# render until externalUrl points at a NATS you run clustered. Set it with --set, or
+# here if you keep a copy of this file.
+#
+# What it costs you if it does fail: events in flight, not the graph. The graph is
+# derived, so the feeds re-ingest it - but the window is real and the analyzer is blind
+# for its duration.
+nats:
+  enabled: false
+  externalUrl: "" # REQUIRED: e.g. nats://nats.internal:4222 (tls:// with nats.tls)
+
+# With the chain in the database it grows without bound unless you bound it. This is a
+# decision about how long you keep records of who looked at the attack map, so the chart
+# does not make it for you - but on a deployment that will actually run, make it:
+#   auditRetention: "2160h"   # 90 days
+# Verify what remains with: perspectivegraph verify-audit -postgres
+auditRetention: ""

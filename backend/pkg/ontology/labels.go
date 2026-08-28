@@ -161,6 +161,19 @@ const (
 	PropImageRef = "image_ref" // "repo:tag"
 	PropARN      = "arn"       // cloud resource ARN
 
+	// PropAccount is the cloud account an asset belongs to (an AWS account id, a
+	// subscription, a project). A real estate is several accounts, and the native
+	// identifiers inside them - i-…, sg-…, rtb-… - are unique only WITHIN one: two
+	// accounts can hand out the same instance id, and a graph that keyed on it alone
+	// would merge two machines into one and invent the paths between them.
+	//
+	// So it is part of the key for account-scoped assets (see ScopedID), not merely a
+	// label to display. Identities are exempt because an ARN already carries the
+	// account, and images are exempt on purpose: one vulnerable image really is the
+	// same image everywhere, and keeping it one node is what lets a single finding
+	// light up every account that runs it.
+	PropAccount = "account" // string - e.g. "123456789012"
+
 	// Identity-resolution provenance: when the normalizer *infers* a join (e.g.
 	// stitches a container to the image a scanner reported on), it records HOW and
 	// HOW SURE, so an analyst can see - and distrust - a heuristic correlation

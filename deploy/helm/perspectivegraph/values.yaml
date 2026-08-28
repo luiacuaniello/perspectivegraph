@@ -6,6 +6,12 @@ backend:
     tag: latest
     pullPolicy: IfNotPresent
   replicas: 1
+  # Scheduling. Empty by default - a single replica has nothing to spread - and set by
+  # values-ha.yaml, because `replicas: 3` that the scheduler stacks on one node is three
+  # copies of one failure domain rather than availability.
+  topologySpreadConstraints: []
+  affinity: {}
+  tolerations: []
   # Requests/limits are REQUIRED for a production deployment. Left empty the pod is
   # BestEffort QoS: the kubelet evicts it first under node pressure, and an analyzer
   # pass over a large graph is exactly the memory spike that triggers that. Sized from
@@ -100,6 +106,9 @@ frontend:
     tag: latest
     pullPolicy: IfNotPresent
   replicas: 1
+  # As for the backend: empty until there is more than one replica to spread.
+  topologySpreadConstraints: []
+  affinity: {}
 
 service:
   apiPort: 8080
@@ -180,6 +189,9 @@ connectors:
     mode: fixtures
     fixturesDir: ""
     region: ""
+    # One role ARN, or several comma-separated (one per account) to pull a
+    # multi-account estate in one pass; each account's assets are qualified with
+    # the account id AWS reports for its credentials.
     roleArn: ""
   azure:
     mode: fixtures
@@ -253,6 +265,24 @@ auth:
     scopes: "openid profile email"
     # IdP end-session endpoint → "Sign out" performs an RP-initiated logout.
     logoutUrl: ""
+    # Directory groups → roles, e.g. "pg-viewers=viewer,pg-admins=admin". This is how
+    # an SSO subject gets a role at all: enterprise IdPs keep authorisation in group
+    # membership, and neither Okta nor Entra mints a "role" claim on its own - so
+    # without a mapping (or defaultRole) people sign in successfully and see nothing.
+    # A subject in several mapped groups gets the highest of them.
+    groupRoles: ""
+    # Grants a role to EVERY subject the IdP authenticates, including those in no
+    # mapped group. Empty = no access without an explicit grant, which is the default
+    # because signing in proves identity, not entitlement to a map of how to attack
+    # the org. Set it when the IdP application is already restricted to the right
+    # people; startup logs a warning either way.
+    defaultRole: ""
+    # Claim names, for directories that namespace them (Auth0, Entra). Empty keeps
+    # role / groups / tenant / apps.
+    roleClaim: ""
+    groupsClaim: ""
+    tenantClaim: ""
+    appsClaim: ""
   # Per-client-IP rate limits (requests/sec). 0 ⇒ disabled.
   apiRateRps: 60
   ingestRateRps: 30
@@ -282,6 +312,14 @@ persistence:
 # removed and checkpointed so the rest still verifies; on the file backend the log is
 # rotated instead (stop, move aside, start - see docs/OPERATIONS.md).
 auditRetention: ""
+
+# Voluntary-disruption budget for the backend (and the frontend when it too runs more
+# than one replica). Off by default: on a single replica a budget can only either do
+# nothing or block node drains forever, so the chart refuses that combination rather
+# than letting a drain hang at 3am. values-ha.yaml turns it on.
+disruptionBudget:
+  enabled: false
+  minAvailable: 1
 
 # Pod security context for the backend. The distroless image runs as the nonroot
 # user 65532; fsGroup makes a freshly-provisioned persistence PVC group-writable by

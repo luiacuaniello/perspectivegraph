@@ -123,3 +123,23 @@ func TestEventRoundTripsThroughJSON(t *testing.T) {
 		t.Errorf("round trip changed identity: %+v", out.Nodes[0])
 	}
 }
+
+// ScopedID has two jobs and they pull in opposite directions: separate the same native
+// identifier in different accounts, and leave a single-account estate's ids exactly as
+// they were - otherwise the first upgrade orphans every node in the graph.
+func TestScopedID(t *testing.T) {
+	a := ScopedID(LabelVirtualMachine, "111111111111", "i-shared")
+	b := ScopedID(LabelVirtualMachine, "222222222222", "i-shared")
+	if a == b {
+		t.Error("two accounts produced one id for the same instance id")
+	}
+	if got, want := ScopedID(LabelVirtualMachine, "", "i-legacy"), NewID(LabelVirtualMachine, "i-legacy"); got != want {
+		t.Errorf("no account should mean the plain id: got %s, want %s", got, want)
+	}
+	// The account is a key part, not a prefix glued onto the hash input in a way that a
+	// crafted instance id could imitate.
+	if ScopedID(LabelVirtualMachine, "111", "i-x") == NewID(LabelVirtualMachine, "account=111", "i-x") {
+		return // this IS the construction; asserted so a change to it is deliberate
+	}
+	t.Error("ScopedID no longer keys on the account as its first key part")
+}

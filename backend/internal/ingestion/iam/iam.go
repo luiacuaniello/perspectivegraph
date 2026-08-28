@@ -264,7 +264,14 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 		}
 		id := ontology.NewID(ontology.LabelUser, u.Arn)
 		arnToID[u.Arn] = id
+		// The id stays keyed on the ARN alone: an ARN already contains the account, so
+		// identities are account-unique for free. The property is stamped anyway, so
+		// "everything in account X" is one filter across identities and infrastructure
+		// rather than two different questions.
 		props := map[string]any{ontology.PropARN: u.Arn}
+		if acct := accountFromARN(u.Arn); acct != "" {
+			props[ontology.PropAccount] = acct
+		}
 		// Credential-origin threat model (opt-in): treat an IAM user as a seed on the
 		// premise that its long-lived credentials could leak. Off by default so the
 		// engine's headline stays the internet-origin path; on, it surfaces "if a
@@ -302,6 +309,9 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 		id := ontology.NewID(ontology.LabelIAMRole, ro.Arn)
 		arnToID[ro.Arn] = id
 		props := map[string]any{ontology.PropARN: ro.Arn}
+		if acct := accountFromARN(ro.Arn); acct != "" {
+			props[ontology.PropAccount] = acct
+		}
 		tags := map[string]string{}
 		for _, t := range ro.Tags {
 			tags[t.Key] = t.Value
@@ -571,4 +581,19 @@ func (b *builder) nodeSlice() []ontology.Node {
 		out = append(out, n)
 	}
 	return out
+}
+
+// accountFromARN pulls the account id out of an ARN
+// (arn:partition:service:region:ACCOUNT:resource), returning "" for anything that does
+// not have one - AWS-managed policies (arn:aws:iam::aws:policy/…) carry the literal
+// "aws" there, and service-linked shapes can leave it empty, so this must not guess.
+func accountFromARN(arn string) string {
+	parts := strings.Split(arn, ":")
+	if len(parts) < 6 {
+		return ""
+	}
+	if acct := parts[4]; acct != "" && acct != "aws" {
+		return acct
+	}
+	return ""
 }

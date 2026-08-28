@@ -424,3 +424,117 @@ func TestForwardedForCannotLockOutSomeoneElse(t *testing.T) {
 		t.Fatalf("the victim's valid credential got %d, want 200", rec.Code)
 	}
 }
+
+// Group -> role mapping. This is where SSO stops being a login and becomes access
+// control: Okta and Entra hand out `groups`, not a bespoke `role`, so before this every
+// SSO subject arrived with no role and saw nothing - and the fix lived inside an IdP
+// this project does not own.
+func TestJWTGroupRoleMapping(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const kid = "test-key-1"
+	jwks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n := base64.RawURLEncoding.EncodeToString(key.PublicKey.N.Bytes())
+		e := base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.PublicKey.E)).Bytes())
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"keys": []map[string]string{{"kty": "RSA", "kid": kid, "n": n, "e": e}},
+		})
+	}))
+	defer jwks.Close()
+
+	mint := func(extra jwt.MapClaims) string {
+		claims := jwt.MapClaims{
+			"iss": "https://idp.example", "aud": "perspectivegraph", "sub": "alice",
+			"exp": time.Now().Add(time.Hour).Unix(),
+		}
+		for k, v := range extra {
+			claims[k] = v
+		}
+		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+		tok.Header["kid"] = kid
+		s, err := tok.SignedString(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+
+	mapping, errs := ParseGroupRoles("pg-viewers=viewer, pg-admins=admin")
+	if len(errs) != 0 {
+		t.Fatalf("mapping did not parse: %v", errs)
+	}
+
+	cases := []struct {
+		name   string
+		cfg    JWTConfig
+		claims jwt.MapClaims
+		want   Role
+	}{
+		{"a mapped group grants its role", JWTConfig{GroupRoles: mapping},
+			jwt.MapClaims{"groups": []any{"pg-viewers"}}, RoleViewer},
+		{"the highest of several mapped groups wins", JWTConfig{GroupRoles: mapping},
+			jwt.MapClaims{"groups": []any{"pg-viewers", "pg-admins"}}, RoleAdmin},
+		{"an unmapped group grants nothing", JWTConfig{GroupRoles: mapping},
+			jwt.MapClaims{"groups": []any{"everyone", "sales"}}, RoleNone},
+		// The claim is often a delimited string rather than an array, depending on the
+		// IdP and how the scope was configured. Both are the same fact.
+		{"groups as a delimited string", JWTConfig{GroupRoles: mapping},
+			jwt.MapClaims{"groups": "sales pg-admins"}, RoleAdmin},
+		// Some directories namespace the claim; the name has to be configurable or the
+		// mapping is unusable exactly where it is most needed.
+		{"a custom groups claim name", JWTConfig{GroupsClaim: "https://acme/groups", GroupRoles: mapping},
+			jwt.MapClaims{"https://acme/groups": []any{"pg-admins"}}, RoleAdmin},
+		{"a custom role claim name", JWTConfig{RoleClaim: "pg_role"},
+			jwt.MapClaims{"pg_role": "operator"}, RoleOperator},
+		// Both sources come from the same signed token, so the higher grant is the
+		// subject's real entitlement rather than a conflict to arbitrate.
+		{"role claim and groups together take the higher", JWTConfig{GroupRoles: mapping},
+			jwt.MapClaims{"role": "viewer", "groups": []any{"pg-admins"}}, RoleAdmin},
+		// The load-bearing default: authenticating proves identity, not entitlement to
+		// read a map of how to attack the organisation.
+		{"no role and no mapped group is no access", JWTConfig{GroupRoles: mapping},
+			jwt.MapClaims{}, RoleNone},
+		{"a default role is honoured when an operator sets one", JWTConfig{DefaultRole: RoleViewer},
+			jwt.MapClaims{}, RoleViewer},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := tc.cfg
+			cfg.JWKSURL, cfg.Issuer, cfg.Audience = jwks.URL, "https://idp.example", "perspectivegraph"
+			req := httptest.NewRequest(http.MethodGet, "/graphql", nil)
+			req.Header.Set("Authorization", "Bearer "+mint(tc.claims))
+			p, ok := NewJWTAuthenticator(cfg).Authenticate(req)
+			if !ok {
+				t.Fatal("a validly signed token was rejected")
+			}
+			if p.Role != tc.want {
+				t.Errorf("role = %s, want %s", p.Role, tc.want)
+			}
+		})
+	}
+}
+
+// The mapping is operator input, and a typo in it must not read as a working config.
+func TestParseGroupRoles(t *testing.T) {
+	m, errs := ParseGroupRoles("a=admin, b=viewer ,, c=operator")
+	if len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	if m["a"] != RoleAdmin || m["b"] != RoleViewer || m["c"] != RoleOperator {
+		t.Errorf("parsed %v", m)
+	}
+
+	m, errs = ParseGroupRoles("good=admin,typo=administrator,nosep")
+	if len(m) != 1 || m["good"] != RoleAdmin {
+		t.Errorf("a bad entry took a good one with it: %v", m)
+	}
+	if len(errs) != 2 {
+		t.Fatalf("want both bad entries reported, got %v", errs)
+	}
+	if !strings.Contains(strings.Join(errs, " "), "administrator") {
+		t.Errorf("the error does not name the offending value: %v", errs)
+	}
+}

@@ -26,8 +26,9 @@ can build on it and know what a version bump means.
 2. **Ingest event contract.** The JSON accepted by `POST /ingest/events` - the
    `ontology.Event` / `Node` / `Edge` shape - and the scanner endpoints
    `POST /ingest/<source>` (trivy, semgrep, custodian, falco, k8s, cloudnet, iam, sso,
-   build, supplychain, dataclass). New *optional* fields are minor; removing or renaming a
-   field, or changing its meaning, is breaking.
+   build, supplychain, dataclass), together with the optional query parameters those
+   endpoints read (`repo`, `slug`, `pr`, `sha`, `account`). New *optional* fields and
+   parameters are minor; removing or renaming one, or changing its meaning, is breaking.
 3. **Operational endpoints.** `GET /healthz`, `GET /metrics` (the `perspectivegraph_*`
    metric names), and `GET /auth/config` (the fields the dashboard login gate reads).
 4. **Configuration.** The environment-variable **names and semantics** documented in

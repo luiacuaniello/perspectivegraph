@@ -20,6 +20,7 @@ import (
 //
 //	perspectivegraph awscollect -region eu-west-1                 # ambient creds
 //	perspectivegraph awscollect -region eu-west-1 -role arn:aws:iam::123:role/pg-ro
+//	perspectivegraph awscollect -region eu-west-1 -role arn:…:role/a,arn:…:role/b
 //	perspectivegraph awscollect -region eu-west-1 -json           # raw events, pipe-able
 //	perspectivegraph awscollect -region eu-west-1 -ingest http://localhost:8081
 //
@@ -32,7 +33,7 @@ import (
 func runAwsCollect(args []string) error {
 	fs := flag.NewFlagSet("awscollect", flag.ContinueOnError)
 	region := fs.String("region", os.Getenv("AWS_REGION"), "AWS region to collect (defaults to $AWS_REGION)")
-	role := fs.String("role", "", "optional cross-account read-only role ARN to assume first")
+	role := fs.String("role", "", "cross-account read-only role ARN to assume first; several, comma-separated, collect one account each")
 	ingest := fs.String("ingest", "", "if set, POST the discovered events to this ingest base URL for full path scoring")
 	token := fs.String("token", os.Getenv("API_TOKEN"), "bearer token if ingest auth is on")
 	asJSON := fs.Bool("json", false, "print the raw discovered events as JSON instead of a summary")
