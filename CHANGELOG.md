@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.10.0...v1.11.0) (2026-08-28)
+
+
+### Features
+
+* require a DCO sign-off, and gate dependency licences ([#152](https://github.com/luiacuaniello/perspectivegraph/issues/152)) ([66a2c69](https://github.com/luiacuaniello/perspectivegraph/commit/66a2c69aef0d241dfe05875fffec47528f0fa8a9))
+
 ## [1.10.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.9.0...v1.10.0) (2026-08-27)
 
 
