@@ -125,6 +125,44 @@ cd backend && go run github.com/securego/gosec/v2/cmd/gosec@latest -quiet -exclu
 
 Contributions written the same way are welcome; hold them to the same gates.
 
+## Signing your work
+
+Every commit must carry a `Signed-off-by:` line. It is the
+[Developer Certificate of Origin](DCO) - the full text is in this repository, so what you
+are certifying is not behind a link - and it says, in short, that you wrote the change or
+otherwise have the right to submit it under this project's licence.
+
+```bash
+git commit -s -m "fix: ..."     # appends the line using your git user.name / user.email
+```
+
+A DCO rather than a CLA on purpose: a CLA is a document somebody's legal team has to
+approve before a first contribution, which is where most drive-by fixes die. A DCO is a
+statement you make in the commit, with nothing to sign and nobody to email.
+
+CI checks it on every pull request. If you forgot, repair the branch rather than adding a
+new commit on top:
+
+```bash
+git rebase --signoff origin/main
+git push --force-with-lease
+```
+
+Bot commits are exempt: Dependabot signs its own, and release-please's release commits
+carry no human authorship to certify - failing every release on a certification nobody is
+making would be theatre rather than provenance.
+
+## Dependency licences
+
+CI fails on a dependency whose licence is outside a permissive allowlist (Apache-2.0, MIT,
+BSD-2-Clause, BSD-3-Clause, ISC) - for Go and for the frontend's production dependencies
+alike. This project ships binaries and images under Apache-2.0, so what it redistributes
+has to be checkable rather than assumed, and a transitive copyleft dependency normally
+arrives in a routine bump rather than in a reviewed decision.
+
+Anything outside that list stops the build so a human decides. If your change needs such a
+dependency, say why in the pull request rather than widening the list quietly.
+
 ## Conventions
 
 - **Go:** `gofmt`, `go vet`, **`gosec`** clean. Justify an unavoidable gosec

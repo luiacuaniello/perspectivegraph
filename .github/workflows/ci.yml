@@ -222,6 +222,66 @@ jobs:
       - name: npm audit
         run: npm audit --audit-level=high
 
+  # Dependency licences. An Apache-2.0 project that ships binaries and images has to
+  # know what it is redistributing, and "we would have noticed" is not a control: a
+  # transitive copyleft dependency arrives in a routine bump, not in a reviewed decision.
+  #
+  # The allowlist is deliberately narrower than "not obviously bad" - permissive only.
+  # Anything else, MPL and the GPL family included, stops the build so a human decides
+  # rather than a default. Measured against the current tree, which is Apache-2.0,
+  # BSD-3-Clause and MIT on the Go side and MIT on the npm side.
+  licenses:
+    name: Dependency licences
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # SPDX ids. go-licenses wants commas, license-checker wants semicolons.
+      ALLOWED_GO: "Apache-2.0,MIT,BSD-2-Clause,BSD-3-Clause,ISC"
+      ALLOWED_NPM: "Apache-2.0;MIT;BSD-2-Clause;BSD-3-Clause;ISC"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.7"
+          cache-dependency-path: backend/go.sum
+
+      # --ignore our own module: its licence is this repository's (LICENSE lives at the
+      # repo root, above the Go module), so the tool cannot find it and would report our
+      # own packages as Unknown. Pinned, not @latest, for the reason the staticcheck step
+      # gives a few jobs up.
+      - name: Go dependencies
+        working-directory: backend
+        run: |
+          go run github.com/google/go-licenses@v1.6.0 check ./... \
+            --allowed_licenses="${ALLOWED_GO}" \
+            --ignore github.com/luiacuaniello/perspectivegraph
+
+      - name: Go inventory (for the log)
+        working-directory: backend
+        run: |
+          go run github.com/google/go-licenses@v1.6.0 report ./cmd/perspectivegraph 2>/dev/null \
+            | grep -v "^github.com/luiacuaniello/perspectivegraph" | sort -t, -k3
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: frontend
+
+      # --production: devDependencies are not redistributed, so their licences are not a
+      # distribution question. --excludePrivatePackages drops the dashboard's own package,
+      # which is marked private and therefore reported UNLICENSED whatever its licence
+      # field says - the same "our own code is not a third-party question" exemption.
+      - name: npm dependencies
+        working-directory: frontend
+        run: |
+          npx --yes license-checker-rseidelsohn@5.0.1 \
+            --production --excludePrivatePackages \
+            --onlyAllow "${ALLOWED_NPM}" --summary
+
   images:
     name: Container images (Trivy)
     runs-on: ubuntu-latest

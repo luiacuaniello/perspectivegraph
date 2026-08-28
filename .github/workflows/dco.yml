@@ -1,0 +1,75 @@
+# Developer Certificate of Origin.
+#
+# Every commit in a pull request must carry a `Signed-off-by:` line - the DCO 1.1
+# certification that the contributor has the right to submit the code under this
+# project's licence. It exists because the alternative, for anyone whose employer asks,
+# is a CLA to negotiate: a DCO is a statement the contributor makes in the commit, with
+# nothing to sign and nobody to email.
+#
+# This is a workflow rather than the DCO GitHub App on purpose: it needs no app
+# installed on the repository, it runs on forks like every other check, and it is
+# readable in the same place as the rules it enforces.
+name: DCO
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  dco:
+    name: Signed-off-by
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+        with:
+          # The whole PR range has to be walkable, so no shallow clone.
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Every commit is signed off
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          missing=0
+          # One SHA per line. A SHA cannot contain whitespace, so nothing in a commit
+          # message can break this loop - the message is re-read per commit below.
+          for sha in $(git rev-list "${BASE}..${HEAD}"); do
+            author="$(git log -1 --format='%an' "$sha")"
+
+            # Bots do not certify authorship. Dependabot signs its commits anyway;
+            # release-please does not, and failing every release PR on a certification
+            # no human is making would be theatre, not provenance.
+            case "$author" in
+              "dependabot[bot]"|"github-actions[bot]") continue ;;
+            esac
+
+            # A merge commit carries no new work to certify.
+            if [ "$(git rev-list --parents -n1 "$sha" | wc -w)" -gt 2 ]; then
+              continue
+            fi
+
+            if ! git log -1 --format='%B' "$sha" | grep -qiE '^Signed-off-by: .+ <.+@.+>'; then
+              echo "::error::$sha ($author) is not signed off"
+              missing=$((missing + 1))
+            fi
+          done
+
+          if [ "$missing" -gt 0 ]; then
+            cat <<'EOF'
+          ::error::Some commits carry no Signed-off-by line.
+
+          Sign off future commits with `git commit -s`, and repair the ones already made:
+
+            git rebase --signoff origin/main   # then: git push --force-with-lease
+
+          What you are certifying is in CONTRIBUTING.md ("Signing your work").
+          EOF
+            exit 1
+          fi
+          echo "every commit in this pull request is signed off"
