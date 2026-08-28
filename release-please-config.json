@@ -9,7 +9,11 @@
       "include-component-in-tag": false,
       "draft": false,
       "prerelease": false,
-      "extra-files": [{ "type": "generic", "path": "README.md" }]
+      "extra-files": [
+        { "type": "generic", "path": "README.md" },
+        { "type": "generic", "path": "deploy/helm/perspectivegraph/Chart.yaml" },
+        { "type": "generic", "path": "docs/MANUAL.md" }
+      ]
     }
   }
 }

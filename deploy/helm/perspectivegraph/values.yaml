@@ -6,6 +6,12 @@ backend:
     tag: latest
     pullPolicy: IfNotPresent
   replicas: 1
+  # Scheduling. Empty by default - a single replica has nothing to spread - and set by
+  # values-ha.yaml, because `replicas: 3` that the scheduler stacks on one node is three
+  # copies of one failure domain rather than availability.
+  topologySpreadConstraints: []
+  affinity: {}
+  tolerations: []
   # Requests/limits are REQUIRED for a production deployment. Left empty the pod is
   # BestEffort QoS: the kubelet evicts it first under node pressure, and an analyzer
   # pass over a large graph is exactly the memory spike that triggers that. Sized from
@@ -100,6 +106,9 @@ frontend:
     tag: latest
     pullPolicy: IfNotPresent
   replicas: 1
+  # As for the backend: empty until there is more than one replica to spread.
+  topologySpreadConstraints: []
+  affinity: {}
 
 service:
   apiPort: 8080
@@ -180,6 +189,9 @@ connectors:
     mode: fixtures
     fixturesDir: ""
     region: ""
+    # One role ARN, or several comma-separated (one per account) to pull a
+    # multi-account estate in one pass; each account's assets are qualified with
+    # the account id AWS reports for its credentials.
     roleArn: ""
   azure:
     mode: fixtures
@@ -253,6 +265,24 @@ auth:
     scopes: "openid profile email"
     # IdP end-session endpoint → "Sign out" performs an RP-initiated logout.
     logoutUrl: ""
+    # Directory groups → roles, e.g. "pg-viewers=viewer,pg-admins=admin". This is how
+    # an SSO subject gets a role at all: enterprise IdPs keep authorisation in group
+    # membership, and neither Okta nor Entra mints a "role" claim on its own - so
+    # without a mapping (or defaultRole) people sign in successfully and see nothing.
+    # A subject in several mapped groups gets the highest of them.
+    groupRoles: ""
+    # Grants a role to EVERY subject the IdP authenticates, including those in no
+    # mapped group. Empty = no access without an explicit grant, which is the default
+    # because signing in proves identity, not entitlement to a map of how to attack
+    # the org. Set it when the IdP application is already restricted to the right
+    # people; startup logs a warning either way.
+    defaultRole: ""
+    # Claim names, for directories that namespace them (Auth0, Entra). Empty keeps
+    # role / groups / tenant / apps.
+    roleClaim: ""
+    groupsClaim: ""
+    tenantClaim: ""
+    appsClaim: ""
   # Per-client-IP rate limits (requests/sec). 0 ⇒ disabled.
   apiRateRps: 60
   ingestRateRps: 30
@@ -276,6 +306,21 @@ persistence:
   storageClass: ""
   mountPath: /data
 
+# How long audit records are kept, e.g. "2160h" (90 days). Empty keeps them forever,
+# which is the absence of a retention policy rather than one - set it deliberately.
+# It prunes only with governanceBackend "postgres", where the oldest records can be
+# removed and checkpointed so the rest still verifies; on the file backend the log is
+# rotated instead (stop, move aside, start - see docs/OPERATIONS.md).
+auditRetention: ""
+
+# Voluntary-disruption budget for the backend (and the frontend when it too runs more
+# than one replica). Off by default: on a single replica a budget can only either do
+# nothing or block node drains forever, so the chart refuses that combination rather
+# than letting a drain hang at 3am. values-ha.yaml turns it on.
+disruptionBudget:
+  enabled: false
+  minAvailable: 1
+
 # Pod security context for the backend. The distroless image runs as the nonroot
 # user 65532; fsGroup makes a freshly-provisioned persistence PVC group-writable by
 # it (without it, the volume is root-owned and the first verdict/ticket/suppression
@@ -285,9 +330,13 @@ persistence:
 #
 #   file     - on the persistence PVC. One writer, so backend.replicas must stay 1 while
 #              persistence is on; the chart refuses to render otherwise.
-#   postgres - in POSTGRES_DSN, shared by every replica. The schema is created and
-#              upgraded on startup, under an advisory lock so several replicas starting
-#              together cannot collide.
+#   postgres - in POSTGRES_DSN, shared by every replica, and the audit chain moves there
+#              with them (appends serialise on an advisory lock, so replicas share one
+#              chain instead of forking it). The schema is created and upgraded on
+#              startup, under an advisory lock so several replicas starting together
+#              cannot collide. This is what lifts the single-replica ceiling - set
+#              persistence.enabled: false alongside it, since the PVC then holds nothing
+#              and its ReadWriteOnce mode would still pin the pods to one node.
 governanceBackend: file
 
 podSecurityContext:

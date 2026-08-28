@@ -55,7 +55,7 @@ Scanners/CI ─► Ingest :8081 ──────────────┼─
 | B2 ingest | S/T | Forge scanner data to poison the graph or hide a path | Per-tenant HMAC verifier, body-size cap, audit on deny | HMAC is **opt-in**; off in the demo. Enable it in prod |
 | B3 connectors | T | **Crown-jewel promotion.** What makes a target worth attacking is usually a tag, and `ec2:CreateTags` is granted freely because tagging looks harmless - so an attacker with a foothold can mark junk `classification: pii` and manufacture paths that dilute a board whose promise is "~5 routes that matter" | The analyzer ranks crown-jewel *provenance*: an authoritative classifier (Macie/DLP) outranks a tag outranks a name heuristic, and ingestion now records `crown_jewel_basis: tagged` so that ranking actually sees the attacker-writable case. The weight and its reason both surface in the path's priority factors, so an operator reads "tagged sensitive asset" rather than an unexplained number | Ordering bounds the damage but does not remove it: fabricated jewels still inflate path *counts* and compete for attention below the top slot. An estate that classifies with a real tool is materially harder to poison than one that relies on tags alone |
 | B3 connectors | T | **Crown-jewel demotion** - remove the tag so a real target stops being one and its path leaves the board | Not possible today: the property is only ever written `true`, and the store's merge contract accumulates (`MergeProps`, later writes win *per key*, nothing is deleted), so a jewel survives the tag being removed | The same contract makes promotion **irreversible**: an attacker needs tagging rights for one collection cycle, and the fabricated jewel then persists with no operator action that removes it. Legitimate declassification is equally stuck. Fixing it means changing the store's merge contract - which exists to stop a partial collector erasing another's data - so it is a deliberate separate change, not a bolt-on |
-| B1 API | I/E | Unauthenticated read of attack paths / tenant data | GraphQL requires a bearer credential (≥ viewer); OIDC Authorization-Code + PKCE login gate; JWKS with key-rotation refetch; brute-force lockout. When `OIDC_JWKS_URL` is set the binary **refuses to start** without `OIDC_ISSUER` and `OIDC_AUDIENCE`: a verifier that skips `aud` accepts any token its IdP ever minted, including one issued to a different application sharing the same JWKS | Auth is **opt-in**; a demo left public exposes A1. The brute-force lockout is **in-memory**: a restart, a deploy or an OOM clears every counter, so a patient attacker regains a full budget at each release. Its key space is capped (50k) so a flood evicts the oldest rather than growing without bound - which also means a large enough flood can push a real attacker's counter out. Neither is a substitute for lockout at the IdP |
+| B1 API | I/E | Unauthenticated read of attack paths / tenant data | GraphQL requires a bearer credential (≥ viewer); OIDC Authorization-Code + PKCE login gate; JWKS with key-rotation refetch; brute-force lockout. When `OIDC_JWKS_URL` is set the binary **refuses to start** without `OIDC_ISSUER` and `OIDC_AUDIENCE`: a verifier that skips `aud` accepts any token its IdP ever minted, including one issued to a different application sharing the same JWKS | Auth is **opt-in**; a demo left public exposes A1. The brute-force lockout is **durable with `GOVERNANCE_BACKEND=postgres`** - a lockout already earned survives a restart, a deploy or an OOM, and every replica enforces it - but only the LOCKOUT is stored, not the counter behind it, so partial progress toward the threshold is still forgiven by a restart (a write per failed login would let the abuse drive the writes). On the file backend it remains per-process and per-replica. A lockout set by another replica is seen within 30s, since the request path reads a cached snapshot rather than the database. Its key space is capped (50k) so a flood evicts the oldest rather than growing without bound - which also means a large enough flood can push a real attacker's counter out. None of this is a substitute for lockout at the IdP |
 | B7 tenants | I/E | One tenant reading another's graph | Tenant stamped from the authenticated principal; isolation covered by tests | Depends on auth being enabled; verify per deployment |
 | B6 store/bus | I/T | Read/modify the graph or events directly | Network isolation; TLS to Postgres (`POSTGRES_SSLMODE`) and in-app TLS are configurable | TLS + at-rest encryption are the operator's job (use a managed DB); demo runs plaintext local |
 | B3 connectors | E | Over-broad cloud credentials pivoted from the engine | Read-only model, AssumeRole, least-privilege grant (`ec2:Describe*`, `iam:GetAccountAuthorizationDetails` ≈ SecurityAudit) | An operator can still attach an over-broad role - document and review the grant |
@@ -113,15 +113,24 @@ choice.
 
 - **Graph**: bounded. `GRAPH_TTL` prunes nodes and edges not re-observed within the
   window, so an identity that leaves your estate leaves the graph.
-- **Audit log**: **append-only, with no retention policy and no rotation.** Set one. It is
-  the gap most likely to be raised in review, and today the answer is "it grows forever".
+- **Audit log**: bounded **when you set a window**, and unbounded until you do. On the
+  Postgres-backed chain, `AUDIT_RETENTION` prunes records older than the window. On the
+  file-backed chain there is no automatic pruning: rotate it (see the
+  [operations runbook](OPERATIONS.md#retention-and-rotation)).
 
 The tension worth naming rather than hiding: the audit log is **hash-chained** so that
-tampering is detectable, which means **deleting a single record breaks every hash after
-it**. Erasure (Art. 17) and tamper-evidence pull in opposite directions. The workable
-answer is rotation, not surgery - retire whole files on a schedule and archive or destroy
-them intact - which is also why the subjects are pseudonymous in the first place: there is
-far less to erase.
+tampering is detectable, which means **deleting a record from the middle breaks every hash
+after it**. Erasure (Art. 17) and tamper-evidence pull in opposite directions.
+
+The answer is truncation, not surgery. Retention removes a **prefix** - the oldest records,
+in the order they arrived - and writes a checkpoint holding the sequence number and hash of
+the last record it removed. Verification then starts at the first surviving record and
+checks that it still links to that hash, so the retained window is exactly as tamper-evident
+as the whole chain was. Deleting one record out of the middle remains impossible to do
+invisibly, which is the property the chain exists for; the prune itself is recorded in the
+chain it shortened. The file-backed chain does the same thing at file granularity: retire
+whole files and archive or destroy them intact. Both of which are also why the subjects are
+pseudonymous in the first place - there is far less to erase.
 
 ### Transfers outside the EEA
 

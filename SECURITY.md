@@ -16,6 +16,10 @@ release (or `main`) to receive fixes.
 | latest release / `main` | ✅ |
 | older tags | ❌ (please upgrade) |
 
+**[SUPPORT.md](SUPPORT.md) is the full policy**: why there are no backports, the upgrade
+contract that makes "run the latest" workable, and how to consume this project where
+change control applies.
+
 ## Reporting a vulnerability
 
 **Please do not open a public issue, pull request, or discussion for a security
@@ -46,8 +50,21 @@ service while investigating. Use a local instance (`make up-full`) for any PoC.
 
 - **Acknowledgement** within **3 business days**.
 - An initial **assessment / severity triage** within **7 business days**.
+- A **fix in a public release**, measured from the day the report is confirmed:
+
+  | Severity (CVSS) | Target |
+  |---|---|
+  | Critical | **7 days** |
+  | High | **30 days** |
+  | Medium / Low | the next release that suits it |
+
 - We work with you on a fix and a coordinated disclosure date. We'll credit you in
   the advisory and release notes unless you prefer to remain anonymous.
+
+Those are targets held by one maintainer, not a purchased SLA: if one is going to slip,
+the advisory says so rather than the date quietly moving. The fix lands on the newest
+release only - there are no backports, and [SUPPORT.md](SUPPORT.md) explains what stands
+in their place.
 
 Please give us a reasonable window to ship a fix before any public disclosure.
 
@@ -81,7 +98,7 @@ Please give us a reasonable window to ship a fix before any public disclosure.
 Because the tool maps how to breach the org, **harden any deployment reachable
 beyond a trusted boundary**. See the [threat model](docs/THREAT-MODEL.md) for the
 full trust-boundary and asset analysis and the operator checklist. The controls below are built in and documented in the
-[README "Application hardening" section](./README.md#application-hardening) and in
+[manual's "Application hardening" section](./docs/MANUAL.md#application-hardening) and in
 [`.env.example`](./.env.example):
 
 - **`API_TOKENS` / OIDC** - bearer auth with role + per-application RBAC (tokens
@@ -91,7 +108,8 @@ full trust-boundary and asset analysis and the operator checklist. The controls 
   stores and the audit log.
 - **`EXPORT_SIGNING_KEY`** - Ed25519-signed OSCAL/SIEM exports a consumer can verify.
 - **`AUDIT_LOG_PATH`** - tamper-evident, hash-chained audit log of reads and writes
-  (verify with `perspectivegraph verify-audit <file>`).
+  (verify with `perspectivegraph verify-audit <file>`, or `verify-audit -postgres` when
+  `GOVERNANCE_BACKEND=postgres` puts the chain in the database instead).
 - **`AUTH_LOCKOUT_THRESHOLD` / `EXFIL_ALERT_THRESHOLD`** - brute-force lockout and
   exfiltration alerting.
 

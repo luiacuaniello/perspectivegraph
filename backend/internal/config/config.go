@@ -154,8 +154,28 @@ type Config struct {
 	// of just dropping the local token and silently re-logging in on the next click.
 	OIDCLogoutURL string
 
+	// OIDC claim names and the group -> role mapping. Enterprise IdPs keep
+	// authorisation in group membership, not in a bespoke "role" claim, so without
+	// these an SSO user arrives with no role and sees nothing until someone builds a
+	// custom claim mapping inside the IdP. OIDCDefaultRole stays empty (= no access)
+	// unless an operator widens it on purpose.
+	OIDCRoleClaim   string
+	OIDCGroupsClaim string
+	OIDCTenantClaim string
+	OIDCAppsClaim   string
+	OIDCGroupRoles  string // "group=role,group=role"
+	OIDCDefaultRole string
+
 	// Audit (optional; tamper-evident hash-chained log file)
 	AuditLogPath string
+
+	// AuditRetention bounds how long audit records are kept. Zero (the default) keeps
+	// them forever, which is the behaviour every release so far has had - a retention
+	// policy is a decision about someone's records, so it is opted into, not imposed by
+	// an upgrade. It applies to the POSTGRES-backed chain, where the engine can prune a
+	// prefix and leave a checkpoint that keeps what remains verifiable; the file-backed
+	// chain is rotated by whatever rotates your other log files (see OPERATIONS.md).
+	AuditRetention time.Duration
 
 	// Triage/suppression store (optional; file-backed). When set, analyst
 	// decisions to suppress a specific attack path (accept-risk / false-positive
@@ -371,7 +391,15 @@ func Load() Config {
 		OIDCScopes:    getenv("OIDC_SCOPES", "openid profile email"),
 		OIDCLogoutURL: getenv("OIDC_LOGOUT_URL", ""),
 
+		OIDCRoleClaim:   getenv("OIDC_ROLE_CLAIM", ""),
+		OIDCGroupsClaim: getenv("OIDC_GROUPS_CLAIM", ""),
+		OIDCTenantClaim: getenv("OIDC_TENANT_CLAIM", ""),
+		OIDCAppsClaim:   getenv("OIDC_APPS_CLAIM", ""),
+		OIDCGroupRoles:  getenv("OIDC_GROUP_ROLES", ""),
+		OIDCDefaultRole: getenv("OIDC_DEFAULT_ROLE", ""),
+
 		AuditLogPath:      getenv("AUDIT_LOG_PATH", ""),
+		AuditRetention:    getdur("AUDIT_RETENTION", 0),
 		SuppressionsPath:  getenv("SUPPRESSIONS_PATH", ""),
 		GovernanceBackend: getenv("GOVERNANCE_BACKEND", "file"),
 		HistoryPath:       getenv("HISTORY_PATH", ""),

@@ -49,9 +49,17 @@ func TestAGEStoreContract(t *testing.T) {
 		t.Skipf("postgres connection: %v", err)
 	}
 	defer conn.Close()
+	// `LOAD 'age'` is deliberately outside the skip list below. Only a superuser may
+	// LOAD a library, so on every managed PostgreSQL it fails with 42501 while AGE
+	// itself works, preloaded through shared_preload_libraries - and this test used to
+	// skip on that, quietly excusing the store from the only environment a customer
+	// can buy. A denied LOAD now proves nothing either way and the setup continues; a
+	// server without usable AGE still skips, on the create_graph below.
+	if _, err := conn.ExecContext(ctx, `LOAD 'age'`); err != nil {
+		t.Logf("LOAD 'age' denied (%v) - continuing, as a managed server would", err)
+	}
 	setup := []string{
 		`CREATE EXTENSION IF NOT EXISTS age`, // self-sufficient: works on a bare Postgres+AGE image
-		`LOAD 'age'`,
 		`SET search_path = ag_catalog, "$user", public`,
 		fmt.Sprintf(`SELECT create_graph('%s')
 		 WHERE NOT EXISTS (SELECT 1 FROM ag_catalog.ag_graph WHERE name = '%s')`, testGraph, testGraph),

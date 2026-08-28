@@ -144,6 +144,14 @@ services:
       # Auth (optional) - pass through when set; open with a loud warning otherwise.
       INGEST_HMAC_SECRET: ${INGEST_HMAC_SECRET:-}
       API_TOKENS: ${API_TOKENS:-}
+      # Who gets which role after SSO. Without a mapping an SSO subject with no role
+      # claim gets no access - see .env.example.
+      OIDC_GROUP_ROLES: ${OIDC_GROUP_ROLES:-}
+      OIDC_ROLE_CLAIM: ${OIDC_ROLE_CLAIM:-}
+      OIDC_GROUPS_CLAIM: ${OIDC_GROUPS_CLAIM:-}
+      OIDC_TENANT_CLAIM: ${OIDC_TENANT_CLAIM:-}
+      OIDC_APPS_CLAIM: ${OIDC_APPS_CLAIM:-}
+      OIDC_DEFAULT_ROLE: ${OIDC_DEFAULT_ROLE:-}
       # Triage/suppression persistence (optional). Empty → in-memory only. To
       # persist, point this at a path on a writable volume (the backend rootfs is
       # read-only) and mount one, e.g. a named volume at /var/lib/perspectivegraph.
@@ -164,6 +172,10 @@ services:
       # disabled. The rootfs is read-only; /tmp is a tmpfs, or mount a volume for
       # durability. Verify the hash chain with: perspectivegraph verify-audit <path>
       AUDIT_LOG_PATH: ${AUDIT_LOG_PATH:-}
+      # Retention for that chain. Empty → kept forever. Prunes only with
+      # GOVERNANCE_BACKEND=postgres (oldest first, checkpointed so the rest still
+      # verifies); the file-backed chain is rotated instead. e.g. 2160h = 90 days.
+      AUDIT_RETENTION: ${AUDIT_RETENTION:-}
       # At-rest encryption + export signing (security hardening). Empty → plaintext
       # on disk / unsigned exports.
       STORE_ENCRYPTION_KEY: ${STORE_ENCRYPTION_KEY:-}
@@ -218,6 +230,8 @@ services:
       AWS_CONNECTOR_MODE: ${AWS_CONNECTOR_MODE:-fixtures}
       AWS_FIXTURES_DIR: ${AWS_FIXTURES_DIR:-}
       AWS_REGION: ${AWS_REGION:-}
+      # One role, or several comma-separated - one per account - to pull a
+      # multi-account estate in a single pass. See .env.example.
       AWS_ROLE_ARN: ${AWS_ROLE_ARN:-}
       AZURE_CONNECTOR_MODE: ${AZURE_CONNECTOR_MODE:-fixtures}
       AZURE_FIXTURES_DIR: ${AZURE_FIXTURES_DIR:-}
@@ -277,7 +291,8 @@ services:
   # Opt-in demo identity provider so you can exercise the dashboard's SSO login
   # gate end-to-end on a laptop, no cloud IdP needed:
   #   docker compose --profile app --profile sso up -d
-  # then set the backend OIDC_* env (see the README SSO section / the realm file) and open
+  # then set the backend OIDC_* env (the exact values are in docs/MANUAL.md, "Trying SSO
+  # end-to-end on a laptop") and open
   # http://localhost:3000. Realm "demo", user demo/demo, client perspectivegraph.
   # Dev image/flags (start-dev, in-memory) - for local testing only, not production.
   keycloak:

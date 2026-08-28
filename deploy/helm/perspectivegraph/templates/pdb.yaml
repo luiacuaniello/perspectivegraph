@@ -1,0 +1,39 @@
+{{- if .Values.disruptionBudget.enabled -}}
+{{- if lt (int .Values.backend.replicas) 2 -}}
+{{- fail "disruptionBudget.enabled with backend.replicas: 1 is a trap, not a safety net: minAvailable 1 on a single replica means a node drain can never evict it and blocks forever, while minAvailable 0 protects nothing. Raise backend.replicas (see values-ha.yaml) or leave the budget off." -}}
+{{- end -}}
+# A PodDisruptionBudget only governs VOLUNTARY disruption - drains, upgrades,
+# autoscaler scale-down. It is what stops a cluster operation from taking every
+# replica at once; it does nothing about a node dying, which is what replicas and
+# spreading are for. All three together are the difference between `replicas: N`
+# and availability.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "perspectivegraph.fullname" . }}-backend
+  labels:
+    {{- include "perspectivegraph.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  minAvailable: {{ .Values.disruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: backend
+{{- if and .Values.frontend.enabled (ge (int .Values.frontend.replicas) 2) }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "perspectivegraph.fullname" . }}-frontend
+  labels:
+    {{- include "perspectivegraph.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  minAvailable: {{ .Values.disruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: frontend
+{{- end }}
+{{- end }}

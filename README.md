@@ -99,8 +99,16 @@ Prefer not to build? The release images are published to GHCR (`latest` also tra
 newest release; the pinned tag is the one to use if you care about reproducibility):
 
 ```bash
-docker pull ghcr.io/luiacuaniello/perspectivegraph:v1.6.0 # x-release-please-version
-docker pull ghcr.io/luiacuaniello/perspectivegraph-dashboard:v1.6.0 # x-release-please-version
+docker pull ghcr.io/luiacuaniello/perspectivegraph:v1.10.0 # x-release-please-version
+docker pull ghcr.io/luiacuaniello/perspectivegraph-dashboard:v1.10.0 # x-release-please-version
+```
+
+On Kubernetes, the Helm chart is published the same way - no clone needed, and a version
+you can pin and verify:
+
+```bash
+helm install perspectivegraph oci://ghcr.io/luiacuaniello/charts/perspectivegraph \
+  --version 1.10.0 # x-release-please-version
 ```
 
 They are signed with cosign keyless and carry an SPDX SBOM plus a SLSA build
@@ -111,7 +119,7 @@ on trust:
 cosign verify \
   --certificate-identity-regexp 'https://github.com/luiacuaniello/perspectivegraph/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  ghcr.io/luiacuaniello/perspectivegraph:v1.6.0 # x-release-please-version
+  ghcr.io/luiacuaniello/perspectivegraph:v1.10.0 # x-release-please-version
 ```
 
 The dashboard opens on the decision, not the inventory: what is being exploited right
@@ -266,7 +274,7 @@ risk percentage in front of a board. What is and isn't claimed is spelled out in
 no outbound connection at all - GitHub, the AI assistant and the KEV/EPSS feeds each stay
 dark until you set a key or flag (`THREATINTEL` is `off` by default).
 
-**The benchmark, as of v1.6.0.** <!-- x-release-please-version --> `make bench-cloudgoat`
+**The benchmark, as of v1.10.0.** <!-- x-release-please-version --> `make bench-cloudgoat`
 runs four CloudGoat-shaped scenarios in CI and grades the engine on each:
 
 | Scenario | Expects | Result |
@@ -333,7 +341,9 @@ patch - see the [API stability policy](docs/API-STABILITY.md). What's next is in
   demo defaults are otherwise deliberately open. Set **`PG_ENV=production`** and the backend **refuses to start** unless both the
   API and ingest are authenticated - the permissive default cannot be reached by forgetting
   to configure it. A production rollout still needs your own hardening beyond that: an
-  external managed PostgreSQL+AGE, secrets in a manager (not env vars), TLS on by default,
+  external PostgreSQL+AGE - **managed only on Azure, self-managed on AWS and GCP, because
+  neither offers the AGE extension** ([the matrix](docs/OPERATIONS.md#3-the-database-postgresql--apache-age)) -
+  secrets in a manager (not env vars), TLS on by default,
   backups, and HA for the leader-gated scheduler. **If you terminate at a reverse proxy or
   ingress, set `TRUSTED_PROXY_CIDRS`** to it: per-IP controls (rate limit, brute-force
   lockout, the address in the audit trail) otherwise key on the connecting peer - correct
@@ -343,6 +353,13 @@ patch - see the [API stability policy](docs/API-STABILITY.md). What's next is in
   your IdP's job rather than a token rotation - see the
   [operations & hardening runbook](docs/OPERATIONS.md), [`SECURITY.md`](SECURITY.md), and the
   [threat model](docs/THREAT-MODEL.md).
+- **Support: the newest release, and nothing behind it.** There are no backports and no LTS
+  branch - at six minor releases in the eight days after 1.0, a maintenance branch would be
+  a promise one maintainer breaks. What is promised instead is a clock on security fixes
+  (Critical 7 days, High 30, from confirmation) and an upgrade specified rather than hoped
+  for: semver over an enumerated stable surface, a drift-guarded schema, no migration step,
+  and rollback by redeploying the previous digest. [SUPPORT.md](SUPPORT.md) is the policy,
+  including how to run this where change control applies.
 - **Scope.** It answers the reachable attack-path question in the developer workflow. It is
   not a scanner, a CNAPP, or a compliance product, and it does not replace them.
 
@@ -365,6 +382,7 @@ environment.
 
 - [Manual](docs/MANUAL.md) - architecture, scoring, quick start, deploy, operate
 - [Positioning](docs/POSITIONING.md) - what is claimed, what is **not**, and how to check
+- [Support](SUPPORT.md) - which versions get fixes, how fast, and how to run this under change control
 - [Roadmap](ROADMAP.md) - what's next, and what it deliberately isn't becoming
 - [Threat model](docs/THREAT-MODEL.md) · [Operations](docs/OPERATIONS.md) · [API stability](docs/API-STABILITY.md) · [Scale](docs/SCALE.md)
 - [Attack-path benchmark](backend/testdata/cloudgoat/README.md) - the CI-gated precision/recall battery

@@ -102,6 +102,11 @@ var (
 		Help: "Stale edges removed by the TTL pruner.",
 	})
 
+	AuditPrunedRecords = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "perspectivegraph_audit_pruned_records_total",
+		Help: "Audit records removed by retention (AUDIT_RETENTION), oldest first.",
+	})
+
 	HTTPRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "perspectivegraph_http_requests_total",
 		Help: "HTTP requests served, by handler and status class.",
@@ -127,7 +132,7 @@ func init() {
 		AnalyzerPasses, AnalyzerPassSeconds, AnalyzerCriticalPaths,
 		AnalyzerGraphNodes, AnalyzerGraphEdges, AnalyzerPathfindSeconds,
 		AnalyzerSnapshotSeconds, AnalyzerSnapshots,
-		GraphPrunedNodes, GraphPrunedEdges,
+		GraphPrunedNodes, GraphPrunedEdges, AuditPrunedRecords,
 		HTTPRequests,
 		ConnectorRuns, ConnectorEvents,
 	)

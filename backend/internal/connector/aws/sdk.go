@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sort"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -53,6 +55,18 @@ type iamAPI interface {
 type sdkTransport struct {
 	ec2 ec2API
 	iam iamAPI
+	sts stsAPI
+
+	// account memoises GetCallerIdentity. It cannot change for a given transport -
+	// the credentials are fixed at construction - so asking once per process is
+	// enough, and asking once per pass would be a needless call on every cycle.
+	accountOnce sync.Once
+	account     string
+}
+
+// stsAPI is the one call needed to learn which account the credentials speak for.
+type stsAPI interface {
+	GetCallerIdentity(ctx context.Context, in *sts.GetCallerIdentityInput, optFns ...func(*sts.Options)) (*sts.GetCallerIdentityOutput, error)
 }
 
 // newSDK builds the live AWS transport. It uses the standard credential chain
@@ -76,10 +90,36 @@ func newSDK(ctx context.Context, cfg Config) (transport, error) {
 	return &sdkTransport{
 		ec2: ec2.NewFromConfig(awsCfg),
 		iam: iam.NewFromConfig(awsCfg),
+		sts: sts.NewFromConfig(awsCfg),
 	}, nil
 }
 
 func (*sdkTransport) Mode() string { return "sdk" }
+
+// Account asks AWS which account these credentials belong to, rather than making the
+// operator type an id that has to agree with the role they configured. Getting that
+// pair out of step would be silent and expensive: assets would be filed under an
+// account they are not in.
+//
+// A failure is logged and returns "" - the pass then produces the unqualified ids it
+// always did, which is wrong only in the sense of being less specific. Refusing to
+// collect because one extra call failed would trade a whole account's visibility for
+// a label.
+func (t *sdkTransport) Account(ctx context.Context) string {
+	t.accountOnce.Do(func() {
+		if t.sts == nil {
+			return // no STS client: collect unqualified rather than crash the pass
+		}
+		out, err := t.sts.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+		if err != nil {
+			slog.Warn("aws connector: could not determine the account id; assets will be collected unqualified",
+				"err", err)
+			return
+		}
+		t.account = aws.ToString(out.Account)
+	})
+	return t.account
+}
 
 func (t *sdkTransport) Fetch(ctx context.Context, feed Feed) ([]byte, error) {
 	switch feed {

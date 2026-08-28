@@ -106,16 +106,29 @@ that sentence matter:
   during a rolling update cannot collide, and a release rolled back onto a database a
   newer one migrated refuses to start rather than writing a schema it does not
   understand.
-- **The audit log is still single-writer.** It is a tamper-evident hash chain, and the
-  chain's integrity depends on ordered appends by one process - moving it needs a design,
-  not the same port repeated. So while `AUDIT_LOG_PATH` is set, keep
-  `backend.replicas: 1` (this is what `values-production.yaml` pins, and why). That is
-  now the only thing holding the ceiling in place.
+- **The audit log follows them.** It is a tamper-evident hash chain, so it could not be
+  moved by repeating the same port: two replicas reading the same tail would both claim
+  it as `prev_hash` and fork the chain, after which `Verify` reports tampering on a log
+  nobody touched. Under `GOVERNANCE_BACKEND=postgres` each append instead takes a
+  transaction-scoped advisory lock, reads the tail and writes inside that transaction, so
+  every replica appends to **one** chain. The file backend is the single-writer one: with
+  `AUDIT_LOG_PATH` and no governance database, keep `backend.replicas: 1`.
 
-In practice: run one replica when you want the governance state to survive restarts, or run
-N replicas with those stores in memory and the graph in a shared AGE. Moving them onto
-Postgres would lift the restriction and is the natural next step - it is not done today, and
-the chart says so rather than letting an operator discover it.
+In practice: with `GOVERNANCE_BACKEND=postgres`, run N replicas against a shared AGE -
+every replica reads the same governance rows and appends to the same audit chain, and the
+leader election keeps the side effects at once each. On the file backend, stay at one
+replica.
+
+`values-ha.yaml` is that shape ready to apply, as an overlay on the production profile:
+it sets both, raises the replicas, spreads them across nodes and adds a disruption budget
+(see [OPERATIONS §7](OPERATIONS.md#7-high-availability)).
+
+The chart holds that line for you. `persistence.enabled` with more than one replica
+**fails to render**, and the message names the reason it is refusing: on the file backend
+the stores would split-brain, and on the Postgres backend the PVC holds nothing yet its
+ReadWriteOnce mode still pins every pod to one node. So the Kubernetes recipe for
+replicas is `governanceBackend: postgres` **and** `persistence.enabled: false` - and
+nothing is given up, because the chain moved into the database rather than being dropped.
 
 ## Interpreting it
 
@@ -125,8 +138,10 @@ the chart says so rather than letting an operator discover it.
   `ANALYZER_INCREMENTAL` so a pass patches the resident graph instead of re-reading it.
 - **Pathfind-dominated (deep/wide graph)**: raise `ANALYZER_WORKERS` up to the core count;
   consider a lower `ANALYZER_MAX_HOPS` if paths beyond N hops are not actionable.
-- **Database**: for a production-size graph use an external, resourced managed Postgres+AGE
-  (see [OPERATIONS.md](OPERATIONS.md)); the bundled demo database is not sized for scale.
+- **Database**: for a production-size graph use an external, resourced Postgres+AGE - which
+  on AWS and GCP means one you run yourself, since only Azure offers AGE as a managed
+  service ([OPERATIONS.md §3](OPERATIONS.md#3-the-database-postgresql--apache-age) has the
+  matrix). The bundled demo database is not sized for scale.
 
 The `PerspectiveGraphAnalyzerPassSlow` alert (see
 [deploy/observability](../deploy/observability)) fires when p95 pass time crosses the

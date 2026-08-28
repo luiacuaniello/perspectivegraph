@@ -91,6 +91,15 @@ data:
   OIDC_TOKEN_URL: {{ .Values.auth.oidc.tokenUrl | quote }}
   OIDC_SCOPES: {{ .Values.auth.oidc.scopes | quote }}
   OIDC_LOGOUT_URL: {{ .Values.auth.oidc.logoutUrl | quote }}
+  # Who gets which role once signed in. Empty groupRoles + empty defaultRole means an
+  # SSO subject with no role claim has no access - deliberately, since signing in
+  # proves identity, not entitlement to the attack map.
+  OIDC_GROUP_ROLES: {{ .Values.auth.oidc.groupRoles | quote }}
+  OIDC_DEFAULT_ROLE: {{ .Values.auth.oidc.defaultRole | quote }}
+  OIDC_ROLE_CLAIM: {{ .Values.auth.oidc.roleClaim | quote }}
+  OIDC_GROUPS_CLAIM: {{ .Values.auth.oidc.groupsClaim | quote }}
+  OIDC_TENANT_CLAIM: {{ .Values.auth.oidc.tenantClaim | quote }}
+  OIDC_APPS_CLAIM: {{ .Values.auth.oidc.appsClaim | quote }}
   # Dev workflow: dashboard link embedded in PR comments / merge-gate status.
   DASHBOARD_URL: {{ .Values.github.dashboardUrl | quote }}
   # Data hygiene: redact secrets out of scanner output before the store.
@@ -113,8 +122,10 @@ data:
   AI_MAX_TOKENS: {{ .Values.ai.maxTokens | quote }}
   HF_MODEL: {{ .Values.ai.hf.model | quote }}
   HF_BASE_URL: {{ .Values.ai.hf.baseUrl | quote }}
-  # Where triage decisions live. "postgres" shares them across replicas and is what
-  # lifts the single-replica ceiling; "file" keeps them on the PVC below, one writer.
+  # Where triage decisions live. "postgres" shares them across replicas and takes the
+  # audit chain with them (serialised on an advisory lock, so replicas append to ONE
+  # chain); "file" keeps both on the PVC below, one writer. The *_PATH values below are
+  # ignored under "postgres" - the backend branches on the database handle, not on them.
   GOVERNANCE_BACKEND: {{ .Values.governanceBackend | quote }}
 {{- if .Values.persistence.enabled }}
   # File-backed governance stores live on the mounted PVC so they survive restarts.
@@ -123,6 +134,11 @@ data:
   VALIDATIONS_PATH: {{ printf "%s/validations.json" .Values.persistence.mountPath | quote }}
   HISTORY_PATH: {{ printf "%s/history.json" .Values.persistence.mountPath | quote }}
   AUDIT_LOG_PATH: {{ printf "%s/audit.log" .Values.persistence.mountPath | quote }}
+{{- end }}
+{{- if .Values.auditRetention }}
+  # How long audit records are kept. Prunes only under governanceBackend "postgres",
+  # where a prefix can be removed and checkpointed; the file-backed chain is rotated.
+  AUDIT_RETENTION: {{ .Values.auditRetention | quote }}
 {{- end }}
 {{- if .Values.postgres.enabled }}
 ---

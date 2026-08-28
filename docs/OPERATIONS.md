@@ -13,7 +13,7 @@ Environment-variable names below are the actual configuration keys (see
 
 | Concern | Demo default | Production |
 |---|---|---|
-| Database | bundled Postgres+AGE image | external, managed, encrypted Postgres+AGE |
+| Database | bundled Postgres+AGE image | external, encrypted Postgres+AGE - **managed only on Azure**, self-managed elsewhere (§3) |
 | API auth | open | `API_TOKENS` and/or OIDC (`OIDC_*`) required |
 | Ingest auth | open | per-tenant HMAC (`INGEST_HMAC_SECRETS`) + `INGEST_RATE_RPS` |
 | Transport | plaintext | TLS in-app (`TLS_CERT_FILE`/`TLS_KEY_FILE`) or at the ingress; `POSTGRES_SSLMODE`; `NATS_TLS_*` |
@@ -65,10 +65,23 @@ Two ready-to-use hardened profiles apply all of the above:
   (`secrets.existingSecret`, e.g. Vault / Sealed Secrets / External Secrets).
 
   ```bash
-  helm upgrade --install perspectivegraph deploy/helm/perspectivegraph \
-    -f deploy/helm/perspectivegraph/values-production.yaml \
+  helm upgrade --install perspectivegraph oci://ghcr.io/luiacuaniello/charts/perspectivegraph \
+    -f values-production.yaml \
     --set postgres.externalHost=db.internal --set ingress.host=pg.example.com
   ```
+
+  The chart installs from the registry, so a production cluster needs no git checkout.
+  The profiles ship **inside** the chart, so neither does getting them - pull it once and
+  the values files are there to edit and keep under your own change control:
+
+  ```bash
+  helm pull oci://ghcr.io/luiacuaniello/charts/perspectivegraph --untar
+  ls perspectivegraph/values-*.yaml   # production, ha, sso-demo
+  ```
+
+  It is cosign-signed; verify it before it runs (see the
+  [manual](MANUAL.md#deploy-to-kubernetes)). From a git checkout instead, swap the
+  `oci://…` reference for `deploy/helm/perspectivegraph`.
 
 - **Docker Compose (single host / on-prem):** `.env.production.example` (copy to `.env`,
   fill in, `chmod 600`) plus the `docker-compose.prod.yml` override for the in-app TLS cert
@@ -123,18 +136,89 @@ all - and "no API token" is not an error, it is the demo profile - which is exac
 open deployment the mount was meant to prevent. A trailing newline is stripped (secret
 managers add one); nothing else is touched, so a passphrase may begin or end with a space.
 
-## 3. External PostgreSQL + Apache AGE
+## 3. The database: PostgreSQL + Apache AGE
 
-The demo runs the `apache/age` image; **do not use it in production** (see the
-security-baseline note). Point the backend at your own managed instance:
+The graph lives in PostgreSQL with the [Apache AGE](https://age.apache.org) extension, and
+that extension - not the DSN - is what decides your deployment. **Most managed PostgreSQL
+services do not offer AGE**, so "point it at a managed Postgres+AGE" is not advice you can
+act on everywhere, and it is worth settling before anything else in this runbook.
+
+### Where you can actually get one
+
+| Where | AGE | What it costs you |
+|---|---|---|
+| **Azure Database for PostgreSQL flexible server** | **yes** (PostgreSQL 16 and below) | The only managed service that ships it. Turned on with two server parameters (recipe below). Not available on PostgreSQL 17, and AGE is excluded from Azure's in-place major-version upgrade |
+| **Self-managed** on Kubernetes or a VM | yes | Backups, failover, patching and TLS become yours. The `apache/age` image already preloads the extension |
+| **AWS RDS / Aurora PostgreSQL** | **no** | Not on the extension allow-list. Requests go to `rds-postgres-extensions-request@amazon.com` |
+| **Google Cloud SQL / AlloyDB** | **no** | Not in the supported-extensions list |
+| The bundled `apache/age` container | yes | **Demo only.** Not sized, backed up, patched or hardened for production |
+
+So on AWS and GCP today the honest choice is to run Postgres+AGE yourself. One thing makes
+that a smaller decision than it looks: the graph is **derived** state - every node and edge
+is reconstructible by re-ingesting the feeds - so a lost database is a re-seed rather than a
+data-loss event (§4). Losing it costs you history, not the map.
+
+### What the engine needs of it
+
+Tested against **PostgreSQL 16 + AGE 1.6.0** - the digest-pinned image the demo and the CI
+integration job both run. Other combinations are not tested here.
+
+**The role does not need to be a superuser.** These grants are enough:
+
+```sql
+GRANT CONNECT, CREATE ON DATABASE perspectivegraph TO perspective;
+GRANT USAGE ON SCHEMA ag_catalog TO perspective;
+GRANT SELECT ON ag_catalog.ag_graph, ag_catalog.ag_label TO perspective;
+```
+
+What the connection does need is AGE actually loaded, and there are only two ways that
+happens:
+
+- the role may run `LOAD 'age'` - a **superuser-only** command, which is what the bundled
+  demo does and what no managed service permits; or
+- **`age` is in `shared_preload_libraries`**, so the library is present before the session
+  opens. The `apache/age` image does this by default; Azure exposes it as a parameter.
+
+The backend works out which of the two it is on the first query and adapts. Check what you
+have with:
+
+```sql
+SELECT extversion FROM pg_extension WHERE extname = 'age';   -- is it installed
+SHOW shared_preload_libraries;                                -- is it preloaded
+```
+
+**Let the backend create its own graph.** AGE keeps each graph in a schema owned by
+whoever called `create_graph`, and a role that does not own that schema is refused on the
+first write with `permission denied for schema ...`. If an administrator pre-creates the
+graph, hand it over with `ALTER SCHEMA <graph> OWNER TO <role>` (and the tables in it)
+rather than leaving the engine a tenant in someone else's schema.
+
+### Azure Database for PostgreSQL
+
+1. On the server's **Parameters** blade, add `AGE` to **`azure.extensions`** and to
+   **`shared_preload_libraries`**, and save. The server restarts to load the library.
+2. Connect to the database and run `CREATE EXTENSION IF NOT EXISTS age CASCADE;`.
+3. Apply the grants above and point the backend at it.
+
+Do **not** run `LOAD 'age'` by hand there: with the library preloaded it does not quietly
+succeed, it fails with a privilege error.
+
+### Self-managed
+
+Run the `apache/age` image (or your own build of the extension) as a StatefulSet, under a
+PostgreSQL operator with that image, or on a VM. Whatever you pick, the list of things you
+have just taken on is the same, and none of it is optional for production: backups with a
+tested restore (§4), a replica and a failover path, patching for both PostgreSQL and AGE,
+TLS, and monitoring. §4 covers backup and restore; the demo image is not a starting point
+for any of it.
+
+### Pointing the backend at it
 
 ```bash
 POSTGRES_DSN=postgres://user:pass@db.internal:5432/perspectivegraph?sslmode=verify-full
 # or the discrete POSTGRES_HOST/PORT/DB/USER/PASSWORD + POSTGRES_SSLMODE keys
+# POSTGRES_PASSWORD_FILE keeps the password out of the environment entirely (§2)
 ```
-
-The instance must have the AGE extension available. On first boot the backend creates its
-graph; the role needs `CREATE` on the database plus usage of `ag_catalog`.
 
 ## 4. Backup & restore (the graph is sensitive data)
 
@@ -247,19 +331,102 @@ election is a session-scoped PostgreSQL advisory lock: when the holder dies its
 connection drops, the lock is released server-side, and another replica takes it on its
 next check. No external coordinator, and no operator action.
 
-What still pins you to one replica is the governance state, not the election. With
+What pins you to one replica is the **file** governance backend, not the election. With
 `GOVERNANCE_BACKEND=postgres` the suppressions, tickets, posture history, validations and
-KEV holdout are all shared. The **audit log** is not: it is a tamper-evident hash chain
-whose integrity depends on ordered appends by one process, so while `AUDIT_LOG_PATH` is
-set keep `backend.replicas: 1`. The chart enforces that. Keep the database HA at the
-managed-Postgres layer.
+KEV holdout are all shared - and so is the **audit log**: the chain moves into the
+database, where each append takes a transaction-scoped advisory lock, reads the tail and
+writes in the same transaction, so several replicas extend one chain instead of forking
+it. Keep the database HA at the managed-Postgres layer.
+
+So the Kubernetes recipe for more than one backend is `governanceBackend: postgres` **and**
+`persistence.enabled: false` - the PVC then holds nothing, and its ReadWriteOnce mode would
+otherwise leave every pod scheduled off the first node hanging on `FailedAttachVolume`. The
+chart refuses to render `persistence.enabled` with `replicas > 1` rather than let you find
+that out from a stuck rollout.
+
+`values-ha.yaml` is that recipe as an overlay on top of the production profile, so HA is
+four decisions rather than a second copy of the whole file:
+
+```bash
+helm upgrade --install perspectivegraph oci://ghcr.io/luiacuaniello/charts/perspectivegraph \
+  -f values-production.yaml -f values-ha.yaml \
+  --set postgres.externalHost=db.internal --set ingress.host=pg.example.com \
+  --set nats.externalUrl=nats://nats.internal:4222
+```
+
+It sets the two settings above, raises the backend to three replicas and the dashboard to
+two, spreads them one-per-node, and adds a **PodDisruptionBudget** - because `replicas: 3`
+that a drain can evict all at once, or that the scheduler stacks on one node, is three
+copies of a single failure domain rather than availability. `values-production.yaml` keeps
+the single-replica shape on the file backend: fewer moving parts, and the audit chain in a
+file you can archive.
+
+Two single points of failure it does **not** remove, and neither is hidden:
+
+- **The database.** Every replica shares one Postgres+AGE. Use a managed instance with a
+  replica and automatic failover - §3 covers where AGE is actually available, which is
+  narrower than it looks.
+- **The event bus.** The bundled NATS is one replica whose JetStream store lives in the
+  container's writable layer, so a restart drops in-flight events. The HA overlay therefore
+  refuses to inherit it: it sets `nats.enabled: false` and the chart will not render until
+  `nats.externalUrl` points at a NATS you run clustered. What that outage costs is the
+  events in flight, not the graph - the graph is derived and the feeds re-ingest it - but
+  the analyzer is blind for the duration.
+
+### Retention and rotation
+
+An append-only chain nobody may delete from grows forever, and "forever" is the absence of
+a retention policy rather than one. Both backends can be bounded, differently:
+
+**Postgres chain - `AUDIT_RETENTION`.** Set a window and the leader prunes records older
+than it, oldest first, on a cadence derived from the window (a sixth of it, clamped to
+between an hour and a day - so a 90-day window checks in daily):
+
+```bash
+AUDIT_RETENTION=2160h   # 90 days; unset (the default) keeps everything, as before
+```
+
+Pruning removes a **prefix** and records a checkpoint holding the sequence and hash of the
+last record removed, so what survives still verifies link-by-link back to it - see the
+[threat model](THREAT-MODEL.md#retention-and-one-honest-tension) for why that is the only
+shape of deletion this log allows. `verify-audit` says what was pruned rather than quietly
+reporting a shorter chain, the prune is itself an entry in the chain it shortened, and
+`perspectivegraph_audit_pruned_records_total` counts what has gone.
+
+**File chain - rotate it.** There is no automatic pruning, and the two obvious ways to
+rotate are both wrong: `logrotate` with `copytruncate` leaves the process writing at its old
+offset into a truncated file, and a live `mv` leaves it writing into the file you meant to
+retire, because the open handle follows the inode. The procedure that works is **stop, move
+the file aside, start** - the engine then begins a fresh chain, and each retired file stays
+a complete chain that verifies on its own (a test pins this). Archive the retired files
+somewhere append-only: once rotated, their integrity is your archive's problem, not the
+engine's. Setting `AUDIT_RETENTION` on a file-backed deployment logs a warning and prunes
+nothing, rather than pretending to.
+
+Whichever you use, decide the window on purpose. It is the number a data-protection review
+asks for, and the erasure/tamper-evidence tension in the threat model is the reason it
+cannot simply be "delete that one record".
+
+### Verifying the chain
+
+Verify the chain wherever it lives - the subcommand follows it:
+
+```bash
+perspectivegraph verify-audit /var/log/perspectivegraph/audit.log   # file backend
+perspectivegraph verify-audit -postgres                             # governance database
+```
+
+`-postgres` reads `POSTGRES_DSN` (or the discrete `POSTGRES_*` keys, `_FILE` variants
+included) exactly as the server does, so a DSN with a password in it never has to be typed
+into a command line where every process on the host can read it.
 
 ## 8. Pre-production checklist
 
 - [ ] API auth enabled (`API_TOKENS`/OIDC) and verified from an unauthenticated client.
 - [ ] Ingest HMAC (`INGEST_HMAC_SECRETS`) + `INGEST_RATE_RPS` set.
 - [ ] TLS everywhere (`TLS_*`, `POSTGRES_SSLMODE=verify-full`, `NATS_TLS_*`).
-- [ ] External managed Postgres+AGE; demo image not in the deployment.
+- [ ] External Postgres+AGE chosen with §3 open (managed on Azure, self-managed on AWS/GCP),
+      its role non-superuser, and the demo image out of the deployment.
 - [ ] Secrets in a manager/mounted files, not inline in compose/Helm values.
 - [ ] Connector role is read-only and reviewed; `GITHUB_TOKEN` scoped to one repo.
 - [ ] Backup scheduled and a restore rehearsed (section 4).

@@ -518,7 +518,8 @@ findings correlate into the top ranked attack path with its fix:
 make demo           # needs Docker + jq; then open http://localhost:3000
 ```
 
-See the [90-second demo](#demo-90-seconds) above (and how to turn the fix into a real PR).
+The [README's walk-through](../README.md#see-the-whole-engine-in-90-seconds) shows what
+that prints, and how to turn the fix into a real PR.
 
 **Or step by step (everything in containers):**
 
@@ -629,10 +630,24 @@ CONNECTORS_ENABLED=aws AWS_CONNECTOR_MODE=sdk AWS_REGION=us-east-1 \
 # iam:GetPolicy + iam:GetPolicyVersion (to resolve permissions-boundary documents)
 # (all covered by the AWS-managed SecurityAudit policy - verified against a live account)
 
+# Multi-account: one role per account, comma-separated, pulled in a single pass.
+CONNECTORS_ENABLED=aws AWS_CONNECTOR_MODE=sdk AWS_REGION=us-east-1 \
+  AWS_ROLE_ARN=arn:aws:iam::111111111111:role/perspectivegraph-readonly,arn:aws:iam::222222222222:role/perspectivegraph-readonly
+
 # See what the live connector discovers before wiring it in (describe-* only):
 AWS_REGION=us-east-1 ROLE_ARN=arn:aws:iam::<account>:role/perspectivegraph-readonly \
   make validate-aws       # internet-exposed seeds vs SG-open-but-suppressed, with reasons
 ```
+
+**Several accounts, one estate.** `AWS_ROLE_ARN` takes a list, and each account's assets
+are qualified with the account id AWS reports for its own credentials
+(`sts:GetCallerIdentity` - no extra grant, it is allowed to every principal). That
+qualification is not cosmetic: `i-…` and `sg-…` are unique only *within* an account, so
+without it two accounts that happen to share an identifier collapse into one asset, and
+the engine reports paths through a machine that exists in neither. An account whose role
+has expired costs that account's assets for the pass and nothing more - the others are
+still collected, and `GET /connectors` reports the error. No AWS Organization is needed:
+a role in each account trusting the one the engine runs as is enough.
 
 Connectors are **leader-only** (replicas don't multiply API calls), interval-driven
 (`CONNECTOR_INTERVAL`), and observable via `GET /connectors` plus
@@ -930,6 +945,45 @@ derivation is unit-tested). The credential lives only in the tab's `sessionStora
 and rides as a Bearer - never written to disk or the bundle. Token validation
 stays on the JWKS / issuer / audience the backend already enforces (fail-closed:
 it refuses to start with a JWKS URL but no `iss`/`aud`).
+
+#### Trying SSO end-to-end on a laptop (the bundled Keycloak)
+
+An opt-in compose profile stands up a demo IdP, so the login gate can be exercised
+without a cloud tenant:
+
+```bash
+docker compose --profile app --profile sso up -d   # realm "demo", user demo/demo
+```
+
+Then point the backend at it and open <http://localhost:3000> → **Sign in with SSO**:
+
+```bash
+# Server-side validation - fetched by the BACKEND, over the compose network.
+OIDC_JWKS_URL=http://keycloak:8080/realms/demo/protocol/openid-connect/certs
+OIDC_ISSUER=http://localhost:8088/realms/demo
+OIDC_AUDIENCE=perspectivegraph
+# SPA-facing coordinates - used by the BROWSER, on the published port.
+OIDC_CLIENT_ID=perspectivegraph
+OIDC_AUTHORIZE_URL=http://localhost:8088/realms/demo/protocol/openid-connect/auth
+OIDC_TOKEN_URL=http://localhost:8088/realms/demo/protocol/openid-connect/token
+OIDC_LOGOUT_URL=http://localhost:8088/realms/demo/protocol/openid-connect/logout
+```
+
+**The two hosts differ on purpose**, and it is the step people get wrong. The JWKS is
+fetched by the backend inside the compose network, so it uses the service name
+(`keycloak:8080`). The issuer is a string *inside the token*, which Keycloak mints from
+the address the browser used (`localhost:8088`) - so it has to match that one. They are
+independent settings and they are meant to disagree. The Helm equivalent is
+`values-sso-demo.yaml`, which splits them the same way.
+
+**Where the role comes from.** RBAC is read off the token's `role` claim; a token without
+one is `RoleNone` and sees nothing. The demo realm supplies it with a hardcoded claim
+mapper (`role: admin`) - and that is the piece a real IdP has to provide too, mapping the
+group or app role your directory already has onto a `role` claim of `viewer`, `operator`
+or `admin`. There is no group-to-role mapping inside the engine, by design: the IdP is
+where that decision belongs.
+
+Demo only: Keycloak runs `start-dev` with an in-memory database and an imported realm.
 
 ### Validated against reality (precision & recall)
 
@@ -1344,7 +1398,19 @@ Every door is open by default for zero-config local dev - and the backend
   ```bash
   perspectivegraph verify-audit /var/log/perspectivegraph/audit.log
   # → audit chain OK: N records verified
+
+  # Under GOVERNANCE_BACKEND=postgres the chain lives in the database instead (which is
+  # what lets replicas exceed 1). Same check, addressed through POSTGRES_DSN / POSTGRES_*
+  # rather than an argument, so the password stays out of the process list:
+  perspectivegraph verify-audit -postgres
   ```
+
+  **Retention.** Left alone the chain grows forever. `AUDIT_RETENTION=2160h` (90 days)
+  prunes the database-backed chain, oldest records first, leaving a checkpoint so the
+  survivors still verify against the hash of the last record removed - deleting from the
+  middle stays impossible to do invisibly, which is the point of a chain. The file-backed
+  chain is rotated instead. Both are in the
+  [operations runbook](OPERATIONS.md#retention-and-rotation).
 
 ```bash
 # Single-tenant, signed + token-gated, with an audit trail:
@@ -1380,6 +1446,35 @@ OIDC_AUDIENCE=perspectivegraph \
 Issuer and audience are mandatory when JWKS is set - the backend refuses to start
 without them, because a verifier that skips `iss`/`aud` accepts any RS256 token the
 IdP ever minted, including ones meant for a different relying party.
+
+**Then decide who gets which role, because signing in does not.** A token proves who
+someone is; this tool's data is a map of how to attack the organisation, so an SSO
+subject with no role gets **no access** until something grants it. Enterprise IdPs keep
+that decision in group membership - neither Okta nor Entra mints a `role` claim unless
+somebody builds a custom mapping inside the IdP first - so map the groups you already
+have:
+
+```bash
+OIDC_GROUP_ROLES=pg-viewers=viewer,pg-secops=operator,pg-admins=admin
+```
+
+- A subject in **several** mapped groups gets the **highest** role among them, which is
+  what adding someone to the admins group already means to whoever granted it.
+- A `role` claim, if your IdP does mint one, still works and is taken together with the
+  groups - the higher of the two wins. Both come from the same signed token, so
+  preferring one would buy no security, only surprise.
+- An entry that does not parse is **dropped and logged at error level**. Silently
+  ignoring `pg-admins=administrator` would leave the group granting nothing, which reads
+  as a working configuration to whoever wrote it and as a broken login to whoever is
+  locked out.
+- Claim names are configurable for directories that namespace them
+  (`OIDC_GROUPS_CLAIM=https://acme.example/groups`, and the same for `OIDC_ROLE_CLAIM`,
+  `OIDC_TENANT_CLAIM`, `OIDC_APPS_CLAIM`). The group claim is read whether it arrives as
+  a JSON array or a delimited string.
+- `OIDC_DEFAULT_ROLE=viewer` grants a role to **everyone the IdP authenticates**. That is
+  a legitimate configuration when the IdP application is already restricted to the right
+  people, and a serious widening otherwise - so it is off by default and startup warns
+  when it is on.
 
 **For machines, use static tokens** - CI jobs, an ingest sender, a scripted
 integration. Give each one its own entry so it can be withdrawn alone, always set an
@@ -1513,21 +1608,44 @@ Beyond the container surface, the backend itself is built defensively:
 
 ## Deploy to Kubernetes
 
-A Helm chart bundles the backend, dashboard, Postgres+AGE, and NATS:
+A Helm chart bundles the backend, dashboard, Postgres+AGE, and NATS. It is published as
+an OCI artifact, so installing it needs no clone of this repository - and gives you a
+version you can pin, verify and name in a change record:
 
 ```bash
-# Build & push images (or use your registry / prebuilt ones)
-docker build -t ghcr.io/luiacuaniello/perspectivegraph:latest backend
-docker build -t ghcr.io/luiacuaniello/perspectivegraph-dashboard:latest frontend
-
-# Install
-helm install perspective deploy/helm/perspectivegraph \
+# Install a pinned release straight from the registry
+helm install perspective oci://ghcr.io/luiacuaniello/charts/perspectivegraph \
   --set github.token=$GITHUB_TOKEN \
-  --set opensearch.url=""           # optional full-text index
+  --set opensearch.url="" \
+  --version 1.10.0 # x-release-please-version
 ```
 
-Bring your own managed Postgres/NATS by disabling the bundled ones and pointing
-the chart at the external endpoints:
+The chart is cosign-signed like the images. Verify it before it templates anything into
+your cluster - a chart is a description of what will run with cluster credentials, so an
+unverified one is a larger hole than an unverified image:
+
+```bash
+cosign verify \
+  --certificate-identity-regexp 'https://github.com/luiacuaniello/perspectivegraph/.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/luiacuaniello/charts/perspectivegraph:1.10.0 # x-release-please-version
+```
+
+The chart declares `kubeVersion: >= 1.21.0-0` (the floor is `policy/v1`
+PodDisruptionBudget), so an older cluster is refused at install time rather than halfway
+through. Working from a git checkout instead is still supported everywhere below - swap
+the `oci://…` reference for `deploy/helm/perspectivegraph`:
+
+```bash
+helm install perspective deploy/helm/perspectivegraph \
+  --set github.token=$GITHUB_TOKEN
+```
+
+Bring your own Postgres/NATS by disabling the bundled ones and pointing the chart at
+the external endpoints. Read
+[the database matrix](OPERATIONS.md#3-the-database-postgresql--apache-age) before you
+pick one: Apache AGE is a managed offering on Azure only, so on AWS and GCP "external"
+means an instance you run.
 
 ```bash
 helm install perspective deploy/helm/perspectivegraph \
@@ -1579,8 +1697,8 @@ make seed   # and make seed-discovery - they post to localhost:8081 (the ingest 
 ```
 
 Full walk-through (incl. why the OIDC URLs differ) in
-the SSO demo section above. Demo only: locally-built images + Keycloak in
-`start-dev`.
+[Trying SSO end-to-end on a laptop](#trying-sso-end-to-end-on-a-laptop-the-bundled-keycloak).
+Demo only: locally-built images + Keycloak in `start-dev`.
 
 ### Hardening a real deployment (beyond a trusted cluster)
 
@@ -1833,6 +1951,14 @@ arrived yet are retried), but this is the logical flow:
 | 7 | Cloud network | `POST /ingest/cloudnet` | **reachability**: internet-facing SGs, SG-to-SG, VPC peering |
 | 8 | IAM authorization | `POST /ingest/iam` | **privilege escalation**: `CAN_ESCALATE_TO` edges to account-admin, public-trust roles |
 
+> **Ingesting more than one cloud account?** Add `?account=<id>` to the cloud sources.
+> Identifiers like `i-…` and `sg-…` are unique only *within* an account, so without it
+> two accounts that happen to share one merge into a single asset - and the engine then
+> reports paths running through a machine that does not exist. Identities need no flag
+> (an ARN already carries its account). Leave it off for a single-account estate and
+> every id stays exactly as it is today.
+
+
 Sources 6–8 are the **discovery** collectors: they extract the network/exposure
 topology and IAM privilege-escalation graph automatically, so paths form without
 hand-stitched ids.
@@ -1990,7 +2116,8 @@ heuristic applies (backward-compatible).
 # Optional precision: add describe-subnets / describe-route-tables /
 # describe-network-acls as "subnets"/"route_tables"/"network_acls" (each instance
 # carries its "SubnetId").
-curl -sS -X POST "$INGEST_URL/ingest/cloudnet" -H 'Content-Type: application/json' --data-binary @cloudnet.json
+curl -sS -X POST "$INGEST_URL/ingest/cloudnet?account=123456789012" \
+  -H 'Content-Type: application/json' --data-binary @cloudnet.json
 ```
 
 #### IAM privilege-escalation graph (auto-discovered)
@@ -2008,7 +2135,8 @@ sensitive asset. A role whose trust policy admits `"Principal":"*"` is marked
 ```bash
 # One call dumps every user, role, group and policy in the account.
 aws iam get-account-authorization-details > iam.json
-curl -sS -X POST "$INGEST_URL/ingest/iam" -H 'Content-Type: application/json' --data-binary @iam.json
+curl -sS -X POST "$INGEST_URL/ingest/iam?account=123456789012" \
+  -H 'Content-Type: application/json' --data-binary @iam.json
 ```
 
 > **Read-only & honest about scope.** The collector needs only the read-only
@@ -2307,8 +2435,10 @@ Start narrow - one app with a known internet entry point and a known sensitive
 store - confirm a path end-to-end, *then* widen the scanners' scope.
 
 **Deploying it on Kubernetes.** The Helm chart in `deploy/helm/perspectivegraph`
-brings up backend + dashboard + Postgres+AGE + NATS in one command (or point it at
-managed Postgres/NATS with `postgres.enabled=false`/`nats.enabled=false`). The
+brings up backend + dashboard + Postgres+AGE + NATS in one command (or point it at an
+external Postgres/NATS with `postgres.enabled=false`/`nats.enabled=false` - see
+[the database matrix](OPERATIONS.md#3-the-database-postgresql--apache-age) for which
+services can host AGE at all). The
 default install is *unauthenticated with in-memory governance* - fine for a demo
 inside a trusted cluster, but for anything reachable beyond it, turn the controls
 on: `--set auth.apiTokens="$(openssl rand -hex 16):admin"` (bearer auth),

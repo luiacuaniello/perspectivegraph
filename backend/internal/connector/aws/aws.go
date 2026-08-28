@@ -40,6 +40,12 @@ type transport interface {
 	// not configured for this transport (so an account with no IAM access can
 	// still pull the network feed).
 	Fetch(ctx context.Context, feed Feed) ([]byte, error)
+	// Account is the cloud account this transport reads, or "" when it cannot say.
+	// It qualifies the ids of assets whose native identifiers (i-…, sg-…) are unique
+	// only within one account - so a transport that does not know its account must
+	// return "" rather than guess: the empty string keeps the single-account ids the
+	// graph already has, while a wrong id would split one account into two.
+	Account(ctx context.Context) string
 }
 
 // Connector is the AWS agentless connector.
@@ -78,6 +84,9 @@ func (*Connector) Source() string { return "aws" }
 func (c *Connector) Collect(ctx context.Context) ([]ontology.Event, error) {
 	var out []ontology.Event
 	var errs []error
+	// Resolved once per pass, not per feed: it is a network call on the sdk transport,
+	// and every feed in this pass describes the same account by construction.
+	account := c.t.Account(ctx)
 	for _, b := range c.feeds {
 		raw, err := c.t.Fetch(ctx, b.feed)
 		if err != nil {
@@ -87,7 +96,7 @@ func (c *Connector) Collect(ctx context.Context) ([]ontology.Event, error) {
 		if len(raw) == 0 {
 			continue // feed not configured for this transport
 		}
-		evs, err := b.col.Parse(bytes.NewReader(raw), ingestion.Options{})
+		evs, err := b.col.Parse(bytes.NewReader(raw), ingestion.Options{Account: account})
 		if err != nil {
 			errs = append(errs, fmt.Errorf("parse %s: %w", b.feed, err))
 			continue

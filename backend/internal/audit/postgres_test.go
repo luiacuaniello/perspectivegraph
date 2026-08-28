@@ -40,6 +40,11 @@ func pgLog(t *testing.T) (*PGLog, *sql.DB) {
 	if _, err := db.Exec(`DELETE FROM audit_log`); err != nil {
 		t.Fatalf("reset: %v", err)
 	}
+	// The retention checkpoint says where the chain starts, so leaving one behind would
+	// make the next test's fresh chain look like it had records removed.
+	if _, err := db.Exec(`DELETE FROM audit_log_checkpoint`); err != nil {
+		t.Fatalf("reset checkpoint: %v", err)
+	}
 	l, err := OpenPG(db)
 	if err != nil {
 		t.Fatal(err)
@@ -399,5 +404,157 @@ func TestRequestIDReachesThePostgresLog(t *testing.T) {
 	}
 	if _, err := VerifyPG(context.Background(), db); err != nil {
 		t.Fatalf("chain broken: %v", err)
+	}
+}
+
+// Retention has to remove records without removing the reason to trust what is left. This
+// is the whole design in one test: prune a prefix, and the survivors still verify.
+func TestPrunedChainStillVerifies(t *testing.T) {
+	l, db := pgLog(t)
+	ctx := context.Background()
+	for i := 0; i < 6; i++ {
+		l.Record(ctx, "api", "alice", "admin", "acme", map[string]any{"i": i})
+	}
+	settled(t, l)
+
+	// Everything written so far is "old"; the cutoff is in the future.
+	pruner, err := OpenPG(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	removed, err := pruner.PruneBefore(ctx, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	settled(t, pruner) // drains the audit.prune record the prune itself chains
+	if removed != 6 {
+		t.Fatalf("removed %d records, want 6", removed)
+	}
+
+	// What survives is the prune's own record, and it verifies against the checkpoint.
+	n, err := VerifyPG(ctx, db)
+	if err != nil {
+		t.Fatalf("a pruned chain failed verification: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("verified %d records, want the 1 that was written after the prune", n)
+	}
+
+	cp, ok, err := ReadCheckpointPG(ctx, db)
+	if err != nil || !ok {
+		t.Fatalf("no checkpoint after a prune (ok=%v err=%v)", ok, err)
+	}
+	if cp.PrunedThroughSeq != 6 || cp.PrunedRecords != 6 {
+		t.Errorf("checkpoint says through=%d total=%d, want 6 and 6", cp.PrunedThroughSeq, cp.PrunedRecords)
+	}
+}
+
+// The danger of allowing any deletion at all is that it becomes a way to hide one. After
+// retention has run, tampering inside the RETAINED window must still be caught.
+func TestTamperingAfterAPruneIsStillDetected(t *testing.T) {
+	l, db := pgLog(t)
+	ctx := context.Background()
+	for i := 0; i < 4; i++ {
+		l.Record(ctx, "api", "alice", "admin", "acme", map[string]any{"i": i})
+	}
+	settled(t, l)
+
+	pruner, err := OpenPG(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pruner.PruneBefore(ctx, time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	settled(t, pruner)
+	// Records written after the prune, inside the retained window.
+	l2, err := OpenPG(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		l2.Record(ctx, "api", "mallory", "admin", "acme", map[string]any{"i": i})
+	}
+	settled(t, l2)
+
+	var seq int64
+	if err := db.QueryRow(`SELECT max(seq) FROM audit_log`).Scan(&seq); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE audit_log SET subject = 'nobody' WHERE seq = $1`, seq); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyPG(ctx, db); err == nil {
+		t.Fatal("an altered record inside the retained window passed verification")
+	}
+}
+
+// A checkpoint is not a licence to lose records: it says the chain starts later, and the
+// survivors must still link to the hash it names. Deleting the first retained record - the
+// obvious way to abuse retention - has to fail.
+func TestAGapAfterTheCheckpointIsDetected(t *testing.T) {
+	l, db := pgLog(t)
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		l.Record(ctx, "api", "alice", "admin", "acme", nil)
+	}
+	settled(t, l)
+
+	pruner, err := OpenPG(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pruner.PruneBefore(ctx, time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	settled(t, pruner)
+	l2, err := OpenPG(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		l2.Record(ctx, "api", "alice", "admin", "acme", nil)
+	}
+	settled(t, l2)
+
+	var first int64
+	if err := db.QueryRow(`SELECT min(seq) FROM audit_log`).Scan(&first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DELETE FROM audit_log WHERE seq = $1`, first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyPG(ctx, db); err == nil {
+		t.Fatal("deleting the first retained record passed verification - retention became a way to hide a deletion")
+	}
+}
+
+// Retention must not touch records inside the window, and must be a no-op when nothing is
+// old enough - otherwise a misconfigured window silently empties the log.
+func TestPruneLeavesRecordsInsideTheWindow(t *testing.T) {
+	l, db := pgLog(t)
+	ctx := context.Background()
+	for i := 0; i < 4; i++ {
+		l.Record(ctx, "api", "alice", "admin", "acme", nil)
+	}
+	settled(t, l)
+
+	pruner, err := OpenPG(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	removed, err := pruner.PruneBefore(ctx, time.Now().Add(-24*time.Hour))
+	if err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	if removed != 0 {
+		t.Fatalf("pruned %d records that were inside the window", removed)
+	}
+	if _, ok, _ := ReadCheckpointPG(ctx, db); ok {
+		t.Error("a no-op prune moved the checkpoint")
+	}
+	n, err := VerifyPG(ctx, db)
+	if err != nil || n != 4 {
+		t.Fatalf("verified %d records (err=%v), want the 4 still inside the window", n, err)
 	}
 }

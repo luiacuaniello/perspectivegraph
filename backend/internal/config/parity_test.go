@@ -103,11 +103,10 @@ func TestDeploySurfacesExposeEveryConfigKey(t *testing.T) {
 	}
 }
 
-// The reverse drift: a surface advertising a key the backend stopped reading. Harmless at
-// runtime, but it is a promise the software no longer keeps, and an operator will spend an
-// afternoon wondering why it has no effect.
-func TestEnvExampleDoesNotAdvertiseDeadKeys(t *testing.T) {
-	root := repoRoot(t)
+// liveConfigKeys is every key a configuration surface may legitimately mention: what the
+// backend reads, plus the exemptions, plus the ones compose hands to other images.
+func liveConfigKeys(t *testing.T) map[string]bool {
+	t.Helper()
 	live := map[string]bool{}
 	for _, k := range keysReadByTheBackend(t) {
 		live[k] = true
@@ -122,6 +121,15 @@ func TestEnvExampleDoesNotAdvertiseDeadKeys(t *testing.T) {
 	} {
 		live[k] = true
 	}
+	return live
+}
+
+// The reverse drift: a surface advertising a key the backend stopped reading. Harmless at
+// runtime, but it is a promise the software no longer keeps, and an operator will spend an
+// afternoon wondering why it has no effect.
+func TestEnvExampleDoesNotAdvertiseDeadKeys(t *testing.T) {
+	root := repoRoot(t)
+	live := liveConfigKeys(t)
 
 	var dead []string
 	for _, m := range regexp.MustCompile(`(?m)^([A-Z0-9_]+)=`).FindAllStringSubmatch(mustRead(t, root, ".env.example"), -1) {
@@ -166,4 +174,57 @@ func stripComments(s string) string {
 		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+// The production profile is a fourth configuration surface, and until this test it was
+// the one nothing guarded: .env.example, docker-compose and the chart are checked above,
+// while .env.production.example - the file an operator actually copies when going to
+// production - could silently omit a control added later. It did: the audit retention
+// window, the governance backend, the lockout threshold and the SSO role mapping were all
+// missing, so a deployment built from it kept records forever, lost its lockouts on every
+// deploy, and let SSO users in with no role.
+//
+// It is a curated profile, not an exhaustive list, so this does not demand every key.
+// It demands the ones that decide security posture, and it refuses keys the backend no
+// longer reads - the two ways a starting point misleads the person starting from it.
+func TestProductionExampleCoversTheSecurityKnobs(t *testing.T) {
+	root := repoRoot(t)
+	prod := mustRead(t, root, ".env.production.example")
+
+	mustHave := []string{
+		"PG_ENV",                 // the fail-closed switch itself
+		"API_TOKENS",             // API authentication
+		"INGEST_HMAC_SECRET",     // ingest authenticity
+		"POSTGRES_SSLMODE",       // the connection carries the attack map
+		"STORE_ENCRYPTION_KEY",   // at rest
+		"AUDIT_LOG_PATH",         // who looked at the map
+		"AUDIT_RETENTION",        // and for how long that is kept
+		"GOVERNANCE_BACKEND",     // whether the audit chain and lockouts are durable
+		"AUTH_LOCKOUT_THRESHOLD", // brute force
+		"OIDC_GROUP_ROLES",       // without it, SSO authenticates people into nothing
+		"SCRUB_INGEST",           // secrets out of ingested payloads
+	}
+	var missing []string
+	for _, k := range mustHave {
+		if !regexp.MustCompile(`(?m)^` + k + `=`).MatchString(prod) {
+			missing = append(missing, k)
+		}
+	}
+	if len(missing) > 0 {
+		t.Errorf(".env.production.example omits %d security-relevant key(s), so an operator "+
+			"copying it deploys without them:\n  %s", len(missing), strings.Join(missing, "\n  "))
+	}
+
+	live := liveConfigKeys(t)
+	var dead []string
+	for _, m := range regexp.MustCompile(`(?m)^([A-Z0-9_]+)=`).FindAllStringSubmatch(prod, -1) {
+		if k := m[1]; !live[k] && !strings.HasSuffix(k, "_FILE") {
+			dead = append(dead, k)
+		}
+	}
+	if len(dead) > 0 {
+		sort.Strings(dead)
+		t.Errorf(".env.production.example sets %d key(s) the backend does not read:\n  %s",
+			len(dead), strings.Join(dead, "\n  "))
+	}
 }

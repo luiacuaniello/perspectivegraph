@@ -23,8 +23,8 @@ So the honest status of the seven randomization axes is:
 | Subnet placement (public/private) | **covered, free** | `make reachability-lab-aws` - two instances behind the *same* open security group, only the routed one is flagged. Verified on a real account. |
 | Permission boundary | **covered, free** | `make boundary-lab-aws` - this is the one that produced the engine's first genuine false positive; the engine now evaluates boundaries and the lab is its regression test. |
 | Real privesc primitive | **covered, free** | `make redteam-aws` - the oracle answers both ways, so precision over escalation claims is an uncensored measurement. |
-| Resource scoping (`*` / single) | **free, not built** | `SimulatePrincipalPolicy` accepts `--resource-arns`, so the `resource_scoped` downgrade can be graded without creating anything. |
-| Condition keys | **free, not built** | `SimulatePrincipalPolicy` accepts `--context-entries`, so a binding `aws:SourceIp` or MFA condition - which the engine treats as an unconditional Allow - is a refutation obtainable for $0. |
+| Resource scoping (`*` / single) | **covered, free** | `perspectivegraph redteam -principal <arn> -resource <arn>` puts the question to AWS over one resource instead of `*`. Without it a resource-scoped grant answers `implicitDeny` and is indistinguishable from no grant, so `-compare` reports the engine's `resource_scoped` claim as *unsettled* rather than refuting a question nobody asked. |
+| Condition keys | **half covered, free** | The oracle no longer mistakes them for refusals: an `implicitDeny` carrying `MissingContextValues` is reported as unsettled, names the keys, and is excluded from the calibration set. *Settling* one - passing `--context-entries` - is deliberately not built: whether an `aws:SourceIp` or MFA condition holds is a fact about the attacker, not a judgement the oracle should make for you. |
 | SCP on the OU | **blocked on cost, not on code** | Requires AWS Organizations. Enabling it on a free-tier account forfeits the credits immediately, so this waits for an account where that does not matter. |
 | IMDS posture (v1/v2) | **genuinely needs this lab** | Distinguishing p≈0.9 from p≈0.6 on the ASSUMES hop needs a real instance and a real SSRF. No API can settle "did the attacker get code execution". |
 
@@ -69,9 +69,10 @@ is self-describing).
 
 ## Meanwhile
 
-The two "free, not built" rows are the cheapest remaining work in this whole area, and
-neither needs this directory. Both extend
-[`internal/redteam`](../../backend/internal/redteam) with a claim the oracle can already
-put to AWS - resource-scoped grants and condition keys - and both can be verified the
-same way `make boundary-lab-aws` is: engine and AWS side by side, non-zero exit on
-disagreement.
+Every axis a dry run can reach is now covered by
+[`internal/redteam`](../../backend/internal/redteam), and one of them found a real bug.
+What is left needs something no API provides: an Organization for the SCP row, and real
+exploitable compute for the IMDS row - the one axis that justifies building this lab at
+all. Anything a future axis *can* settle with a simulation should still be settled that
+way first, the way `make boundary-lab-aws` does it: engine and AWS side by side, non-zero
+exit on disagreement.

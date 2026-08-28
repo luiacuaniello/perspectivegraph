@@ -4,6 +4,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"crypto/tls"
 	"database/sql"
@@ -68,19 +69,15 @@ var subcommands = []string{
 }
 
 func main() {
-	// Operator utility: verify the audit log's hash chain and exit.
-	if len(os.Args) >= 3 && os.Args[1] == "verify-audit" {
-		sealer, err := cryptostore.New(os.Getenv("STORE_ENCRYPTION_KEY"))
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "verify-audit:", err)
+	// Operator utility: verify the audit log's hash chain and exit. Dispatching on the
+	// subcommand alone - not on it plus an argument - is deliberate: `verify-audit` with
+	// nothing after it used to fall through every other case and START THE SERVER, so a
+	// typo in a verification step became a running process nobody meant to launch.
+	if len(os.Args) >= 2 && os.Args[1] == "verify-audit" {
+		if err := runVerifyAudit(os.Args[2:], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		n, err := audit.Verify(os.Args[2], audit.WithSealer(sealer))
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "audit chain INVALID after %d records: %v\n", n, err)
-			os.Exit(1)
-		}
-		fmt.Printf("audit chain OK: %d records verified\n", n)
 		return
 	}
 
@@ -111,6 +108,12 @@ func main() {
 	// puts a sensitive asset within reach. Blocks on attack paths, not on CVE counts. Its
 	// exit code is its interface, so it exits itself rather than returning. See runGate.
 	if len(os.Args) >= 2 && os.Args[1] == "gate" {
+		// staticcheck is right that this can only be true: runGate reaches every verdict
+		// through reportAndExit, which exits, so the `return nil` below it is unreachable
+		// and the only returns left are failures. The check stays anyway - it is what
+		// makes a future path that DOES return nil fail closed instead of exiting 0 on a
+		// verdict nobody produced, which on a merge gate is the whole ballgame.
+		//lint:ignore SA4023 deliberate: a gate must fail closed if it ever returns.
 		if err := runGate(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "gate:", err)
 			os.Exit(gateExitError)
@@ -532,7 +535,16 @@ func run(ctx context.Context, cfg config.Config) error {
 			defer func() { _ = alog.Close() }()
 			auditRec = alog
 			slog.Info("audit log enabled (postgres, shared chain)")
+			if cfg.AuditRetention > 0 {
+				go auditRetention(ctx, alog, cfg.AuditRetention, elector)
+				slog.Info("audit retention enabled - records older than this are pruned, oldest first (leader only)",
+					"retention", cfg.AuditRetention)
+			}
 		} else {
+			if cfg.AuditRetention > 0 {
+				slog.Warn("AUDIT_RETENTION is set but the audit log is file-backed, so nothing prunes it - " +
+					"rotate the file (see docs/OPERATIONS.md) or set GOVERNANCE_BACKEND=postgres")
+			}
 			alog, aerr := audit.Open(cfg.AuditLogPath, audit.WithSealer(sealer))
 			if aerr != nil {
 				return aerr
@@ -567,7 +579,23 @@ func run(ctx context.Context, cfg config.Config) error {
 		auditRec.Record(context.Background(), "auth.lockout.alert", "secwatch", "", "", map[string]any{"remote": key, "count": count})
 	})
 	if authGuard.Enabled() {
-		slog.Info("auth brute-force lockout enabled", "threshold_failures_per_5m", cfg.AuthLockoutThreshold)
+		// Durable lockouts when there is a database to keep them in. Without one the
+		// lockout is per-process and per-replica, so a deploy - a schedule anyone can
+		// read - hands a brute-forcer a clean slate. Only the lockout is stored, never
+		// the per-failure counter: a write per failed login would let the abuse drive
+		// the writes.
+		if govDB != nil {
+			trips, terr := secwatch.NewPGTrips(ctx, govDB)
+			if terr != nil {
+				return fmt.Errorf("auth lockout store: %w", terr)
+			}
+			authGuard.WithTripStore(trips)
+			slog.Info("auth brute-force lockout enabled (durable, shared across replicas)",
+				"threshold_failures_per_5m", cfg.AuthLockoutThreshold)
+		} else {
+			slog.Info("auth brute-force lockout enabled (in-memory: cleared on restart, per-replica)",
+				"threshold_failures_per_5m", cfg.AuthLockoutThreshold)
+		}
 	}
 
 	// ── Auth (optional; open with a loud warning when unset) ─────────
@@ -593,14 +621,45 @@ func run(ctx context.Context, cfg config.Config) error {
 	} else {
 		slog.Warn("ingest auth DISABLED - webhook endpoints are open (set INGEST_HMAC_SECRET)")
 	}
+	// Group -> role mapping. A malformed entry is dropped and said out loud: silently
+	// ignoring it would leave a group granting nothing, which reads as a working
+	// configuration to whoever wrote it and as a broken login to whoever is locked out.
+	groupRoles, mapErrs := auth.ParseGroupRoles(cfg.OIDCGroupRoles)
+	for _, e := range mapErrs {
+		slog.Error("OIDC_GROUP_ROLES: entry ignored", "problem", e)
+	}
+	if len(groupRoles) > 0 {
+		slog.Info("OIDC group mapping active", "groups", len(groupRoles), "claim", cmp.Or(cfg.OIDCGroupsClaim, "groups"))
+	}
+
+	// A default role is how an operator says "anyone my IdP authenticates may look".
+	// It stays none unless they say it: passing the IdP proves identity, not that the
+	// subject may read a map of how to attack the organisation.
+	var defaultRole auth.Role
+	if cfg.OIDCDefaultRole != "" {
+		r, ok := auth.ParseRole(cfg.OIDCDefaultRole)
+		if !ok {
+			return fmt.Errorf("OIDC_DEFAULT_ROLE %q is not viewer|operator|admin", cfg.OIDCDefaultRole)
+		}
+		defaultRole = r
+		slog.Warn("OIDC_DEFAULT_ROLE is set: EVERY subject this IdP authenticates gets this role",
+			"role", r.String())
+	}
+
 	// The iss/aud fail-closed rule is enforced by checkAuthConfig, before this
 	// function runs and before the process touches any dependency.
 	authn := auth.Chain{
 		auth.NewTokenStore(cfg.APITokens),
 		auth.NewJWTAuthenticator(auth.JWTConfig{
-			JWKSURL:  cfg.OIDCJWKSURL,
-			Issuer:   cfg.OIDCIssuer,
-			Audience: cfg.OIDCAudience,
+			JWKSURL:     cfg.OIDCJWKSURL,
+			Issuer:      cfg.OIDCIssuer,
+			Audience:    cfg.OIDCAudience,
+			RoleClaim:   cfg.OIDCRoleClaim,
+			GroupsClaim: cfg.OIDCGroupsClaim,
+			TenantClaim: cfg.OIDCTenantClaim,
+			AppsClaim:   cfg.OIDCAppsClaim,
+			GroupRoles:  groupRoles,
+			DefaultRole: defaultRole,
 		}),
 	}
 	if authn.Enabled() {
@@ -845,6 +904,45 @@ func run(ctx context.Context, cfg config.Config) error {
 // scheduler. Unknown names are skipped with a warning, and a connector that fails
 // to initialize is skipped (not fatal) so one misconfigured source can't block
 // boot. The scheduler is a no-op when nothing is enabled.
+// auditRetention prunes audit records older than the retention window, until ctx ends.
+//
+// Leader-gated for the same reason every other side effect is: N replicas pruning the
+// same chain would serialise on the audit lock and do the same work N times. The cadence
+// is derived from the window rather than configured - a sixth of it, so a 90-day
+// retention checks in daily - and clamped so neither a very short nor a very long window
+// turns into a hot loop or a prune that effectively never runs.
+func auditRetention(ctx context.Context, log *audit.PGLog, window time.Duration, elector analyzer.Leader) {
+	every := window / 6
+	if every < time.Hour {
+		every = time.Hour
+	}
+	if every > 24*time.Hour {
+		every = 24 * time.Hour
+	}
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if !elector.IsLeader(ctx) {
+				continue
+			}
+			removed, err := log.PruneBefore(ctx, time.Now().Add(-window))
+			if err != nil {
+				slog.Error("audit retention: prune failed", "err", err)
+				continue
+			}
+			if removed > 0 {
+				metrics.AuditPrunedRecords.Add(float64(removed))
+				slog.Info("audit retention: pruned records older than the window",
+					"removed", removed, "retention", window)
+			}
+		}
+	}
+}
+
 func buildConnectors(ctx context.Context, cfg config.Config, pub connector.Publisher, elector connector.Leader) *connector.Scheduler {
 	var conns []connector.Connector
 	for _, name := range cfg.ConnectorsEnabled {

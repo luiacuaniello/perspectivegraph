@@ -137,6 +137,7 @@ func (s *Server) handleTool(w http.ResponseWriter, r *http.Request) {
 		Repository: q.Get("repo"),
 		RepoSlug:   q.Get("slug"),
 		CommitSHA:  q.Get("sha"),
+		Account:    q.Get("account"),
 	}
 	if n, err := strconv.Atoi(q.Get("pr")); err == nil {
 		opts.PRNumber = n

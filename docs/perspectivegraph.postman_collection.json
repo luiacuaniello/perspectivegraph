@@ -480,13 +480,21 @@
 							}
 						],
 						"url": {
-							"raw": "{{ingestUrl}}/ingest/cloudnet",
+							"raw": "{{ingestUrl}}/ingest/cloudnet?account=123456789012",
 							"host": [
 								"{{ingestUrl}}"
 							],
 							"path": [
 								"ingest",
 								"cloudnet"
+							],
+							"query": [
+								{
+									"key": "account",
+									"value": "123456789012",
+									"description": "Cloud account the bundle describes (e.g. 123456789012). Native identifiers like i-… and sg-… are unique only WITHIN an account, so ingesting several accounts without this merges assets that merely share an id - and manufactures the paths between them. Optional: leave it off for a single-account estate and the ids stay exactly as they were.",
+									"disabled": true
+								}
 							]
 						},
 						"body": {
@@ -512,13 +520,21 @@
 							}
 						],
 						"url": {
-							"raw": "{{ingestUrl}}/ingest/iam",
+							"raw": "{{ingestUrl}}/ingest/iam?account=123456789012",
 							"host": [
 								"{{ingestUrl}}"
 							],
 							"path": [
 								"ingest",
 								"iam"
+							],
+							"query": [
+								{
+									"key": "account",
+									"value": "123456789012",
+									"description": "Cloud account the bundle describes (e.g. 123456789012). Native identifiers like i-… and sg-… are unique only WITHIN an account, so ingesting several accounts without this merges assets that merely share an id - and manufactures the paths between them. Optional: leave it off for a single-account estate and the ids stay exactly as they were.",
+									"disabled": true
+								}
 							]
 						},
 						"body": {
