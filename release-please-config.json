@@ -10,9 +10,22 @@
       "draft": false,
       "prerelease": false,
       "extra-files": [
-        { "type": "generic", "path": "README.md" },
-        { "type": "generic", "path": "deploy/helm/perspectivegraph/Chart.yaml" },
-        { "type": "generic", "path": "docs/MANUAL.md" }
+        {
+          "type": "generic",
+          "path": "README.md"
+        },
+        {
+          "type": "generic",
+          "path": "deploy/helm/perspectivegraph/Chart.yaml"
+        },
+        {
+          "type": "generic",
+          "path": "docs/MANUAL.md"
+        },
+        {
+          "type": "generic",
+          "path": "docs/OPERATIONS.md"
+        }
       ]
     }
   }

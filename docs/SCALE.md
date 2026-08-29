@@ -87,6 +87,34 @@ usually dominates a pass at these sizes, which is what `ANALYZER_INCREMENTAL` ad
 
 Reproduce with `go test ./internal/analyzer -bench FindCriticalPaths -benchmem`.
 
+## Sizing the backend
+
+Requests and limits derived from the table above, not guessed. The allocation figure is
+per pass and transient, so the memory request is roughly "resident graph plus one pass"
+and the limit leaves room for a pass that arrives while the previous one is still being
+collected:
+
+| graph | requests | limits |
+|---|---|---|
+| up to 10k nodes | `cpu: 250m`, `memory: 512Mi` | `memory: 1Gi` |
+| up to 50k nodes | `cpu: 500m`, `memory: 1Gi` | `memory: 2Gi` |
+| up to 100k nodes | `cpu: 1`, `memory: 2Gi` | `memory: 4Gi` |
+
+Three notes that matter more than the numbers:
+
+- **Set something.** The chart default is `resources: {}`, which is BestEffort QoS: the
+  kubelet evicts that pod first under node pressure, and an analyzer pass over a large
+  graph is exactly the memory spike that creates the pressure. `values-production.yaml`
+  sets the 10k row; raise it from there.
+- **No CPU limit.** Throttling an analyzer pass only makes it longer, and a pass that
+  overruns `ANALYZER_INTERVAL` is the failure this table exists to avoid. Request CPU so
+  the scheduler reserves it; do not cap it.
+- **`ANALYZER_INCREMENTAL` trades memory for fetch time**, so it moves you up a row
+  rather than down one: the graph stays resident between passes.
+
+These are a starting point measured on a synthetic layered graph. Run `make scale-test`
+against your own size and shape before treating them as more than that.
+
 ## Scaling out (replicas)
 
 The compute path is already replica-safe, and the governance path is not. Both halves of
