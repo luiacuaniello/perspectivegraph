@@ -84,6 +84,10 @@ where the two disagree** - each disagreement is a false positive or a miss, in t
 engine or in your assumptions. That check is how the permission-boundary bug described
 in the [manual](docs/MANUAL.md) was found, and how it stays closed.
 
+That command is also stage 0 of a fuller trial: [how to evaluate this](docs/EVALUATION.md)
+walks from here to a verdict in stages that each end in an answer - and says what the
+trial will *not* tell you before you spend a fortnight finding out.
+
 ## See the whole engine in 90 seconds
 
 ```bash
@@ -380,11 +384,13 @@ The [manual](docs/MANUAL.md) is the full reference: the scoring model, every
 integration, deployment, hardening and the runbook for pointing it at your own
 environment.
 
+- [Evaluation](docs/EVALUATION.md) - trying it on your own estate, in stages that each end in an answer
 - [Manual](docs/MANUAL.md) - architecture, scoring, quick start, deploy, operate
 - [Positioning](docs/POSITIONING.md) - what is claimed, what is **not**, and how to check
 - [Support](SUPPORT.md) - which versions get fixes, how fast, and how to run this under change control
 - [Roadmap](ROADMAP.md) - what's next, and what it deliberately isn't becoming
 - [Threat model](docs/THREAT-MODEL.md) · [Operations](docs/OPERATIONS.md) · [API stability](docs/API-STABILITY.md) · [Scale](docs/SCALE.md)
+- [Governance](GOVERNANCE.md) · [Maintainers](MAINTAINERS.md) · [Adopters](ADOPTERS.md) - who decides, who maintains, who runs it
 - [Attack-path benchmark](backend/testdata/cloudgoat/README.md) - the CI-gated precision/recall battery
 
 Verify the claims rather than taking them: `make test`, `make bench-cloudgoat`

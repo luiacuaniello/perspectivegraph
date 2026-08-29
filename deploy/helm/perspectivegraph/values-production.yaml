@@ -24,9 +24,16 @@ backend:
   logFormat: json
   # Off the public API port; scrape it from inside the cluster.
   metricsAddr: "127.0.0.1:9090"
+  # Sized from the measured curve in docs/SCALE.md ("Sizing the backend"): the 10k-node
+  # row. Raise both with the graph.
+  #
+  # Memory is capped, CPU is not, and the asymmetry is deliberate: a memory limit stops one
+  # pod taking a node down, while a CPU limit only makes an analyzer pass longer - and a
+  # pass that overruns ANALYZER_INTERVAL is the failure this sizing exists to avoid. The
+  # request is what reserves the CPU; the limit would only throttle it.
   resources:
     requests: { cpu: "250m", memory: "512Mi" }
-    limits: { cpu: "2", memory: "2Gi" }
+    limits: { memory: "2Gi" }
   # In-pod HTTPS. Leave off if you terminate TLS at the ingress (below); enable for
   # a zero-proxy / service-mesh-passthrough setup, pointing at a kubernetes.io/tls Secret.
   tls:

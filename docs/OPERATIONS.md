@@ -420,7 +420,96 @@ perspectivegraph verify-audit -postgres                             # governance
 included) exactly as the server does, so a DSN with a password in it never has to be typed
 into a command line where every process on the host can read it.
 
-## 8. Pre-production checklist
+## 8. Air-gapped and internal-registry installs
+
+Nothing here phones home: the engine opens no outbound connection until you set a key or a
+flag, so an isolated network is a supported deployment rather than a workaround. What an
+air-gapped install needs is the artefacts brought in, and their signatures checked **before**
+they cross the boundary - verifying inside is verifying a copy you already trusted.
+
+**Mirror, verifying on the way in.** On a host with internet access:
+
+```bash
+# The release you are approving.
+V=1.11.0 # x-release-please-version
+ID_RE='https://github.com/luiacuaniello/perspectivegraph/.*'
+ISSUER=https://token.actions.githubusercontent.com
+
+for img in perspectivegraph perspectivegraph-dashboard; do
+  cosign verify --certificate-identity-regexp "$ID_RE" --certificate-oidc-issuer "$ISSUER" \
+    "ghcr.io/luiacuaniello/${img}:v${V}"
+  # Copy by DIGEST so the tag cannot be re-pointed between verification and pull.
+  digest="$(crane digest "ghcr.io/luiacuaniello/${img}:v${V}")"
+  crane copy "ghcr.io/luiacuaniello/${img}@${digest}" "registry.internal/perspectivegraph/${img}:v${V}"
+done
+
+cosign verify --certificate-identity-regexp "$ID_RE" --certificate-oidc-issuer "$ISSUER" \
+  "ghcr.io/luiacuaniello/charts/perspectivegraph:${V}"
+helm pull "oci://ghcr.io/luiacuaniello/charts/perspectivegraph" --version "$V"
+```
+
+Then point the chart at your registry:
+
+```bash
+helm install perspectivegraph "./perspectivegraph-${V}.tgz" \
+  -f perspectivegraph/values-production.yaml \
+  --set backend.image.repository=registry.internal/perspectivegraph/perspectivegraph \
+  --set frontend.image.repository=registry.internal/perspectivegraph/perspectivegraph-dashboard
+```
+
+**Three things that would otherwise try to leave**, all off by default - check they still
+are, because an air-gapped cluster turns a silent outbound call into a hang rather than an
+error:
+
+| Setting | Off by default | What it would reach |
+|---|---|---|
+| `THREATINTEL` | yes (`off`) | CISA KEV + FIRST EPSS feeds |
+| `ANTHROPIC_API_KEY` / `HF_TOKEN` | yes (unset) | the model provider - and it sends attack-path context |
+| `GITHUB_TOKEN` | yes (unset) | api.github.com, for PR comments and the merge gate |
+
+The two images and the chart are the whole dependency set. The engine ingests what you POST
+to it, so no scanner needs outbound access either - only a route to the ingest port.
+
+**The database is the exception worth planning for.** Apache AGE has to come from
+somewhere: mirror the `apache/age` image for the bundled path, or have your DBA team build
+the extension for your managed instance (§3).
+
+## 9. Continuous delivery (Argo CD, Flux)
+
+The chart is an OCI artefact, so a GitOps tool consumes it directly - no repository to
+clone, no chart to vendor:
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: perspectivegraph
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: ghcr.io/luiacuaniello/charts
+    chart: perspectivegraph
+    # Pinned: let a bump be a reviewed commit, not a surprise resync.
+    targetRevision: 1.11.0 # x-release-please-version
+    helm:
+      valueFiles: [values-production.yaml] # ships inside the chart; override with your own
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: perspectivegraph
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+```
+
+Keep the secrets out of it: `secrets.existingSecret` points at a Secret your own operator
+(External Secrets, Sealed Secrets, Vault) manages, so nothing sensitive lives in the
+Application manifest.
+
+There is **no Terraform module**. The chart plus a `helm_release` resource is the whole
+integration, and a module wrapping that would be a layer to maintain rather than a
+capability to gain.
+
+## 10. Pre-production checklist
 
 - [ ] API auth enabled (`API_TOKENS`/OIDC) and verified from an unauthenticated client.
 - [ ] Ingest HMAC (`INGEST_HMAC_SECRETS`) + `INGEST_RATE_RPS` set.
