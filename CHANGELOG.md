@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.1](https://github.com/luiacuaniello/perspectivegraph/compare/v1.11.0...v1.11.1) (2026-09-02)
+
+
+### Bug Fixes
+
+* **deps:** bump golang.org/x/crypto, and let Dependabot see indirect … ([#158](https://github.com/luiacuaniello/perspectivegraph/issues/158)) ([4ac13af](https://github.com/luiacuaniello/perspectivegraph/commit/4ac13afba57d2080dfa1679d6a852848c7d6d8be))
+
 ## [1.11.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.10.0...v1.11.0) (2026-08-28)
 
 
