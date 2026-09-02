@@ -2,8 +2,8 @@ apiVersion: v2
 name: perspectivegraph
 description: PerspectiveGraph - The Open DevSecOps Context Engine
 type: application
-version: 1.11.0 # x-release-please-version
-appVersion: "1.11.0" # x-release-please-version
+version: 1.11.1 # x-release-please-version
+appVersion: "1.11.1" # x-release-please-version
 # The floor is policy/v1 PodDisruptionBudget, which went GA in 1.21; everything else
 # here (networking.k8s.io/v1, seccompProfile, topologySpreadConstraints) is older.
 #
