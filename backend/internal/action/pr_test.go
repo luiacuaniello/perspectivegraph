@@ -71,7 +71,7 @@ func fakeGitHub(t *testing.T, fail map[string]int) (*httptest.Server, *[]call) {
 
 func opener(t *testing.T, srv *httptest.Server) PROpener {
 	t.Helper()
-	return NewGitHubPROpener(GitHubConfig{Token: "ghp_secret", BaseURL: srv.URL})
+	return NewGitHubPROpener(GitHubConfig{Token: "ghp_secret", BaseURL: srv.URL, Allow: mustAllow(t, "acme/*")})
 }
 
 func request() OpenPRRequest {

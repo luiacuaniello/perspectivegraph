@@ -1433,6 +1433,39 @@ func (a *API) scopedLatest(ctx context.Context) []analyzer.AttackPath {
 	return out
 }
 
+// scopedPathIDs is the set of attack-path ids the caller may act on, or nil when the
+// caller is unrestricted.
+//
+// The governance stores - suppressions, tickets, validations - are keyed by path id and
+// scoped by TENANT alone, so before this an app-scoped admin could suppress a path
+// belonging to another team's application: hiding a real finding from the people
+// responsible for it, silently. That is the same boundary scopedLatest enforces on
+// reads, applied to the records that reference those paths.
+//
+// nil for an unrestricted caller is deliberate: every call site skips the work entirely,
+// so the single-team deployment - which is most of them - pays nothing and behaves
+// exactly as before.
+func (a *API) scopedPathIDs(ctx context.Context) map[string]bool {
+	if len(allowedApps(ctx)) == 0 {
+		return nil
+	}
+	paths := a.scopedLatest(ctx)
+	ids := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		ids[p.ID] = true
+	}
+	return ids
+}
+
+// mayActOnPath reports whether the caller may read or write a governance record for
+// pathID. An app-scoped caller may only reach paths currently surfaced within its
+// applications: a path that is no longer live cannot be attributed to an application,
+// so it is refused rather than guessed at.
+func (a *API) mayActOnPath(ctx context.Context, pathID string) bool {
+	ids := a.scopedPathIDs(ctx)
+	return ids == nil || ids[pathID]
+}
+
 func nodeMatchesApp(n ontology.Node, app string) bool {
 	if s, _ := n.Properties[ontology.PropRepoSlug].(string); s == app {
 		return true

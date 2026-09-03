@@ -82,7 +82,7 @@ func TestGitHubCommenterCreateDedupUpdate(t *testing.T) {
 	defer srv.Close()
 	ctx := context.Background()
 
-	c := NewGitHubCommenter(GitHubConfig{Token: "test-token", BaseURL: srv.URL})
+	c := NewGitHubCommenter(GitHubConfig{Token: "test-token", BaseURL: srv.URL, Allow: mustAllow(t, "acme/*")})
 	path := samplePath(0.58)
 
 	// 1. First pass → one comment created.
@@ -108,7 +108,7 @@ func TestGitHubCommenterCreateDedupUpdate(t *testing.T) {
 
 	// 3. A fresh commenter (cold cache) with a changed body must UPDATE the
 	//    existing comment (found by marker), not create a new one.
-	c2 := NewGitHubCommenter(GitHubConfig{Token: "test-token", BaseURL: srv.URL})
+	c2 := NewGitHubCommenter(GitHubConfig{Token: "test-token", BaseURL: srv.URL, Allow: mustAllow(t, "acme/*")})
 	c2.OnCriticalPaths(ctx, []analyzer.AttackPath{samplePath(0.42)})
 	if mock.posts != 1 {
 		t.Errorf("expected no new POST, got posts=%d", mock.posts)
@@ -129,7 +129,7 @@ func TestGitHubCommenterSkipsWhenNoPRContext(t *testing.T) {
 	srv := httptest.NewServer(mock.handler())
 	defer srv.Close()
 
-	c := NewGitHubCommenter(GitHubConfig{Token: "test-token", BaseURL: srv.URL})
+	c := NewGitHubCommenter(GitHubConfig{Token: "test-token", BaseURL: srv.URL, Allow: mustAllow(t, "acme/*")})
 	path := samplePath(0.58)
 	path.Nodes[1].Properties = nil // strip PR context from the image node
 

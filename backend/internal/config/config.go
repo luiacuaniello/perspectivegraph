@@ -106,6 +106,12 @@ type Config struct {
 	GitHubAPIURL string
 	GitHubDryRun bool
 
+	// RepoAllowlist bounds which repositories the engine may write to (PR comments,
+	// commit statuses, remediation PRs). Entries are "owner/repo" or "owner/*".
+	// The destination otherwise comes from an ingested node property, so this is
+	// required for any real write: empty means every write is refused.
+	RepoAllowlist []string
+
 	// GitLab MR commenter (action layer)
 	GitLabToken  string
 	GitLabAPIURL string
@@ -358,6 +364,8 @@ func Load() Config {
 		GitHubToken:  sec.get("GITHUB_TOKEN", ""),
 		GitHubAPIURL: getenv("GITHUB_API_URL", "https://api.github.com"),
 		GitHubDryRun: getbool("GITHUB_DRY_RUN", false),
+
+		RepoAllowlist: getlist("REPO_ALLOWLIST", ""),
 
 		GitLabToken:  sec.get("GITLAB_TOKEN", ""),
 		GitLabAPIURL: getenv("GITLAB_API_URL", "https://gitlab.com/api/v4"),

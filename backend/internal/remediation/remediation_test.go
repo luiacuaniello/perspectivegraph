@@ -114,3 +114,69 @@ func TestGeneratePrivescAndLateralPaths(t *testing.T) {
 		t.Fatalf("lateral path: expected a segmentation suggestion, got %+v", lat)
 	}
 }
+
+// The namespace comes from ingested data, and the generated manifest is proposed as a
+// fix - so a value carrying a line break used to insert keys of its own into a
+// NetworkPolicy. Every environment-derived string in a generated file is an RFC 1123
+// label or it does not go in.
+func TestGeneratedManifestCannotBeShapedByTheNamespaceProperty(t *testing.T) {
+	hostile := map[string]string{
+		"yaml break":      "prod\n  hostNetwork: true\n  x: ",
+		"comment escape":  "prod # injected",
+		"uppercase":       "PROD",
+		"leading dash":    "-prod-",
+		"path separator":  "kube-system/../prod",
+		"over the length": strings.Repeat("a", 200),
+	}
+	for name, ns := range hostile {
+		t.Run(name, func(t *testing.T) {
+			p := analyzer.AttackPath{
+				Nodes: []ontology.Node{
+					{ID: "lb", Label: ontology.LabelLoadBalancer, Name: "edge-alb"},
+					{ID: "c", Label: ontology.LabelContainer, Name: "payments",
+						Properties: map[string]any{"k8s_ns": ns}},
+					{ID: "j", Label: ontology.LabelDatabase, Name: "customers",
+						Properties: map[string]any{ontology.PropCrownJewel: true}},
+				},
+				Steps: []analyzer.Step{
+					{EdgeType: ontology.EdgeExposes, From: "lb", To: "c"},
+					{EdgeType: ontology.EdgeConnectsTo, From: "c", To: "j"},
+				},
+			}
+			var netpol string
+			for _, s := range Generate(p) {
+				if s.Kind == "k8s-networkpolicy" {
+					netpol = s.Content
+				}
+			}
+			if netpol == "" {
+				t.Fatal("no NetworkPolicy generated")
+			}
+			var got string
+			for _, line := range strings.Split(netpol, "\n") {
+				if v, ok := strings.CutPrefix(strings.TrimSpace(line), "namespace:"); ok {
+					got = strings.TrimSpace(v)
+				}
+			}
+			if got == "" {
+				t.Fatal("no namespace line in the manifest")
+			}
+			if !isRFC1123Label(got) {
+				t.Errorf("namespace %q is not an RFC 1123 label - the property shaped the manifest", got)
+			}
+		})
+	}
+}
+
+func isRFC1123Label(s string) bool {
+	if s == "" || len(s) > 63 || s[0] == '-' || s[len(s)-1] == '-' {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
+			return false
+		}
+	}
+	return true
+}

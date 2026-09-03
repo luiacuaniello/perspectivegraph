@@ -366,22 +366,38 @@ func run(ctx context.Context, cfg config.Config) error {
 		slog.Info("threat intel: KEV + EPSS enrichment enabled")
 	}
 	normalizer := normalization.New(manager).WithIndexer(indexer).WithThreatIntel(intel).WithScrub(cfg.ScrubIngest)
+
+	// Where the engine is allowed to write. The forge writers take their destination
+	// from an ingested node property, so without this they write wherever the graph
+	// points - see internal/action/repoguard.go. A bad pattern fails startup rather
+	// than silently dropping a repository from the list.
+	repoAllow, err := action.NewRepoAllow(cfg.RepoAllowlist)
+	if err != nil {
+		return fmt.Errorf("REPO_ALLOWLIST: %w", err)
+	}
+	if !repoAllow.Configured() && (cfg.GitHubToken != "" || cfg.GitLabToken != "") {
+		slog.Warn("forge token set but REPO_ALLOWLIST is empty: every PR comment, commit status and remediation PR will be refused",
+			"fix", "set REPO_ALLOWLIST=owner/repo[,owner/*]")
+	}
 	sinks := action.MultiSink{
 		action.ConsoleSink{},
 		action.NewGitHubCommenter(action.GitHubConfig{
 			Token:   cfg.GitHubToken,
 			BaseURL: cfg.GitHubAPIURL,
 			DryRun:  cfg.GitHubDryRun,
+			Allow:   repoAllow,
 		}),
 		action.NewGitHubChecker(action.GitHubConfig{
 			Token:   cfg.GitHubToken,
 			BaseURL: cfg.GitHubAPIURL,
 			DryRun:  cfg.GitHubDryRun,
+			Allow:   repoAllow,
 		}, cfg.DashboardURL),
 		action.NewGitLabCommenter(action.GitLabConfig{
 			Token:   cfg.GitLabToken,
 			BaseURL: cfg.GitLabAPIURL,
 			DryRun:  cfg.GitLabDryRun,
+			Allow:   repoAllow,
 		}),
 	}
 	notifier := notify.New(cfg.AlertWebhookURL, cfg.AlertWebhookFormat)
@@ -794,7 +810,7 @@ func run(ctx context.Context, cfg config.Config) error {
 		WithHMAC(hmac).WithAudit(auditRec).WithRateLimit(ingestLimiter).
 		WithConnectorStatus(func() any { return connSched.Status() }).
 		WithCoverage(coverageStore)
-	prOpener := action.NewGitHubPROpener(action.GitHubConfig{Token: cfg.GitHubToken, BaseURL: cfg.GitHubAPIURL, DryRun: cfg.GitHubDryRun})
+	prOpener := action.NewGitHubPROpener(action.GitHubConfig{Token: cfg.GitHubToken, BaseURL: cfg.GitHubAPIURL, DryRun: cfg.GitHubDryRun, Allow: repoAllow})
 	aiCfg := ai.Config{
 		APIKey: cfg.AnthropicAPIKey, Model: cfg.AnthropicModel, BaseURL: cfg.AnthropicBaseURL, MaxTokens: cfg.AIMaxTokens,
 		HFToken: cfg.HFToken, HFModel: cfg.HFModel, HFBaseURL: cfg.HFBaseURL,

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/action"
+	"github.com/luiacuaniello/perspectivegraph/internal/analyzer"
 	"github.com/luiacuaniello/perspectivegraph/internal/auth"
 	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
 )
@@ -108,5 +110,89 @@ func TestOpenRemediationPRUnknownPath(t *testing.T) {
 	a.openRemediationPR(rec, req.WithContext(viewerCtx()))
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("unknown path should be 404, got %d", rec.Code)
+	}
+}
+
+// refusingOpener is the real opener's answer for a repository outside REPO_ALLOWLIST.
+type refusingOpener struct{ called bool }
+
+func (o *refusingOpener) Enabled() bool { return true }
+func (o *refusingOpener) OpenPR(context.Context, action.OpenPRRequest) (string, error) {
+	o.called = true
+	return "", fmt.Errorf("%w: %q", action.ErrRepoNotAllowed, "victim/infra")
+}
+
+// A repository the operator never named is a configuration answer, not a bad gateway:
+// the caller did nothing wrong and retrying will not help. It must also not echo the
+// forge's response body back, which is how a 502 leaks whether a private repo exists.
+func TestOpenRemediationPRRefusesRepoOutsideAllowlist(t *testing.T) {
+	a, _ := testAPI(t)
+	o := &refusingOpener{}
+	a.WithRemediationPR(o)
+	id := seedPRPath(t, a)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/remediation/pr", strings.NewReader(`{"pathId":"`+id+`"}`))
+	a.openRemediationPR(rec, req.WithContext(viewerCtx()))
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("refused repository should be 422, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "REPO_ALLOWLIST") {
+		t.Errorf("the error should name the setting to fix; got %s", rec.Body.String())
+	}
+	if !o.called {
+		t.Error("the opener was never consulted, so the guard is in the wrong place")
+	}
+}
+
+// The slug is read from a node property. A malformed one must never reach a URL: it is
+// dropped at resolution, so the request fails as "no repository context" instead.
+func TestRepoSlugOfRejectsMalformedSlugs(t *testing.T) {
+	for _, bad := range []string{"../../user/repos", "acme", "acme/we b", "acme/..", ""} {
+		p := analyzer.AttackPath{Nodes: []ontology.Node{
+			{ID: "n", Properties: map[string]any{ontology.PropRepoSlug: bad}},
+		}}
+		if got := repoSlugOf(p); got != "" {
+			t.Errorf("repoSlugOf(%q) = %q, want it dropped", bad, got)
+		}
+	}
+	p := analyzer.AttackPath{Nodes: []ontology.Node{
+		{ID: "n", Properties: map[string]any{ontology.PropRepoSlug: "acme/web"}},
+	}}
+	if got := repoSlugOf(p); got != "acme/web" {
+		t.Errorf("repoSlugOf(valid) = %q, want acme/web", got)
+	}
+}
+
+type failingOpener struct{ err error }
+
+func (o *failingOpener) Enabled() bool { return true }
+func (o *failingOpener) OpenPR(context.Context, action.OpenPRRequest) (string, error) {
+	return "", o.err
+}
+
+// The forge's own error carries the URL that was requested and up to 2KB of its answer,
+// and GitHub answers differently for "no such repository" and "no access to it". Echoed
+// to the caller that is an oracle for private repository names and for what the token
+// can reach, so the detail goes to the log and the caller gets the status.
+func TestOpenRemediationPRDoesNotEchoTheForgeResponse(t *testing.T) {
+	a, _ := testAPI(t)
+	a.WithRemediationPR(&failingOpener{err: fmt.Errorf(
+		"create branch: POST https://api.github.com/repos/acme/secret-infra/git/refs: 404 Not Found: " +
+			`{"message":"Not Found","documentation_url":"https://docs.github.com/rest"}`)})
+	id := seedPRPath(t, a)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/remediation/pr", strings.NewReader(`{"pathId":"`+id+`"}`))
+	a.openRemediationPR(rec, req.WithContext(viewerCtx()))
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status %d, want 502", rec.Code)
+	}
+	for _, leak := range []string{"api.github.com", "secret-infra", "404", "documentation_url"} {
+		if strings.Contains(rec.Body.String(), leak) {
+			t.Errorf("the response repeated %q from the forge's answer: %s", leak, rec.Body.String())
+		}
 	}
 }

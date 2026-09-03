@@ -45,6 +45,7 @@ type poster interface {
 // (which survives restarts).
 type Commenter struct {
 	p      poster
+	allow  *RepoAllow // where writes are permitted; nil denies everything
 	mu     sync.Mutex
 	posted map[string]string // dedupe key -> last body hash
 }
@@ -53,8 +54,21 @@ type Commenter struct {
 // per page → 2,000 comments scanned at most).
 const maxCommentPages = 20
 
-func newCommenter(p poster) *Commenter {
-	return &Commenter{p: p, posted: map[string]string{}}
+func newCommenter(p poster, allow *RepoAllow) *Commenter {
+	return &Commenter{p: p, allow: allow, posted: map[string]string{}}
+}
+
+// permitted reports whether this comment may be posted at all. The slug comes from a
+// node property, so it is attacker-influenceable input choosing a write destination -
+// see repoguard.go. Dry-run is exempt because it makes no outbound call: the demo
+// keeps printing what it would post without anyone having to configure an allowlist.
+func (c *Commenter) permitted(slug string) bool {
+	if !c.p.enabled() || c.allow.Permit(slug) {
+		return true
+	}
+	slog.Warn("pr comment refused: repository not allowed",
+		"forge", c.p.forge(), "slug", slug, "hint", "add it to REPO_ALLOWLIST")
+	return false
 }
 
 func (c *Commenter) OnCriticalPaths(ctx context.Context, paths []analyzer.AttackPath) {
@@ -62,6 +76,9 @@ func (c *Commenter) OnCriticalPaths(ctx context.Context, paths []analyzer.Attack
 		slug, num, ok := prTarget(p)
 		if !ok {
 			continue // no PR/MR context on this path
+		}
+		if !c.permitted(slug) {
+			continue
 		}
 		ref := prRef{slug: slug, number: num}
 		marker := fmt.Sprintf("<!-- perspectivegraph:attack-path:%s -->", p.ID)
@@ -123,7 +140,7 @@ func prTarget(p analyzer.AttackPath) (slug string, number int, ok bool) {
 	for _, n := range p.Nodes {
 		s, _ := n.Properties[ontology.PropRepoSlug].(string)
 		num := toInt(n.Properties[ontology.PropPRNumber])
-		if s != "" && num > 0 && strings.Contains(s, "/") {
+		if num > 0 && ValidSlug(s) {
 			return s, num, true
 		}
 	}

@@ -2,7 +2,9 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -73,22 +75,34 @@ func (a *API) openRemediationPR(w http.ResponseWriter, r *http.Request) {
 	}
 	body.WriteString("\n<sub>Opened by PerspectiveGraph. Review before merging.</sub>\n")
 
-	url, err := a.prOpener.OpenPR(r.Context(), action.OpenPRRequest{
+	prURL, err := a.prOpener.OpenPR(r.Context(), action.OpenPRRequest{
 		Slug:   slug,
 		Branch: "perspectivegraph/fix-" + branchID(path.ID),
 		Title:  "PerspectiveGraph: remediate path to " + path.Target().Name,
 		Body:   body.String(),
 		Files:  files,
 	})
-	if err != nil {
-		writeJSONError(w, http.StatusBadGateway, "could not open PR: "+err.Error())
+	switch {
+	case errors.Is(err, action.ErrRepoNotAllowed):
+		// Not a transport failure: the path names a repository this deployment is not
+		// configured to write to. Say so without echoing the forge's response.
+		writeJSONError(w, http.StatusUnprocessableEntity,
+			"this path's repository ("+slug+") is not in REPO_ALLOWLIST")
+		return
+	case err != nil:
+		// The forge's own response body is not repeated to the caller: it carries the
+		// requested URL and up to 2KB of GitHub's answer, which differs between "no such
+		// repository" and "no access to it" - an oracle for private repository names and
+		// for what the token can reach. The operator gets the detail in the log.
+		slog.Error("remediation PR failed", "slug", slug, "path", path.ID, "err", err)
+		writeJSONError(w, http.StatusBadGateway, "could not open the pull request - see the server log")
 		return
 	}
 	p := auth.PrincipalFromContext(r.Context())
 	a.audit.Record(r.Context(), "remediation.pr", p.Subject, p.Role.String(), p.Tenant, map[string]any{
-		"path": path.ID, "slug": slug, "url": url, "files": len(files),
+		"path": path.ID, "slug": slug, "url": prURL, "files": len(files),
 	})
-	writeJSON(w, http.StatusOK, map[string]any{"url": url, "files": len(files)})
+	writeJSON(w, http.StatusOK, map[string]any{"url": prURL, "files": len(files)})
 }
 
 func findPath(paths []analyzer.AttackPath, id string) (analyzer.AttackPath, bool) {
@@ -102,7 +116,7 @@ func findPath(paths []analyzer.AttackPath, id string) (analyzer.AttackPath, bool
 
 func repoSlugOf(p analyzer.AttackPath) string {
 	for _, n := range p.Nodes {
-		if s, _ := n.Properties[ontology.PropRepoSlug].(string); strings.Contains(s, "/") {
+		if s, _ := n.Properties[ontology.PropRepoSlug].(string); action.ValidSlug(s) {
 			return s
 		}
 	}

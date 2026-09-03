@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -49,18 +51,41 @@ func (a *API) listValidations(w http.ResponseWriter, r *http.Request) {
 		// These records are the evidence every calibration number is computed from.
 		// An empty board read from a broken store would read as "no verdicts yet",
 		// which is a claim about the engine's accuracy nobody made.
-		writeJSONError(w, http.StatusServiceUnavailable, "validation store unreachable: "+err.Error())
+		slog.Error("validation store access failed", "err", err)
+		writeJSONError(w, http.StatusServiceUnavailable, "validation store unreachable - see the server log")
 		return
 	}
 	metrics, err := a.validation.Metrics(r.Context(), tenant)
 	if err != nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "validation store unreachable: "+err.Error())
+		slog.Error("validation store access failed", "err", err)
+		writeJSONError(w, http.StatusServiceUnavailable, "validation store unreachable - see the server log")
 		return
 	}
 	cal, err := a.validation.Calibration(r.Context(), tenant)
 	if err != nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "validation store unreachable: "+err.Error())
+		slog.Error("validation store access failed", "err", err)
+		writeJSONError(w, http.StatusServiceUnavailable, "validation store unreachable - see the server log")
 		return
+	}
+	// The per-record board is scoped: a record names a path id, and a path id belongs to
+	// an application.
+	//
+	// The aggregates below are NOT, and that is deliberate rather than an oversight.
+	// They are tenant-wide measures of the ENGINE - precision/recall and calibration over
+	// the validated subset - carrying no path id, asset name or application. They are
+	// also computed in the store, which is shared by both backends so the two cannot
+	// disagree about the dataset a calibration is derived from; recomputing a scoped
+	// variant here would fork that math. And the same numbers are reachable through the
+	// GraphQL `validation` and `calibration` fields, so withholding them here would be a
+	// control that looks enforced and is not. Recorded as a residual in the threat model.
+	if ids := a.scopedPathIDs(r.Context()); ids != nil {
+		kept := make([]validation.Record, 0, len(list))
+		for _, rec := range list {
+			if ids[rec.PathID] {
+				kept = append(kept, rec)
+			}
+		}
+		list = kept
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"validations": list,
@@ -75,11 +100,14 @@ func (a *API) listValidations(w http.ResponseWriter, r *http.Request) {
 // can be paired with the prediction it tests AND segmented later. Zeroes when the
 // path is no longer in the latest analysis (resolved, or never surfaced) or the
 // analyzer isn't wired - such records sit out of the calibration math.
-func (a *API) pathFeatures(tenant, pathID string) (score float64, hops int, correlated bool, weightBasis string, found bool) {
+func (a *API) pathFeatures(ctx context.Context, pathID string) (score float64, hops int, correlated bool, weightBasis string, found bool) {
 	if a.analyzer == nil || pathID == "" {
 		return 0, 0, false, "", false
 	}
-	for _, p := range a.analyzer.Latest(tenant) {
+	// scopedLatest, not analyzer.Latest: these helpers took the tenant alone, which let
+	// an app-scoped caller read the score and structure of a path in another team's
+	// application by naming its id.
+	for _, p := range a.scopedLatest(ctx) {
 		if p.ID == pathID {
 			return p.Score, len(p.Steps), p.CorrelatedHops, weakestBasis(p), true
 		}
@@ -106,12 +134,12 @@ func weakestBasis(p analyzer.AttackPath) string {
 // against (the any-route event), as opposed to the per-path S(P). Captured
 // server-side so the tester can't fudge it; found=false when the path or its target
 // is no longer live (the caller then trusts a client fallback, or omits it).
-func (a *API) targetCompromise(tenant, pathID string) (prob float64, found bool) {
+func (a *API) targetCompromise(ctx context.Context, pathID string) (prob float64, found bool) {
 	if a.analyzer == nil || pathID == "" {
 		return 0, false
 	}
 	var targetID string
-	for _, p := range a.analyzer.Latest(tenant) {
+	for _, p := range a.scopedLatest(ctx) {
 		if p.ID == pathID {
 			targetID = p.Target().ID
 			break
@@ -120,7 +148,7 @@ func (a *API) targetCompromise(tenant, pathID string) (prob float64, found bool)
 	if targetID == "" {
 		return 0, false
 	}
-	for _, cj := range a.analyzer.LatestRisk(tenant).CrownJewels {
+	for _, cj := range a.analyzer.LatestRisk(tenantOf(ctx)).CrownJewels {
 		if cj.ID == targetID {
 			return cj.CompromiseProbability, true
 		}
@@ -145,8 +173,8 @@ type verdictFields struct {
 // verdict) it falls back to client-supplied features. For a target-scoped verdict it
 // also captures the per-target compromise probability - the any-route event that
 // track grades against.
-func (a *API) buildRecord(tenant string, f verdictFields) validation.Record {
-	score, hops, correlated, weightBasis, found := a.pathFeatures(tenant, f.pathID)
+func (a *API) buildRecord(ctx context.Context, f verdictFields) validation.Record {
+	score, hops, correlated, weightBasis, found := a.pathFeatures(ctx, f.pathID)
 	if !found {
 		if f.predictedScore != nil {
 			score = *f.predictedScore
@@ -163,14 +191,14 @@ func (a *API) buildRecord(tenant string, f verdictFields) validation.Record {
 	}
 	var compromise float64
 	if validation.Scope(f.scope) == validation.ScopeTarget {
-		if p, ok := a.targetCompromise(tenant, f.pathID); ok {
+		if p, ok := a.targetCompromise(ctx, f.pathID); ok {
 			compromise = p
 		} else if f.predictedCompromise != nil {
 			compromise = *f.predictedCompromise
 		}
 	}
 	return validation.Record{
-		PathID: f.pathID, Tenant: tenant, Outcome: validation.Outcome(f.outcome),
+		PathID: f.pathID, Tenant: tenantOf(ctx), Outcome: validation.Outcome(f.outcome),
 		Scope: validation.Scope(f.scope), Source: f.source, Evidence: f.evidence,
 		Route: f.route, PredictedScore: score, PredictedCompromise: compromise,
 		Hops: hops, CorrelatedHops: correlated, WeightBasis: weightBasis, Detected: f.detected,
@@ -181,12 +209,15 @@ func (a *API) buildRecord(tenant string, f verdictFields) validation.Record {
 // entry filter), the way a BAS report references a finding when it does not carry an
 // engine path id: the highest-priority surfaced path whose target name contains
 // target and whose entry name contains from. Returns "" when nothing matches.
-func (a *API) matchPath(tenant, target, from string) string {
+// It resolves an id from a SUBSTRING of a crown-jewel name, so unscoped it was also an
+// oracle: an app-scoped caller could enumerate the target names of other applications a
+// letter at a time. It searches the caller's scoped paths.
+func (a *API) matchPath(ctx context.Context, target, from string) string {
 	if a.analyzer == nil || target == "" {
 		return ""
 	}
 	best, bestPri := "", -1.0
-	for _, p := range a.analyzer.Latest(tenant) {
+	for _, p := range a.scopedLatest(ctx) {
 		if !containsFold(p.Target().Name, target) {
 			continue
 		}
@@ -212,8 +243,13 @@ func (a *API) putValidation(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	tenant := tenantOf(r.Context())
-	rec, err := a.validation.Put(r.Context(), a.buildRecord(tenant, verdictFields{
+	// A verdict recorded against another team's path pollutes the calibration that team
+	// is graded by, and the features returned describe a path the caller cannot see.
+	if !a.mayActOnPath(r.Context(), req.PathID) {
+		writeJSONError(w, http.StatusNotFound, "attack path not found (or out of your scope)")
+		return
+	}
+	rec, err := a.validation.Put(r.Context(), a.buildRecord(r.Context(), verdictFields{
 		pathID: req.PathID, outcome: req.Outcome, scope: req.Scope, source: req.Source,
 		evidence: req.Evidence, route: req.Route, detected: req.Detected, weightBasis: req.WeightBasis,
 		predictedScore: req.PredictedScore, predictedCompromise: req.PredictedCompromise,
@@ -280,7 +316,6 @@ func (a *API) importValidations(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "report has no findings")
 		return
 	}
-	tenant := tenantOf(r.Context())
 	source := req.Source
 	if source == "" {
 		source = "bas-import"
@@ -293,13 +328,17 @@ func (a *API) importValidations(w http.ResponseWriter, r *http.Request) {
 	for _, f := range req.Findings {
 		pathID := f.PathID
 		if pathID == "" && f.Outcome != string(validation.Missed) {
-			pathID = a.matchPath(tenant, f.Target, f.From)
+			pathID = a.matchPath(r.Context(), f.Target, f.From)
 			if pathID == "" {
 				unmatched++ // no live path to reference; not an error, just nothing to grade
 				continue
 			}
 		}
-		_, err := a.validation.Put(r.Context(), a.buildRecord(tenant, verdictFields{
+		if !a.mayActOnPath(r.Context(), pathID) {
+			unmatched++ // out of the caller's scope: indistinguishable from no live path
+			continue
+		}
+		_, err := a.validation.Put(r.Context(), a.buildRecord(r.Context(), verdictFields{
 			pathID: pathID, outcome: f.Outcome, scope: f.Scope, source: source,
 			evidence: f.Evidence, route: f.Route, detected: f.Detected, weightBasis: f.WeightBasis,
 			predictedScore: f.PredictedScore, predictedCompromise: f.PredictedCompromise,
@@ -334,6 +373,28 @@ func (a *API) deleteValidation(w http.ResponseWriter, r *http.Request) {
 	if !a.adminWritable(r) {
 		writeJSONError(w, http.StatusForbidden, "admin role required to delete validations")
 		return
+	}
+	// Addressed by record id, so the path it grades has to be resolved before the
+	// mutation. Only for a scoped caller: an unrestricted one skips the read.
+	if ids := a.scopedPathIDs(r.Context()); ids != nil {
+		list, err := a.validation.List(r.Context(), tenantOf(r.Context()))
+		if err != nil {
+			slog.Error("validation store access failed", "err", err)
+			writeJSONError(w, http.StatusServiceUnavailable, "validation store unreachable - see the server log")
+			return
+		}
+		id := r.PathValue("id")
+		found := false
+		for _, rec := range list {
+			if rec.ID == id && ids[rec.PathID] {
+				found = true
+				break
+			}
+		}
+		if !found {
+			writeJSONError(w, http.StatusNotFound, "validation not found (or out of your scope)")
+			return
+		}
 	}
 	if err := a.validation.Delete(r.Context(), tenantOf(r.Context()), r.PathValue("id")); err != nil {
 		if errors.Is(err, validation.ErrNotFound) {

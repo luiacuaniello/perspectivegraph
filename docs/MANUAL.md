@@ -590,6 +590,20 @@ GitHub Enterprise via `GITHUB_API_URL`). The same path context the analyzer alre
 carries (`repo_slug` / `pr_number` / `commit_sha`) is what routes each action to the
 right PR and commit.
 
+**`REPO_ALLOWLIST` is required for any of it to write.** That routing context is a node
+property, and node properties arrive on the ingest path - which every scanner holding
+the shared HMAC key can reach. Without a bound, one planted node redirects a write to
+any repository the token can reach, and a `success` commit status in a repository where
+this check is *required* opens a merge gate rather than closing one. So the operator
+names the destinations, as exact slugs or an owner wildcard:
+
+```bash
+REPO_ALLOWLIST=acme/payments-api,acme/*
+```
+
+Empty means every real write is refused (dry-run still logs what it would do), and a
+refusal is logged with the slug it declined.
+
 Everything below - the connectors, topology discovery, scoring, runtime
 confirmation, the dashboard - exists so that red check is *true*: a real, reachable
 path, not noise.
@@ -1498,10 +1512,11 @@ When a scan is fed with PR context (the `make seed` demo passes
 pull request - but **only** for findings on a verified attack path, with the
 path diagram and a remediation hint. It upserts a single comment per path
 (idempotent across the analyzer's repeated passes). Without a `GITHUB_TOKEN` it
-runs in **dry-run**, logging exactly what it would post. Set the token to go live:
+runs in **dry-run**, logging exactly what it would post. Set the token *and* the
+allowlist that bounds where it may write (see above) to go live:
 
 ```bash
-GITHUB_TOKEN=ghp_… make run-backend
+GITHUB_TOKEN=ghp_… REPO_ALLOWLIST=acme/payments-api make run-backend
 ```
 
 Then open the dashboard at http://localhost:5173 and the GraphQL playground at
@@ -1578,7 +1593,14 @@ Beyond the container surface, the backend itself is built defensively:
   (`token:role:tenant:YYYY-MM-DD`) and can be stored **hashed** (`sha256$<hex>`) so
   the live secret never sits at rest; a token (or OIDC `apps` claim) can be scoped
   to a set of **applications**, restricting *reads* (paths, graph, violations,
-  exports, search) to those apps - enforced once at the data boundary, no bypass.
+  exports, search) to those apps. It bounds **writes** too: the governance records -
+  suppressions, tickets, validations - are keyed by attack-path id, and a scoped
+  principal may only act on a path within its own applications. That half was missing
+  and a self-assessment found it: the boards were scoped by tenant alone, so one team's
+  admin could suppress another team's path - hiding a real finding from the people
+  responsible for it. One residual is deliberate: the tenant-wide **calibration and
+  precision/recall aggregates** are not scoped, because they measure the engine rather
+  than any application and name nothing.
 - **Fail-loud persistence.** `GRAPH_STRICT=true` refuses to start if Apache AGE is
   unreachable instead of silently falling back to the non-persistent in-memory
   store. Events that exhaust redelivery go to a **dead-letter stream**, not the void.
@@ -2259,6 +2281,15 @@ Edge types: `EXPOSES`, `ROUTES_TO`, `HOSTS`, `CONNECTS_TO`, `ASSUMES`,
 `VirtualMachine`, `Container`, `VPC`, `Database`, `Bucket`, `Repository`,
 `Image`, `Library`, `User`, `IAM_Role`, `ServiceAccount`, `CVE`, `Weakness`,
 `Misconfiguration`, `Secret`.
+
+**The vocabulary is closed, and the endpoint enforces it**: a label or edge type outside
+these lists is rejected with `400`, naming the offending value. It has to be closed,
+because downstream code treats it as a bounded set - the AI layer renders the target's
+label and each hop's edge type into a prompt, and the Apache AGE store interpolates the
+label into Cypher. Enforcement used to live in the AGE store alone, so the in-memory
+backend accepted anything; it now sits at the ingest door and again at the single writer
+into the graph, where a value that arrives by another route is dropped and logged rather
+than stored.
 
 ---
 

@@ -173,6 +173,16 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) publishAll(w http.ResponseWriter, ctx context.Context, events []ontology.Event) {
 	tenant := auth.PrincipalFromContext(ctx).Tenant
+	// The vocabulary is a closed set, and this is the door an arbitrary one comes
+	// through: /ingest/events takes pre-normalized Events, so a poster chooses every
+	// label and edge type. Rejecting here - before the bus - gives the sender a usable
+	// error instead of a node that is dropped silently three layers later.
+	for _, ev := range events {
+		if err := ontology.ValidateVocabulary(ev); err != nil {
+			http.Error(w, "outside the ontology: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
 	var nodes, edges int
 	for _, ev := range events {
 		ev.Tenant = tenant // route to the authenticated tenant's graph

@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -39,8 +40,18 @@ func (a *API) listSuppressions(w http.ResponseWriter, r *http.Request) {
 		// Saying the store is unreachable beats returning an empty board: an analyst
 		// would read that as "nothing is suppressed" and re-triage decisions they
 		// already made.
-		writeJSONError(w, http.StatusServiceUnavailable, "suppression store unreachable: "+err.Error())
+		slog.Error("suppression store read failed", "err", err)
+		writeJSONError(w, http.StatusServiceUnavailable, "suppression store unreachable - see the server log")
 		return
+	}
+	if ids := a.scopedPathIDs(r.Context()); ids != nil {
+		kept := make([]suppress.Record, 0, len(list))
+		for _, rec := range list {
+			if ids[rec.PathID] {
+				kept = append(kept, rec)
+			}
+		}
+		list = kept
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"suppressions": list,
@@ -58,6 +69,13 @@ func (a *API) putSuppression(w http.ResponseWriter, r *http.Request) {
 	var req suppressRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	// Suppressing hides a path from the board. An app-scoped admin hiding another
+	// team's finding is the sharp end of this endpoint, so the path has to be one the
+	// caller can see.
+	if !a.mayActOnPath(r.Context(), req.PathID) {
+		writeJSONError(w, http.StatusNotFound, "attack path not found (or out of your scope)")
 		return
 	}
 
@@ -111,6 +129,10 @@ func (a *API) deleteSuppression(w http.ResponseWriter, r *http.Request) {
 	pathID := r.PathValue("pathID")
 	if pathID == "" {
 		writeJSONError(w, http.StatusBadRequest, "path id required")
+		return
+	}
+	if !a.mayActOnPath(r.Context(), pathID) {
+		writeJSONError(w, http.StatusNotFound, "attack path not found (or out of your scope)")
 		return
 	}
 	if err := a.suppress.Delete(r.Context(), tenantOf(r.Context()), pathID); err != nil {

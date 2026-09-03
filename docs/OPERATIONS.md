@@ -57,6 +57,19 @@ Least privilege for the outbound integrations: give connectors a read-only cloud
 to the target repo only, and leave `ANTHROPIC_API_KEY`/`HF_TOKEN` unset unless you accept
 sending attack-path context to that provider.
 
+Token scope is the second line, not the first. **`REPO_ALLOWLIST` is the first**, because
+the *destination* of a forge write comes from an ingested node property rather than from
+your configuration - so it is chosen by whoever can post an event, which includes every
+scanner holding the ingest HMAC key. Name the repositories explicitly:
+
+```bash
+REPO_ALLOWLIST=acme/payments-api,acme/*        # exact slugs, or an owner wildcard
+```
+
+Empty refuses every real write. The pairing matters: the allowlist bounds where the
+engine *asks* to write, the token scope bounds what the forge *lets* it write, and
+neither alone is sufficient.
+
 Two ready-to-use hardened profiles apply all of the above:
 
 - **Kubernetes (recommended):** `deploy/helm/perspectivegraph/values-production.yaml` -
@@ -465,7 +478,7 @@ error:
 |---|---|---|
 | `THREATINTEL` | yes (`off`) | CISA KEV + FIRST EPSS feeds |
 | `ANTHROPIC_API_KEY` / `HF_TOKEN` | yes (unset) | the model provider - and it sends attack-path context |
-| `GITHUB_TOKEN` | yes (unset) | api.github.com, for PR comments and the merge gate |
+| `GITHUB_TOKEN` | yes (unset) | api.github.com, for PR comments and the merge gate - bounded by `REPO_ALLOWLIST` |
 
 The two images and the chart are the whole dependency set. The engine ingests what you POST
 to it, so no scanner needs outbound access either - only a route to the ingest port.
@@ -517,7 +530,8 @@ capability to gain.
 - [ ] External Postgres+AGE chosen with §3 open (managed on Azure, self-managed on AWS/GCP),
       its role non-superuser, and the demo image out of the deployment.
 - [ ] Secrets in a manager/mounted files, not inline in compose/Helm values.
-- [ ] Connector role is read-only and reviewed; `GITHUB_TOKEN` scoped to one repo.
+- [ ] Connector role is read-only and reviewed; `GITHUB_TOKEN` scoped to one repo, and
+      `REPO_ALLOWLIST` names the repositories it may write to (empty = no writes).
 - [ ] Backup scheduled and a restore rehearsed (section 4).
 - [ ] `/metrics` scraped; alerts on the SLOs above.
 - [ ] Images verified (cosign signature + SBOM + provenance) before rollout.

@@ -1573,7 +1573,7 @@
 								"pr"
 							]
 						},
-						"description": "Open a branch + commit the generated fix (K8s NetworkPolicy / Terraform) + raise a pull request for an attack path. pathId = attackPaths { id }. Needs GITHUB_TOKEN (dry-run when unset). Admin role when auth is enabled."
+						"description": "Open a branch + commit the generated fix (K8s NetworkPolicy / Terraform) + raise a pull request for an attack path. pathId = attackPaths { id }. Needs GITHUB_TOKEN (dry-run when unset) AND REPO_ALLOWLIST naming the repository (e.g. acme/*): the target repo is read from the path's repo_slug, which is ingested data, so a repo outside the allowlist returns 422 rather than being written to. Admin role when auth is enabled."
 					}
 				}
 			]

@@ -5,6 +5,7 @@ package graph
 
 import (
 	"context"
+	"log/slog"
 	"sync/atomic"
 	"time"
 
@@ -239,13 +240,38 @@ func ApplyEvent(ctx context.Context, s Store, ev ontology.Event) error {
 		seen = time.Now()
 	}
 	ts := seen.Unix()
+
+	// The ontology is a closed set and this is the single writer, so this is where the
+	// contract holds for every backend. It was previously checked only by the Apache
+	// AGE store, which left the in-memory default - what the demo runs - accepting any
+	// string as a label or an edge type, while downstream code (the AI prompt renderer,
+	// the Cypher builder) assumes the closed set.
+	//
+	// A value outside the vocabulary is DROPPED, not returned as an error: an error
+	// Naks the event and the broker redelivers it, so one malformed node would loop
+	// forever. The endpoint-missing error below stays an error precisely because that
+	// one IS worth redelivering - the node it waits for is still arriving.
+	dropped := map[string]bool{}
 	for _, n := range ev.Nodes {
+		if !ontology.IsValidLabel(n.Label) {
+			slog.Warn("dropping node outside the ontology",
+				"id", n.ID, "label", ontology.Truncate(string(n.Label)), "source", ev.Source)
+			dropped[n.ID] = true
+			continue
+		}
 		n.Properties = withLastSeen(n.Properties, ts)
 		if err := s.UpsertNode(ctx, n); err != nil {
 			return err
 		}
 	}
 	for _, e := range ev.Edges {
+		// An edge to a node this event dropped can never land, so it is dropped with it
+		// rather than left to fail the endpoint check and be redelivered forever.
+		if !ontology.IsValidEdgeType(e.Type) || dropped[e.From] || dropped[e.To] {
+			slog.Warn("dropping edge outside the ontology",
+				"type", ontology.Truncate(string(e.Type)), "from", e.From, "to", e.To, "source", ev.Source)
+			continue
+		}
 		e.Properties = withLastSeen(e.Properties, ts)
 		if err := s.UpsertEdge(ctx, e); err != nil {
 			return err
