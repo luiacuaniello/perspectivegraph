@@ -288,7 +288,12 @@ func location(n ontology.Node) string {
 
 func networkPolicy(c ontology.Node) Suggestion {
 	app := sanitize(c.Name)
-	ns := propStr(c, "k8s_ns")
+	// The namespace is an ingested property, and unlike its siblings here it used to be
+	// written into the manifest raw - so a value carrying a line break inserted keys of
+	// its own into a NetworkPolicy this tool then proposes as a fix. sanitize already
+	// yields exactly the RFC 1123 label a namespace must be; the cap is that rule's
+	// 63-character limit, and an empty result falls back rather than emitting nothing.
+	ns := k8sName(propStr(c, "k8s_ns"))
 	if ns == "" {
 		ns = "default"
 	}
@@ -476,6 +481,17 @@ resource "aws_security_group_rule" "perspective_segment_%s_to_%s" {
 func propStr(n ontology.Node, key string) string {
 	s, _ := n.Properties[key].(string)
 	return s
+}
+
+// k8sName renders an environment-controlled string as an RFC 1123 label - what a
+// Kubernetes namespace or object name must be - bounded to the 63 characters the API
+// server accepts. Empty when nothing survives, so the caller decides the fallback.
+func k8sName(s string) string {
+	out := sanitize(s)
+	if len(out) > 63 {
+		out = strings.Trim(out[:63], "-")
+	}
+	return out
 }
 
 // sanitize makes a node name safe for use in k8s/terraform identifiers.

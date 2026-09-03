@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	neturl "net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +16,9 @@ type GitHubConfig struct {
 	Token   string // token with `pull_requests: write` (e.g. GITHUB_TOKEN in CI)
 	BaseURL string // API base; defaults to https://api.github.com (override for GHE)
 	DryRun  bool   // log the comment instead of calling the API
+	// Allow is the repository allowlist. It is required for any real write: the
+	// destination otherwise comes from ingested graph data. Nil denies everything.
+	Allow *RepoAllow
 }
 
 // NewGitHubCommenter returns a Commenter that posts to GitHub pull requests.
@@ -26,7 +30,7 @@ func NewGitHubCommenter(cfg GitHubConfig) *Commenter {
 		slog.Warn("github commenter: no token set, running in dry-run (comments logged, not posted)")
 		cfg.DryRun = true
 	}
-	return newCommenter(&githubPoster{cfg: cfg, http: &http.Client{Timeout: 10 * time.Second}})
+	return newCommenter(&githubPoster{cfg: cfg, http: &http.Client{Timeout: 10 * time.Second}}, cfg.Allow)
 }
 
 type githubPoster struct {
@@ -64,7 +68,7 @@ func (g *githubPoster) find(ctx context.Context, ref prRef, marker string) (stri
 	}
 	for page := 1; page <= maxCommentPages; page++ {
 		url := fmt.Sprintf("%s/repos/%s/%s/issues/%d/comments?per_page=100&page=%d",
-			g.cfg.BaseURL, owner, repo, ref.number, page)
+			g.cfg.BaseURL, neturl.PathEscape(owner), neturl.PathEscape(repo), ref.number, page)
 		var comments []ghComment
 		if err := requestJSON(ctx, g.http, http.MethodGet, url, g.headers(), nil, &comments); err != nil {
 			return "", err
@@ -83,13 +87,15 @@ func (g *githubPoster) find(ctx context.Context, ref prRef, marker string) (stri
 
 func (g *githubPoster) create(ctx context.Context, ref prRef, body string) error {
 	owner, repo, _ := splitSlug(ref.slug)
-	url := fmt.Sprintf("%s/repos/%s/%s/issues/%d/comments", g.cfg.BaseURL, owner, repo, ref.number)
+	url := fmt.Sprintf("%s/repos/%s/%s/issues/%d/comments",
+		g.cfg.BaseURL, neturl.PathEscape(owner), neturl.PathEscape(repo), ref.number)
 	return requestJSON(ctx, g.http, http.MethodPost, url, g.headers(), map[string]string{"body": body}, nil)
 }
 
 func (g *githubPoster) update(ctx context.Context, ref prRef, commentID, body string) error {
 	owner, repo, _ := splitSlug(ref.slug)
-	url := fmt.Sprintf("%s/repos/%s/%s/issues/comments/%s", g.cfg.BaseURL, owner, repo, commentID)
+	url := fmt.Sprintf("%s/repos/%s/%s/issues/comments/%s",
+		g.cfg.BaseURL, neturl.PathEscape(owner), neturl.PathEscape(repo), neturl.PathEscape(commentID))
 	return requestJSON(ctx, g.http, http.MethodPatch, url, g.headers(), map[string]string{"body": body}, nil)
 }
 

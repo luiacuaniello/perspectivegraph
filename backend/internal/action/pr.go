@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	neturl "net/url"
+	"strings"
 	"time"
 )
 
@@ -58,8 +60,13 @@ func (g *githubPROpener) OpenPR(ctx context.Context, req OpenPRRequest) (string,
 	if req.Slug == "" || req.Branch == "" || len(req.Files) == 0 {
 		return "", errors.New("pr opener: slug, branch and at least one file are required")
 	}
+	// The slug arrives from a node property, so it is untrusted input naming where a
+	// branch and a commit get written with the operator's token - see repoguard.go.
+	if !g.cfg.Allow.Permit(req.Slug) {
+		return "", fmt.Errorf("%w: %q", ErrRepoNotAllowed, req.Slug)
+	}
 	h := githubHeaders(g.cfg.Token)
-	api := g.cfg.BaseURL + "/repos/" + req.Slug
+	api := g.cfg.BaseURL + "/repos/" + escapePath(req.Slug)
 
 	// 1. default branch + its head sha.
 	var repo struct {
@@ -74,7 +81,7 @@ func (g *githubPROpener) OpenPR(ctx context.Context, req OpenPRRequest) (string,
 			SHA string `json:"sha"`
 		} `json:"object"`
 	}
-	if err := requestJSON(ctx, g.http, http.MethodGet, api+"/git/ref/heads/"+defaultBranch, h, nil, &ref); err != nil {
+	if err := requestJSON(ctx, g.http, http.MethodGet, api+"/git/ref/heads/"+escapePath(defaultBranch), h, nil, &ref); err != nil {
 		return "", fmt.Errorf("get base ref: %w", err)
 	}
 
@@ -86,7 +93,7 @@ func (g *githubPROpener) OpenPR(ctx context.Context, req OpenPRRequest) (string,
 
 	// 3. commit each file onto the branch (new files).
 	for _, f := range req.Files {
-		if err := requestJSON(ctx, g.http, http.MethodPut, api+"/contents/"+f.Path, h, map[string]any{
+		if err := requestJSON(ctx, g.http, http.MethodPut, api+"/contents/"+escapePath(f.Path), h, map[string]any{
 			"message": req.Title,
 			"content": base64.StdEncoding.EncodeToString([]byte(f.Content)),
 			"branch":  req.Branch,
@@ -105,6 +112,17 @@ func (g *githubPROpener) OpenPR(ctx context.Context, req OpenPRRequest) (string,
 		return "", fmt.Errorf("open pr: %w", err)
 	}
 	return pr.HTMLURL, nil
+}
+
+// escapePath escapes each segment of a path that is interpolated into a URL, keeping
+// the separators. Callers validate the value first; this is the second layer, so a
+// segment can never introduce a separator, a query or a dot-segment of its own.
+func escapePath(p string) string {
+	parts := strings.Split(p, "/")
+	for i, seg := range parts {
+		parts[i] = neturl.PathEscape(seg)
+	}
+	return strings.Join(parts, "/")
 }
 
 // nopPROpener is the default when no GitHub token is configured.

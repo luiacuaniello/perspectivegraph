@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -33,6 +32,7 @@ type statusPoster interface {
 // the merge.
 type StatusReporter struct {
 	p         statusPoster
+	allow     *RepoAllow // where writes are permitted; nil denies everything
 	targetURL string
 	mu        sync.Mutex
 	failing   map[string]commitRef // "slug@sha" currently red, so we can clear them
@@ -40,8 +40,22 @@ type StatusReporter struct {
 
 type commitRef struct{ slug, sha string }
 
-func newStatusReporter(p statusPoster, targetURL string) *StatusReporter {
-	return &StatusReporter{p: p, targetURL: targetURL, failing: map[string]commitRef{}}
+func newStatusReporter(p statusPoster, allow *RepoAllow, targetURL string) *StatusReporter {
+	return &StatusReporter{p: p, allow: allow, targetURL: targetURL, failing: map[string]commitRef{}}
+}
+
+// permitted reports whether a status may be posted on this repository. The slug is a
+// node property - untrusted input choosing a write destination (see repoguard.go) -
+// and a commit status is the one write that can OPEN a gate rather than close it: a
+// `success` on a commit in a repository where this check is required. Dry-run is
+// exempt; it makes no outbound call.
+func (s *StatusReporter) permitted(slug string) bool {
+	if !s.p.enabled() || s.allow.Permit(slug) {
+		return true
+	}
+	slog.Warn("pr check refused: repository not allowed",
+		"forge", s.p.forge(), "slug", slug, "hint", "add it to REPO_ALLOWLIST")
+	return false
 }
 
 func (s *StatusReporter) OnCriticalPaths(ctx context.Context, paths []analyzer.AttackPath) {
@@ -52,6 +66,9 @@ func (s *StatusReporter) OnCriticalPaths(ctx context.Context, paths []analyzer.A
 		slug, sha, ok := commitTarget(p)
 		if !ok {
 			continue // no PR commit context on this path
+		}
+		if !s.permitted(slug) {
+			continue
 		}
 		key := slug + "@" + sha
 		counts[key]++
@@ -94,7 +111,7 @@ func commitTarget(p analyzer.AttackPath) (slug, sha string, ok bool) {
 	for _, n := range p.Nodes {
 		s, _ := n.Properties[ontology.PropRepoSlug].(string)
 		c, _ := n.Properties[ontology.PropCommitSHA].(string)
-		if s != "" && c != "" && strings.Contains(s, "/") {
+		if c != "" && ValidSlug(s) {
 			return s, c, true
 		}
 	}
@@ -120,7 +137,7 @@ func NewGitHubChecker(cfg GitHubConfig, targetURL string) *StatusReporter {
 		slog.Warn("github pr check: no token set, running in dry-run (status logged, not posted)")
 		cfg.DryRun = true
 	}
-	return newStatusReporter(&githubStatusPoster{cfg: cfg, http: &http.Client{Timeout: 10 * time.Second}}, targetURL)
+	return newStatusReporter(&githubStatusPoster{cfg: cfg, http: &http.Client{Timeout: 10 * time.Second}}, cfg.Allow, targetURL)
 }
 
 type githubStatusPoster struct {

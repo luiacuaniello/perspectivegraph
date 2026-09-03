@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -117,7 +118,11 @@ func (a *API) requireAI(w http.ResponseWriter) bool {
 func (a *API) runAI(w http.ResponseWriter, r *http.Request, action, system, user string) {
 	answer, err := a.ai.Complete(r.Context(), system, user)
 	if err != nil {
-		writeJSONError(w, http.StatusBadGateway, "AI request failed: "+err.Error())
+		// Same reason as the PR opener: the provider's response body reaches the caller
+		// otherwise, carrying the endpoint and whatever the provider says about the
+		// account behind the key.
+		slog.Error("AI request failed", "err", err)
+		writeJSONError(w, http.StatusBadGateway, "the AI provider could not answer - see the server log")
 		return
 	}
 	p := auth.PrincipalFromContext(r.Context())
@@ -159,7 +164,12 @@ func pathLine(p analyzer.AttackPath) string {
 	}
 	for i, n := range p.Nodes {
 		if i > 0 && i-1 < len(p.Steps) {
-			fmt.Fprintf(&b, " -%s-> ", p.Steps[i-1].EdgeType)
+			// Label and edge type belong to a closed vocabulary, enforced at the single
+			// writer (graph.ApplyEvent). They are sanitised anyway: they used to be the
+			// two fields that reached this prompt raw, and a containment that depends on
+			// a check in a different package is one refactor away from being no
+			// containment at all.
+			fmt.Fprintf(&b, " -%s-> ", safeName(string(p.Steps[i-1].EdgeType)))
 		}
 		name := n.Name
 		if name == "" {
@@ -168,7 +178,7 @@ func pathLine(p analyzer.AttackPath) string {
 		// The environment names this, not us - see untrusted.go.
 		b.WriteString(safeName(name))
 		if i == len(p.Nodes)-1 {
-			fmt.Fprintf(&b, " [%s]", n.Label)
+			fmt.Fprintf(&b, " [%s]", safeName(string(n.Label)))
 		}
 	}
 	fmt.Fprintf(&b, " | exploit %.0f%%", p.Score*100)

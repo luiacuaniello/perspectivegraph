@@ -164,6 +164,12 @@ opensearch:
 # Action layer: PR/MR commenters. Tokens go into a Secret; empty → dry-run.
 # dashboardUrl is the public dashboard base the PR comment / merge-gate status
 # links back to (e.g. https://perspectivegraph.example.com). Empty → no link.
+# Repositories the engine may write to: PR comments, merge-gate commit statuses
+# and remediation PRs, on GitHub and GitLab alike. Entries are "owner/repo" or
+# "owner/*". REQUIRED for any real write - the destination otherwise comes from
+# an ingested node property, so an empty list refuses every write.
+repoAllowlist: []
+
 github:
   token: ""
   apiUrl: https://api.github.com

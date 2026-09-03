@@ -60,7 +60,7 @@ func TestGitLabCommenterCreateAndUpdate(t *testing.T) {
 	defer srv.Close()
 	ctx := context.Background()
 
-	c := NewGitLabCommenter(GitLabConfig{Token: "glpat-x", BaseURL: srv.URL})
+	c := NewGitLabCommenter(GitLabConfig{Token: "glpat-x", BaseURL: srv.URL, Allow: mustAllow(t, "acme/*")})
 
 	c.OnCriticalPaths(ctx, []analyzer.AttackPath{samplePath(0.58)})
 	if mock.posts != 1 || len(mock.notes) != 1 {
@@ -71,7 +71,7 @@ func TestGitLabCommenterCreateAndUpdate(t *testing.T) {
 	}
 
 	// Cold-cache commenter with changed body must update via marker, not repost.
-	c2 := NewGitLabCommenter(GitLabConfig{Token: "glpat-x", BaseURL: srv.URL})
+	c2 := NewGitLabCommenter(GitLabConfig{Token: "glpat-x", BaseURL: srv.URL, Allow: mustAllow(t, "acme/*")})
 	c2.OnCriticalPaths(ctx, []analyzer.AttackPath{samplePath(0.42)})
 	if mock.posts != 1 || mock.puts != 1 {
 		t.Errorf("expected update not repost: posts=%d puts=%d", mock.posts, mock.puts)

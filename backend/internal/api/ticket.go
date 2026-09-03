@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/auth"
@@ -24,8 +25,18 @@ func (a *API) listTickets(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// An empty board read from a broken database looks like "no outstanding work",
 		// and a team would open tickets that already exist.
-		writeJSONError(w, http.StatusServiceUnavailable, "ticket store unreachable: "+err.Error())
+		slog.Error("ticket store read failed", "err", err)
+		writeJSONError(w, http.StatusServiceUnavailable, "ticket store unreachable - see the server log")
 		return
+	}
+	if ids := a.scopedPathIDs(r.Context()); ids != nil {
+		kept := make([]ticket.Ticket, 0, len(list))
+		for _, tk := range list {
+			if ids[tk.PathID] {
+				kept = append(kept, tk)
+			}
+		}
+		list = kept
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"tickets":    list,
@@ -44,6 +55,10 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 	var req ticketRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if !a.mayActOnPath(r.Context(), req.PathID) {
+		writeJSONError(w, http.StatusNotFound, "attack path not found (or out of your scope)")
 		return
 	}
 	tk, err := a.ticket.Create(r.Context(), ticket.Ticket{
@@ -74,6 +89,28 @@ func (a *API) closeTicket(w http.ResponseWriter, r *http.Request) {
 	if !a.adminWritable(r) {
 		writeJSONError(w, http.StatusForbidden, "admin role required to close tickets")
 		return
+	}
+	// Addressed by ticket id, not path id, so the path it belongs to has to be resolved
+	// before the mutation. Only for a scoped caller: an unrestricted one skips the read.
+	if ids := a.scopedPathIDs(r.Context()); ids != nil {
+		list, err := a.ticket.List(r.Context(), tenantOf(r.Context()))
+		if err != nil {
+			slog.Error("ticket store read failed", "err", err)
+			writeJSONError(w, http.StatusServiceUnavailable, "ticket store unreachable - see the server log")
+			return
+		}
+		id := r.PathValue("id")
+		found := false
+		for _, t := range list {
+			if t.ID == id && ids[t.PathID] {
+				found = true
+				break
+			}
+		}
+		if !found {
+			writeJSONError(w, http.StatusNotFound, "ticket not found (or out of your scope)")
+			return
+		}
 	}
 	tk, err := a.ticket.Close(r.Context(), tenantOf(r.Context()), r.PathValue("id"))
 	if err != nil {

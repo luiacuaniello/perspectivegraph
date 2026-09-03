@@ -1,5 +1,7 @@
 package ontology
 
+import "fmt"
+
 // Label is the type of a graph vertex (V). The set of labels is the shared
 // vocabulary that every collector must map its findings onto.
 type Label string
@@ -95,6 +97,44 @@ func IsValidLabel(l Label) bool { return validLabels[l] }
 
 // IsValidEdgeType reports whether t is part of the ontology vocabulary.
 func IsValidEdgeType(t EdgeType) bool { return validEdgeTypes[t] }
+
+// ValidateVocabulary reports the first node label or edge type in ev that is outside
+// the ontology.
+//
+// The vocabulary is a closed set, and it needs to be enforced where EVERY event passes
+// rather than in one store implementation. It was checked only by the Apache AGE store,
+// so the in-memory backend - the default, and what the demo runs - accepted any string
+// as a label or an edge type. Downstream code reasonably assumes the closed set: the AI
+// layer renders the target's label and each hop's edge type into the prompt, and a label
+// carrying line breaks and a closing fence tag is a prompt-injection payload arriving
+// through a field the containment in internal/api/untrusted.go does not cover.
+//
+// Labels are also interpolated into Cypher by the AGE store, where the closed set is
+// what makes that interpolation safe.
+func ValidateVocabulary(ev Event) error {
+	for _, n := range ev.Nodes {
+		if !IsValidLabel(n.Label) {
+			return fmt.Errorf("node %q: unknown label %q", n.ID, Truncate(string(n.Label)))
+		}
+	}
+	for _, e := range ev.Edges {
+		if !IsValidEdgeType(e.Type) {
+			return fmt.Errorf("edge %s->%s: unknown type %q", e.From, e.To, Truncate(string(e.Type)))
+		}
+	}
+	return nil
+}
+
+// Truncate bounds a rejected value before it reaches an error message or a log line:
+// the value is attacker-supplied, and an unbounded one turns a rejection into a way to
+// write a page of text into the operator's logs.
+func Truncate(s string) string {
+	const max = 64
+	if len(s) > max {
+		return s[:max] + "…"
+	}
+	return s
+}
 
 // Well-known node property keys that drive analysis. Keeping them as constants
 // avoids stringly-typed bugs across collectors and the analyzer.

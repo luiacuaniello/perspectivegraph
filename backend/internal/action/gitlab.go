@@ -16,6 +16,8 @@ type GitLabConfig struct {
 	Token   string // personal/project access token with `api` scope
 	BaseURL string // API base; defaults to https://gitlab.com/api/v4
 	DryRun  bool
+	// Allow is the repository allowlist - see GitHubConfig.Allow. Nil denies everything.
+	Allow *RepoAllow
 }
 
 // NewGitLabCommenter returns a Commenter that posts to GitLab merge requests.
@@ -29,7 +31,7 @@ func NewGitLabCommenter(cfg GitLabConfig) *Commenter {
 		slog.Warn("gitlab commenter: no token set, running in dry-run (comments logged, not posted)")
 		cfg.DryRun = true
 	}
-	return newCommenter(&gitlabPoster{cfg: cfg, http: &http.Client{Timeout: 10 * time.Second}})
+	return newCommenter(&gitlabPoster{cfg: cfg, http: &http.Client{Timeout: 10 * time.Second}}, cfg.Allow)
 }
 
 type gitlabPoster struct {

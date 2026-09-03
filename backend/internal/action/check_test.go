@@ -31,7 +31,7 @@ func pathWithPR(slug, sha, jewel string) analyzer.AttackPath {
 // pass no longer has it, the same commit flips green.
 func TestCheckFailsThenResolves(t *testing.T) {
 	fp := &fakeStatus{}
-	r := newStatusReporter(fp, "")
+	r := newStatusReporter(fp, mustAllow(t, "acme/*"), "")
 	ctx := context.Background()
 
 	// Pass 1: the PR's change sits on a critical path → failure.
@@ -50,7 +50,7 @@ func TestCheckFailsThenResolves(t *testing.T) {
 // TestCheckSkipsPathsWithoutCommit: no commit SHA → nothing to attach a status to.
 func TestCheckSkipsPathsWithoutCommit(t *testing.T) {
 	fp := &fakeStatus{}
-	r := newStatusReporter(fp, "")
+	r := newStatusReporter(fp, mustAllow(t, "acme/*"), "")
 	// PR slug but no commit sha.
 	p := analyzer.AttackPath{Nodes: []ontology.Node{
 		{ID: "lb", Properties: map[string]any{ontology.PropRepoSlug: "acme/web"}},

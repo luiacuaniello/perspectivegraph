@@ -47,24 +47,68 @@ func pathNamed(name string) analyzer.AttackPath {
 	}
 }
 
+// assertNoForgedStructure is what every environment-derived field must satisfy: it may
+// not introduce a line, close the fence, or smuggle a control character into the prompt.
+func assertNoForgedStructure(t *testing.T, field, line string) {
+	t.Helper()
+	if strings.ContainsAny(line, "\n\r") {
+		t.Errorf("%s introduced a line break into the prompt:\n%q", field, line)
+	}
+	if strings.Contains(line, "</environment-data>") {
+		t.Errorf("%s closed the untrusted-data block:\n%q", field, line)
+	}
+	for _, c := range line {
+		if c < 0x20 && c != '\t' {
+			t.Errorf("control character %q survived into the prompt via %s: %q", c, field, line)
+			return
+		}
+	}
+}
+
 // An asset name must never introduce a line of its own. Every hostile shape here works
 // by breaking out of one entry in a numbered list and appearing to be the prompt's own
 // structure - a new list item, a new speaker turn, a closing delimiter.
 func TestAssetNameCannotForgeStructure(t *testing.T) {
 	for name, payload := range payloads {
 		t.Run(name, func(t *testing.T) {
-			line := pathLine(pathNamed(payload))
-			if strings.ContainsAny(line, "\n\r") {
-				t.Errorf("a name introduced a line break into the prompt:\n%q", line)
+			assertNoForgedStructure(t, "a name", pathLine(pathNamed(payload)))
+		})
+	}
+}
+
+// The name is not the only environment-derived string in the line. The target's LABEL
+// and each hop's EDGE TYPE are rendered too, and both were reaching the prompt raw:
+// the vocabulary that bounds them was enforced by the Apache AGE store alone, so the
+// in-memory default accepted any string and the containment was bypassed by a field it
+// did not cover. Every payload now runs through all three fields, because a test that
+// only varies the name proves only that the name is safe.
+func TestLabelAndEdgeTypeCannotForgeStructure(t *testing.T) {
+	for name, payload := range payloads {
+		t.Run(name+"/label", func(t *testing.T) {
+			p := pathNamed("web-01")
+			p.Nodes[len(p.Nodes)-1].Label = ontology.Label(payload)
+			assertNoForgedStructure(t, "a node label", pathLine(p))
+		})
+		t.Run(name+"/edge type", func(t *testing.T) {
+			p := pathNamed("web-01")
+			p.Steps[0].EdgeType = ontology.EdgeType(payload)
+			assertNoForgedStructure(t, "an edge type", pathLine(p))
+		})
+	}
+}
+
+// The vocabulary is what should keep a hostile label out of the graph in the first
+// place, and it has to hold for EVERY backend - it used to hold only for Apache AGE.
+func TestOntologyRejectsHostileVocabulary(t *testing.T) {
+	for name, payload := range payloads {
+		t.Run(name, func(t *testing.T) {
+			node := ontology.Event{Nodes: []ontology.Node{{ID: "n", Label: ontology.Label(payload)}}}
+			if err := ontology.ValidateVocabulary(node); err == nil {
+				t.Error("a hostile label was accepted as part of the ontology")
 			}
-			if strings.Contains(line, "</environment-data>") {
-				t.Errorf("a name closed the untrusted-data block:\n%q", line)
-			}
-			for _, c := range line {
-				if c < 0x20 && c != '\t' {
-					t.Errorf("control character %q survived into the prompt: %q", c, line)
-					break
-				}
+			edge := ontology.Event{Edges: []ontology.Edge{{Type: ontology.EdgeType(payload), From: "a", To: "b"}}}
+			if err := ontology.ValidateVocabulary(edge); err == nil {
+				t.Error("a hostile edge type was accepted as part of the ontology")
 			}
 		})
 	}
