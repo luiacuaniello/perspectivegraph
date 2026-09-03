@@ -1,11 +1,43 @@
 # Support
 
-What is supported, for how long, and what to do if your organisation cannot simply "run
-the latest".
+Where to take a question, a bug or a security report - then what is supported, for how
+long, and what to do if your organisation cannot simply "run the latest".
 
 This document exists because "supported versions: the latest release" is a *policy*, and a
 policy a change-advisory board reads has to say more than a maintainer assumes. Everything
 below is written so it can be checked or refused rather than taken on trust.
+
+## Where to go
+
+The routing, first, because GitHub surfaces this file to someone who is already
+mid-way through opening an issue. It matches
+[`.github/ISSUE_TEMPLATE/config.yml`](.github/ISSUE_TEMPLATE/config.yml), which is what
+the New Issue page actually offers.
+
+| You have | Go to |
+|---|---|
+| a question, an idea, or "is this supposed to work like this?" | [Discussions](https://github.com/luiacuaniello/perspectivegraph/discussions) |
+| something that looks like a bug | the **Bug report** issue template |
+| a feature or a change in behaviour to propose | the **Feature request** issue template - and read the [roadmap](ROADMAP.md) first, so we can agree on the shape before you write code |
+| a security problem | **never a public issue** - [private reporting](https://github.com/luiacuaniello/perspectivegraph/security/advisories/new), see [SECURITY.md](SECURITY.md) |
+
+Questions go to Discussions rather than issues on purpose: an issue is a thing that gets
+closed, and "how do I model a shared VPC" is a thing other people search for later.
+
+### Before you ask
+
+Four lines that turn most reports into something answerable on the first reply:
+
+1. **The version** - the image digest or tag, or `git rev-parse HEAD` if you built it.
+2. **Which stack** - `make demo`, Docker Compose, or Helm on a real cluster - and the
+   graph backend (in-memory or Apache AGE), because several behaviours differ between them.
+3. **What you expected and what happened**, ideally as the request you sent and the
+   response you got.
+4. **The relevant log lines** - the backend logs the reason it refused something far more
+   often than the API response does. Scrub them first: they can name your assets.
+
+The [manual](docs/MANUAL.md) is the reference and answers most usage questions before they
+need asking.
 
 ## The policy
 
@@ -103,8 +135,8 @@ the risk, because no fix will be issued for it here.
   only stated response times in this project are for security reports.
 - **Security reports do not go in public issues** - use private reporting, see
   [SECURITY.md](SECURITY.md).
-- Questions about *using* it belong in an issue; the [manual](docs/MANUAL.md) is the
-  reference and is meant to answer most of them first.
+- Questions about *using* it belong in [Discussions](https://github.com/luiacuaniello/perspectivegraph/discussions),
+  not in issues - see the routing at the top.
 
 ## Continuity
 

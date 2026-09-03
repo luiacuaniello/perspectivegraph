@@ -134,6 +134,41 @@ algorithm, it's the analysis architecture.
   underlying cost is unchanged; a delta-based what-if would fix it at the root.
   *(partially mitigated)*
 
+## Assurance
+
+The engine's *correctness* is measured and says so: calibration against recorded
+verdicts, a CloudGoat precision/recall battery, an AWS policy oracle that has already
+refuted it once. Its own *security* is measured less independently, and this section
+exists to say by how much rather than let the automated gates imply more than they show.
+
+- **Independent security audit.** The code passes `govulncheck`, `gosec`, CodeQL,
+  `gitleaks`, Trivy and `staticcheck` on every build, and the container images publish
+  zero critical or high findings - but every one of those is a tool looking for known
+  shapes. Nothing here has been read by a security engineer who did not write it. For a
+  tool whose output is a map of how to breach an organisation, that is the largest open
+  assurance gap, and it is the one an adopting security team is most likely to ask about.
+  Worth being precise about what it should be: a **code and application audit**, not a
+  network penetration test. There is no hosted service to test - the deployment belongs
+  to the adopter - so the target is this repository plus the hardening guidance in
+  [OPERATIONS](docs/OPERATIONS.md). *(not started)*
+- **What has been done instead, and what it is worth.** An adversarial self-assessment
+  (September 2026) went after the ingest → analyzer → outbound-write path and found five
+  real issues: the destination of forge writes taken from ingested data, a prompt-injection
+  containment bypassed by two fields it did not cover, application scoping enforced on
+  reads but not on the governance records behind them, upstream error bodies echoed to API
+  callers, and an unsanitised property reaching a generated manifest. All five are fixed
+  and carry regression tests, and the ones that changed a stated guarantee are written up
+  in the [threat model](docs/THREAT-MODEL.md). It is recorded here as a **self**-assessment
+  because that is what it is: performed by the author of the code, so it shares the code's
+  blind spots by construction. It does not close the item above. *(done - and not a
+  substitute)*
+- **OSS-Fuzz enrolment.** The parse boundary is already fuzzed - 14 targets, seeded on
+  every build and explored weekly by
+  [`.github/workflows/fuzz.yml`](.github/workflows/fuzz.yml). OSS-Fuzz would add the two
+  things a self-hosted schedule cannot: CPU-months instead of minutes, and findings
+  produced by infrastructure that is not the maintainer's. The targets exist, so this is
+  an onboarding task rather than a build one. *(not started)*
+
 ## What this is not becoming
 
 To keep the roadmap honest, some things are deliberately absent:
