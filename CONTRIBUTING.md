@@ -68,7 +68,7 @@ make test            # Go tests (CGO disabled for static, portable binaries)
 ### Checks CI runs - run them locally before a PR
 
 ```bash
-# Backend (go1.25): build, vet, tests, dependency vulns, and SAST
+# Backend (go1.26): build, vet, tests, dependency vulns, and SAST
 cd backend
 GOTOOLCHAIN=go1.26.7 CGO_ENABLED=0 go build ./... && go vet ./... && go test ./...
 go run golang.org/x/vuln/cmd/govulncheck@latest ./...

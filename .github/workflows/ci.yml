@@ -26,6 +26,14 @@ jobs:
       - run: go build ./...
       - run: go vet ./...
       - run: go test ./...
+      # The parity tests read files OUTSIDE the Go module - .env.example, docker-compose,
+      # the Helm values, these workflows, the Dockerfiles, the Makefile. Go's test cache
+      # does not track those, so the step above can return a cached pass for a pull request
+      # that changed only a deploy surface, and the guard silently does not run. Measured:
+      # with .env.example deliberately broken, `go test ./internal/config/` still reports
+      # `ok (cached)`; only -count=1 catches it. One package, so the cost is a second.
+      - name: Repository-surface parity (uncached)
+        run: go test -count=1 ./internal/config/
       # Supply-chain gate: fail on a vulnerability the code actually reaches.
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
