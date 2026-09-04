@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help up up-full demo up-search down logs run-backend build-backend test bench bench-cloudgoat mcp reachability-lab-aws redteam-aws boundary-lab-aws tidy run-frontend install-frontend lockfile seed seed-discovery seed-load clean
+.PHONY: help up up-full up-demo demo demo-build demo-run up-search down logs run-backend build-backend test bench bench-cloudgoat mcp reachability-lab-aws redteam-aws boundary-lab-aws tidy run-frontend install-frontend lockfile seed seed-discovery seed-load clean
 
 # CGO is disabled so the Go binaries link statically (Go's pure-Go DNS resolver
 # instead of the system one). This also sidesteps a macOS system-linker bug on
@@ -14,12 +14,21 @@ help:
 up:
 	docker compose up -d postgres nats
 
-## up-full: build + run the WHOLE stack in containers (infra + backend + dashboard on :3000)
+## up-full: BUILD + run the whole stack in containers (infra + backend + dashboard on :3000)
 up-full:
 	docker compose --profile app up -d --build
 
-## demo: the wedge in ~90s - bring up the stack, seed it, and surface the top attack path + its generated fix (needs jq)
-demo: up-full
+## up-demo: run the whole stack from the PUBLISHED signed images - no toolchain, no build
+up-demo:
+	docker compose -f docker-compose.yml -f docker-compose.demo.yml --profile app up -d
+
+## demo: the wedge in ~90s - published images, seeded, with the top attack path + its fix (needs jq)
+demo: up-demo demo-run
+
+## demo-build: the same demo, but built from this working tree (for contributors)
+demo-build: up-full demo-run
+
+demo-run:
 	@echo ""
 	@echo "→ feeding sample scanner output (Trivy, Semgrep, Custodian, Falco, K8s, IAM, SSO, supply-chain, data-class)…"
 	@$(MAKE) --no-print-directory seed          >/dev/null 2>&1 || true

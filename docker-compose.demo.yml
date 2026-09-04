@@ -1,0 +1,35 @@
+# The demo, from the published images instead of from source.
+#
+# `docker-compose.yml` builds the backend and the dashboard, which is right for a
+# contributor changing them and wrong for someone deciding whether this is worth
+# an afternoon: it costs a Go toolchain, a React bundle and several minutes before
+# anything appears. The releases already publish both images - signed with cosign,
+# with an SBOM and SLSA provenance attached - so a first look should be a pull.
+#
+# It is an OVERRIDE, not a second stack: everything else - Postgres+AGE, NATS, the
+# hundred-odd backend settings, the ports, the health checks - keeps coming from
+# docker-compose.yml, so this file cannot drift away from the thing it demonstrates.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.demo.yml --profile app up -d
+#
+# or just `make demo`, which does that and then seeds and queries it.
+#
+# `pull_policy: always` rather than removing the build section: it needs no recent
+# Compose (the `!reset` tag does), and for a demo OF SIGNED RELEASES it is the right
+# semantics - you get the image that was actually published, never a stale local one
+# left over from a build. To go back to building, drop this file from the command.
+#
+# The tags carry release-please markers, so a release bumps them with everything else.
+# To verify what you are about to run, before you run it:
+#
+#   cosign verify ghcr.io/luiacuaniello/perspectivegraph:v1.11.2 \ # x-release-please-version
+#     --certificate-identity-regexp 'https://github.com/luiacuaniello/perspectivegraph/.*' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+services:
+  backend:
+    image: ghcr.io/luiacuaniello/perspectivegraph:v1.11.2 # x-release-please-version
+    pull_policy: always
+
+  frontend:
+    image: ghcr.io/luiacuaniello/perspectivegraph-dashboard:v1.11.2 # x-release-please-version
+    pull_policy: always

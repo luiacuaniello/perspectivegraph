@@ -1,0 +1,32 @@
+# Artifact Hub repository metadata.
+#
+# The Helm chart is published to an OCI registry
+# (oci://ghcr.io/luiacuaniello/charts/perspectivegraph), which is fine for `helm install`
+# and invisible to anyone looking for a chart: OCI registries have no index to browse, so
+# GHCR shows tags and digests and never the chart's values, its README or what it does.
+# Artifact Hub is the page the chart otherwise does not have.
+#
+# This file does two things there: it claims ownership of the repository (the `owners`
+# email must match the Artifact Hub sign-in), and once `repositoryID` is filled in it
+# earns the Verified Publisher flag.
+#
+# For an OCI repository the file is NOT read from git - Artifact Hub pulls it from the
+# registry under a special tag. The release workflow pushes it on every release
+# (.github/workflows/publish-images.yml, the `chart` job), so it cannot go stale here
+# while the registry keeps an older copy. To push it by hand:
+#
+#   oras push ghcr.io/luiacuaniello/charts/perspectivegraph:artifacthub.io \
+#     --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
+#     artifacthub-repo.yml:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml
+#
+# Order of operations, because it is not obvious: register the repository on
+# artifacthub.io first (Control Panel → Repositories → Add, kind "Helm charts", URL
+# oci://ghcr.io/luiacuaniello/charts/perspectivegraph). Ownership can be claimed with the
+# `owners` block alone. The ID it then shows on the repository card goes in
+# `repositoryID` below - uncomment it, and the next release push turns on the flag.
+
+repositoryID: 2c1ddbf2-bfac-41bb-8cb8-d3413437b6e6
+
+owners:
+  - name: Luigi Iacuaniello
+    email: luigi@a3thinker.it

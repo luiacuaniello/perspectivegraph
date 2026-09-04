@@ -171,6 +171,9 @@ dependency, say why in the pull request rather than widening the list quietly.
 - **Frontend:** must pass `tsc`, `build`, and `vitest`. Use the inline SVG icon
   set (`components/icons.tsx`) - **no emoji in the UI**; colors come from the
   CSS-variable design tokens (so light/dark both work), not hardcoded hex.
+- **Running the stack while you work:** `make demo` runs the *published* images, so it
+  will not show your changes. Use **`make demo-build`** (or `make up-full`), which builds
+  the backend and dashboard from your working tree.
 - **Frontend dependencies:** install with `npm ci` (`make install-frontend`), and to
   add or update one, edit `package.json` and run **`make lockfile`** - never a bare
   `npm install`. CI and the release image both use `npm ci`, so the build is
