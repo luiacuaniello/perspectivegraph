@@ -115,7 +115,7 @@ spec:
       {{- end }}
       containers:
         - name: dashboard
-          image: "{{ .Values.frontend.image.repository }}:{{ .Values.frontend.image.tag }}"
+          image: "{{ .Values.frontend.image.repository }}:{{ .Values.frontend.image.tag | default (printf "v%s" .Chart.AppVersion) }}"
           imagePullPolicy: {{ .Values.frontend.image.pullPolicy }}
           {{- with .Values.frontend.containerSecurityContext }}
           securityContext:

@@ -30,9 +30,16 @@ sources:
 maintainers:
   - name: PerspectiveGraph contributors
 # Artifact Hub reads these to build the chart's page - the one thing an OCI registry
-# cannot give it. `images` is the load-bearing one: it is what makes Artifact Hub scan
-# the images this chart runs and publish the security report beside the chart, which for
-# this project is the claim rather than a badge. The tags carry release-please markers.
+# cannot give it. `images` is the load-bearing one: it is what Artifact Hub scans to
+# publish the security report beside the chart.
+#
+# It lists EVERY image a default install deploys, third-party ones included, because the
+# annotation REPLACES Artifact Hub's own extraction: listing only the two we build would
+# have taken the report from 20 criticals to zero without fixing anything - the bundled
+# apache/age is where most of them are. A security tool that quietly drops the images
+# making its own badge look bad has answered the wrong question. `values-production.yaml`
+# is the honest fix and already does it: it points at an external Postgres, and apache/age
+# is not deployed at all.
 annotations:
   artifacthub.io/category: security
   artifacthub.io/license: Apache-2.0
@@ -41,6 +48,12 @@ annotations:
       image: ghcr.io/luiacuaniello/perspectivegraph:v1.12.0 # x-release-please-version
     - name: dashboard
       image: ghcr.io/luiacuaniello/perspectivegraph-dashboard:v1.12.0 # x-release-please-version
+    - name: postgres-age
+      image: apache/age:release_PG16_1.6.0@sha256:16aa423d20a31aed36a3313244bf7aa00731325862f20ed584510e381f2feaed
+    - name: nats
+      image: nats:2.12.11-alpine@sha256:006a95e54643c0a2a33dfcee4654e9115f7540ebb8804822d3e2d82bf8515f61
+    - name: governance-init
+      image: busybox:1.37
   artifacthub.io/links: |
     - name: Documentation
       url: https://github.com/luiacuaniello/perspectivegraph/blob/main/docs/MANUAL.md

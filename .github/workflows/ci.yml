@@ -208,6 +208,27 @@ jobs:
       # never succeeds, with no error anywhere to say why. It broke on its first hand
       # edit - an uncommented line left a leading space, which made the document
       # unparseable. Ten lines of check beat finding out from a flag that never turns on.
+      # artifacthub.io/images REPLACES Artifact Hub's own image extraction, so whatever it
+      # lists is exactly what gets scanned and reported beside the chart. An annotation
+      # that falls behind the templates therefore does not go stale quietly - it publishes
+      # a security report for a set of images nobody installs. Listing fewer than the chart
+      # deploys is the failure that matters, and it is the flattering one.
+      - name: Artifact Hub images match what a default install deploys
+        run: |
+          helm template pg deploy/helm/perspectivegraph > /tmp/rendered.yaml
+          python3 - <<'PY'
+          import re, sys, yaml
+          chart = yaml.safe_load(open("deploy/helm/perspectivegraph/Chart.yaml"))
+          declared = {i["image"] for i in yaml.safe_load(chart["annotations"]["artifacthub.io/images"])}
+          rendered = set(re.findall(r'^\s*image:\s*"?([^"\s]+)"?\s*$', open("/tmp/rendered.yaml").read(), re.M))
+          if declared != rendered:
+              missing, extra = rendered - declared, declared - rendered
+              if missing:
+                  sys.exit(f"a default install deploys images the annotation does not declare, so they would not be scanned: {sorted(missing)}")
+              sys.exit(f"the annotation declares images no default install deploys: {sorted(extra)}")
+          print(f"artifacthub.io/images matches the rendered install: {len(declared)} image(s)")
+          PY
+
       - name: Artifact Hub metadata is well-formed
         run: |
           python3 - <<'PY'
