@@ -5,6 +5,9 @@
   "license": "Apache-2.0",
   "type": "module",
   "description": "PerspectiveGraph dashboard - posture overview & attack-path explorer",
+  "engines": {
+    "npm": "11.19.1"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
