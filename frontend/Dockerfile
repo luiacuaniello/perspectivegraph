@@ -9,18 +9,8 @@
 # architecture - so emulating the whole Node toolchain under QEMU to produce arm64
 # assets buys nothing and costs hours: vite/rolldown are native Rust binaries, and
 # emulated they crawl. Only the nginx stage below varies per target.
-FROM --platform=$BUILDPLATFORM node:22-alpine@sha256:9385cd9f3001dfc3431e8ead12c43e9e1f87cc1b9b5c6cfd0f73865d405b27c4 AS build
+FROM --platform=$BUILDPLATFORM node:24-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf AS build
 WORKDIR /app
-# The npm a Node image bundles is whatever that image happened to ship (10.9.8 here), and
-# it is not the npm CI runs. `npm ci` is lockfile-deterministic, so today the two agree -
-# measured: npm 11.19.1 regenerates this lockfile byte-identically. What is being pinned
-# is that they GO ON agreeing: npm's platform-specific behaviour is exactly what the note
-# below is about, and a release image resolving it differently from CI is a divergence
-# nothing would report. The version is declared once, in package.json `engines.npm`.
-#
-# npm is a build tool here, not shipped content: only /app/dist is copied into the nginx
-# stage, so this adds nothing to the image, its SBOM or its provenance.
-RUN npm install -g npm@11.19.1
 COPY package*.json ./
 # `npm ci`, never `npm install`: it installs exactly what package-lock.json pins and
 # fails rather than resolving anything new, so this image is reproducible and the SBOM

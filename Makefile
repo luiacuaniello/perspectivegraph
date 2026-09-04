@@ -110,8 +110,8 @@ install-frontend:
 
 ## lockfile: regenerate frontend/package-lock.json after changing package.json. Runs npm INSIDE the same Linux image the release build uses, because npm only records the transitive deps of optional platform packages for the platform it runs on - regenerating on macOS drops entries the Linux build needs and breaks `npm ci` in CI. Never run a bare `npm install` in frontend/ to add a dependency; edit package.json, then run this.
 lockfile:
-	docker run --rm -v "$(CURDIR)/frontend":/app -w /app node:22-alpine \
-	  sh -c 'npm install -g npm@11.19.1 >/dev/null && npm install --package-lock-only --no-audit --no-fund' 
+	docker run --rm -v "$(CURDIR)/frontend":/app -w /app node:24-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf \
+	  npm install --package-lock-only --no-audit --no-fund
 	@echo ""
 	@echo "→ regenerated frontend/package-lock.json on linux. Verify before committing:"
 	@echo "    git diff --stat frontend/package-lock.json"
