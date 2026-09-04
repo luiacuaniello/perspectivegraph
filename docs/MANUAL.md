@@ -1646,7 +1646,7 @@ version you can pin, verify and name in a change record:
 helm install perspective oci://ghcr.io/luiacuaniello/charts/perspectivegraph \
   --set github.token=$GITHUB_TOKEN \
   --set opensearch.url="" \
-  --version 1.12.1 # x-release-please-version
+  --version 1.12.2 # x-release-please-version
 ```
 
 The chart is cosign-signed like the images. Verify it before it templates anything into
@@ -1657,7 +1657,7 @@ unverified one is a larger hole than an unverified image:
 cosign verify \
   --certificate-identity-regexp 'https://github.com/luiacuaniello/perspectivegraph/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  ghcr.io/luiacuaniello/charts/perspectivegraph:1.12.1 # x-release-please-version
+  ghcr.io/luiacuaniello/charts/perspectivegraph:1.12.2 # x-release-please-version
 ```
 
 The chart declares `kubeVersion: >= 1.21.0-0` (the floor is `policy/v1`
