@@ -17,6 +17,36 @@ digest, take the backup, stage it.
 
 ---
 
+## 1.12.4
+
+### The bundled demo database moves to PostgreSQL 17
+
+**Affects you if** you run the bundled database - `make demo`, `docker compose`, or a Helm
+install left on `postgres.enabled: true`. An install pointed at your own PostgreSQL+AGE is
+unaffected, and that is what production should be doing anyway.
+
+The image moves from `apache/age:release_PG16_1.6.0` to `release_PG17_1.7.0`. **A
+PostgreSQL major version cannot read the previous major's data directory**, so an existing
+demo volume will not start under it. The data is derived - the graph is rebuilt by
+re-ingesting - so the fix is to drop the volume:
+
+```bash
+make down            # `docker compose down -v` removes the volumes
+make demo
+```
+
+On Kubernetes, delete the PVC before upgrading if you were using the bundled database.
+
+Why bother, for a demo: the older image carried 19 critical and 191 high advisories, and
+it is what Artifact Hub scans and reports on the chart's page. The newer one is 14 and 97.
+Nothing there is in code this project ships - both first-party images scan clean - but a
+default install deploying it is a default install answering for it. Thirteen of the
+remaining critical findings have no fix available from Debian in any version.
+
+The NATS image moves with it, from 2.12.11 to 2.14.6. That one was entirely ours to fix:
+all thirteen of its findings had upstream fixes, and the new image is clean of criticals.
+No action is needed - NATS reads no persistent state in this deployment.
+
 ## 1.12.1
 
 ### The chart installs the app version it was built with, not `latest`

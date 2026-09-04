@@ -49,9 +49,9 @@ annotations:
     - name: dashboard
       image: ghcr.io/luiacuaniello/perspectivegraph-dashboard:v1.12.3 # x-release-please-version
     - name: postgres-age
-      image: apache/age:release_PG16_1.6.0@sha256:16aa423d20a31aed36a3313244bf7aa00731325862f20ed584510e381f2feaed
+      image: apache/age:release_PG17_1.7.0@sha256:92a5d223965bc2e436f9eee436e0bd2c0d81f3b59124b3d197ec94706f3450a8
     - name: nats
-      image: nats:2.12.11-alpine@sha256:006a95e54643c0a2a33dfcee4654e9115f7540ebb8804822d3e2d82bf8515f61
+      image: nats:2.14.6-alpine@sha256:ad7a43eb7e3337c3c38ce5d784d1461791f95f730f252d2b25eee699752a0ca3
     - name: governance-init
       image: busybox:1.37@sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028
   artifacthub.io/links: |
