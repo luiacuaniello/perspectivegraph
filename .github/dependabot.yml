@@ -88,6 +88,18 @@ updates:
       interval: weekly
     commit-message:
       prefix: "chore(deps)"
+    # The Go toolchain version is not Dependabot's to choose. It is named in seventeen
+    # places - go.mod's toolchain and go directive, eight CI jobs, six scripts, this
+    # Dockerfile - and TestGoVersionIsConsistentEverywhereItIsNamed fails when they
+    # disagree. Bumping the base image alone is a partial update by construction, which
+    # is what happened: PR #179 proposed golang 1.27.1 against a go.mod on 1.26.7 and the
+    # guard refused it. Patches and rebuilt digests still flow, which is the part that
+    # carries the CVE fixes; moving a minor is a deliberate migration, done by hand.
+    ignore:
+      - dependency-name: golang
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
     groups:
       backend-images:
         patterns: ["*"]
@@ -98,6 +110,15 @@ updates:
       interval: weekly
     commit-message:
       prefix: "chore(deps)"
+    # Same reasoning as the backend, plus one of its own: npm comes with Node, so the
+    # Node version is pinned in ci.yml, the Makefile and package.json's engines as well
+    # as here. PR #178 proposed node 26, which is Current rather than LTS - moving a
+    # release image off LTS is not a dependency bump. Patches and digests still flow.
+    ignore:
+      - dependency-name: node
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
     groups:
       frontend-images:
         patterns: ["*"]
