@@ -6,7 +6,7 @@
 # toolchain under QEMU would produce the same static binary far slower - and emulation is
 # not merely slow: `npm ci` under QEMU/arm64 died with SIGILL and hung a release build for
 # three hours (see frontend/Dockerfile). Nothing here needs to run on the target.
-FROM --platform=$BUILDPLATFORM golang:1.26.7-alpine@sha256:28d89ee9cc0ff9fec75c82ca201e6bf7fdf9a679d4b7b24dfa04f2bb766bb468 AS build
+FROM --platform=$BUILDPLATFORM golang:1.26.8-alpine@sha256:ce864e7223ac17b1775e6fd0b4c0db580c2eb50e7953a427916379e4b92a1628 AS build
 # Supplied by buildx per target image; defaulted so a plain `docker build` still works.
 ARG TARGETOS=linux
 ARG TARGETARCH
