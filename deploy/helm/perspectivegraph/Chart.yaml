@@ -2,8 +2,8 @@ apiVersion: v2
 name: perspectivegraph
 description: PerspectiveGraph - The Open DevSecOps Context Engine
 type: application
-version: 1.11.2 # x-release-please-version
-appVersion: "1.11.2" # x-release-please-version
+version: 1.12.0 # x-release-please-version
+appVersion: "1.12.0" # x-release-please-version
 # The floor is policy/v1 PodDisruptionBudget, which went GA in 1.21; everything else
 # here (networking.k8s.io/v1, seccompProfile, topologySpreadConstraints) is older.
 #
@@ -38,9 +38,9 @@ annotations:
   artifacthub.io/license: Apache-2.0
   artifacthub.io/images: |
     - name: backend
-      image: ghcr.io/luiacuaniello/perspectivegraph:v1.11.2 # x-release-please-version
+      image: ghcr.io/luiacuaniello/perspectivegraph:v1.12.0 # x-release-please-version
     - name: dashboard
-      image: ghcr.io/luiacuaniello/perspectivegraph-dashboard:v1.11.2 # x-release-please-version
+      image: ghcr.io/luiacuaniello/perspectivegraph-dashboard:v1.12.0 # x-release-please-version
   artifacthub.io/links: |
     - name: Documentation
       url: https://github.com/luiacuaniello/perspectivegraph/blob/main/docs/MANUAL.md
