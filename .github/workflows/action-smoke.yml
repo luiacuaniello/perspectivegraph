@@ -224,7 +224,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.7"
+          go-version: "1.26.8"
           cache-dependency-path: backend/go.sum
 
       # Local mode is newer than the last release, so the released binary cannot run it.
@@ -276,7 +276,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.7"
+          go-version: "1.26.8"
           cache-dependency-path: backend/go.sum
 
       # Local mode is newer than the last release, so the released binary cannot run it.
