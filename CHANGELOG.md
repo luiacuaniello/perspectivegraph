@@ -4,6 +4,11 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+This file is generated from commit subjects, so it says *what* changed in one line.
+When a release needs you to **do** something - set a new variable, change a request you
+send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
+version absent from it needs no action.
+
 ## [1.11.2](https://github.com/luiacuaniello/perspectivegraph/compare/v1.11.1...v1.11.2) (2026-09-03)
 
 

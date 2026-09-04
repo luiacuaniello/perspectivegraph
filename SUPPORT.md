@@ -90,7 +90,8 @@ to be boring:
 - **The schema contract is machine-guarded.** `docs/api/schema.graphql` is a snapshot and a
   test fails CI on any drift, so a breaking API change cannot arrive unnoticed in a patch.
 - **A CHANGELOG per release**, generated from Conventional Commits rather than written from
-  memory.
+  memory, and an [upgrade note](docs/UPGRADING.md) for every release that needs you to do
+  something - a new setting, a request that now fails. Most releases need neither.
 - **No migration step.** The backend creates and upgrades its own graph and governance
   schema on start-up. There is nothing to run between versions.
 - **Rollback is a redeploy** of the previous digest. One caveat worth knowing before you
@@ -118,7 +119,10 @@ The practical recipe, in the order a release manager would want it:
    advisories.
 3. **Verify** the cosign signature, the SBOM and the provenance attestation as a gate in
    your own pipeline, so an unverifiable artefact fails your process rather than mine.
-4. **Read the CHANGELOG entry** for the target version; it names any deprecation.
+4. **Read [UPGRADING.md](docs/UPGRADING.md)** for the target version - the releases that
+   need an action from you, and what it is - then the CHANGELOG for the rest. The
+   CHANGELOG is generated from commit subjects and states what changed in a line; it is
+   not where the operator instruction lives.
 5. **Stage it**, then roll forward with the backup already taken.
 6. **Keep your configuration under your own change control.** The environment variables are
    part of the stable surface, so your `.env` or Helm values are a reviewable artefact that

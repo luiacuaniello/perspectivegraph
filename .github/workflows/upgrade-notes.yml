@@ -1,0 +1,74 @@
+# A behaviour change has to arrive with the note that tells an operator about it.
+#
+# The CHANGELOG is generated from Conventional Commit *subjects*, so the paragraph under
+# the subject - the one saying "set this variable or your PR comments stop" - never
+# reaches a reader. That is not hypothetical: 1.11.2 changed three behaviours and shipped
+# with a one-line release note, which is why docs/UPGRADING.md exists.
+#
+# So the convention is enforced rather than remembered: a pull request whose commits
+# announce a behaviour or breaking change must also touch docs/UPGRADING.md. The check
+# cannot know whether the note is any good - only that someone had to write one.
+name: Upgrade notes
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  upgrade-notes:
+    name: Behaviour changes carry a note
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+        with:
+          # The whole PR range has to be walkable, so no shallow clone.
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: A commit that changes behaviour updates docs/UPGRADING.md
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          # `BREAKING CHANGE` is the Conventional Commits footer; `BEHAVIOUR CHANGE` is
+          # this project's marker for a change that alters what a deployment does without
+          # breaking the stable interface - a control that starts refusing something, a
+          # default that flips. Both need an operator to be told; only the first would
+          # reach the CHANGELOG on its own.
+          announced=""
+          for sha in $(git rev-list "${BASE}..${HEAD}"); do
+            if git log -1 --format='%B' "$sha" | grep -qE '^(BREAKING[ -]CHANGE|BEHAVIOU?R CHANGE):'; then
+              announced="${announced}${sha} $(git log -1 --format='%s' "$sha")
+          "
+            fi
+          done
+
+          if [ -z "$announced" ]; then
+            echo "no commit in this pull request announces a behaviour or breaking change"
+            exit 0
+          fi
+
+          if git diff --name-only "${BASE}..${HEAD}" | grep -qx 'docs/UPGRADING.md'; then
+            echo "behaviour change announced, and docs/UPGRADING.md is updated"
+            exit 0
+          fi
+
+          echo "::error::These commits announce a behaviour or breaking change:"
+          printf '%s' "$announced"
+          cat <<'EOF'
+          ::error::docs/UPGRADING.md is not updated.
+
+          The CHANGELOG is generated from commit subjects, so the paragraph explaining what
+          an operator has to do never reaches it. Add a section for the release this lands
+          in, saying who is affected, what they will see, and what to set.
+
+          If this genuinely needs no action from anyone running it, the commit should not
+          announce a change - reword the footer.
+          EOF
+          exit 1

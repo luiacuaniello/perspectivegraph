@@ -258,7 +258,9 @@ Notes:
 
 ## 5. Upgrades
 
-1. Read the [CHANGELOG](../CHANGELOG.md) for the target version.
+1. Read [UPGRADING.md](UPGRADING.md) for the target version - it lists the releases that
+   need an action from you, and what the action is. Then the
+   [CHANGELOG](../CHANGELOG.md) for everything else that changed.
 2. Take a backup (section 4).
 3. Roll the backend image forward. The graph schema is created/managed by the backend;
    there is no separate migration step, but a major version may re-derive nodes/edges - a
