@@ -22,14 +22,14 @@
 # The tags carry release-please markers, so a release bumps them with everything else.
 # To verify what you are about to run, before you run it:
 #
-#   cosign verify ghcr.io/luiacuaniello/perspectivegraph:v1.12.0 \ # x-release-please-version
+#   cosign verify ghcr.io/luiacuaniello/perspectivegraph:v1.12.1 \ # x-release-please-version
 #     --certificate-identity-regexp 'https://github.com/luiacuaniello/perspectivegraph/.*' \
 #     --certificate-oidc-issuer https://token.actions.githubusercontent.com
 services:
   backend:
-    image: ghcr.io/luiacuaniello/perspectivegraph:v1.12.0 # x-release-please-version
+    image: ghcr.io/luiacuaniello/perspectivegraph:v1.12.1 # x-release-please-version
     pull_policy: always
 
   frontend:
-    image: ghcr.io/luiacuaniello/perspectivegraph-dashboard:v1.12.0 # x-release-please-version
+    image: ghcr.io/luiacuaniello/perspectivegraph-dashboard:v1.12.1 # x-release-please-version
     pull_policy: always
