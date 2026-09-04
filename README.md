@@ -94,10 +94,16 @@ trial will *not* tell you before you spend a fortnight finding out.
 make demo
 ```
 
-Builds the stack, feeds it sample Trivy / Semgrep / Custodian / Falco / Kubernetes /
-IAM / SSO output, waits for the analyzer, and prints the top attack path with its
-generated fix. Dashboard on **http://localhost:3000**. Needs Docker, `jq` and `curl`;
-first run takes a couple of minutes to build the images. Tear down with `make down`.
+Pulls the **published, cosign-signed images**, feeds them sample Trivy / Semgrep /
+Custodian / Falco / Kubernetes / IAM / SSO output, waits for the analyzer, and prints the
+top attack path with its generated fix. Dashboard on **http://localhost:3000**. Needs
+Docker, `jq` and `curl` - no Go or Node toolchain, and nothing is compiled: measured at
+**23 seconds** from an empty image cache. Tear down with `make down`.
+
+Building it yourself instead is `make demo-build`, which is the same demo from your
+working tree. The images the fast path runs are the release artefacts, so you can check
+what you are about to run before you run it - the `cosign verify` command is at the top of
+[`docker-compose.demo.yml`](docker-compose.demo.yml).
 
 Prefer not to build? The release images are published to GHCR (`latest` also tracks the
 newest release; the pinned tag is the one to use if you care about reproducibility):

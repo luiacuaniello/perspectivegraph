@@ -25,6 +25,10 @@
         {
           "type": "generic",
           "path": "docs/OPERATIONS.md"
+        },
+        {
+          "type": "generic",
+          "path": "docker-compose.demo.yml"
         }
       ]
     }

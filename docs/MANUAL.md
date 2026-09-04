@@ -518,13 +518,20 @@ findings correlate into the top ranked attack path with its fix:
 make demo           # needs Docker + jq; then open http://localhost:3000
 ```
 
+Nothing is compiled: it runs the **published, signed release images**
+([`docker-compose.demo.yml`](../docker-compose.demo.yml) overrides the two services that
+would otherwise be built), so there is no Go or Node toolchain to install and no wait -
+measured at 23 seconds from an empty image cache. `make demo-build` is the same demo from
+your working tree, for when you are changing the code.
+
 The [README's walk-through](../README.md#see-the-whole-engine-in-90-seconds) shows what
 that prints, and how to turn the fix into a real PR.
 
 **Or step by step (everything in containers):**
 
 ```bash
-make up-full        # builds & runs infra + backend + dashboard (docker compose --profile app)
+make up-demo        # published images, no build
+# or: make up-full  # builds infra + backend + dashboard from this tree
 make seed           # feed the sample sources; they correlate into attack paths
 open http://localhost:3000
 ```

@@ -203,6 +203,27 @@ jobs:
       - name: Content-Security-Policy matches the page it protects
         run: python3 scripts/csp-check.py
 
+      # artifacthub-repo.yml is read by Artifact Hub, not by anything here, and a broken
+      # one fails SILENTLY: the chart page keeps working and the ownership claim just
+      # never succeeds, with no error anywhere to say why. It broke on its first hand
+      # edit - an uncommented line left a leading space, which made the document
+      # unparseable. Ten lines of check beat finding out from a flag that never turns on.
+      - name: Artifact Hub metadata is well-formed
+        run: |
+          python3 - <<'PY'
+          import re, sys, yaml
+          d = yaml.safe_load(open("artifacthub-repo.yml"))
+          if not isinstance(d, dict):
+              sys.exit("artifacthub-repo.yml is not a YAML mapping")
+          rid = str(d.get("repositoryID", ""))
+          if not re.fullmatch(r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}", rid):
+              sys.exit(f"repositoryID {rid!r} is not the UUID Artifact Hub shows on the repository card")
+          owners = d.get("owners") or []
+          if not owners or not all(o.get("name") and "@" in str(o.get("email", "")) for o in owners):
+              sys.exit("every owner needs a name and the email used to sign in to Artifact Hub")
+          print(f"artifacthub-repo.yml ok: {rid}, {len(owners)} owner(s)")
+          PY
+
   frontend:
     name: Frontend (React)
     runs-on: ubuntu-latest
