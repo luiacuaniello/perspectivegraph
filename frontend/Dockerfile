@@ -9,7 +9,7 @@
 # architecture - so emulating the whole Node toolchain under QEMU to produce arm64
 # assets buys nothing and costs hours: vite/rolldown are native Rust binaries, and
 # emulated they crawl. Only the nginx stage below varies per target.
-FROM --platform=$BUILDPLATFORM node:24-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf AS build
+FROM --platform=$BUILDPLATFORM node:26-alpine@sha256:2d984a15c9b54fd0aeb608b8e0d0d83529eb34d2966db27a1fb4f1edc3d298a3 AS build
 WORKDIR /app
 COPY package*.json ./
 # `npm ci`, never `npm install`: it installs exactly what package-lock.json pins and
@@ -27,7 +27,7 @@ RUN npm ci --no-audit --no-fund
 COPY . .
 RUN npm run build
 
-FROM nginx:1.31.2-alpine@sha256:1a8724a52d432501548a8d8681bb1554c2d09778f8b9ed0882fc3442549980b7
+FROM nginx:1.31.5-alpine@sha256:72ba65eb42c10344912a84ff42408db7d34f2feb642204570ab8fc5ffd29f1d3
 # Base is pinned by digest for reproducibility; apk upgrade patches any OS-package
 # CVEs disclosed since that digest was built (e.g. openssl/libxml2), so the image
 # stays current without waiting on a base rebuild. Keeps the Trivy CI gate green.
