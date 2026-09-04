@@ -1,7 +1,8 @@
 name: PerspectiveGraph attack-path gate
-description: >-
-  Fail a pull request when the change puts a sensitive asset within reach - blocking on
-  attack paths rather than on vulnerability counts, and telling you when nobody looked.
+# 125 characters is the GitHub Marketplace ceiling, and it is checked when the listing is
+# published rather than when this file is edited - so a longer one fails there, on a
+# release, not here. The rest of the argument is in the comment block below.
+description: Fail a pull request when the change puts a sensitive asset within reach - not when it adds a CVE nothing routes to.
 author: luiacuaniello
 branding:
   icon: git-merge
