@@ -179,6 +179,13 @@ dependency, say why in the pull request rather than widening the list quietly.
   build uses, because npm records the transitive dependencies of optional
   platform-specific packages only for the platform it runs on: regenerating on macOS
   silently drops entries the Linux build needs, and `npm ci` then fails in CI.
+- **The npm version is pinned**, declared once in `frontend/package.json`
+  (`engines.npm`) and installed verbatim by CI, `make lockfile` and the release
+  Dockerfile - a Go test fails if any of them drifts. The version a Node image happens
+  to bundle is not a decision, and it was silently deciding which registry API the
+  supply-chain audit depended on. If your own npm differs you will see an
+  `EBADENGINE` warning; that is the intended signal, and `make lockfile` is unaffected
+  because it runs the pinned npm in a container.
 - **Docs + Postman:** every user-facing feature updates the docs and
   `.env.example` **and** the Postman collection
   (`docs/perspectivegraph.postman_collection.json`). `README.md` is the landing

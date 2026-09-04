@@ -215,6 +215,9 @@ jobs:
       # own npm no longer calls. So npm is pinned like every other tool in this file
       # (staticcheck, Trivy, the actions themselves): an unpinned one changes the gate
       # under a pull request that did not touch it.
+      #
+      # The version is declared once, in frontend/package.json `engines.npm`, and a Go
+      # test (TestNpmVersionIsPinnedEverywhereItRuns) fails if any call site drifts.
       - run: npm install -g npm@11.19.1
       # `npm ci`, never `npm install`: it installs exactly what the lockfile pins and
       # fails instead of resolving anything new, so CI tests the same dependency tree
@@ -276,6 +279,9 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      # Same npm as everywhere else - frontend/package.json `engines.npm` is the source,
+      # and a Go test holds all four call sites to it.
+      - run: npm install -g npm@11.19.1
       - run: npm ci --no-audit --no-fund
         working-directory: frontend
 
