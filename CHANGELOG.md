@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.12.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.11.2...v1.12.0) (2026-09-04)
+
+
+### Features
+
+* run the demo from published images, and give the chart a page ([#167](https://github.com/luiacuaniello/perspectivegraph/issues/167)) ([4853a79](https://github.com/luiacuaniello/perspectivegraph/commit/4853a798f01fc1c517363dfe7297d23ccf11a354))
+
 ## [1.11.2](https://github.com/luiacuaniello/perspectivegraph/compare/v1.11.1...v1.11.2) (2026-09-03)
 
 
