@@ -68,7 +68,7 @@ make test            # Go tests (CGO disabled for static, portable binaries)
 ### Checks CI runs - run them locally before a PR
 
 ```bash
-# Backend (go1.25): build, vet, tests, dependency vulns, and SAST
+# Backend (go1.26): build, vet, tests, dependency vulns, and SAST
 cd backend
 GOTOOLCHAIN=go1.26.7 CGO_ENABLED=0 go build ./... && go vet ./... && go test ./...
 go run golang.org/x/vuln/cmd/govulncheck@latest ./...
@@ -179,13 +179,14 @@ dependency, say why in the pull request rather than widening the list quietly.
   build uses, because npm records the transitive dependencies of optional
   platform-specific packages only for the platform it runs on: regenerating on macOS
   silently drops entries the Linux build needs, and `npm ci` then fails in CI.
-- **The npm version is pinned**, declared once in `frontend/package.json`
-  (`engines.npm`) and installed verbatim by CI, `make lockfile` and the release
-  Dockerfile - a Go test fails if any of them drifts. The version a Node image happens
-  to bundle is not a decision, and it was silently deciding which registry API the
-  supply-chain audit depended on. If your own npm differs you will see an
-  `EBADENGINE` warning; that is the intended signal, and `make lockfile` is unaffected
-  because it runs the pinned npm in a container.
+- **Node is pinned, and npm comes with it.** CI pins an exact `node-version`, and the
+  release Dockerfile and `make lockfile` pin the same image by digest - Node 24.20.0,
+  which ships npm 11.19.0. Nothing installs npm over it: `npm install -g npm@x` pins a
+  version but fetches it unauthenticated, which is a supply-chain regression (OpenSSF
+  Scorecard reports it as an unpinned dependency) where the image digest is a
+  cryptographic pin. A Go test fails if any of those surfaces drifts, or if a global npm
+  install comes back. `engines.npm` records what that Node ships, so if your own npm
+  differs you get an `EBADENGINE` warning - the intended signal.
 - **Docs + Postman:** every user-facing feature updates the docs and
   `.env.example` **and** the Postman collection
   (`docs/perspectivegraph.postman_collection.json`). `README.md` is the landing

@@ -41,6 +41,16 @@ node_modules/
 .claude/
 *.swp
 
+# macOS/iCloud conflict copies: "name 2.go", "name 3.json". This directory is under
+# ~/Documents, which iCloud Drive syncs, and a copy lands beside the original with the
+# same content. One of these was committed and broke the build rather than a test: Go
+# compiles "npmversion_test 2.go" as ORDINARY source - the name does not end in
+# _test.go - so it landed in the package proper, where the helper it calls only exists
+# in a test file. `go build ./...` failed, and so did the release image build.
+* [0-9].*
+* copy.*
+* copy [0-9].*
+
 # Data volumes (docker)
 /.data/
 node_modules.nosync/

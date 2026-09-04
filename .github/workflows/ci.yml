@@ -26,9 +26,17 @@ jobs:
       - run: go build ./...
       - run: go vet ./...
       - run: go test ./...
+      # The parity tests read files OUTSIDE the Go module - .env.example, docker-compose,
+      # the Helm values, these workflows, the Dockerfiles, the Makefile. Go's test cache
+      # does not track those, so the step above can return a cached pass for a pull request
+      # that changed only a deploy surface, and the guard silently does not run. Measured:
+      # with .env.example deliberately broken, `go test ./internal/config/` still reports
+      # `ok (cached)`; only -count=1 catches it. One package, so the cost is a second.
+      - name: Repository-surface parity (uncached)
+        run: go test -count=1 ./internal/config/
       # Supply-chain gate: fail on a vulnerability the code actually reaches.
       - name: govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
       # SAST gate: static security analysis of the tool's OWN source - a security
       # tool should hold itself to the bar it sets. The by-design benign hits
       # (G404 Monte-Carlo PRNG, G401/G505 sha1 as a non-crypto content fingerprint,
@@ -36,7 +44,7 @@ jobs:
       # call site, so a plain `gosec ./...` is clean and NEW unjustified uses still
       # fail. Only G104 (unchecked cleanup Close() errors) stays globally excluded.
       - name: gosec (SAST)
-        run: go run github.com/securego/gosec/v2/cmd/gosec@latest -quiet -exclude=G104 ./...
+        run: go run github.com/securego/gosec/v2/cmd/gosec@v2.29.0 -quiet -exclude=G104 ./...
       # Correctness gate, orthogonal to the three above: vet catches a fixed set of
       # suspicious constructs, gosec looks for security patterns and govulncheck for
       # known-vulnerable dependencies - none of them find dead code, redundant
@@ -205,20 +213,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "24.20.0"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      # The npm that ships with a Node image is whatever that image happened to bundle,
-      # and it decides which registry API the audit talks to: npm 10 posts to the legacy
-      # `security/audits/quick`, current npm to `security/advisories/bulk`. A 503 on the
-      # legacy endpoint failed a build here on 2026-09-04 - on an endpoint the maintainer's
-      # own npm no longer calls. So npm is pinned like every other tool in this file
-      # (staticcheck, Trivy, the actions themselves): an unpinned one changes the gate
-      # under a pull request that did not touch it.
-      #
-      # The version is declared once, in frontend/package.json `engines.npm`, and a Go
-      # test (TestNpmVersionIsPinnedEverywhereItRuns) fails if any call site drifts.
-      - run: npm install -g npm@11.19.1
       # `npm ci`, never `npm install`: it installs exactly what the lockfile pins and
       # fails instead of resolving anything new, so CI tests the same dependency tree
       # the release image ships. It also means a pull request cannot silently pull in a
@@ -230,8 +227,37 @@ jobs:
       - name: Unit tests (Vitest)
         run: npm test
       # Supply-chain gate: fail on a high/critical advisory in the JS deps.
-      - name: npm audit
-        run: npm audit --audit-level=high
+      #
+      # Retried, because `npm audit` exits non-zero for two unrelated reasons - an advisory
+      # was found, and the registry could not be reached - and npmjs.org has answered 503
+      # twice on this repository in one day, on both the legacy and the current endpoint.
+      # A retry is the whole fix: the gate still FAILS if the registry is genuinely down,
+      # so a build never passes without having been audited. It just does not fail on a
+      # blip. The two outcomes are told apart by the shape of the output rather than by
+      # npm's error schema, which is theirs to change: a well-formed report is judged on
+      # its counts, anything else is a failed attempt.
+      - name: npm audit (high/critical)
+        run: |
+          set -uo pipefail
+          for delay in 0 10 30; do
+            if [ "$delay" -gt 0 ]; then
+              echo "the registry did not return a report; retrying in ${delay}s"
+              sleep "$delay"
+            fi
+            out="$(npm audit --json 2>/dev/null || true)"
+            if printf '%s' "$out" | jq -e '.metadata.vulnerabilities.high' >/dev/null 2>&1; then
+              n="$(printf '%s' "$out" | jq '.metadata.vulnerabilities.high + .metadata.vulnerabilities.critical')"
+              if [ "$n" -gt 0 ]; then
+                echo "::error::$n high/critical advisory(ies) in the npm dependency tree"
+                npm audit --audit-level=high || true
+                exit 1
+              fi
+              echo "npm audit: no high or critical advisories"
+              exit 0
+            fi
+          done
+          echo "::error::npm audit could not get a report from the registry after 3 attempts. The gate did not run, so this build fails rather than passing unaudited - re-run the job."
+          exit 1
 
   # Dependency licences. An Apache-2.0 project that ships binaries and images has to
   # know what it is redistributing, and "we would have noticed" is not a control: a
@@ -276,12 +302,9 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "24.20.0"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      # Same npm as everywhere else - frontend/package.json `engines.npm` is the source,
-      # and a Go test holds all four call sites to it.
-      - run: npm install -g npm@11.19.1
       - run: npm ci --no-audit --no-fund
         working-directory: frontend
 
