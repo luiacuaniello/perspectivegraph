@@ -81,7 +81,10 @@ backend:
     secretName: ""
   # Tiny utility image used by the dependency-wait initContainers (needs `nc`).
   # Pin to a digest in security-sensitive environments.
-  waitImage: busybox:1.37
+  # Pinned by digest like every other image this chart deploys, and like both
+  # Dockerfiles. A tag is a pointer someone else can move; this is the one place the
+  # chart still trusted one.
+  waitImage: busybox:1.37@sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028
 
 frontend:
   # nginx runs as uid 101 in its image. These are values rather than fixed template text

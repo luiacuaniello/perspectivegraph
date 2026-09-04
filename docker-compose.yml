@@ -56,7 +56,7 @@ services:
   # One-shot: make the governance volume writable by the non-root backend (uid 65532),
   # so file-backed persistence (VALIDATIONS_PATH etc.) survives restarts. Exits at once.
   gov-init:
-    image: busybox:1.37
+    image: busybox:1.37@sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028
     command: ["sh", "-c", "mkdir -p /govdata && chown -R 65532:65532 /govdata"]
     volumes:
       - perspective-govdata:/govdata
