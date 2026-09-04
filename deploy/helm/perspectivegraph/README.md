@@ -89,6 +89,40 @@ each with the comment explaining what it costs.
 The [threat model](https://github.com/luiacuaniello/perspectivegraph/blob/main/docs/THREAT-MODEL.md)
 states what is *not* covered, and what an operator has to do themselves.
 
+## About the security report on this page
+
+Artifact Hub scans every image a **default** install deploys, and the default here includes
+a bundled PostgreSQL+AGE so that `helm install` works with nothing else in place. That
+image is where the findings are. The split, from the report itself:
+
+| Image | Critical | High |
+|---|---|---|
+| `perspectivegraph` (backend) | **0** | **0** |
+| `perspectivegraph-dashboard` | **0** | **0** |
+| `nats` | 0 | 2 |
+| `apache/age` (bundled demo database) | 14 | 97 |
+
+Nothing in the two images this project builds. Of the remaining criticals, **thirteen have
+no fix available from Debian in any version** - they are not waiting on anyone's upgrade.
+
+Medium and low follow the same shape: 144 and 150, and **77% of them have no fix available
+either**. The rest would be cleared by an upstream rebuild of the database image on a
+current Debian, which is the image maintainer's release cadence rather than a decision
+anyone here can make.
+
+`values-production.yaml` deploys none of it: production points at your own PostgreSQL+AGE,
+which is what [OPERATIONS](https://github.com/luiacuaniello/perspectivegraph/blob/main/docs/OPERATIONS.md)
+asks for, and the bundled database is a convenience for evaluating the chart rather than a
+component of it.
+
+Left there rather than trimmed on purpose. The annotation that feeds this report *replaces*
+Artifact Hub's own image extraction, so listing only the two first-party images would take
+the page to zero criticals without a single one having been fixed. That number would be
+easier to look at and would mean nothing - which is the failure this engine exists to
+measure. A critical on something a deployment does not run, or that nothing can route to,
+is not the same as a critical on something exposed, and telling those two apart is the
+whole product.
+
 ## Documentation
 
 - [Operations runbook](https://github.com/luiacuaniello/perspectivegraph/blob/main/docs/OPERATIONS.md) - where to get PostgreSQL+AGE, backup and restore, upgrades, the production checklist

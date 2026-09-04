@@ -1,5 +1,5 @@
-# Dependabot keeps dependencies patched across the three ecosystems this repo
-# uses. Grouped, weekly PRs so the review load stays low. See:
+# Dependabot keeps dependencies patched across the ecosystems this repo uses.
+# Grouped, weekly PRs so the review load stays low. See:
 # https://docs.github.com/code-security/dependabot/dependabot-version-updates
 version: 2
 updates:
@@ -65,3 +65,59 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "chore(ci)"
+
+  # Container images.
+  #
+  # This was the blind spot, and it was where every critical finding lived. Dependabot
+  # watched the Go, npm and Actions ecosystems; the CI image scan covers only the two
+  # images this project BUILDS. Nothing watched the third-party images the chart and the
+  # compose file DEPLOY - so nats sat three minor versions behind on 2.12.11, carrying a
+  # critical and ten highs that were all fixed upstream, and the Artifact Hub security
+  # report was the first thing to say so.
+  #
+  # Coverage, stated honestly: the Dockerfiles below are certain. The chart's values.yaml
+  # is picked up because its postgres and nats entries are plain `image: <ref>` strings,
+  # which the docker parser deep-fetches from YAML; the first-party ones are
+  # repository/tag maps and are skipped, correctly - release-please owns those. Whether
+  # docker-compose.yml is fetched depends on the ecosystem's YAML matching, so it is
+  # listed but not relied upon: check that a bump there actually arrives before trusting
+  # it, and until then the compose pins are reviewed by hand alongside the chart.
+  - package-ecosystem: docker
+    directory: /backend
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      backend-images:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /frontend
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      frontend-images:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /deploy/helm/perspectivegraph
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      chart-images:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      compose-images:
+        patterns: ["*"]

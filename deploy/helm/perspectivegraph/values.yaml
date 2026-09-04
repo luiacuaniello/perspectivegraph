@@ -132,7 +132,7 @@ postgres:
   dsn: ""
   externalHost: ""
   externalPort: 5432
-  image: apache/age:release_PG16_1.6.0@sha256:16aa423d20a31aed36a3313244bf7aa00731325862f20ed584510e381f2feaed
+  image: apache/age:release_PG17_1.7.0@sha256:92a5d223965bc2e436f9eee436e0bd2c0d81f3b59124b3d197ec94706f3450a8
   graph: perspective
   # libpq sslmode for the DB connection (it carries the attack map). Empty picks a
   # safe default by context: "disable" for the bundled in-cluster Postgres (no TLS),
@@ -154,7 +154,7 @@ postgres:
 nats:
   enabled: true
   externalUrl: ""
-  image: nats:2.12.11-alpine@sha256:006a95e54643c0a2a33dfcee4654e9115f7540ebb8804822d3e2d82bf8515f61
+  image: nats:2.14.6-alpine@sha256:ad7a43eb7e3337c3c38ce5d784d1461791f95f730f252d2b25eee699752a0ca3
   stream: PERSPECTIVE
   subject: perspective.events.*
   # App-level TLS to a TLS-enabled NATS (typically external; use a tls:// URL).
