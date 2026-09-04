@@ -22,7 +22,7 @@ set -euo pipefail
 REGION=${AWS_REGION:-${REGION:-}}
 ROLE_ARN=${ROLE_ARN:-}
 INGEST_URL=${INGEST_URL:-}
-GO=${GO:-go}; export GOTOOLCHAIN=${GOTOOLCHAIN:-go1.26.7}
+GO=${GO:-go}; export GOTOOLCHAIN=${GOTOOLCHAIN:-go1.26.8}
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 die() { echo "ERROR: $*" >&2; exit 1; }
