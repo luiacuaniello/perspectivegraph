@@ -3,7 +3,11 @@
 backend:
   image:
     repository: ghcr.io/luiacuaniello/perspectivegraph
-    tag: latest
+    # Empty means the chart's own appVersion, so a chart installs the app it was built
+    # and tested against. It was `latest`, which floats: chart 1.12.0 could deploy any
+    # image ever pushed, and Artifact Hub's security report scanned that instead of the
+    # release. Set it to pin a different version - or better, to a @sha256 digest.
+    tag: ""
     pullPolicy: IfNotPresent
   replicas: 1
   # Scheduling. Empty by default - a single replica has nothing to spread - and set by
@@ -103,7 +107,7 @@ frontend:
   enabled: true
   image:
     repository: ghcr.io/luiacuaniello/perspectivegraph-dashboard
-    tag: latest
+    tag: "" # empty = the chart's appVersion; see backend.image.tag above
     pullPolicy: IfNotPresent
   replicas: 1
   # As for the backend: empty until there is more than one replica to spread.

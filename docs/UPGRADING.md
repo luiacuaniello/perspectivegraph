@@ -17,6 +17,36 @@ digest, take the backup, stage it.
 
 ---
 
+## 1.12.1
+
+### The chart installs the app version it was built with, not `latest`
+
+**Affects you if** you install the Helm chart without setting `backend.image.tag` or
+`frontend.image.tag` - which is the default.
+
+Both defaulted to `latest`. A chart is a versioned, signed artefact that was tested
+against one build of the application, and `latest` floats: chart 1.12.0 would deploy
+whatever image had been pushed most recently, which is not necessarily the one it
+declares. The default is now empty, and an empty tag resolves to the chart's own
+`appVersion`.
+
+Concretely, `helm install` with defaults moves from `…/perspectivegraph:latest` to
+`…/perspectivegraph:v1.12.1`. If you were relying on `latest` to pick up new images
+without touching your values, set it back explicitly:
+
+```yaml
+backend:
+  image:
+    tag: latest
+```
+
+Better, pin a digest - `tag: "@sha256:…"` - which is what
+[OPERATIONS](OPERATIONS.md) asks for in production and what the release publishes.
+
+There was a second, quieter consequence. Artifact Hub scans the images a chart deploys
+and publishes the report on the chart's page; with a floating tag it was scanning
+something other than the release.
+
 ## 1.11.2
 
 A security release. Three behaviours changed, each of them a control that now refuses
