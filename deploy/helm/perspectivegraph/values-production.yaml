@@ -40,7 +40,7 @@ backend:
     enabled: false
     secretName: ""
   # Pin the wait helper image by digest in security-sensitive clusters.
-  waitImage: busybox:1.37
+  waitImage: busybox:1.37@sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028
 
 # Bring your own managed, encrypted Postgres with the Apache AGE extension (the
 # bundled demo image has no TLS, so it cannot satisfy sslMode: verify-full).

@@ -53,7 +53,7 @@ annotations:
     - name: nats
       image: nats:2.12.11-alpine@sha256:006a95e54643c0a2a33dfcee4654e9115f7540ebb8804822d3e2d82bf8515f61
     - name: governance-init
-      image: busybox:1.37
+      image: busybox:1.37@sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028
   artifacthub.io/links: |
     - name: Documentation
       url: https://github.com/luiacuaniello/perspectivegraph/blob/main/docs/MANUAL.md
