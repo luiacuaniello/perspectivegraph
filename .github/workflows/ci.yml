@@ -208,6 +208,14 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      # The npm that ships with a Node image is whatever that image happened to bundle,
+      # and it decides which registry API the audit talks to: npm 10 posts to the legacy
+      # `security/audits/quick`, current npm to `security/advisories/bulk`. A 503 on the
+      # legacy endpoint failed a build here on 2026-09-04 - on an endpoint the maintainer's
+      # own npm no longer calls. So npm is pinned like every other tool in this file
+      # (staticcheck, Trivy, the actions themselves): an unpinned one changes the gate
+      # under a pull request that did not touch it.
+      - run: npm install -g npm@11.19.1
       # `npm ci`, never `npm install`: it installs exactly what the lockfile pins and
       # fails instead of resolving anything new, so CI tests the same dependency tree
       # the release image ships. It also means a pull request cannot silently pull in a

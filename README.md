@@ -388,6 +388,7 @@ environment.
 - [Manual](docs/MANUAL.md) - architecture, scoring, quick start, deploy, operate
 - [Positioning](docs/POSITIONING.md) - what is claimed, what is **not**, and how to check
 - [Support](SUPPORT.md) - which versions get fixes, how fast, and how to run this under change control
+- [Upgrading](docs/UPGRADING.md) - the releases that need an action from you, and what it is
 - [Roadmap](ROADMAP.md) - what's next, and what it deliberately isn't becoming
 - [Threat model](docs/THREAT-MODEL.md) · [Operations](docs/OPERATIONS.md) · [API stability](docs/API-STABILITY.md) · [Scale](docs/SCALE.md)
 - [Governance](GOVERNANCE.md) · [Maintainers](MAINTAINERS.md) · [Adopters](ADOPTERS.md) - who decides, who maintains, who runs it
