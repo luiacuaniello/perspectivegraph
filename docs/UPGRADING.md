@@ -17,6 +17,73 @@ digest, take the backup, stage it.
 
 ---
 
+## 1.12.7
+
+### The chart could not install at all, and now can
+
+**Affects you if** you ever tried `helm install` with the default values. It failed, and
+this release is the fix.
+
+The bundled database and broker pods declared `runAsNonRoot: true` without a `runAsUser`,
+and every image the chart deployed leaves `USER` unset - which is root. The kubelet refuses
+that combination outright:
+
+```
+container has runAsNonRoot and image will run as root
+```
+
+Both pods sat in `CreateContainerConfigError` and the backend waited behind them in
+`Init:0/2` forever. CI never saw it because it rendered the templates and checked them
+against the restricted Pod Security Standard - which they passed - and never installed
+them. `make chart-install` now stands up a kind cluster and installs the chart with default
+values on two Kubernetes versions, so this class of failure cannot return silently.
+
+**Action: none, if you were using the bundled database** - it could not have been running,
+so there is nothing to migrate. An install pointed at your own PostgreSQL+AGE was never
+affected.
+
+### `postgres.image` is now a map, not a string
+
+**Affects you if** you override the bundled database image, typically as
+`--set postgres.image=...` in a pipeline. It now follows the same shape as the backend and
+dashboard images:
+
+```yaml
+postgres:
+  image:
+    repository: ghcr.io/luiacuaniello/perspectivegraph-postgres
+    tag: "" # empty = the chart's appVersion
+```
+
+A string value now fails to render rather than being ignored, which is the safe direction.
+
+### The bundled demo database is built here instead of pulled
+
+The image moves from `apache/age:release_PG17_1.7.0` to
+`ghcr.io/luiacuaniello/perspectivegraph-postgres`, built from `deploy/postgres/Dockerfile`:
+the same PostgreSQL 17 and Apache AGE 1.7.0, on Alpine instead of Debian, signed with
+cosign and carrying an SBOM and provenance like the other two.
+
+**Action: none.** The postgres uid is deliberately kept at 999, the Debian value, so an
+existing `docker compose` volume is read by the new image unchanged - this was tested by
+writing a graph with the old image and reading it back with the new one. On Kubernetes
+`PGDATA` moves to a subdirectory of the mount, which no running cluster can notice for the
+reason in the first note.
+
+Why bother, for a demo: `apache/age` is not stale - it is the official `postgres:17-trixie`
+image plus the extension - but its Debian base carried fourteen criticals, **thirteen of
+them perl and libxml2 with no fix published in any version**, so no rebuild by anyone would
+have cleared them. Alpine ships no perl. The chart's report goes from 430 findings to 4.
+
+### NATS moves to the scratch image
+
+Same server, same version, no Linux userland around it - which was twenty of that image's
+twenty-three findings. **Action: none** unless you run the compose stack with a custom
+health check for NATS: there is no shell in the image to run one, and `docker-compose.yml`
+now waits for the broker with a busybox container instead.
+
+---
+
 ## 1.12.5
 
 ### The chart refuses to publish an unauthenticated instance

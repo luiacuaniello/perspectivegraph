@@ -37,9 +37,16 @@ kubectl -n perspectivegraph port-forward \
 
 ## Requirements
 
-Kubernetes **1.21+**. Nothing else: the chart brings its own database and broker by
-default, and the backend creates and upgrades its own schema at start-up - there is no
-migration step between versions.
+Kubernetes **1.21+** - the floor is `policy/v1` PodDisruptionBudget, and everything else
+the chart uses is older. Nothing else is needed: the chart brings its own database and
+broker by default, and the backend creates and upgrades its own schema at start-up, so
+there is no migration step between versions.
+
+That floor is what the chart *declares*. What is **exercised** on every commit is narrower
+and stated rather than implied: CI installs the chart with default values on kind and waits
+for every pod, on **1.33 and 1.36**. Between the declared floor and the tested range sits a
+span nobody verifies - it is small, because the chart uses only APIs that went GA years
+ago, but it is not zero.
 
 ## Two profiles, and which one you want
 
@@ -92,37 +99,45 @@ states what is *not* covered, and what an operator has to do themselves.
 
 ## About the security report on this page
 
-Artifact Hub scans every image a **default** install deploys, and the default here includes
-a bundled PostgreSQL+AGE so that `helm install` works with nothing else in place. That
-image is where the findings are. The split, from the report itself:
+Artifact Hub scans every image a **default** install deploys, and the annotation that feeds
+it *replaces* Artifact Hub's own extraction - so what is listed is a choice. Everything a
+default install deploys is listed, third-party images included. That rule has not changed
+now that the list scans clean; it is the reason the list can be trusted.
 
-| Image | Critical | High |
-|---|---|---|
-| `perspectivegraph` (backend) | **0** | **0** |
-| `perspectivegraph-dashboard` | **0** | **0** |
-| `nats` | 0 | 2 |
-| `apache/age` (bundled demo database) | 14 | 97 |
+| Image | Critical | High | Total |
+|---|---|---|---|
+| `perspectivegraph` (backend) | 0 | 0 | 1 |
+| `perspectivegraph-dashboard` | 0 | 0 | 0 |
+| `perspectivegraph-postgres` (bundled demo database) | 0 | 0 | 0 |
+| `nats` | 0 | 0 | 3 |
+| `busybox` (init container) | 0 | 0 | 0 |
 
-Nothing in the two images this project builds. Of the remaining criticals, **thirteen have
-no fix available from Debian in any version** - they are not waiting on anyone's upgrade.
+The four remaining findings are the same unknown-severity `golang.org/x/crypto` advisory in
+two Go binaries, with no fix published in any version.
 
-Medium and low follow the same shape: 144 and 150, and **77% of them have no fix available
-either**. The rest would be cleared by an upstream rebuild of the database image on a
-current Debian, which is the image maintainer's release cadence rather than a decision
-anyone here can make.
+**It used to read 14 critical and 97 high, and all of it came from the bundled database.**
+That image was `apache/age`, which is not stale - it is the official `postgres:17-trixie`
+image plus the extension, rebuilt in step with it. The findings were the Debian base:
+thirteen of the fourteen criticals were perl and libxml2 with **no fix available in any
+version**, so no rebuild by anyone would have cleared them. Moving to `postgres:18-trixie`
+was measured and produces a byte-identical finding profile.
 
-`values-production.yaml` deploys none of it: production points at your own PostgreSQL+AGE,
-which is what [OPERATIONS](https://github.com/luiacuaniello/perspectivegraph/blob/main/docs/OPERATIONS.md)
-asks for, and the bundled database is a convenience for evaluating the chart rather than a
-component of it.
+The database is now built from
+[deploy/postgres/Dockerfile](https://github.com/luiacuaniello/perspectivegraph/blob/main/deploy/postgres/Dockerfile):
+PostgreSQL 17 and Apache AGE 1.7.0 on Alpine, which ships no perl at all, with the base
+patched at build time and `gosu` removed - it exists only to drop from root, and this image
+never starts as root. NATS moved from `-alpine` to `-scratch`, which is the same server
+binary with no userland around it. Both are rebuilt on every release, which is what keeps
+them clean rather than clean once.
 
-Left there rather than trimmed on purpose. The annotation that feeds this report *replaces*
-Artifact Hub's own image extraction, so listing only the two first-party images would take
-the page to zero criticals without a single one having been fixed. That number would be
-easier to look at and would mean nothing - which is the failure this engine exists to
-measure. A critical on something a deployment does not run, or that nothing can route to,
-is not the same as a critical on something exposed, and telling those two apart is the
-whole product.
+Two things this deliberately does not claim. Artifact Hub's rating is set by the highest
+severity present and ignores how many there are, so a report going quiet is worth exactly
+as much as the work behind it - and a critical on something nothing can route to was never
+the same as a critical on something exposed. Telling those two apart is what the engine on
+this page is for. And `values-production.yaml` still deploys no bundled database at all:
+production points at your own PostgreSQL+AGE, as
+[OPERATIONS](https://github.com/luiacuaniello/perspectivegraph/blob/main/docs/OPERATIONS.md)
+asks.
 
 ## Documentation
 

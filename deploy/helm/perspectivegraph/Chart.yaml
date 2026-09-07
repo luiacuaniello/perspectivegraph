@@ -34,12 +34,16 @@ maintainers:
 # publish the security report beside the chart.
 #
 # It lists EVERY image a default install deploys, third-party ones included, because the
-# annotation REPLACES Artifact Hub's own extraction: listing only the two we build would
-# have taken the report from 20 criticals to zero without fixing anything - the bundled
-# apache/age is where most of them are. A security tool that quietly drops the images
-# making its own badge look bad has answered the wrong question. `values-production.yaml`
-# is the honest fix and already does it: it points at an external Postgres, and apache/age
-# is not deployed at all.
+# annotation REPLACES Artifact Hub's own extraction: listing only the ones we build would
+# take the report to zero criticals without fixing anything. A security tool that quietly
+# drops the images making its own badge look bad has answered the wrong question. That
+# rule has not changed now that the list scans clean - it is why the list can be trusted.
+#
+# What did change is the two images that carried the findings. The bundled database was
+# `apache/age`, whose Debian base held fourteen criticals with no fix available for
+# thirteen of them; it is now built here from Alpine (deploy/postgres/Dockerfile). NATS
+# moved from -alpine to -scratch. Both are rebuilt with every release, which is what keeps
+# them clean rather than merely clean today.
 annotations:
   artifacthub.io/category: security
   artifacthub.io/license: Apache-2.0
@@ -49,9 +53,9 @@ annotations:
     - name: dashboard
       image: ghcr.io/luiacuaniello/perspectivegraph-dashboard:v1.12.6 # x-release-please-version
     - name: postgres-age
-      image: apache/age:release_PG17_1.7.0@sha256:92a5d223965bc2e436f9eee436e0bd2c0d81f3b59124b3d197ec94706f3450a8
+      image: ghcr.io/luiacuaniello/perspectivegraph-postgres:v1.12.6 # x-release-please-version
     - name: nats
-      image: nats:2.14.6-alpine@sha256:ad7a43eb7e3337c3c38ce5d784d1461791f95f730f252d2b25eee699752a0ca3
+      image: nats:2.14.6-scratch@sha256:54eac64d71b1b04360c2bba312a6b652ff7da0b7e7328865c977518aa5e29d11
     - name: governance-init
       image: busybox:1.37@sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028
   artifacthub.io/links: |

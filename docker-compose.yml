@@ -19,8 +19,14 @@ services:
   # ── Graph core: PostgreSQL with the Apache AGE extension ────────────
   postgres:
     <<: *hardening
-    # Pinned by digest for reproducible, tamper-evident pulls.
-    image: apache/age:release_PG17_1.7.0@sha256:92a5d223965bc2e436f9eee436e0bd2c0d81f3b59124b3d197ec94706f3450a8
+    # Built here rather than pulled, for the reason the Dockerfile spells out: the
+    # apache/age image this replaced inherits fourteen Debian criticals, thirteen with no
+    # fix published in any version. Built locally like backend and frontend so a change to
+    # the Dockerfile is testable; `docker-compose.demo.yml` overrides it with the
+    # published, signed image so the demo still needs no toolchain.
+    build:
+      context: ./deploy/postgres
+    image: perspectivegraph-postgres:local
     container_name: perspective-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-perspective}
@@ -41,17 +47,29 @@ services:
   # ── Event bus: NATS JetStream ───────────────────────────────────────
   nats:
     <<: *hardening
-    image: nats:2.14.6-alpine@sha256:ad7a43eb7e3337c3c38ce5d784d1461791f95f730f252d2b25eee699752a0ca3
+    # -scratch: the nats-server binary and nothing else. That removed twenty of this
+    # image's twenty-three findings, which were all in the Alpine userland it never used.
+    image: nats:2.14.6-scratch@sha256:54eac64d71b1b04360c2bba312a6b652ff7da0b7e7328865c977518aa5e29d11
     container_name: perspective-nats
     command: ["-js", "-m", "8222"]
     ports:
       - "127.0.0.1:4222:4222"   # client
       - "127.0.0.1:8222:8222"   # monitoring
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8222/healthz"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+    # No healthcheck: Compose runs one INSIDE the container, and a scratch image has no
+    # wget and no shell to run it with. `nats-ready` below is the replacement - the same
+    # thing the Helm chart does with an initContainer, and busybox is already in this file
+    # and scans clean. Do not "restore" a healthcheck here without changing the image back.
+
+  # Waits for the broker, then exits. The backend gates on it completing rather than on a
+  # nats healthcheck, because the backend does not retry its first NATS connection: it
+  # returns an error and dies, and Compose would restart it into the same race.
+  nats-ready:
+    image: busybox:1.37@sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028
+    command: ["sh", "-c", "until nc -z nats 4222; do sleep 1; done"]
+    depends_on:
+      nats:
+        condition: service_started
+    restart: "no"
 
   # One-shot: make the governance volume writable by the non-root backend (uid 65532),
   # so file-backed persistence (VALIDATIONS_PATH etc.) survives restarts. Exits at once.
@@ -81,8 +99,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      nats:
-        condition: service_healthy
+      nats-ready:
+        condition: service_completed_successfully
       gov-init:
         condition: service_completed_successfully
     environment:

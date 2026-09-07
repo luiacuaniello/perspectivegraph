@@ -19,11 +19,21 @@ spec:
         app.kubernetes.io/component: nats
     spec:
       # The `restricted` Pod Security Standard, minus readOnlyRootFilesystem - which it
-      # does not require, and which these two DO need (JetStream writes its store, the
-      # bundled Postgres writes its data directory). Both images already run as a non-root
-      # user; this states it so an enforcing namespace admits the pod.
+      # does not require, and which this container DOES need (JetStream writes its store).
+      #
+      # runAsUser is load-bearing: the kubelet checks `runAsNonRoot` against the IMAGE's
+      # user, and the nats image leaves USER empty - which is root - so without a uid here
+      # the container is refused with "container has runAsNonRoot and image will run as
+      # root". See the same note in postgres.yaml; both pods failed this way on a real
+      # cluster while CI, which only rendered templates, stayed green.
+      #
+      # 1000 is arbitrary and that is fine: the scratch image is one static binary with no
+      # /etc/passwd to look the name up in, and nothing in it needs a resolvable user.
       securityContext:
         runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -33,10 +43,20 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
-          args: ["-js", "-m", "8222"]
+          # -sd names the JetStream store explicitly instead of letting nats-server
+          # default to /tmp/nats/jetstream. On the scratch image there is no /tmp and no
+          # shell to create one, and a non-root uid cannot mkdir at the filesystem root:
+          # the server starts, then dies with "could not create storage directory - mkdir
+          # /tmp: permission denied". The emptyDir below is that directory. Storage is
+          # ephemeral either way - it was the container's writable layer before - so this
+          # changes where the stream lives, not how long it survives.
+          args: ["-js", "-sd", "/data", "-m", "8222"]
           ports:
             - containerPort: 4222
             - containerPort: 8222
+          volumeMounts:
+            - name: store
+              mountPath: /data
           # TCP rather than the readiness check: readiness answers "can it serve
           # requests", liveness only "is the process still there". Conflating them
           # restarts a component that is merely busy or waiting on a dependency.
@@ -52,6 +72,9 @@ spec:
               port: 8222
             initialDelaySeconds: 3
             periodSeconds: 5
+      volumes:
+        - name: store
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
