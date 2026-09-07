@@ -379,6 +379,11 @@ graph:
 
 ingress:
   enabled: false
+  # Enabling the ingress publishes /graphql and /ingest. The chart refuses to render that
+  # with no credential configured - see the guard in templates/ingress.yaml. Set this to
+  # true only when an open instance is the point (a public read-only demo), and know that
+  # it publishes both this environment's attack map and a writable ingest endpoint.
+  allowUnauthenticated: false
   className: ""
   annotations: {}
   host: perspectivegraph.local
