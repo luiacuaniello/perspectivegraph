@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help up up-full up-demo demo demo-build demo-run up-search down logs run-backend build-backend test bench bench-cloudgoat mcp reachability-lab-aws redteam-aws boundary-lab-aws tidy run-frontend install-frontend lockfile seed seed-discovery seed-load clean
+.PHONY: help chart-install up up-full up-demo demo demo-build demo-run up-search down logs run-backend build-backend test bench bench-cloudgoat mcp reachability-lab-aws redteam-aws boundary-lab-aws tidy run-frontend install-frontend lockfile seed seed-discovery seed-load clean
 
 # CGO is disabled so the Go binaries link statically (Go's pure-Go DNS resolver
 # instead of the system one). This also sidesteps a macOS system-linker bug on
@@ -235,6 +235,10 @@ import-verdicts:
 ## validate-harness: repeatable REAL-verdict loop with no circularity - bring up a genuinely-exploitable log4shell app, let the engine surface the path, EXPLOIT the live app, and take the verdict from an independent oracle (did the app make the JNDI callback?). Records confirmed/refuted with the path's server-captured predicted score -> calibration. Override TARGET_IMAGE=... to point at a patched image (harvests honest 'refuted') or another target. Needs docker + the stack up.
 validate-harness:
 	@bash scripts/validate-harness.sh
+
+## chart-install: install the Helm chart on a throwaway kind cluster with the DEFAULT values and wait for every pod to be Ready, then check that Apache AGE is loadable inside it. `helm lint` and `helm template` cannot catch an image whose USER is root under runAsNonRoot - that combination made `helm install` impossible while CI stayed green. NODE_IMAGE=<kindest/node:vX> tests another Kubernetes version; KEEP=1 leaves the cluster up. Needs kind + kubectl + helm.
+chart-install:
+	@bash scripts/chart-install.sh
 
 ## validate-harness-k8s: REAL-topology verdict loop - stand up a kind cluster with two misconfigured RBAC scenarios, let the k8s collector DISCOVER the paths (real scores, not modelled), then exploit each and take the verdict from the Kubernetes API server's own RBAC decision (reader=confirmed, webapp=refuted false-positive). SUFFIX=<x> makes distinct samples to accumulate; DELETE_CLUSTER=1 tears the cluster down. Needs kind + the stack up.
 validate-harness-k8s:

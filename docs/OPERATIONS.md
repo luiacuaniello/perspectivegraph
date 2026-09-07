@@ -161,10 +161,10 @@ act on everywhere, and it is worth settling before anything else in this runbook
 | Where | AGE | What it costs you |
 |---|---|---|
 | **Azure Database for PostgreSQL flexible server** | **yes** (PostgreSQL 16 and below) | The only managed service that ships it. Turned on with two server parameters (recipe below). Not available on PostgreSQL 17, and AGE is excluded from Azure's in-place major-version upgrade |
-| **Self-managed** on Kubernetes or a VM | yes | Backups, failover, patching and TLS become yours. The `apache/age` image already preloads the extension |
+| **Self-managed** on Kubernetes or a VM | yes | Backups, failover, patching and TLS become yours. The `apache/age` image, or the one this project builds in `deploy/postgres`, already preloads the extension |
 | **AWS RDS / Aurora PostgreSQL** | **no** | Not on the extension allow-list. Requests go to `rds-postgres-extensions-request@amazon.com` |
 | **Google Cloud SQL / AlloyDB** | **no** | Not in the supported-extensions list |
-| The bundled `apache/age` container | yes | **Demo only.** Not sized, backed up, patched or hardened for production |
+| The bundled `perspectivegraph-postgres` container | yes | **Demo only.** Not sized, backed up or tuned for production, whatever its vulnerability report says |
 
 So on AWS and GCP today the honest choice is to run Postgres+AGE yourself. One thing makes
 that a smaller decision than it looks: the graph is **derived** state - every node and edge
@@ -190,7 +190,7 @@ happens:
 - the role may run `LOAD 'age'` - a **superuser-only** command, which is what the bundled
   demo does and what no managed service permits; or
 - **`age` is in `shared_preload_libraries`**, so the library is present before the session
-  opens. The `apache/age` image does this by default; Azure exposes it as a parameter.
+  opens. The bundled image does this by default; Azure exposes it as a parameter.
 
 The backend works out which of the two it is on the first query and adapts. Check what you
 have with:
@@ -218,7 +218,8 @@ succeed, it fails with a privilege error.
 
 ### Self-managed
 
-Run the `apache/age` image (or your own build of the extension) as a StatefulSet, under a
+Run `ghcr.io/luiacuaniello/perspectivegraph-postgres` (or `apache/age`, or your own build
+of the extension) as a StatefulSet, under a
 PostgreSQL operator with that image, or on a VM. Whatever you pick, the list of things you
 have just taken on is the same, and none of it is optional for production: backups with a
 tested restore (§4), a replica and a failover path, patching for both PostgreSQL and AGE,
@@ -486,7 +487,7 @@ The two images and the chart are the whole dependency set. The engine ingests wh
 to it, so no scanner needs outbound access either - only a route to the ingest port.
 
 **The database is the exception worth planning for.** Apache AGE has to come from
-somewhere: mirror the `apache/age` image for the bundled path, or have your DBA team build
+somewhere: mirror the bundled database image, or have your DBA team build
 the extension for your managed instance (§3).
 
 ## 9. Continuous delivery (Argo CD, Flux)

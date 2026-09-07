@@ -20,16 +20,33 @@ spec:
         app.kubernetes.io/component: postgres
     spec:
       # The `restricted` Pod Security Standard, minus readOnlyRootFilesystem - which it
-      # does not require, and which these two DO need (JetStream writes its store, the
-      # bundled Postgres writes its data directory). Both images already run as a non-root
-      # user; this states it so an enforcing namespace admits the pod.
+      # does not require, and which this container DOES need (the bundled Postgres writes
+      # its data directory).
+      #
+      # runAsUser is not decoration. `runAsNonRoot: true` alone is a promise the kubelet
+      # checks against the IMAGE's configured user, and it refuses the container outright
+      # when that user is root or unset:
+      #
+      #   container has runAsNonRoot and image will run as root
+      #
+      # Every image this chart used to deploy left USER empty, so `helm install` with the
+      # defaults failed exactly there - postgres and nats in CreateContainerConfigError and
+      # the backend stuck in Init:0/2 behind them - and nothing caught it, because CI only
+      # rendered templates and never installed the chart on a cluster. `make chart-install`
+      # now does, so this cannot come back silently.
+      #
+      # 999 is the postgres uid in both the old Debian image and the Alpine one that
+      # replaced it; fsGroup is what makes the PersistentVolume writable by it.
       securityContext:
         runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: postgres
-          image: {{ .Values.postgres.image }}
+          image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag | default (printf "v%s" .Chart.AppVersion) }}"
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -37,6 +54,20 @@ spec:
           ports:
             - containerPort: 5432
           env:
+            # PGDATA is a SUBDIRECTORY of the mount, and that is not a style choice.
+            # fsGroup makes the PersistentVolume group-writable but leaves it owned by
+            # root, and initdb refuses a data directory it does not own:
+            #
+            #   initdb: error: could not change permissions of directory
+            #   "/var/lib/postgresql/data": Operation not permitted
+            #
+            # Pointing PGDATA one level down lets postgres create that directory itself,
+            # and own it. Nothing is migrated by this: the pod could never start before
+            # (see the securityContext note above), so no cluster has ever written here.
+            # docker-compose keeps the default layout, where the volume already carries
+            # postgres ownership from the image.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
             - name: POSTGRES_USER
               value: {{ .Values.postgres.auth.user | quote }}
             - name: POSTGRES_DB

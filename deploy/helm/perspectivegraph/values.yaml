@@ -138,7 +138,14 @@ postgres:
   dsn: ""
   externalHost: ""
   externalPort: 5432
-  image: apache/age:release_PG17_1.7.0@sha256:92a5d223965bc2e436f9eee436e0bd2c0d81f3b59124b3d197ec94706f3450a8
+  # Built from deploy/postgres/Dockerfile: PostgreSQL 17 + Apache AGE 1.7.0 on Alpine.
+  # It replaced apache/age, whose Debian base carries fourteen criticals - thirteen of
+  # them perl and libxml2 with no fix published in any version, so no rebuild clears
+  # them. The Dockerfile explains the rest. Rebuilt on every release, which is what
+  # keeps it at zero findings.
+  image:
+    repository: ghcr.io/luiacuaniello/perspectivegraph-postgres
+    tag: "" # empty = the chart's appVersion; see backend.image.tag above
   graph: perspective
   # libpq sslmode for the DB connection (it carries the attack map). Empty picks a
   # safe default by context: "disable" for the bundled in-cluster Postgres (no TLS),
@@ -160,7 +167,11 @@ postgres:
 nats:
   enabled: true
   externalUrl: ""
-  image: nats:2.14.6-alpine@sha256:ad7a43eb7e3337c3c38ce5d784d1461791f95f730f252d2b25eee699752a0ca3
+  # -scratch, not -alpine: the same nats-server binary with no Linux userland around it.
+  # That userland was twenty of this image's twenty-three findings, two of them high; what
+  # is left is the binary itself. A broker reachable from every workload in the namespace
+  # is a poor place to keep a shell and a package manager it never uses.
+  image: nats:2.14.6-scratch@sha256:54eac64d71b1b04360c2bba312a6b652ff7da0b7e7328865c977518aa5e29d11
   stream: PERSPECTIVE
   subject: perspective.events.*
   # App-level TLS to a TLS-enabled NATS (typically external; use a tls:// URL).

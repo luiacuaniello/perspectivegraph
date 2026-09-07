@@ -49,6 +49,14 @@ jobs:
           - name: dashboard
             context: ./frontend
             image: perspectivegraph-dashboard
+          # The bundled demo database. It is published like the other two - signed, with
+          # an SBOM and provenance - because the chart deploys it by default, and an
+          # unsigned image in a chart whose other images are signed is the weakest link
+          # deciding the guarantee. Rebuilding it every release is also what keeps it at
+          # zero findings: the Dockerfile's `apk upgrade` only runs when something builds.
+          - name: postgres
+            context: ./deploy/postgres
+            image: perspectivegraph-postgres
     env:
       IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
     steps:

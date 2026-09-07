@@ -6,9 +6,12 @@
 # anything appears. The releases already publish both images - signed with cosign,
 # with an SBOM and SLSA provenance attached - so a first look should be a pull.
 #
-# It is an OVERRIDE, not a second stack: everything else - Postgres+AGE, NATS, the
-# hundred-odd backend settings, the ports, the health checks - keeps coming from
-# docker-compose.yml, so this file cannot drift away from the thing it demonstrates.
+# It is an OVERRIDE, not a second stack: everything else - NATS, the hundred-odd backend
+# settings, the ports, the health checks - keeps coming from docker-compose.yml, so this
+# file cannot drift away from the thing it demonstrates. Postgres+AGE joined the list of
+# images the release publishes when it stopped being `apache/age` and started being built
+# from deploy/postgres/Dockerfile, so it is overridden here too: without this the demo
+# would compile the AGE extension before showing anything.
 #
 #   docker compose -f docker-compose.yml -f docker-compose.demo.yml --profile app up -d
 #
@@ -32,4 +35,8 @@ services:
 
   frontend:
     image: ghcr.io/luiacuaniello/perspectivegraph-dashboard:v1.12.6 # x-release-please-version
+    pull_policy: always
+
+  postgres:
+    image: ghcr.io/luiacuaniello/perspectivegraph-postgres:v1.12.6 # x-release-please-version
     pull_policy: always
