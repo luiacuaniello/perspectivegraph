@@ -49,23 +49,37 @@ kind create cluster --name "$CLUSTER" --image "$NODE_IMAGE" --wait 180s >/dev/nu
 
 # The chart points at the published database image for the release it belongs to, which
 # does not exist yet for the commit under test. Build it and hand it to the node.
-ok "building the Postgres+AGE image"
+# ALL THREE images are built here, not just the database, and that is not thoroughness -
+# it is the only thing that works. The chart points every image at its own appVersion, and
+# on a release branch appVersion is the version BEING released: `perspectivegraph:v1.12.7`
+# does not exist while the release PR is open, because publish-images runs after it merges.
+# Pulling would sit in ImagePullBackOff until the timeout. Building instead also tests the
+# chart against the code under review rather than against the last release.
+ok "building the three images the chart deploys"
 docker build -q -t perspectivegraph-postgres:charttest deploy/postgres >/dev/null
+docker build -q -t perspectivegraph-backend:charttest backend >/dev/null
+docker build -q -t perspectivegraph-dashboard:charttest frontend >/dev/null
 
 # `kind load docker-image` would be the obvious call and it is avoided on purpose: on a
 # host whose Docker keeps a containerd image store it dies with "unknown containerd config
 # version: 4 (supported versions: 2 and 3)" before it copies anything, while the node's own
 # containerd is quite happy on version 2. Piping the archive straight into the node's
 # containerd skips kind's loader and behaves the same on a laptop and on a CI runner.
-docker save perspectivegraph-postgres:charttest \
-  | docker exec -i "${CLUSTER}-control-plane" ctr --namespace=k8s.io images import - >/dev/null \
-  || die "could not import the database image into the node"
+for img in perspectivegraph-postgres perspectivegraph-backend perspectivegraph-dashboard; do
+  docker save "${img}:charttest" \
+    | docker exec -i "${CLUSTER}-control-plane" ctr --namespace=k8s.io images import - >/dev/null \
+    || die "could not import ${img} into the node"
+done
 
 ok "helm install with default values"
 if ! helm install "$RELEASE" "$CHART" \
       --kube-context "kind-$CLUSTER" \
       --set postgres.image.repository=perspectivegraph-postgres \
       --set postgres.image.tag=charttest \
+      --set backend.image.repository=perspectivegraph-backend \
+      --set backend.image.tag=charttest \
+      --set frontend.image.repository=perspectivegraph-dashboard \
+      --set frontend.image.tag=charttest \
       --wait --timeout 360s >/dev/null; then
   echo "--- pods ---"
   kubectl --context "kind-$CLUSTER" get pods
