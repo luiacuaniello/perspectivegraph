@@ -67,7 +67,7 @@ layers multiple replicas, pod spreading and a disruption budget on top of it.
 | `auth.apiTokens` / `auth.oidc` | empty | **Authentication is off by default.** A reachable install with neither is an unauthenticated map of how to breach your estate. |
 | `repoAllowlist` | `[]` | The repositories the engine may write to. Empty refuses every PR comment, merge-gate status and remediation PR - the destination otherwise comes from ingested data. |
 | `backend.image.tag` | `""` | Empty resolves to the chart's `appVersion`. Pin a `@sha256:` digest if your policy asks for it. |
-| `ingress.enabled` | `false` | With `ingress.tls`, terminate TLS at the edge; `backend.tls` terminates in the process instead. |
+| `ingress.enabled` | `false` | With `ingress.tls`, terminate TLS at the edge; `backend.tls` terminates in the process instead. **The chart refuses to render this with no credential configured** — enabling it publishes `/graphql` and `/ingest`. Override with `ingress.allowUnauthenticated: true` only if an open instance is the point. |
 | `ai.apiKey` | empty | The AI layer is off until set. When set, attack-path context leaves your boundary. |
 
 `helm show values oci://ghcr.io/luiacuaniello/charts/perspectivegraph` prints all of them,

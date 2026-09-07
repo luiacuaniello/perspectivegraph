@@ -17,6 +17,42 @@ digest, take the backup, stage it.
 
 ---
 
+## 1.12.5
+
+### The chart refuses to publish an unauthenticated instance
+
+**Affects you if** you install the Helm chart with `ingress.enabled: true` and have not
+configured a credential. `helm upgrade` will refuse to render rather than apply.
+
+Enabling the ingress is the moment an install becomes reachable, and this chart's ingress
+routes both `/graphql` — this environment's map of how to breach it — and `/ingest`, the
+write side that decides what the engine reasons over. The backend has always refused to
+start unauthenticated under `PG_ENV=production`, but that gate only fires for an operator
+who declared production; an install left on the demo default was reachable and open, with
+nothing but a startup warning that scrolls past in a log.
+
+The chart now fails to render in that combination. Set one of:
+
+```yaml
+auth:
+  apiTokens: "s3cr3t:admin"        # or oidc.jwksUrl with issuer and audience
+ingest:
+  hmacSecret: "another-secret"     # or hmacSecrets for per-tenant keys
+```
+
+Credentials supplied through `secrets.existingSecret` satisfy the guard: the chart cannot
+read a secret's contents, so an operator using one is trusted rather than blocked.
+
+If an open instance is the point — a public read-only demo — say so explicitly:
+
+```yaml
+ingress:
+  allowUnauthenticated: true
+```
+
+Nothing changes for an install with `ingress.enabled: false`, which is the default, or for
+`make demo` and Docker Compose, which bind to 127.0.0.1 only.
+
 ## 1.12.4
 
 ### The bundled demo database moves to PostgreSQL 17

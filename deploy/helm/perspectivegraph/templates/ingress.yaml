@@ -1,4 +1,22 @@
 {{- if .Values.ingress.enabled }}
+{{- /*
+  Enabling the ingress is the moment this install becomes reachable, and this ingress
+  routes BOTH /graphql (the attack map) and /ingest (the write side). The backend already
+  refuses to start unauthenticated when PG_ENV=production, but that gate only fires for an
+  operator who declared production - so an install left on the demo default was reachable
+  and open, with nothing but a startup warning that scrolls past.
+  These two guards fire at the only moment the chart can be certain exposure is intended.
+  They cannot see inside secrets.existingSecret, so an operator supplying credentials that
+  way is trusted rather than blocked.
+*/}}
+{{- if not .Values.secrets.existingSecret }}
+{{- if and (not .Values.auth.apiTokens) (not .Values.auth.oidc.jwksUrl) (not .Values.ingress.allowUnauthenticated) }}
+{{- fail "ingress.enabled publishes /graphql, which is this environment's map of how to breach it, and no credential is configured: set auth.apiTokens (static bearer tokens) or auth.oidc.jwksUrl with issuer and audience (SSO), or supply them through secrets.existingSecret. If an open instance is what you actually want - a public read-only demo, say - set ingress.allowUnauthenticated: true and be explicit about it." -}}
+{{- end }}
+{{- if and (not .Values.ingest.hmacSecret) (not .Values.ingest.hmacSecrets) (not .Values.ingress.allowUnauthenticated) }}
+{{- fail "ingress.enabled publishes /ingest and no ingest key is configured, so anyone who can reach it can forge the nodes and edges this engine reasons over - fabricating attack paths that do not exist, or burying ones that do. Set ingest.hmacSecret (or ingest.hmacSecrets for per-tenant keys), or supply them through secrets.existingSecret. To publish an open ingest deliberately, set ingress.allowUnauthenticated: true." -}}
+{{- end }}
+{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
