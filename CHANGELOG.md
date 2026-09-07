@@ -9,6 +9,14 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.12.7](https://github.com/luiacuaniello/perspectivegraph/compare/v1.12.6...v1.12.7) (2026-09-07)
+
+
+### Bug Fixes
+
+* **ci:** the chart install test must build every image, not just the database ([#193](https://github.com/luiacuaniello/perspectivegraph/issues/193)) ([8d426dc](https://github.com/luiacuaniello/perspectivegraph/commit/8d426dcba2dcaf81ebe6398768776e8768ca6db2))
+* **helm:** the chart could not install, and the database it ships is now built here ([#191](https://github.com/luiacuaniello/perspectivegraph/issues/191)) ([e716793](https://github.com/luiacuaniello/perspectivegraph/commit/e7167938c7eaca74221fb2ae46a7b8777c3b67d1))
+
 ## [1.12.6](https://github.com/luiacuaniello/perspectivegraph/compare/v1.12.5...v1.12.6) (2026-09-07)
 
 
