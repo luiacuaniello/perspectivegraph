@@ -21,6 +21,18 @@ digest, take the backup, stage it.
 
 ### The chart refuses to publish an unauthenticated instance
 
+`service.type` is now a value, defaulting to `ClusterIP`, and `LoadBalancer` or `NodePort`
+is guarded exactly like the ingress: the chart refuses to render either without a
+credential. It is offered on purpose - without it, exposing the backend meant patching the
+Service by hand, which no guard in the chart could see. Nothing changes for an install
+that leaves it at `ClusterIP`.
+
+The dashboard also carries a banner, not dismissible, whenever `/auth/config` reports that
+no credential is required. It is what covers the exposure a chart cannot see - a patched
+Service, a hand-written Ingress - and it appears in `make demo` too, which runs open by
+design.
+
+
 **Affects you if** you install the Helm chart with `ingress.enabled: true` and have not
 configured a credential. `helm upgrade` will refuse to render rather than apply.
 

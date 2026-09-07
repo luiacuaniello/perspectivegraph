@@ -1,3 +1,6 @@
+{{- if and (ne .Values.service.type "ClusterIP") (not (include "perspectivegraph.credentialsConfigured" .)) }}
+{{- fail "service.type publishes the backend outside the cluster - /graphql is this environment's map of how to breach it, and /ingest lets anyone forge what the engine reasons over - and no credential is configured. Set auth.apiTokens or auth.oidc.jwksUrl, and ingest.hmacSecret or ingest.hmacSecrets; or supply them through secrets.existingSecret. To publish an open instance deliberately, set ingress.allowUnauthenticated: true." -}}
+{{- end }}
 {{- if and .Values.persistence.enabled (gt (int .Values.backend.replicas) 1) -}}
 {{- if ne .Values.governanceBackend "postgres" -}}
 {{- fail "persistence.enabled stores governance state (suppressions/tickets/validations/history/audit) on a single-writer ReadWriteOnce volume; set backend.replicas to 1, or set governanceBackend to \"postgres\" so every replica shares one database instead. Multiple replicas on the file backend would split-brain the stores and cannot co-mount an RWO PVC." -}}
@@ -239,6 +242,7 @@ metadata:
     {{- include "perspectivegraph.labels" . | nindent 4 }}
     app.kubernetes.io/component: backend
 spec:
+  type: {{ .Values.service.type }}
   selector:
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: backend

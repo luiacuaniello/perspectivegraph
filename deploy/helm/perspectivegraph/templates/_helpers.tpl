@@ -47,3 +47,16 @@ nats://{{ include "perspectivegraph.natsHost" . }}:4222
 {{- include "perspectivegraph.fullname" . }}-secrets
 {{- end -}}
 {{- end -}}
+
+{{/* Whether this install carries a credential, for the guards that fire when it becomes
+     reachable. Non-empty means "configured, or deliberately waived, or supplied through a
+     Secret this chart cannot read". Kept in one place because it is asked from two
+     surfaces - the ingress and the Service type - and two copies would drift. */}}
+{{- define "perspectivegraph.credentialsConfigured" -}}
+{{- if or .Values.secrets.existingSecret .Values.ingress.allowUnauthenticated -}}
+yes
+{{- else if and (or .Values.auth.apiTokens .Values.auth.oidc.jwksUrl) (or .Values.ingest.hmacSecret .Values.ingest.hmacSecrets) -}}
+yes
+{{- end -}}
+{{- end -}}
+

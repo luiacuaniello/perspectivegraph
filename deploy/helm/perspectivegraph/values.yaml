@@ -118,6 +118,12 @@ frontend:
   affinity: {}
 
 service:
+  # ClusterIP keeps the backend inside the cluster, which is what the defaults assume.
+  # LoadBalancer and NodePort publish it, and the chart refuses to render either without a
+  # credential - the same guard the ingress carries, since it is the same exposure. It is
+  # offered here on purpose: without it, exposing means patching the Service by hand,
+  # which no guard in this chart could ever see.
+  type: ClusterIP
   apiPort: 8080
   ingestPort: 8081
   frontendPort: 80

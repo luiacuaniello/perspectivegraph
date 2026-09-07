@@ -1,6 +1,36 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { fetchAuthConfig, authToken, setAuthToken, type AuthConfig } from "../api/client";
 import { beginPkceLogin, completePkceLogin, randomString } from "../auth/pkce";
+import { AlertTriangleIcon } from "./icons";
+
+// OpenInstanceBanner is the only place an unauthenticated instance says so to a human.
+// The backend logs a warning at startup and /auth/config reports authRequired: false, but
+// a log scrolls past and an endpoint is not read by whoever opens the page - so an install
+// exposed by accident looked exactly like one exposed on purpose.
+//
+// It is deliberately not dismissible. The Helm chart refuses to publish an install without
+// a credential, but it can only see exposure arranged through the chart: a patched Service
+// or a hand-written Ingress is invisible to it, and this banner is what covers that gap. A
+// signal that can be clicked away does not cover it.
+//
+// It shows in `make demo` too, which runs open by design. That is the point rather than a
+// side effect: the demo is where someone learns this is open until they configure it.
+function OpenInstanceBanner() {
+  return (
+    <div
+      role="alert"
+      className="flex shrink-0 items-center gap-2 border-b border-flag/25 bg-flag-soft px-4 py-2 text-xs text-flag"
+    >
+      <AlertTriangleIcon className="size-3.5 shrink-0" />
+      <span>
+        <strong className="font-semibold">This instance requires no credential.</strong>{" "}
+        Anyone who can reach it can read these attack paths and post to the ingest endpoint.
+        Set <code>API_TOKENS</code> or <code>OIDC_JWKS_URL</code>, and{" "}
+        <code>INGEST_HMAC_SECRET</code>, before exposing it.
+      </span>
+    </div>
+  );
+}
 
 // LoginGate fronts the dashboard with a runtime login when the API requires auth.
 // It reads GET /auth/config (public) to learn the mode, so the same build works
@@ -16,6 +46,10 @@ export default function LoginGate({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [authed, setAuthed] = useState(false);
   const [config, setConfig] = useState<AuthConfig | null>(null);
+  // Whether /auth/config actually answered. A failed fetch falls back to "open" so the
+  // dashboard still renders, but it is not evidence that the instance IS open - and
+  // claiming so on a network blip would teach people to ignore the banner.
+  const [configKnown, setConfigKnown] = useState(false);
   const [token, setToken] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -46,11 +80,14 @@ export default function LoginGate({ children }: { children: ReactNode }) {
         /* malformed return URL - ignore and fall through to the gate */
       }
 
-      const c = await fetchAuthConfig().catch(
-        () => ({ authRequired: false, mode: "none" }) as AuthConfig,
-      );
+      let known = true;
+      const c = await fetchAuthConfig().catch(() => {
+        known = false;
+        return { authRequired: false, mode: "none" } as AuthConfig;
+      });
       if (!alive) return;
       setConfig(c);
+      setConfigKnown(known);
       setAuthed(!c.authRequired || !!authToken());
       setReady(true);
     }
@@ -62,7 +99,15 @@ export default function LoginGate({ children }: { children: ReactNode }) {
   }, []);
 
   if (!ready) return null;
-  if (authed || !config) return <>{children}</>;
+  if (authed || !config) {
+    const open = configKnown && config !== null && !config.authRequired;
+    return (
+      <>
+        {open && <OpenInstanceBanner />}
+        {children}
+      </>
+    );
+  }
 
   const oidc = config.oidc;
   const ssoAvailable = !!(oidc && oidc.authorizeUrl && oidc.clientId);
