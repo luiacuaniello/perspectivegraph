@@ -5,6 +5,7 @@
 [![Go](https://img.shields.io/github/go-mod/go-version/luiacuaniello/perspectivegraph?filename=backend%2Fgo.mod)](backend/go.mod)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/13828/badge)](https://www.bestpractices.dev/projects/13828)
+[![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/perspectivegraph)](https://artifacthub.io/packages/helm/perspectivegraph/perspectivegraph)
 
 > **Catch the attack path in the pull request that opens it - then ship the fix as a PR.**
 
@@ -111,10 +112,15 @@ newest release; the pinned tag is the one to use if you care about reproducibili
 ```bash
 docker pull ghcr.io/luiacuaniello/perspectivegraph:v1.12.7 # x-release-please-version
 docker pull ghcr.io/luiacuaniello/perspectivegraph-dashboard:v1.12.7 # x-release-please-version
+docker pull ghcr.io/luiacuaniello/perspectivegraph-postgres:v1.12.7 # x-release-please-version
 ```
 
 On Kubernetes, the Helm chart is published the same way - no clone needed, and a version
-you can pin and verify:
+you can pin and verify. It is listed on
+[Artifact Hub](https://artifacthub.io/packages/helm/perspectivegraph/perspectivegraph) as an
+**official** package from a verified publisher, which is Artifact Hub's way of saying the
+chart is published by the people who wrote the software rather than by a third party
+repackaging it:
 
 ```bash
 helm install perspectivegraph oci://ghcr.io/luiacuaniello/charts/perspectivegraph \
