@@ -339,7 +339,8 @@ func scoreTrust(api *API) Tool {
 			"or BAS outcomes: the verdict (well-calibrated / overconfident / underconfident / insufficient-data), the " +
 			"predicted-versus-observed rates, and what to do about the gap. Call this before quoting any score as a " +
 			"probability. If it reports insufficient-data, the numbers are expert estimates and must be presented as " +
-			"a ranking, not as odds.",
+			"the model's own estimate - not as odds, and not as a graded ordering either: the ranking they produce " +
+			"has never been measured against outcomes.",
 		InputSchema: obj(map[string]any{}),
 		Call: func(ctx context.Context, _ map[string]any) (string, error) {
 			var out json.RawMessage

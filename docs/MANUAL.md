@@ -138,6 +138,11 @@ Two boolean node attributes drive analysis:
 
 ## Risk scoring
 
+What the resulting number is the probability *of* - and the three readings it does not
+support, including "80% likely this year" - is stated in
+[positioning](POSITIONING.md#what-a-score-is-the-probability-of). This section is how it
+is computed.
+
 Each edge carries an exploit probability `p ∈ (0, 1]`. The probability that a full path is
 exploitable (assuming independence, for tractability) is the product of its edge probabilities:
 
