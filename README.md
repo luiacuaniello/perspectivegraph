@@ -278,6 +278,8 @@ feature. Every tool declares that on the wire (`readOnlyHint`), so a host can de
 to run unattended without taking this paragraph's word for it - and a test fails if a
 tool is ever added without that decision. The descriptions also tell the model the scores
 are expert estimates, and to call `get_score_trust` before quoting one as a probability.
+Every tool is also run against the real engine in the test suite, not only a stub, so a
+query naming a field the schema lacks fails the build instead of an agent's call.
 
 ## Project status & maturity
 
