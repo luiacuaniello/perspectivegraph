@@ -53,19 +53,20 @@ func (p *PGStore) Put(ctx context.Context, r Record) (Record, error) {
 
 	const q = `
 		INSERT INTO validations (tenant, id, path_id, outcome, source, evidence, route, tested_at,
-			predicted_score, scope, predicted_compromise, hops, correlated_hops, weight_basis, detected)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+			predicted_score, scope, predicted_compromise, hops, correlated_hops, weight_basis, detected,
+			predicted_priority)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 		ON CONFLICT (tenant, id) DO UPDATE SET
 			path_id = EXCLUDED.path_id, outcome = EXCLUDED.outcome, source = EXCLUDED.source,
 			evidence = EXCLUDED.evidence, route = EXCLUDED.route, tested_at = EXCLUDED.tested_at,
 			predicted_score = EXCLUDED.predicted_score, scope = EXCLUDED.scope,
 			predicted_compromise = EXCLUDED.predicted_compromise, hops = EXCLUDED.hops,
 			correlated_hops = EXCLUDED.correlated_hops, weight_basis = EXCLUDED.weight_basis,
-			detected = EXCLUDED.detected`
+			detected = EXCLUDED.detected, predicted_priority = EXCLUDED.predicted_priority`
 	if _, err := p.db.ExecContext(ctx, q,
 		r.Tenant, r.ID, r.PathID, string(r.Outcome), r.Source, r.Evidence, r.Route, r.TestedAt,
 		r.PredictedScore, string(r.Scope), r.PredictedCompromise, r.Hops, r.CorrelatedHops,
-		r.WeightBasis, detectedArg(r.Detected)); err != nil {
+		r.WeightBasis, detectedArg(r.Detected), priorityArg(r.PredictedPriority)); err != nil {
 		return Record{}, fmt.Errorf("validation: put %s: %w", r.ID, err)
 	}
 	return r, nil
@@ -161,7 +162,7 @@ func (p *PGStore) records(ctx context.Context, tenant string) ([]Record, error) 
 const selectCols = `
 	SELECT tenant, id, path_id, outcome, source, evidence, route, tested_at,
 	       predicted_score, scope, predicted_compromise, hops, correlated_hops,
-	       weight_basis, detected`
+	       weight_basis, detected, predicted_priority`
 
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -173,10 +174,11 @@ func scanRecord(row rowScanner) (Record, error) {
 		outcome  string
 		scope    string
 		detected sql.NullBool
+		priority sql.NullFloat64
 	)
 	if err := row.Scan(&r.Tenant, &r.ID, &r.PathID, &outcome, &r.Source, &r.Evidence, &r.Route,
 		&r.TestedAt, &r.PredictedScore, &scope, &r.PredictedCompromise, &r.Hops,
-		&r.CorrelatedHops, &r.WeightBasis, &detected); err != nil {
+		&r.CorrelatedHops, &r.WeightBasis, &detected, &priority); err != nil {
 		return Record{}, err
 	}
 	r.Outcome = Outcome(outcome)
@@ -188,7 +190,19 @@ func scanRecord(row rowScanner) (Record, error) {
 		d := detected.Bool
 		r.Detected = &d
 	}
+	// Same distinction for Priority: NULL is "not captured", and 0.0 is a real priority.
+	if priority.Valid {
+		v := priority.Float64
+		r.PredictedPriority = &v
+	}
 	return r, nil
+}
+
+func priorityArg(p *float64) any {
+	if p == nil {
+		return nil
+	}
+	return *p
 }
 
 func detectedArg(d *bool) any {

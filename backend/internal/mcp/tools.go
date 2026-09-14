@@ -336,16 +336,23 @@ func scoreTrust(api *API) Tool {
 	return Tool{
 		Name: "get_score_trust",
 		Description: "Report how well the engine's probabilities have matched reality, measured against recorded red-team " +
-			"or BAS outcomes: the verdict (well-calibrated / overconfident / underconfident / insufficient-data), the " +
+			"or BAS outcomes: the verdict (well-calibrated / calibrated-on-average / overconfident / underconfident / " +
+			"insufficient-data; calibrated-on-average means only the average matches, so no individual score may be " +
+			"quoted as a probability), the " +
 			"predicted-versus-observed rates, and what to do about the gap. Call this before quoting any score as a " +
 			"probability. If it reports insufficient-data, the numbers are expert estimates and must be presented as " +
-			"the model's own estimate - not as odds, and not as a graded ordering either: the ranking they produce " +
-			"has never been measured against outcomes.",
+			"the model's own estimate, not as odds. It also reports discrimination - whether the score, and separately " +
+			"the triage Priority order, put confirmed paths above refuted ones (AUC with a 95% interval). Do not " +
+			"present the ranking as evidence of which path is most dangerous unless priorityDiscrimination reads " +
+			"'discriminates'; 'insufficient-data' or 'indistinguishable-from-chance' means the order has not been " +
+			"shown to beat a coin, and must be said so.",
 		InputSchema: obj(map[string]any{}),
 		Call: func(ctx context.Context, _ map[string]any) (string, error) {
 			var out json.RawMessage
 			err := api.query(ctx, `{
-              calibration { samples brier ece meanPredicted observedRate recommendedScale verdict hasData diagnosis }
+              calibration { samples brier ece meanPredicted observedRate recommendedScale verdict hasData diagnosis
+                discrimination { auc aucLow aucHigh verdict positives negatives hasData }
+                priorityDiscrimination { auc aucLow aucHigh verdict positives negatives hasData } }
               validation { confirmed refuted partial missed tested precision recall }
             }`, &out)
 			return string(out), err

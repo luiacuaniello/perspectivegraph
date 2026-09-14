@@ -62,6 +62,7 @@ type Calibration {
   brierRecalibratedByBasis: Float
   detection: DetectionStats
   diagnosis: String
+  discrimination: Discrimination!
   ece: Float
   edge: Calibration
   hasData: Boolean
@@ -69,6 +70,7 @@ type Calibration {
   meanPredicted: Float
   observedRate: Float
   persistent: Boolean
+  priorityDiscrimination: Discrimination
   recalibrationByBasis: [BasisRecalibration]
   recalibrationMap: [CalibrationPoint]
   recommendedScale: Float
@@ -123,6 +125,16 @@ type DetectionStats {
   highScoreDetectionRate: Float
   highScoreTested: Int
   tested: Int
+}
+
+type Discrimination {
+  auc: Float
+  aucHigh: Float
+  aucLow: Float
+  hasData: Boolean
+  negatives: Int
+  positives: Int
+  verdict: String
 }
 
 type Edge {

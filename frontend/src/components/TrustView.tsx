@@ -132,11 +132,23 @@ function plainVerdict(c?: Calibration): string {
   }
   const predicted = pct(c.meanPredicted);
   const observed = pct(c.observedRate);
+  // "When it says 70%, roughly 70% is what happens" is a claim about every score range, and
+  // only a verdict that checked the ranges supports it. well-calibrated now requires the
+  // bins to agree as well as the averages; before, a score whose outcomes did not depend on
+  // it at all earned this sentence because its mean happened to match the base rate.
   if (c.verdict === "well-calibrated") {
-    return `Across ${c.samples} tested routes the engine predicted ${predicted} on average and ${observed} actually held up. When it says 70%, roughly 70% is what happens - the scores can be read as probabilities.`;
+    return `Across ${c.samples} tested routes the engine predicted ${predicted} on average and ${observed} actually held up, and the same holds within each score range. When it says 70%, roughly 70% is what happens - the scores can be read as probabilities.`;
+  }
+  if (c.verdict === "calibrated-on-average") {
+    return `Across ${c.samples} tested routes the engine predicted ${predicted} on average and ${observed} held up - but only the average agrees. Within individual score ranges predictions and outcomes diverge (calibration error ${c.ece.toFixed(2)}), so a particular score cannot be read as a probability: a path at 70% has not been shown to happen 70% of the time.`;
   }
   if (c.verdict === "overconfident") {
-    return `Across ${c.samples} tested routes the engine predicted ${predicted} on average but only ${observed} held up. It is claiming more certainty than reality delivers, so treat the ranking as sound and the absolute values as inflated.`;
+    // "The ranking is sound" is a claim about ORDER, which calibration does not measure.
+    // It is made only when discrimination has actually shown it.
+    const ordered = c.discrimination?.verdict === "discriminates";
+    return ordered
+      ? `Across ${c.samples} tested routes the engine predicted ${predicted} on average but only ${observed} held up. It is claiming more certainty than reality delivers; the order has been shown to put real paths first, so treat the ranking as sound and the absolute values as inflated.`
+      : `Across ${c.samples} tested routes the engine predicted ${predicted} on average but only ${observed} held up. It is claiming more certainty than reality delivers, so treat the absolute values as inflated - and whether the order itself holds up has not been shown.`;
   }
   if (c.verdict === "underconfident") {
     return `Across ${c.samples} tested routes the engine predicted ${predicted} on average but ${observed} held up. Reality is harsher than the model expects, so the scores understate what an attacker achieves.`;

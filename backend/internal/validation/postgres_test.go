@@ -3,6 +3,7 @@ package validation
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -190,6 +191,88 @@ func TestUnrecordedDetectionStaysNil(t *testing.T) {
 				t.Errorf("a recorded 'not detected' came back as %v", r.Detected)
 			}
 		}
+	}
+}
+
+// A captured Priority of 0.0 and an uncaptured one are different claims: the first is the
+// bottom of the order, the second is no evidence at all. A NOT NULL DEFAULT 0 column would
+// fold them together, and the calibration would then have to drop both.
+func TestUncapturedPriorityStaysNil(t *testing.T) {
+	ctx := context.Background()
+	s := pgStore(t)
+
+	zero, some := 0.0, 42.5
+	unset := verdict("acme", "ap-unset", Refuted)
+	atZero := verdict("acme", "ap-zero", Refuted)
+	atZero.PredictedPriority = &zero
+	set := verdict("acme", "ap-set", Confirmed)
+	set.PredictedPriority = &some
+
+	for _, r := range []Record{unset, atZero, set} {
+		if _, err := s.Put(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	list, err := s.List(ctx, "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range list {
+		switch r.PathID {
+		case "ap-unset":
+			if r.PredictedPriority != nil {
+				t.Errorf("an uncaptured priority came back as %v", *r.PredictedPriority)
+			}
+		case "ap-zero":
+			if r.PredictedPriority == nil || *r.PredictedPriority != 0 {
+				t.Errorf("a captured 0.0 priority came back as %v - the bottom of the order became no evidence", r.PredictedPriority)
+			}
+		case "ap-set":
+			if r.PredictedPriority == nil || *r.PredictedPriority != 42.5 {
+				t.Errorf("priority 42.5 came back as %v", r.PredictedPriority)
+			}
+		}
+	}
+}
+
+// The order is graded from evidence held in either backend, and the backends return it in
+// different orders. The AUC and its interval must still be the same bits in both.
+func TestDiscriminationMatchesTheFileBackend(t *testing.T) {
+	ctx := context.Background()
+	pg := pgStore(t)
+	file, err := New("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 24; i++ {
+		r := verdict("acme", fmt.Sprintf("ap-%02d", i), Confirmed)
+		if i%2 == 0 {
+			r.Outcome = Refuted
+		}
+		r.PredictedScore = 0.1 + float64(i%7)/10
+		pr := float64((i * 37) % 100)
+		r.PredictedPriority = &pr
+		if _, err := pg.Put(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := file.Put(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pgCal, err := pg.Calibration(ctx, "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileCal, err := file.Calibration(ctx, "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pgCal.Discrimination != fileCal.Discrimination {
+		t.Fatalf("score discrimination differs by backend:\n  postgres %+v\n  file     %+v", pgCal.Discrimination, fileCal.Discrimination)
+	}
+	if pgCal.PriorityDiscrimination == nil || fileCal.PriorityDiscrimination == nil ||
+		*pgCal.PriorityDiscrimination != *fileCal.PriorityDiscrimination {
+		t.Fatalf("priority discrimination differs by backend:\n  postgres %+v\n  file     %+v", pgCal.PriorityDiscrimination, fileCal.PriorityDiscrimination)
 	}
 }
 

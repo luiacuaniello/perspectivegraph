@@ -233,10 +233,10 @@ func TestPathFeaturesAreScopedToTheCallersApps(t *testing.T) {
 	a, paymentsPath, webPath := twoAppAPI(t)
 	ctx := scopedAdmin("payments")
 
-	if _, _, _, _, found := a.pathFeatures(ctx, webPath); found {
+	if _, _, _, _, _, found := a.pathFeatures(ctx, webPath); found {
 		t.Error("pathFeatures returned another application's path")
 	}
-	if _, _, _, _, found := a.pathFeatures(ctx, paymentsPath); !found {
+	if _, _, _, _, _, found := a.pathFeatures(ctx, paymentsPath); !found {
 		t.Error("pathFeatures did not return the caller's OWN path")
 	}
 	if _, found := a.targetCompromise(ctx, webPath); found {

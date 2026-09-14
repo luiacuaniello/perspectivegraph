@@ -124,6 +124,14 @@ type Record struct {
 	// the *detection axis* (#7): if reachable paths are routinely detected, the score
 	// over-predicts undetected impact and the model needs a P(reach ∧ ¬detect) term.
 	Detected *bool `json:"detected,omitempty"`
+	// PredictedPriority is the path's triage Priority in [0,100] at the moment the verdict
+	// was recorded - the order an operator actually works through - captured server-side
+	// like PredictedScore, so discrimination can grade that ordering and not only S(P).
+	// A pointer, not a zero sentinel: Priority is rounded to one decimal and a weak path
+	// legitimately scores 0.0, and those are exactly the refuted paths the metric needs.
+	// Treating 0 as "unknown" would drop the bottom of the order and flatter the result.
+	// nil = not captured (a verdict recorded before this existed, or no live path).
+	PredictedPriority *float64 `json:"predicted_priority,omitempty"`
 }
 
 // Metrics is the rolled-up, evidence-based trust summary for a tenant.

@@ -63,9 +63,11 @@ section for the same reason.
   distinct, but that has been exercised on fixtures, not yet against real accounts, and
   the accounts are listed rather than discovered - there is no AWS Organizations
   integration and no SCP evaluation.
-- **The ranking is not graded.** Detection is measured and calibration is measured; the
-  ordering that decides which path an operator opens first is not. See *Three questions,
-  three measurements* below for why those are three claims and not one.
+- **The ranking has an instrument, not a result.** The order an operator works through is
+  now graded - AUC over confirmed and refuted verdicts, for S(P) and for Priority - but no
+  field dataset has been fed to it, so on a real install it reads `insufficient-data`.
+  See *Three questions, three measurements* below for why that is a third claim and not a
+  restatement of the other two.
 - **It does not replace a CNAPP.** It answers the reachable-path question inside the
   developer workflow; it is not a scanner, an inventory or a compliance product.
 - **Coverage is not the strength.** Cartography has more connectors, BloodHound
@@ -81,8 +83,8 @@ a check the project loses.
 ## Three questions, three measurements
 
 A surfaced path carries three separate claims: that it exists, where it sits in the
-list, and what the number attached to it means. They fail independently, and only two
-of them are measured here.
+list, and what the number attached to it means. They fail independently, and each needs
+its own measurement.
 
 **Detection - is a surfaced path real, and did we miss any?** Measured as precision and
 recall. `make bench-cloudgoat` grades the engine against scenarios whose paths are
@@ -91,22 +93,35 @@ the subset a red team or a BAS platform actually tested. Neither is a global
 precision/recall claim - that needs exhaustive ground truth, which nobody has - and
 both say so.
 
-**Discrimination - are the dangerous paths above the less dangerous ones?** *No metric is
-computed.* The engine nevertheless ranks: every path gets a composite priority and a
-P1/P2/P3 band, and `attackPaths(limit: N)` returns the top N, so that ordering decides
-what an operator looks at first. Nothing grades that ordering. The closest thing in the
-codebase is the edge track's reliability diagram, which is deliberately kept for exactly
-this read - whether higher-scored CVEs really do enter KEV more often - but it speaks to
-per-CVE hop probabilities, not to the path order a team works through, and it is a shape
-to eyeball rather than a number. A model can order perfectly while every number it prints
-is wrong, or be honest about each number and still bury the path that matters at position
-forty; precision/recall answers neither question, and neither does a Brier score. This is
-a gap, and it is written here rather than left for someone else to find.
+**Discrimination - are the dangerous paths above the less dangerous ones?** Measured as
+AUC: the probability that a confirmed path outranks a refuted one, ties counted half, so
+0.5 is a coin and 1 is perfect separation. It is rank-based, which is what lets it grade
+two things calibration cannot. The first is the score itself. The second is `Priority`,
+the order `attackPaths(limit: N)` returns and an operator actually works down - which is
+not a probability at all, so no Brier score could ever say anything about it. For that,
+each verdict now records the Priority its path had when it was recorded, captured
+server-side like S(P). The report carries an approximate 95% interval and a verdict -
+`discriminates`, `indistinguishable-from-chance`, `inverted` - withheld below ten of each
+class, and `Partial` verdicts are excluded because half credit is not a class.
+
+Three things the number does not say. A modest Priority AUC is partly by design: Priority
+weighs target sensitivity and blast radius on purpose, so a refuted path to a crown jewel
+ranking high is the order doing its job, not failing at it. The synthetic self-test
+(`make seed-validation`) shows the separation cleanly - its `overconfident` scenario is
+badly miscalibrated and orders paths *better* than any other, while `low-resolution`
+cannot be told apart from a coin - but those verdicts are generated, and prove the
+instrument rather than the engine. And the gate diagnosis still infers "the ranking is
+sound" from the recalibrated Brier rather than from this measure; the two agree on every
+synthetic scenario and have not been reconciled in code.
 
 **Calibration - when the engine says 0.8, does it happen about 80% of the time?**
 Measured as Brier score, log loss, ECE and a reliability diagram, over verdicts that
 reality actually settled. Below `minCalibrationSamples` the verdict is
-`insufficient-data` and no rescaling is offered, because a thin sample fits noise. An
+`insufficient-data` and no rescaling is offered, because a thin sample fits noise.
+`well-calibrated` needs the reliability bins to agree as well as the averages; when only
+the mean matches the verdict is `calibrated-on-average`, which licenses no statement about
+what any particular score means - a score that orders nothing can match the base rate on
+average, and used to be called well-calibrated for it. An
 unmeasured outcome is excluded rather than imputed: `CalibrationGrade` admits only
 Confirmed and Refuted, since the most common path shape contains a hop no API can
 settle - whether an attacker gets code execution on the exposed host.
@@ -187,12 +202,12 @@ resulting calibration measures the fit, not the model.
 
 ## Verifying the claims
 
-None of the above asks to be taken on trust. Note which question each command answers -
-none of them grades the ranking:
+None of the above asks to be taken on trust. Note which question each command answers:
 
 ```bash
 make test              # backend + frontend suites
 make bench-cloudgoat   # DETECTION: precision/recall against known-vulnerable scenarios
+make seed-validation   # CALIBRATION + DISCRIMINATION on synthetic verdicts - proves the instrument, not the engine
 cd backend && go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 cd backend && go run github.com/securego/gosec/v2/cmd/gosec@latest -quiet -exclude=G104 ./...
 ```

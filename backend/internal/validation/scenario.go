@@ -23,6 +23,12 @@ type SyntheticVerdict struct {
 	CorrelatedHops bool
 	WeightBasis    string
 	Detected       *bool
+	// PredictedPriority is a synthetic triage Priority in [0,100], so the self-test
+	// exercises discrimination of the order and not only of S(P). It blends the score with
+	// an impact term independent of the outcome - the way the engine's Priority also weighs
+	// target sensitivity - so the triage order separates less than the score does, which is
+	// the honest shape and the one the docs warn about.
+	PredictedPriority *float64
 }
 
 // Scenarios is the ordered set of self-test scenarios and the diagnosis each must
@@ -80,6 +86,10 @@ func GenerateScenario(scenario string, count int, seed uint64) ([]SyntheticVerdi
 		return nil, false
 	}
 	rng := rand.New(rand.NewPCG(seed, 0x9e3779b97f4a7c15)) // #nosec G404 -- deterministic PRNG for reproducible self-test scenarios, not security-sensitive
+	// A SEPARATE stream for the synthetic impact term. Drawing it from rng would shift every
+	// later draw and change which verdicts come out confirmed, silently rewriting the
+	// scenarios the diagnosis tests pin. Outcomes stay byte-identical to what they were.
+	impactRNG := rand.New(rand.NewPCG(seed, 0x243f6a8885a308d3)) // #nosec G404 -- deterministic PRNG for reproducible self-test scenarios, not security-sensitive
 	out := make([]SyntheticVerdict, 0, count)
 	for i := 0; i < count; i++ {
 		p := 0.05 + rng.Float64()*0.9 // predicted score in [0.05, 0.95]
@@ -105,6 +115,9 @@ func GenerateScenario(scenario string, count int, seed uint64) ([]SyntheticVerdi
 		if isConf {
 			v.Outcome = Confirmed
 		}
+		// Rounded to one decimal like the engine's Priority, so 0.0 is reachable here too.
+		pr := math.Round(math.Min(1, 0.6*p+0.4*impactRNG.Float64())*1000) / 10
+		v.PredictedPriority = &pr
 		// Detection axis: reachable high-score paths are frequently caught (#7 signal).
 		if scenario == "detection" && isConf && p >= 0.6 {
 			caught := rng.Float64() < 0.7

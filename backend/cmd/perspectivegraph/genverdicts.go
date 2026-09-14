@@ -77,6 +77,9 @@ func runGenverdicts(args []string) error {
 		if v.WeightBasis != "" {
 			body["weightBasis"] = v.WeightBasis
 		}
+		if v.PredictedPriority != nil {
+			body["predictedPriority"] = *v.PredictedPriority
+		}
 		if v.Outcome == validation.Confirmed {
 			confirmed++
 		}

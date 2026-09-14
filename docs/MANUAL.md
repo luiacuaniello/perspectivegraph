@@ -264,7 +264,8 @@ path's **predicted score `S(P)` at test time** (captured server-side from the li
 verdict log doubles as a calibration dataset: predicted probability paired with observed outcome
 (confirmed→1, refuted→0, partial→0.5). From it `internal/validation` computes the standard scoring
 rules - **Brier score**, **log loss**, **ECE** (expected calibration error) - plus a **reliability
-diagram** (predicted vs observed per bucket) and a verdict (well-calibrated / over- / under-confident).
+diagram** (predicted vs observed per bucket) and a verdict (well-calibrated / calibrated-on-average /
+over- / under-confident).
 It also surfaces an *advisory* rescale (`observed/predicted`) rather than silently rewriting scores:
 on a thin sample that would fit noise, and on a demo's synthetic outcomes it would be circular. This
 is the demo→production boundary - the evidence that lets you defend a "55%" as a probability. Exposed
@@ -1055,8 +1056,26 @@ ECE   = Σ (nₖ/N)·|meanPredₖ - obsRateₖ|         # binned calibration gap
 
 plus a **reliability diagram** (predicted vs observed per bucket; points on the
 diagonal are perfectly calibrated), an honest **verdict** (well-calibrated /
-overconfident / underconfident), and an **advisory rescale** (`observed/predicted` -
-surfaced, *not* silently applied, since rescaling on a thin sample is fitting noise).
+calibrated-on-average / overconfident / underconfident), and an **advisory rescale**
+(`observed/predicted` - surfaced, *not* silently applied, since rescaling on a thin sample
+is fitting noise).
+
+The verdict needs **both** the mean and the bins before it says well-calibrated:
+
+| verdict | mean gap | ECE | what it licenses |
+|---|---|---|---|
+| `overconfident` / `underconfident` | > 0.1 | - | the scores run hot / cold on average |
+| `calibrated-on-average` | ≤ 0.1 | > 0.1 | only the average: no individual score may be read as a probability |
+| `well-calibrated` | ≤ 0.1 | ≤ 0.1 | "when it says 70%, roughly 70% happens" |
+
+The middle row exists because the mean alone cannot carry the last one. A score whose
+outcomes do not depend on it at all can still predict the base rate on average - the
+`low-resolution` self-test scenario has a mean gap of −0.006 and an ECE of 0.21 - and it
+used to be labelled well-calibrated, which the Trust page then read aloud as "70% means
+70%". It is also what too few samples per bucket honestly produce: ECE is noisy on small
+data, so a per-score claim the data cannot support is withheld. The verdict describes the
+pooled population; a miscalibration that differs by evidence basis can still hide inside a
+well-calibrated pool, which is what the per-basis diagnosis is for.
 
 ```bash
 curl -s "$API/validations" | jq .calibration   # brier, ece, verdict, reliability bins
@@ -1066,6 +1085,46 @@ curl -s "$API/validations" | jq .calibration   # brier, ece, verdict, reliabilit
 This is the artifact that lets an operator stand behind "55%" as a *probability*,
 not a vibe - the line between a demo and a risk tool you can put in front of an
 auditor. The dashboard renders it as a **Calibration** panel on the Overview.
+
+##### Discrimination: does the *order* mean anything?
+
+Calibration grades the number; it says nothing about whether the dangerous paths sit
+above the harmless ones - and that order is what an operator works through. A score can
+be perfectly calibrated and separate nothing, or order paths sharply while every number
+it prints is wrong. So each calibration track also reports **AUC**: the probability that a
+confirmed path outranks a refuted one, ties counted half.
+
+```
+AUC = P( score(confirmed) > score(refuted) ) + ½·P(tie)   # 0.5 = coin, 1 = perfect, <0.5 = inverted
+```
+
+It is graded twice on the path track: for **S(P)** (`discrimination`) and for **Priority**
+(`priorityDiscrimination`) - the triage order itself, which is not a probability, so
+nothing above could grade it. That is why every verdict now also records the path's
+Priority *at verdict time*, captured server-side exactly like the score. A verdict
+recorded before this existed, or against a path that was no longer live, carries none,
+and simply does not count toward the triage-order grade.
+
+- `Partial` verdicts are **excluded** - half credit is not a class to a ranking comparison.
+- Each result carries an approximate **95% interval** (Hanley-McNeil). Perfect separation on
+  a small sample would otherwise report zero width, so the error is evaluated at a
+  half-count shrunk AUC; the published AUC is never shrunk.
+- The **verdict** - `discriminates` / `indistinguishable-from-chance` / `inverted` - is
+  withheld (`insufficient-data`) below **ten of each class**; the AUC is still shown.
+- A modest `priorityDiscrimination` is partly by design: Priority also weighs target
+  sensitivity and blast radius, so a refuted path to a crown jewel ranking high is the
+  order doing its job.
+
+```bash
+# GraphQL: { calibration { discrimination { auc aucLow aucHigh verdict positives negatives }
+#                          priorityDiscrimination { auc aucLow aucHigh verdict } } }
+```
+
+`make seed-validation` shows the two claims coming apart on synthetic verdicts: the
+`overconfident` scenario is badly miscalibrated yet orders paths better than any other,
+while `low-resolution` cannot be told apart from a coin. Those verdicts are generated,
+so they prove the instrument, not the engine. The dashboard shows both orders under the
+reliability diagram as **Score order** and **Triage order**.
 
 ##### Calibration diagnostics: "and therefore what should we build?"
 

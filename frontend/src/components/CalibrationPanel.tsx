@@ -1,5 +1,6 @@
 import { type Calibration, type CalibrationTrendPoint } from "../api/client";
 import InfoTip from "./InfoTip";
+import { DiscriminationRow } from "./DiscriminationRow";
 
 // Sparkline draws a tiny trend line for a numeric series, normalized to its own
 // range so the shape (up/down) reads at a glance even when values are close.
@@ -31,6 +32,9 @@ function Sparkline({ values, tone }: { values: number[]; tone: string }) {
 // green when scores match reality, red/amber when they don't.
 const VERDICT_STYLE: Record<string, { label: string; cls: string }> = {
   "well-calibrated": { label: "well-calibrated", cls: "bg-emerald-500/15 text-emerald-700" },
+  // The mean agrees and the bins do not: not a success to colour green, and not the absence
+  // of data either - without its own entry it would fall back to "insufficient data".
+  "calibrated-on-average": { label: "calibrated on average", cls: "bg-amber-500/15 text-amber-700" },
   overconfident: { label: "overconfident", cls: "bg-red-500/15 text-flag" },
   underconfident: { label: "underconfident", cls: "bg-amber-500/15 text-amber-700" },
   "insufficient-data": { label: "insufficient data", cls: "bg-slate-400/15 text-slate-500" },
@@ -154,6 +158,11 @@ export function CalibrationPanel({ calibration, trend }: { calibration: Calibrat
           )}
         </div>
       </div>
+
+      <DiscriminationRow
+        discrimination={calibration.discrimination}
+        priorityDiscrimination={calibration.priorityDiscrimination}
+      />
 
       {(calibration.diagnosis || (calibration.segments?.length ?? 0) > 0 || calibration.detection) && (
         <div className="mt-3 border-t border-edge/60 pt-3">

@@ -121,13 +121,26 @@ func calibrationStats(samples []calSample) coreStats {
 		bc := float64(binCount[i])
 		c.ece += (bc / nn) * math.Abs(binPredSum[i]/bc-binObsSum[i]/bc)
 	}
-	c.verdict = verdictFor(n, c.meanPred-c.obsRate)
+	c.verdict = verdictFor(n, c.meanPred-c.obsRate, c.ece)
 	return c
 }
 
-// verdictFor labels a calibration from its sample count and predicted-minus-observed
-// gap, withholding a read below the sample floor.
-func verdictFor(n int, gap float64) string {
+// verdictFor labels a calibration from its sample count, its predicted-minus-observed gap
+// and its ECE, withholding a read below the sample floor.
+//
+// The mean gap alone cannot carry "well-calibrated". A score whose outcomes do not depend
+// on it at all can still predict the base rate on average - the synthetic low-resolution
+// scenario does exactly that, mean gap -0.006 with an ECE of 0.21 - and that label was
+// then read as "when it says 70%, roughly 70% is what happens", which no bin of that data
+// supports. So:
+//
+//   - a real mean offset is over- or underconfident, as before;
+//   - "well-calibrated" additionally needs the bins to agree (ECE within the same tolerance);
+//   - a mean that agrees over bins that do not is "calibrated-on-average" - which says only
+//     what the average shows. It is also what too few samples per bin honestly produce:
+//     ECE is noisy on small data, and a per-bin claim that the data cannot support is
+//     withheld rather than asserted.
+func verdictFor(n int, gap, ece float64) string {
 	if n < minCalibrationSamples {
 		return "insufficient-data"
 	}
@@ -136,6 +149,8 @@ func verdictFor(n int, gap float64) string {
 		return "overconfident"
 	case gap < -calibrationGapTolerance:
 		return "underconfident"
+	case ece > calibrationGapTolerance:
+		return "calibrated-on-average"
 	default:
 		return "well-calibrated"
 	}

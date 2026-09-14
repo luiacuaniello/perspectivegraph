@@ -39,6 +39,9 @@ type validationRequest struct {
 	// WeightBasis (offline fallback): the path's weakest evidence basis, for per-basis
 	// recalibration. Ignored when the path is live (server-captured wins).
 	WeightBasis string `json:"weightBasis"`
+	// PredictedPriority (offline fallback): the path's triage Priority in [0,100], so a
+	// synthetic dataset can exercise discrimination of the order. Ignored for a live path.
+	PredictedPriority *float64 `json:"predictedPriority"`
 }
 
 // listValidations handles GET /validations - the verdicts board, the rolled-up
@@ -100,19 +103,19 @@ func (a *API) listValidations(w http.ResponseWriter, r *http.Request) {
 // can be paired with the prediction it tests AND segmented later. Zeroes when the
 // path is no longer in the latest analysis (resolved, or never surfaced) or the
 // analyzer isn't wired - such records sit out of the calibration math.
-func (a *API) pathFeatures(ctx context.Context, pathID string) (score float64, hops int, correlated bool, weightBasis string, found bool) {
+func (a *API) pathFeatures(ctx context.Context, pathID string) (score float64, hops int, correlated bool, weightBasis string, priority float64, found bool) {
 	if a.analyzer == nil || pathID == "" {
-		return 0, 0, false, "", false
+		return 0, 0, false, "", 0, false
 	}
 	// scopedLatest, not analyzer.Latest: these helpers took the tenant alone, which let
 	// an app-scoped caller read the score and structure of a path in another team's
 	// application by naming its id.
 	for _, p := range a.scopedLatest(ctx) {
 		if p.ID == pathID {
-			return p.Score, len(p.Steps), p.CorrelatedHops, weakestBasis(p), true
+			return p.Score, len(p.Steps), p.CorrelatedHops, weakestBasis(p), p.Priority, true
 		}
 	}
-	return 0, 0, false, "", false
+	return 0, 0, false, "", 0, false
 }
 
 // weakestBasis is the basis of the path's least-evidenced hop (lowest WeightConfidence)
@@ -163,6 +166,7 @@ type verdictFields struct {
 	weightBasis                                     string
 	detected                                        *bool
 	predictedScore, predictedCompromise             *float64
+	predictedPriority                               *float64
 	hops                                            *int
 	correlatedHops                                  *bool
 }
@@ -174,7 +178,16 @@ type verdictFields struct {
 // also captures the per-target compromise probability - the any-route event that
 // track grades against.
 func (a *API) buildRecord(ctx context.Context, f verdictFields) validation.Record {
-	score, hops, correlated, weightBasis, found := a.pathFeatures(ctx, f.pathID)
+	score, hops, correlated, weightBasis, livePriority, found := a.pathFeatures(ctx, f.pathID)
+	// The triage order the operator saw, captured with the score. Server-captured for a
+	// live path, like everything else here; the client value is only an offline fallback.
+	var priority *float64
+	if found {
+		priority = &livePriority
+	} else if f.predictedPriority != nil {
+		v := *f.predictedPriority
+		priority = &v
+	}
 	if !found {
 		if f.predictedScore != nil {
 			score = *f.predictedScore
@@ -202,6 +215,7 @@ func (a *API) buildRecord(ctx context.Context, f verdictFields) validation.Recor
 		Scope: validation.Scope(f.scope), Source: f.source, Evidence: f.evidence,
 		Route: f.route, PredictedScore: score, PredictedCompromise: compromise,
 		Hops: hops, CorrelatedHops: correlated, WeightBasis: weightBasis, Detected: f.detected,
+		PredictedPriority: priority,
 	}
 }
 
@@ -253,7 +267,7 @@ func (a *API) putValidation(w http.ResponseWriter, r *http.Request) {
 		pathID: req.PathID, outcome: req.Outcome, scope: req.Scope, source: req.Source,
 		evidence: req.Evidence, route: req.Route, detected: req.Detected, weightBasis: req.WeightBasis,
 		predictedScore: req.PredictedScore, predictedCompromise: req.PredictedCompromise,
-		hops: req.Hops, correlatedHops: req.CorrelatedHops,
+		hops: req.Hops, correlatedHops: req.CorrelatedHops, predictedPriority: req.PredictedPriority,
 	}))
 	if err != nil {
 		switch {
@@ -289,6 +303,7 @@ type importFinding struct {
 	WeightBasis         string   `json:"weightBasis"`
 	PredictedScore      *float64 `json:"predictedScore"`
 	PredictedCompromise *float64 `json:"predictedCompromise"`
+	PredictedPriority   *float64 `json:"predictedPriority"`
 }
 
 // importValidations handles POST /validations/import - the push path for automatic
@@ -342,6 +357,7 @@ func (a *API) importValidations(w http.ResponseWriter, r *http.Request) {
 			pathID: pathID, outcome: f.Outcome, scope: f.Scope, source: source,
 			evidence: f.Evidence, route: f.Route, detected: f.Detected, weightBasis: f.WeightBasis,
 			predictedScore: f.PredictedScore, predictedCompromise: f.PredictedCompromise,
+			predictedPriority: f.PredictedPriority,
 		}))
 		if err != nil {
 			rejected++ // the finding matched (or carried) a path but was invalid

@@ -15,7 +15,8 @@ package validation
 //   - ECE          = Σ (nₖ/N) · |meanPredₖ - obsRateₖ|  (binned calibration gap)
 //   - a reliability diagram (predicted vs observed per bin)
 //
-// and an honest verdict: well-calibrated / overconfident / underconfident, plus a
+// and an honest verdict: well-calibrated / calibrated-on-average / overconfident /
+// underconfident, plus a
 // RecommendedScale (the multiplicative nudge that would best align predictions to
 // observations). The scale is *advisory* - we surface it rather than silently
 // rescaling scores, because on a thin sample that would be fitting noise. This is
@@ -37,8 +38,10 @@ const reliabilityBins = 5
 // "insufficient-data" and withhold a RecommendedScale rather than overfit.
 const minCalibrationSamples = 8
 
-// calibrationGapTolerance is how far mean-predicted may sit from observed-rate
-// before we call the model over/under-confident rather than well-calibrated.
+// calibrationGapTolerance is how far mean-predicted may sit from observed-rate before we
+// call the model over/under-confident, and how large the ECE may be before a matching mean
+// is only "calibrated-on-average" rather than well-calibrated. Both are gaps between a
+// predicted and an observed probability, so one tolerance serves both.
 const calibrationGapTolerance = 0.1
 
 // ReliabilityBin is one bucket of the reliability diagram: of the tested paths
@@ -125,8 +128,23 @@ type Calibration struct {
 	// fine for a demo, but for a real engagement that accumulates verdicts over weeks it
 	// must be set, so the report surfaces the gap rather than letting it bite silently.
 	Persistent bool `json:"persistent"`
-	// Verdict is the qualitative read: "well-calibrated" | "overconfident" |
-	// "underconfident" | "insufficient-data".
+	// Discrimination grades whether this track's predicted score orders confirmed
+	// verdicts above refuted ones (AUC). It is a different question from everything above:
+	// a perfectly calibrated score can fail to separate anything, and a sharply separating
+	// one can be wildly miscalibrated. Always present; HasData false until both classes
+	// exist.
+	Discrimination Discrimination `json:"discrimination"`
+	// PriorityDiscrimination grades the triage order itself - Priority, not S(P) - on the
+	// path-scoped track. Priority is not a probability, so nothing above applies to it; AUC
+	// is rank-based and does. It grades the order against an EXPLOITABILITY outcome while
+	// Priority also weighs target sensitivity and blast radius on purpose, so a refuted path
+	// to a crown jewel ranking high is partly by design: read a modest value as "the order
+	// is not only about reachability", not as a defect on its own. Nil on the target and
+	// edge tracks, and until any path verdict carries a captured Priority.
+	PriorityDiscrimination *Discrimination `json:"priority_discrimination,omitempty"`
+	// Verdict is the qualitative read: "well-calibrated" (the mean AND the bins agree) |
+	// "calibrated-on-average" (the mean agrees, the bins do not - no per-score claim) |
+	// "overconfident" | "underconfident" | "insufficient-data".
 	Verdict string `json:"verdict"`
 	HasData bool   `json:"has_data"` // false ⇒ no scored verdicts yet; the metrics are undefined
 }
@@ -167,10 +185,16 @@ func calibrationOf(records []Record, persistent bool) Calibration {
 	pathSamples := make([]calSample, 0, len(records))
 	targetSamples := make([]calSample, 0, len(records))
 	edgeSamples := make([]calSample, 0)
+	priorityPairs := make([]rankPair, 0)
 	for _, r := range records {
 		y, isSample := observedOutcome(r.Outcome)
 		if !isSample {
 			continue
+		}
+		// Independent of PredictedScore: a verdict can carry a captured Priority even when
+		// its score was not, and the triage order is graded on its own evidence.
+		if scopeOrDefault(r.Scope) == ScopePath && r.PredictedPriority != nil {
+			priorityPairs = append(priorityPairs, rankPair{score: *r.PredictedPriority, y: y})
 		}
 		switch scopeOrDefault(r.Scope) {
 		case ScopeTarget:
@@ -195,6 +219,10 @@ func calibrationOf(records []Record, persistent bool) Calibration {
 	// Detection spans all confirmed verdicts (scope-agnostic) and must be set before
 	// diagnose(), so each track's diagnosis can raise the detection axis (#7).
 	cal := computeCalibration(pathSamples, detection, persistent)
+	if len(priorityPairs) > 0 {
+		pd := discriminationOf(priorityPairs)
+		cal.PriorityDiscrimination = &pd
+	}
 	if len(targetSamples) > 0 {
 		tcal := computeCalibration(targetSamples, detection, persistent)
 		cal.Target = &tcal
@@ -223,7 +251,8 @@ func calibrationOf(records []Record, persistent bool) Calibration {
 // Calibration reports the reliability of the engine's own scores for a tenant.
 func (s *Store) Calibration(_ context.Context, tenant string) (Calibration, error) {
 	if s == nil {
-		return Calibration{Bins: emptyBins(), Verdict: "insufficient-data"}, nil
+		return Calibration{Bins: emptyBins(), Verdict: "insufficient-data",
+			Discrimination: Discrimination{Verdict: "insufficient-data"}}, nil
 	}
 	persistent := s.Persistent()
 	tenant = tenantKey(tenant)
@@ -244,6 +273,9 @@ func (s *Store) Calibration(_ context.Context, tenant string) (Calibration, erro
 
 func computeCalibration(samples []calSample, detection *DetectionStats, persistent bool) Calibration {
 	cal := Calibration{Bins: emptyBins(), Verdict: "insufficient-data", Persistent: persistent, Detection: detection}
+	// Before the early returns: discrimination has its own per-class floor and must not
+	// inherit the calibration one, or a thin calibration dataset would hide a ranking read.
+	cal.Discrimination = scoreDiscrimination(samples)
 	n := len(samples)
 	if n == 0 {
 		return cal

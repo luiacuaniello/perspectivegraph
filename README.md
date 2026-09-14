@@ -284,8 +284,9 @@ are expert estimates, and to call `get_score_trust` before quoting one as a prob
 **The short version, if you read nothing else.** The engine and its public API are
 complete, documented and tested. The AWS connector is verified against a real account.
 The path *scores* are **not** calibrated against real exploited outcomes yet, and the
-*order* they produce is not graded either - what is measured is whether a surfaced path
-is real (the benchmark below). So: use it to find and cut routes, and don't put its risk
+*order* they produce has not been graded against them either - the instruments for both
+exist, the field verdicts do not. What is measured today is whether a surfaced path is
+real (the benchmark below). So: use it to find and cut routes, and don't put its risk
 percentage in front of a board. What is and isn't claimed is spelled out in
 [positioning](docs/POSITIONING.md). It collects **no telemetry**: out of the box it opens
 no outbound connection at all - GitHub, the AI assistant and the KEV/EPSS feeds each stay

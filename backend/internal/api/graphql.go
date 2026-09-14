@@ -791,6 +791,35 @@ func (a *API) Schema() (graphql.Schema, error) {
 		},
 	})
 
+	discriminationType := graphql.NewObject(graphql.ObjectConfig{
+		Name:        "Discrimination",
+		Description: "Does the score ORDER dangerous paths above harmless ones? AUC: the probability a confirmed path outranks a refuted one, ties counted half. 0.5 is a coin, 1 is perfect separation, below 0.5 the order is inverted. A separate question from calibration - a well-calibrated score can separate nothing, and a sharply separating one can be badly miscalibrated. Partial verdicts are excluded: half credit is not a class.",
+		Fields: graphql.Fields{
+			"positives": &graphql.Field{Type: graphql.Int, Description: "Confirmed verdicts carrying the score.", Resolve: field[validation.Discrimination](func(d validation.Discrimination) any { return d.Positives })},
+			"negatives": &graphql.Field{Type: graphql.Int, Description: "Refuted verdicts carrying the score.", Resolve: field[validation.Discrimination](func(d validation.Discrimination) any { return d.Negatives })},
+			"auc": &graphql.Field{Type: graphql.Float, Description: "P(a confirmed path outranks a refuted one). Null until there is at least one of each.", Resolve: field[validation.Discrimination](func(d validation.Discrimination) any {
+				if !d.HasData {
+					return nil
+				}
+				return d.AUC
+			})},
+			"aucLow": &graphql.Field{Type: graphql.Float, Description: "Lower bound of an approximate 95% interval (Hanley-McNeil, widened on small samples so perfect separation does not report zero width).", Resolve: field[validation.Discrimination](func(d validation.Discrimination) any {
+				if !d.HasData {
+					return nil
+				}
+				return d.AUCLow
+			})},
+			"aucHigh": &graphql.Field{Type: graphql.Float, Description: "Upper bound of the same interval. An interval containing 0.5 means the order cannot yet be told apart from a coin.", Resolve: field[validation.Discrimination](func(d validation.Discrimination) any {
+				if !d.HasData {
+					return nil
+				}
+				return d.AUCHigh
+			})},
+			"verdict": &graphql.Field{Type: graphql.String, Description: "discriminates | indistinguishable-from-chance | inverted | insufficient-data (fewer than ten of either class: the AUC is still shown, not judged).", Resolve: field[validation.Discrimination](func(d validation.Discrimination) any { return d.Verdict })},
+			"hasData": &graphql.Field{Type: graphql.Boolean, Resolve: field[validation.Discrimination](func(d validation.Discrimination) any { return d.HasData })},
+		},
+	})
+
 	calibrationType := graphql.NewObject(graphql.ObjectConfig{
 		Name:        "Calibration",
 		Description: "Does the number mean anything? Pairs each tested path's predicted score with its observed outcome (confirmed→1, refuted→0, partial→0.5) and grades the forecast: Brier/log-loss/ECE plus a reliability diagram. The production artifact that lets you stand behind \"55%\" as a probability, not a vibe.",
@@ -807,7 +836,7 @@ func (a *API) Schema() (graphql.Schema, error) {
 				}
 				return c.RecommendedScale
 			})},
-			"verdict":                  &graphql.Field{Type: graphql.String, Description: "well-calibrated | overconfident | underconfident | insufficient-data.", Resolve: field[validation.Calibration](func(c validation.Calibration) any { return c.Verdict })},
+			"verdict":                  &graphql.Field{Type: graphql.String, Description: "well-calibrated (mean and per-bin agree: a score can be read as a probability) | calibrated-on-average (the mean agrees but the bins do not, ECE above tolerance - no claim about what any particular score means) | overconfident | underconfident | insufficient-data.", Resolve: field[validation.Calibration](func(c validation.Calibration) any { return c.Verdict })},
 			"hasData":                  &graphql.Field{Type: graphql.Boolean, Resolve: field[validation.Calibration](func(c validation.Calibration) any { return c.HasData })},
 			"bins":                     &graphql.Field{Type: graphql.NewList(reliabilityBinType), Description: "The reliability diagram, fixed buckets over [0,1] (empty buckets have count 0).", Resolve: field[validation.Calibration](func(c validation.Calibration) any { return c.Bins })},
 			"brierRecalibrated":        &graphql.Field{Type: graphql.Float, Description: "Brier after an isotonic recalibration - the floor a monotone rescale can reach. If it's good, recalibration suffices (apply recalibrationMap); if it's still high, the model lacks resolution and no rescale fixes it (the line past which #6/#7 are warranted).", Resolve: field[validation.Calibration](func(c validation.Calibration) any { return c.BrierRecalibrated })},
@@ -821,6 +850,13 @@ func (a *API) Schema() (graphql.Schema, error) {
 					return nil
 				}
 				return *c.Detection
+			})},
+			"discrimination": &graphql.Field{Type: graphql.NewNonNull(discriminationType), Description: "Whether this track's own predicted score orders confirmed verdicts above refuted ones (AUC).", Resolve: field[validation.Calibration](func(c validation.Calibration) any { return c.Discrimination })},
+			"priorityDiscrimination": &graphql.Field{Type: discriminationType, Description: "Whether the triage ORDER - Priority, the axis an operator sorts by - puts confirmed paths above refuted ones. Path-scoped track only; null until a verdict carries a Priority captured at verdict time. It grades the order against an exploitability outcome while Priority also weighs target sensitivity and blast radius by design, so read a modest value as \"the order is not only about reachability\", not as a defect on its own.", Resolve: field[validation.Calibration](func(c validation.Calibration) any {
+				if c.PriorityDiscrimination == nil {
+					return nil
+				}
+				return *c.PriorityDiscrimination
 			})},
 			"diagnosis":  &graphql.Field{Type: graphql.String, Description: "The one-line gate recommendation derived from all of the above: calibrated / recalibrate-first / structural (#6) / detection-axis (#7) / low-resolution. The answer to \"and therefore what should we build?\".", Resolve: field[validation.Calibration](func(c validation.Calibration) any { return c.Diagnosis })},
 			"persistent": &graphql.Field{Type: graphql.Boolean, Description: "Whether the verdict store survives a restart (VALIDATIONS_PATH set). False ⇒ the calibration dataset is in-memory and lost on restart - fine for a demo, but set it for a real calibration program.", Resolve: field[validation.Calibration](func(c validation.Calibration) any { return c.Persistent })},

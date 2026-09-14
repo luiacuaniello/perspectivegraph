@@ -182,3 +182,45 @@ func TestCalibrationEndToEndWithSegmentsAndDetection(t *testing.T) {
 		t.Error("expected a non-empty diagnosis")
 	}
 }
+
+// The verdict separates three things a mean gap alone runs together: a real offset
+// (over/underconfident), agreement in every bin (well-calibrated), and agreement only on
+// average - which is what an uninformative score or too few samples per bin can show, and
+// which supports no claim about what any particular score means.
+func TestVerdictNeedsTheBinsToAgreeNotOnlyTheMean(t *testing.T) {
+	cases := []struct {
+		name     string
+		n        int
+		gap, ece float64
+		want     string
+	}{
+		{"below the floor", minCalibrationSamples - 1, 0, 0, "insufficient-data"},
+		{"real upward offset", 50, 0.2, 0.2, "overconfident"},
+		{"real downward offset", 50, -0.2, 0.2, "underconfident"},
+		{"mean and bins agree", 50, 0.02, 0.05, "well-calibrated"},
+		{"mean agrees, bins do not", 500, -0.006, 0.21, "calibrated-on-average"},
+		{"exactly at both tolerances", 50, calibrationGapTolerance, calibrationGapTolerance, "well-calibrated"},
+	}
+	for _, c := range cases {
+		if got := verdictFor(c.n, c.gap, c.ece); got != c.want {
+			t.Errorf("%s: verdictFor(%d, %+.3f, %.3f) = %q, want %q", c.name, c.n, c.gap, c.ece, got, c.want)
+		}
+	}
+}
+
+// A segment that is calibrated only on average has |gap| <= tolerance by definition, and the
+// structural check needs |gap| > reference + tolerance. It must never manufacture a #6.
+func TestACalibratedOnAverageSegmentNeverTriggersStructural(t *testing.T) {
+	cal := Calibration{
+		MeanPredicted: 0.5, ObservedRate: 0.5,
+		Segments: []CalibrationSegment{
+			{Name: "correlated-hops", Samples: 200, Verdict: "calibrated-on-average", MeanPredicted: 0.58, ObservedRate: 0.5},
+			{Name: "independent-hops", Samples: 200, Verdict: "well-calibrated", MeanPredicted: 0.5, ObservedRate: 0.5},
+			{Name: "long-path", Samples: 200, Verdict: "calibrated-on-average", MeanPredicted: 0.42, ObservedRate: 0.5},
+			{Name: "short-path", Samples: 200, Verdict: "well-calibrated", MeanPredicted: 0.5, ObservedRate: 0.5},
+		},
+	}
+	if s := structuralSegment(cal); s != "" {
+		t.Fatalf("a calibrated-on-average segment produced a structural diagnosis: %q", s)
+	}
+}
