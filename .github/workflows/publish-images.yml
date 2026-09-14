@@ -316,17 +316,46 @@ jobs:
       # `helm push` prints the digest it created; capture it, because signing a tag
       # signs whatever that tag points at later, while signing a digest signs this
       # artifact for good.
+      #
+      # A version is pushed ONCE. `helm package` stamps the current time into the archive,
+      # so the same commit packaged twice is a different digest - and re-running this job
+      # after a later step failed (it has: setup-oras hit a 504 from GitHub's release CDN
+      # on v1.13.0, after the chart was already pushed and signed) would silently replace
+      # the published, signed 1.13.0 with another build under the same tag. So ask the
+      # registry first. 404: publish. 200: reuse what is there, and pull it, so the file
+      # attached to the release is byte-for-byte the one in the registry. Anything else
+      # stops the job - a registry that cannot say whether the version exists must not
+      # be taken to mean that it does not.
       - id: push
-        name: Push to GHCR (OCI)
+        name: Push to GHCR (OCI), once per version
         env:
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          repo="oci://ghcr.io/${{ github.repository_owner }}/charts"
-          helm push "dist/perspectivegraph-${TAG#v}.tgz" "$repo" 2>&1 | tee push.log
+          ver="${TAG#v}"
+          name="${{ github.repository_owner }}/charts/perspectivegraph"
+          token="$(curl -fsS "https://ghcr.io/token?scope=repository:${name}:pull&service=ghcr.io" | jq -r .token)"
+          code="$(curl -sS -o /dev/null -I -w '%{http_code}' \
+            -H "Authorization: Bearer ${token}" \
+            -H 'Accept: application/vnd.oci.image.manifest.v1+json' \
+            "https://ghcr.io/v2/${name}/manifests/${ver}")"
+          case "$code" in
+            404)
+              helm push "dist/perspectivegraph-${ver}.tgz" "oci://ghcr.io/${{ github.repository_owner }}/charts" 2>&1 | tee push.log
+              ;;
+            200)
+              rm -f dist/*.tgz
+              helm pull "oci://ghcr.io/${name}" --version "$ver" -d dist 2>&1 | tee push.log
+              echo "::notice::chart ${ver} is already published; reusing it rather than pushing a new build over it"
+              ;;
+            *)
+              echo "::error::GHCR answered ${code} for chart ${ver}; refusing to guess whether it is published"
+              exit 1
+              ;;
+          esac
           digest="$(awk '/^Digest: /{print $2}' push.log)"
-          test -n "$digest" || { echo "::error::helm push printed no digest"; exit 1; }
-          echo "ref=ghcr.io/${{ github.repository_owner }}/charts/perspectivegraph@${digest}" >>"${GITHUB_OUTPUT}"
+          test -n "$digest" || { echo "::error::helm printed no digest"; exit 1; }
+          echo "ref=ghcr.io/${name}@${digest}" >>"${GITHUB_OUTPUT}"
 
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
@@ -347,8 +376,39 @@ jobs:
       # Pushed on every release rather than once by hand, because the hand-pushed one is
       # the copy that silently falls behind - it carries the repositoryID that turns on
       # the Verified Publisher flag, and a stale one turns it back off.
+      #
+      # Pushed only when it differs. The file changes about once a year; the ORAS download
+      # below comes from GitHub's release CDN, and on v1.13.0 that 504 failed a release
+      # whose metadata in the registry was already identical. An OCI layer digest is the
+      # sha256 of the file, so comparing digests is exact without fetching the blob.
+      - id: ahmeta
+        name: Is the Artifact Hub metadata in the registry current?
+        run: |
+          set -euo pipefail
+          name="${{ github.repository_owner }}/charts/perspectivegraph"
+          token="$(curl -fsS "https://ghcr.io/token?scope=repository:${name}:pull&service=ghcr.io" | jq -r .token)"
+          want="sha256:$(sha256sum artifacthub-repo.yml | cut -d' ' -f1)"
+          manifest="$(mktemp)"
+          code="$(curl -sS -o "$manifest" -w '%{http_code}' \
+            -H "Authorization: Bearer ${token}" \
+            -H 'Accept: application/vnd.oci.image.manifest.v1+json' \
+            "https://ghcr.io/v2/${name}/manifests/artifacthub.io")"
+          case "$code" in
+            200) have="$(jq -r '.layers[0].digest' "$manifest")" ;;
+            404) have="" ;;
+            *)   echo "::error::GHCR answered ${code} for the artifacthub.io tag"; exit 1 ;;
+          esac
+          if [ "$have" = "$want" ]; then
+            echo "artifacthub-repo.yml is already in the registry (${want})"
+            echo "push=false" >>"${GITHUB_OUTPUT}"
+          else
+            echo "push=true" >>"${GITHUB_OUTPUT}"
+          fi
+
       - uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
+        if: steps.ahmeta.outputs.push == 'true'
       - name: Push the Artifact Hub repository metadata
+        if: steps.ahmeta.outputs.push == 'true'
         run: |
           oras push "ghcr.io/${{ github.repository_owner }}/charts/perspectivegraph:artifacthub.io" \
             --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
