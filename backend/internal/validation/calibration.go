@@ -104,7 +104,9 @@ type Calibration struct {
 	// detection axis (#7). Nil until any confirmed verdict carries a Detected flag.
 	Detection *DetectionStats `json:"detection,omitempty"`
 	// Diagnosis is the one-line gate recommendation derived from all of the above:
-	// calibrated / recalibrate-first / structural-#6 / detection-#7 / low-resolution.
+	// calibrated / recalibrate-first / structural-#6 / detection-#7 / per-basis (P1) /
+	// low-resolution / inverted-order. Its claims about the ranking come from
+	// Discrimination and quote its AUC.
 	Diagnosis string `json:"diagnosis,omitempty"`
 	// Target is the *target-scoped* calibration: verdicts that validated whether a
 	// crown jewel was reached AT ALL (by any route) grade the per-target compromise

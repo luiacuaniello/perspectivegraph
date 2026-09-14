@@ -110,9 +110,12 @@ ranking high is the order doing its job, not failing at it. The synthetic self-t
 (`make seed-validation`) shows the separation cleanly - its `overconfident` scenario is
 badly miscalibrated and orders paths *better* than any other, while `low-resolution`
 cannot be told apart from a coin - but those verdicts are generated, and prove the
-instrument rather than the engine. And the gate diagnosis still infers "the ranking is
-sound" from the recalibrated Brier rather than from this measure; the two agree on every
-synthetic scenario and have not been reconciled in code.
+instrument rather than the engine. And the gate diagnosis takes its claims about order
+from this measure rather than inferring them: it says "the ranking is sound" only on a
+`discriminates` verdict and quotes the AUC beside it, reads an order indistinguishable
+from chance as low-resolution, names an inverted one, and says the ranking is not yet
+graded when there are too few of a class. On the synthetic scenarios this changed no
+scenario's recommendation, only what each is allowed to claim about order.
 
 **Calibration - when the engine says 0.8, does it happen about 80% of the time?**
 Measured as Brier score, log loss, ECE and a reliability diagram, over verdicts that

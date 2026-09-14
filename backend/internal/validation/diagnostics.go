@@ -14,9 +14,12 @@ package validation
 //     high rate means the score over-predicts *undetected* compromise and the model
 //     needs a detection axis (#7).
 //
-// diagnose() folds all three into one gate recommendation.
+// diagnose() folds all three into one gate recommendation, and takes every claim it makes
+// about the ORDER of paths from the discrimination metric (discrimination.go) - the three
+// lenses above measure the numbers, not the ranking.
 
 import (
+	"fmt"
 	"math"
 	"math/rand/v2"
 	"sort"
@@ -593,10 +596,33 @@ func diagnose(cal Calibration) string {
 		cal.BrierRecalibrated-cal.BrierRecalibratedByBasis > basisImprovementThreshold {
 		return "per-basis recalibration (P1): the score is miscalibrated differently by evidence basis (e.g. EPSS runs hot, heuristic runs cold), which a single global rescale can't fix - apply the per-basis map (recalibrationByBasis)."
 	}
-	// Resolution first: if the score barely discriminates (per-bin observed rates hug
-	// the base rate), no rescale helps - a constant forecast is calibrated yet useless.
+	// Every claim below about ORDER - "the ranking is sound", "barely separates real from
+	// fake" - is read from the discrimination metric, not inferred from calibration
+	// quantities. It used to be inferred, and nothing stopped the diagnosis from calling a
+	// ranking sound right above a Score order that read "not shown to beat chance".
+	//
+	// An order shown to be a coin or backwards is settled before resolution and structure:
+	// no rescale fixes it, and a correlation-aware model (#6) on top of it would be model
+	// complexity built on evidence that orders nothing. It stays after detection and
+	// per-basis, which have their own evidence: mixing bases that run hot and cold can
+	// flatten a pooled order that the per-basis map restores.
+	disc := cal.Discrimination
+	switch disc.Verdict {
+	case "inverted":
+		return fmt.Sprintf("inverted-order: a refuted path outranks a confirmed one more often than the reverse (%s) - no rescale fixes an order that points the wrong way; check the verdicts were not recorded with confirmed and refuted swapped, then the per-edge evidence.", aucText(disc))
+	case "indistinguishable-from-chance":
+		return fmt.Sprintf("low-resolution: the score's order cannot be told apart from chance (%s), so a rescale can't help - revisit the per-edge evidence before adding model complexity.", aucText(disc))
+	}
+	ordered := disc.Verdict == "discriminates"
+
+	// Resolution: the per-bin observed rates hug the base rate, so the score explains
+	// little of the outcomes and no rescale can add what isn't there. What it says about
+	// the order depends on whether the order was graded.
 	if resolutionSkill(cal) < lowResolutionSkill {
-		return "low-resolution: the score barely separates real from fake paths (a rescale can't help) - revisit the per-edge evidence before adding model complexity."
+		if ordered {
+			return fmt.Sprintf("low-resolution: the order beats chance (%s) but the score explains little of the outcomes, and a rescale can't add what isn't there - revisit the per-edge evidence before adding model complexity.", aucText(disc))
+		}
+		return "low-resolution: the score's bins barely move away from the base rate, so a rescale can't help, and its order is not yet graded - revisit the per-edge evidence before adding model complexity."
 	}
 	// Structural (#6): a segment miscalibrated *more than the rest* needs its own curve,
 	// which a single global rescale can't provide.
@@ -608,7 +634,16 @@ func diagnose(cal Calibration) string {
 	if cal.Verdict == "well-calibrated" {
 		return "calibrated: predicted scores match observed outcomes; no model change indicated - keep validating."
 	}
-	return "recalibrate-first: the ranking is sound but the scores are mis-scaled - apply the recalibrationMap before building any new model."
+	if ordered {
+		return fmt.Sprintf("recalibrate-first: the ranking is sound (%s) but the scores are mis-scaled - apply the recalibrationMap before building any new model.", aucText(disc))
+	}
+	return fmt.Sprintf("recalibrate-first: the scores are mis-scaled and a monotone rescale is indicated, but the ranking itself is not yet graded (it needs at least %d confirmed and %d refuted verdicts) - apply the recalibrationMap, and keep validating before building any new model.", minDiscriminationPerClass, minDiscriminationPerClass)
+}
+
+// aucText is the measurement a ranking claim rests on, printed beside the claim so that a
+// sound-but-weak order (AUC 0.58) cannot pass for a strong one.
+func aucText(d Discrimination) string {
+	return fmt.Sprintf("AUC %.2f [%.2f-%.2f]", d.AUC, d.AUCLow, d.AUCHigh)
 }
 
 // resolutionSkill is the Murphy resolution divided by the uncertainty (base-rate

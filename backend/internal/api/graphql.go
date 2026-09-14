@@ -858,7 +858,7 @@ func (a *API) Schema() (graphql.Schema, error) {
 				}
 				return *c.PriorityDiscrimination
 			})},
-			"diagnosis":  &graphql.Field{Type: graphql.String, Description: "The one-line gate recommendation derived from all of the above: calibrated / recalibrate-first / structural (#6) / detection-axis (#7) / low-resolution. The answer to \"and therefore what should we build?\".", Resolve: field[validation.Calibration](func(c validation.Calibration) any { return c.Diagnosis })},
+			"diagnosis":  &graphql.Field{Type: graphql.String, Description: "The one-line gate recommendation derived from all of the above: calibrated / recalibrate-first / structural (#6) / detection-axis (#7) / per-basis recalibration (P1) / low-resolution / inverted-order. The answer to \"and therefore what should we build?\". Any claim it makes about the ranking is read from discrimination, and quotes its AUC.", Resolve: field[validation.Calibration](func(c validation.Calibration) any { return c.Diagnosis })},
 			"persistent": &graphql.Field{Type: graphql.Boolean, Description: "Whether the verdict store survives a restart (VALIDATIONS_PATH set). False ⇒ the calibration dataset is in-memory and lost on restart - fine for a demo, but set it for a real calibration program.", Resolve: field[validation.Calibration](func(c validation.Calibration) any { return c.Persistent })},
 		},
 	})

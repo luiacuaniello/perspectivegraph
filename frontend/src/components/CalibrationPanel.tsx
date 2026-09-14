@@ -89,10 +89,12 @@ function Stat({ label, value, tone = "text-slate-700" }: { label: string; value:
 }
 
 // diagTone colours the gate diagnosis: green when calibrated, blue when a rescale
-// fixes it, amber when a new model/axis is indicated.
+// fixes it, red when the order points the wrong way (the same red as an inverted Score
+// order, so the two lines agree at a glance), amber when a new model/axis is indicated.
 function diagTone(d: string): string {
   if (d.startsWith("calibrated")) return "text-emerald-600";
   if (d.startsWith("recalibrate")) return "text-accent";
+  if (d.startsWith("inverted")) return "text-flag";
   return "text-amber-600";
 }
 
@@ -170,7 +172,7 @@ export function CalibrationPanel({ calibration, trend }: { calibration: Calibrat
             <div className="flex items-start gap-2">
               <span className="mt-0.5 text-[11px] font-medium text-muted">Diagnosis</span>
               <span className={`flex-1 text-[12px] leading-snug ${diagTone(calibration.diagnosis)}`}>{calibration.diagnosis}</span>
-              <InfoTip text="The gate recommendation: recalibrate-first (a rescale fixes it), structural #6 (error on correlated/long paths), detection-axis #7 (paths get caught, so the score over-predicts), or low-resolution (inputs can't tell real from fake)." />
+              <InfoTip text="The gate recommendation: recalibrate-first (a rescale fixes it), structural #6 (error on correlated/long paths), detection-axis #7 (paths get caught, so the score over-predicts), per-basis (one evidence source runs hot, another cold), low-resolution (inputs can't tell real from fake), or inverted-order (refuted paths outrank confirmed ones). Whatever it says about the ranking comes from the Score order line above, with its AUC." />
             </div>
           )}
           <div className="mt-2 flex flex-wrap items-center gap-1.5">

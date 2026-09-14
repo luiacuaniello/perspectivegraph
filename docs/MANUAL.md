@@ -280,8 +280,8 @@ by path structure (correlated/independent hops, long/short paths, captured on th
 error concentrated on correlated/long paths is structural → a correlation-aware model (**#6**). (3)
 **Detection**: an operator can mark a confirmed verdict `detected`; a high catch rate on high-score paths
 means the score over-predicts *undetected* compromise → a detection axis (**#7**). `diagnose()` returns
-`recalibrate-first | structural (#6) | detection-axis (#7) | low-resolution` - so you build #6/#7 only when
-real verdicts prove the simpler fixes won't do.
+`recalibrate-first | structural (#6) | detection-axis (#7) | per-basis (P1) | low-resolution | inverted-order` -
+so you build #6/#7 only when real verdicts prove the simpler fixes won't do.
 
 Those real verdicts have to come from an authority *independent of the engine* - otherwise the loop is
 circular and the calibration only measures how well the engine agrees with itself. That authority is AWS.
@@ -1147,8 +1147,25 @@ and folds them into one **diagnosis**:
   *undetected* compromise - the signal for a detection axis (**#7**, `P(reach ∧ ¬detect)`).
 
 So the gate is honest and self-directing: `recalibrate-first` (apply the map) /
-`structural (#6)` / `detection-axis (#7)` / `low-resolution` - you build #6 or #7
-only when the evidence on real verdicts says the simpler fixes won't do.
+`structural (#6)` / `detection-axis (#7)` / `per-basis (P1)` / `low-resolution` /
+`inverted-order` - you build #6 or #7 only when the evidence on real verdicts says the
+simpler fixes won't do.
+
+Whatever the diagnosis says about the *ranking* is read from
+[discrimination](#discrimination-does-the-order-mean-anything), never inferred from the
+lenses above, which measure the numbers:
+
+| Score order verdict | What the diagnosis may say about order |
+|---|---|
+| `discriminates` | "the ranking is sound", with the AUC and its interval beside it - so a weak order that still beats chance is visible as one |
+| `indistinguishable-from-chance` | `low-resolution`: the order cannot be told apart from chance, so no rescale can help |
+| `inverted` | `inverted-order`: refuted paths outrank confirmed ones; first suspect verdicts recorded with confirmed and refuted swapped |
+| `insufficient-data` | nothing: `recalibrate-first` says the rescale is indicated and the ranking is not yet graded |
+
+A coin-flip or backwards order is settled before the structural (#6) branch - a
+correlation-aware model on evidence that orders nothing is complexity without a
+foundation - but after detection (#7) and per-basis, which carry their own evidence:
+pooling bases that run hot and cold can flatten an order the per-basis map restores.
 
 If the diagnosis ever points at #6, `make and-probe` (the `andprobe` decision tool)
 answers the question that actually decides a Bayesian Attack Graph: does your
@@ -2463,8 +2480,8 @@ Those verdicts also feed **probability calibration** (`{ calibration { … } }`)
 captures the path's predicted score, so the report grades it (Brier/ECE + a reliability
 diagram), cross-validates a recalibration map, segments by path structure, tracks a
 detection axis, and folds it all into one **diagnosis** -
-`recalibrate-first | structural (#6) | detection-axis (#7) | low-resolution` - the
-answer to "and therefore what should we build?". You don't need real infra to exercise
+`recalibrate-first | structural (#6) | detection-axis (#7) | per-basis (P1) | low-resolution | inverted-order` -
+the answer to "and therefore what should we build?". You don't need real infra to exercise
 it: `make calibration-selftest SCENARIO=…` draws verdicts from a known reality and the
 gate must name the cause (also a deterministic CI test). A "Brier over time" trend on
 the Overview lets you watch the evidence accumulate.
