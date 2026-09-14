@@ -287,22 +287,39 @@ jobs:
         with:
           version: v3.16.4
 
-      # install_only: the script creates and tears down its own cluster, so that it is
-      # the same command a contributor runs locally (`make chart-install`) rather than a
-      # CI-only path that can rot unnoticed.
+      # kind is compiled from its module, not downloaded as a release binary. That was
+      # helm/kind-action, and on 2026-09-14 github.com answered 504 for exactly one file -
+      # kind v0.31.0's linux-amd64 binary - while every other asset of the same release,
+      # and the same file through the API, downloaded fine. The action saves the 92-byte
+      # error page as the binary, its checksum check refuses it, and the job fails in 36s
+      # on a pull request that changed nothing here. `go install` fetches source through
+      # the Go module proxy, verified against sum.golang.org, so a broken release CDN is
+      # no longer something this gate depends on. kubectl comes from the runner image.
+      #
       # The kind version is pinned as tightly as the node images, because the two are
       # coupled: kind v0.31 writes a v1beta3 kubeadm config, which a v1.37 node rejects.
-      # Letting the action pick "latest" would make this job fail on a day nobody changed
-      # anything here.
-      - uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
+      # The runner image ships its own, newer kind; the version check below proves the
+      # pinned one is the one on PATH rather than trusting PATH order.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          install_only: true
-          version: v0.31.0
+          go-version: "1.26.8"
+          cache: false
 
+      - name: Install kind v0.31.0
+        run: |
+          GOBIN="$HOME/.local/bin" go install sigs.k8s.io/kind@v0.31.0
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/kind" version
+
+      # The script creates and tears down its own cluster, so that it is the same command
+      # a contributor runs locally (`make chart-install`) rather than a CI-only path that
+      # can rot unnoticed.
       - name: Install the chart and wait for every pod
         env:
           NODE_IMAGE: ${{ matrix.node }}
-        run: bash scripts/chart-install.sh
+        run: |
+          kind version | grep -q '^kind v0\.31\.0 ' || { echo "wrong kind on PATH: $(kind version)"; exit 1; }
+          bash scripts/chart-install.sh
 
   frontend:
     name: Frontend (React)

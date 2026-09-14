@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// The Go toolchain is named in seventeen places, and they have to agree.
+// The Go toolchain is named in eighteen places, and they have to agree.
 //
 // Beside the npm and deploy-parity tests for the same reason: these are repository
 // surfaces that must match, the drift is silent, and nothing else in the build compares
@@ -62,7 +62,7 @@ func TestGoVersionIsConsistentEverywhereItIsNamed(t *testing.T) {
 		count int
 	}{
 		{[]string{"backend", "Dockerfile"}, `golang:(\d+\.\d+\.\d+)-alpine`, 1},
-		{[]string{".github", "workflows", "ci.yml"}, `go-version: "(\d+\.\d+\.\d+)"`, 3},
+		{[]string{".github", "workflows", "ci.yml"}, `go-version: "(\d+\.\d+\.\d+)"`, 4},
 		{[]string{".github", "workflows", "codeql.yml"}, `go-version: "(\d+\.\d+\.\d+)"`, 1},
 		{[]string{".github", "workflows", "fuzz.yml"}, `go-version: "(\d+\.\d+\.\d+)"`, 1},
 		{[]string{".github", "workflows", "publish-images.yml"}, `go-version: "(\d+\.\d+\.\d+)"`, 1},
