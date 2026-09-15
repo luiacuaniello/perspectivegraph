@@ -110,15 +110,18 @@ updates:
       interval: weekly
     commit-message:
       prefix: "chore(deps)"
-    # Same reasoning as the backend, plus one of its own: npm comes with Node, so the
-    # Node version is pinned in ci.yml, the Makefile and package.json's engines as well
-    # as here. PR #178 proposed node 26, which is Current rather than LTS - moving a
-    # release image off LTS is not a dependency bump. Patches and digests still flow.
+    # Node is named in ONE place, frontend/Dockerfile, by exact version and digest; CI's
+    # setup-node and `make lockfile` read it through scripts/node-image.sh. So unlike the
+    # Go toolchain, a bump here is complete, and minors and patches within the LTS line
+    # flow: PR #204 was the last partial one, when the Makefile and ci.yml carried their
+    # own copies. Majors stay out - PR #178 proposed node 26, which is Current rather than
+    # LTS, and moving a release image off LTS is a decision, not a dependency bump.
+    # A Node that ships a different npm still stops in CI, on purpose: the frontend job
+    # compares npm with package.json's engines.npm, because npm writes the lockfile.
     ignore:
       - dependency-name: node
         update-types:
           - version-update:semver-major
-          - version-update:semver-minor
     groups:
       frontend-images:
         patterns: ["*"]
