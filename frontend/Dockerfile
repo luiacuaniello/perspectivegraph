@@ -9,7 +9,7 @@
 # architecture - so emulating the whole Node toolchain under QEMU to produce arm64
 # assets buys nothing and costs hours: vite/rolldown are native Rust binaries, and
 # emulated they crawl. Only the nginx stage below varies per target.
-FROM --platform=$BUILDPLATFORM node:24-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf AS build
+FROM --platform=$BUILDPLATFORM node:24-alpine@sha256:50c8e8ca1d27439048670df5883f32d57cf81cff6233222c893fd0d9884cbd81 AS build
 WORKDIR /app
 COPY package*.json ./
 # `npm ci`, never `npm install`: it installs exactly what package-lock.json pins and
