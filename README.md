@@ -283,6 +283,14 @@ query naming a field the schema lacks fails the build instead of an agent's call
 `search_assets` asks the engine whether full-text search is on: without OpenSearch an agent
 is told so, instead of receiving an empty result that reads as "no asset by that name".
 
+The server is in the official [MCP Registry](https://registry.modelcontextprotocol.io) as
+`io.github.luiacuaniello/perspectivegraph`, published from every stable release, and on
+[Glama](https://glama.ai/mcp/servers/luiacuaniello/perspectivegraph), which builds it,
+inspects the tools it exposes and grades their definitions - a grade of the MCP surface,
+not of the engine's scores:
+
+[![PerspectiveGraph MCP server on Glama](https://glama.ai/mcp/servers/luiacuaniello/perspectivegraph/badges/score.svg)](https://glama.ai/mcp/servers/luiacuaniello/perspectivegraph)
+
 ## Project status & maturity
 
 **The short version, if you read nothing else.** The engine and its public API are

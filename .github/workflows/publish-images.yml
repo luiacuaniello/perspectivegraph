@@ -460,3 +460,83 @@ jobs:
           git tag -f -a "$major" -m "${major} -> ${TAG}"
           git push -f origin "refs/tags/${major}"
           echo "::notice::${major} now points at ${TAG}"
+
+  # The official MCP Registry (registry.modelcontextprotocol.io) lists the MCP server by the
+  # backend image, which IS the server - `mcp` is a subcommand of the same binary. An entry
+  # names one image tag, so a release that is not published there leaves every client that
+  # installs from the registry on the previous image, security fixes included. The first
+  # entry (1.13.3) was published by hand; this keeps it current.
+  #
+  # After `publish`, because the registry checks that the image it is given exists and
+  # carries the io.modelcontextprotocol.server.name label the Dockerfile sets. Stable
+  # releases only, like the floating tag.
+  #
+  # Re-runnable by construction, as the chart job is: the registry refuses a version it
+  # already has, so the job asks first - 200 means published, skip; 404 means publish;
+  # anything else stops rather than guessing.
+  mcp-registry:
+    needs: [publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write # mcp-publisher login github-oidc: proves io.github.<owner>/... without a stored secret
+    env:
+      TAG: ${{ inputs.tag }}
+      SERVER_NAME: io.github.luiacuaniello/perspectivegraph
+      REGISTRY_URL: https://registry.modelcontextprotocol.io
+      # Pinned and checksum-verified like every other tool fetched at build time. The
+      # sha256 is the digest GitHub records for the v1.8.1 release asset.
+      MCP_PUBLISHER_VERSION: v1.8.1
+      MCP_PUBLISHER_SHA256: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - id: plan
+        name: Is this release a stable version the registry does not have yet?
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::notice::${TAG} is not a stable vX.Y.Z tag; not publishing it to the MCP Registry"
+            echo "publish=false" >>"${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          version="${TAG#v}"
+          code="$(curl -sS -o /dev/null -w '%{http_code}' \
+            "${REGISTRY_URL}/v0.1/servers/${SERVER_NAME/\//%2F}/versions/${version}")"
+          case "$code" in
+            200)
+              echo "::notice::${SERVER_NAME} ${version} is already in the MCP Registry"
+              echo "publish=false" >>"${GITHUB_OUTPUT}"
+              ;;
+            404)
+              echo "publish=true" >>"${GITHUB_OUTPUT}"
+              ;;
+            *)
+              echo "::error::the MCP Registry answered ${code} for ${SERVER_NAME} ${version}; refusing to guess whether it is published"
+              exit 1
+              ;;
+          esac
+
+      # -f matters here: without it a 504 from GitHub's release CDN is saved as the
+      # download and only the checksum notices, which is how kind-action failed on v1.13.0.
+      - name: Install mcp-publisher
+        if: steps.plan.outputs.publish == 'true'
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o mcp-publisher.tar.gz \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum -c -
+          tar xzf mcp-publisher.tar.gz mcp-publisher
+
+      - name: Publish to the MCP Registry
+        if: steps.plan.outputs.publish == 'true'
+        run: |
+          set -euo pipefail
+          bash scripts/mcp-server-json.sh "${TAG#v}" > server.json
+          ./mcp-publisher validate server.json
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish server.json
+          echo "::notice::published ${SERVER_NAME} ${TAG#v} to the MCP Registry"
