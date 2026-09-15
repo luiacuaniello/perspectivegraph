@@ -280,6 +280,8 @@ tool is ever added without that decision. The descriptions also tell the model t
 are expert estimates, and to call `get_score_trust` before quoting one as a probability.
 Every tool is also run against the real engine in the test suite, not only a stub, so a
 query naming a field the schema lacks fails the build instead of an agent's call.
+`search_assets` asks the engine whether full-text search is on: without OpenSearch an agent
+is told so, instead of receiving an empty result that reads as "no asset by that name".
 
 ## Project status & maturity
 

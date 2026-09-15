@@ -3,13 +3,17 @@ package api
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/mcp"
+	"github.com/luiacuaniello/perspectivegraph/internal/search"
+	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
 )
 
 // The MCP tools are unit-tested against a fake engine, which pins what a tool ASKS but
@@ -23,33 +27,11 @@ import (
 // It adds no cycle: internal/mcp imports nothing from this module.
 func TestEveryMCPToolIsAcceptedByTheRealEngine(t *testing.T) {
 	a := seededAPI(t)
-	h, err := a.Handler()
-	if err != nil {
-		t.Fatalf("Handler: %v", err)
-	}
-
-	// Record what reached the engine and what it said back. A tool's error alone is not
-	// enough to debug from: search_assets rewrites engine errors into "search is not
-	// enabled", and a query-guard rejection surfaces as a bare HTTP status.
-	var (
-		mu               sync.Mutex
-		sent, engineSaid string
-	)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		r.Body = io.NopCloser(bytes.NewReader(body))
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, r)
-		mu.Lock()
-		sent, engineSaid = string(body), truncate(rec.Body.String(), 600)
-		mu.Unlock()
-		for k, v := range rec.Header() {
-			w.Header()[k] = v
-		}
-		w.WriteHeader(rec.Code)
-		_, _ = w.Write(rec.Body.Bytes())
-	}))
-	t.Cleanup(srv.Close)
+	// Search ON, so search_assets is exercised on the path that returns hits. Set before
+	// the handler serves anything. With search off the tool answers differently, and
+	// that answer has its own test below.
+	a.search = enabledSearch{hits: []search.Hit{{ID: "n1", Name: "payments-api", Label: "Container", Score: 1}}}
+	eng := recordingEngine(t, a)
 
 	paths, _ := query(t, a, `{ attackPaths(limit: 1) { id } }`)["attackPaths"].([]any)
 	if len(paths) == 0 {
@@ -71,7 +53,7 @@ func TestEveryMCPToolIsAcceptedByTheRealEngine(t *testing.T) {
 		"get_score_trust":     {{}},
 	}
 
-	tools := mcp.Tools(mcp.NewAPI(srv.URL, ""))
+	tools := mcp.Tools(mcp.NewAPI(eng.url, ""))
 	if len(tools) == 0 {
 		t.Fatal("mcp.Tools returned no tools to check")
 	}
@@ -85,15 +67,9 @@ func TestEveryMCPToolIsAcceptedByTheRealEngine(t *testing.T) {
 		}
 		t.Run(tool.Name, func(t *testing.T) {
 			for _, args := range argSets {
-				mu.Lock()
-				sent, engineSaid = "", ""
-				mu.Unlock()
-
+				eng.reset()
 				out, err := tool.Call(context.Background(), args)
-
-				mu.Lock()
-				q, said := sent, engineSaid
-				mu.Unlock()
+				q, said := eng.last()
 				switch {
 				case q == "":
 					t.Errorf("args %v: the tool sent no query (%v) - the sample arguments no longer satisfy it", args, err)
@@ -110,6 +86,98 @@ func TestEveryMCPToolIsAcceptedByTheRealEngine(t *testing.T) {
 			t.Errorf("sample arguments for %q, which is no longer a tool - rename or remove the entry", name)
 		}
 	}
+
+	// The hit has to come back as a hit: this is the path that returned `{"search":null}`
+	// - read by an agent as "nothing by that name" - on every deployment without OpenSearch.
+	out, err := toolNamed(t, tools, "search_assets").Call(context.Background(), map[string]any{"query": "payments"})
+	if err != nil || !strings.Contains(out, "payments-api") {
+		t.Errorf("search on: output %q, error %v - want the indexed hit", out, err)
+	}
+}
+
+// Without OpenSearch the real engine does not fail - its indexer answers "no hits" - so
+// the only thing that tells an agent search is off is the tool asking. Run against the
+// real handler, the query must be accepted AND the answer must be ErrSearchDisabled.
+func TestMCPSearchSaysSearchIsOffOnTheRealEngine(t *testing.T) {
+	a := seededAPI(t) // search.Noop, as on any deployment without OPENSEARCH_URL
+	eng := recordingEngine(t, a)
+	tool := toolNamed(t, mcp.Tools(mcp.NewAPI(eng.url, "")), "search_assets")
+
+	out, err := tool.Call(context.Background(), map[string]any{"query": "payments"})
+	q, said := eng.last()
+	if !errors.Is(err, mcp.ErrSearchDisabled) {
+		t.Fatalf("search off: output %q, error %v, want ErrSearchDisabled\nsent:   %s\nengine: %s", out, err, q, said)
+	}
+	if strings.Contains(said, `"errors"`) {
+		t.Errorf("the engine rejected the query rather than reporting search off:\nsent:   %s\nengine: %s", q, said)
+	}
+}
+
+// recordingEngine serves a's real handler and remembers the last request and reply. A
+// tool's error alone is not enough to debug from: a query-guard rejection surfaces as a
+// bare HTTP status.
+type engineRecorder struct {
+	url              string
+	mu               sync.Mutex
+	sent, engineSaid string
+}
+
+func recordingEngine(t *testing.T, a *API) *engineRecorder {
+	t.Helper()
+	h, err := a.Handler()
+	if err != nil {
+		t.Fatalf("Handler: %v", err)
+	}
+	e := &engineRecorder{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		e.mu.Lock()
+		e.sent, e.engineSaid = string(body), truncate(rec.Body.String(), 600)
+		e.mu.Unlock()
+		for k, v := range rec.Header() {
+			w.Header()[k] = v
+		}
+		w.WriteHeader(rec.Code)
+		_, _ = w.Write(rec.Body.Bytes())
+	}))
+	t.Cleanup(srv.Close)
+	e.url = srv.URL
+	return e
+}
+
+func (e *engineRecorder) reset() {
+	e.mu.Lock()
+	e.sent, e.engineSaid = "", ""
+	e.mu.Unlock()
+}
+
+func (e *engineRecorder) last() (sent, engineSaid string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.sent, e.engineSaid
+}
+
+func toolNamed(t *testing.T, tools []mcp.Tool, name string) mcp.Tool {
+	t.Helper()
+	for _, tl := range tools {
+		if tl.Name == name {
+			return tl
+		}
+	}
+	t.Fatalf("tool %q is not registered", name)
+	return mcp.Tool{}
+}
+
+// enabledSearch is an indexer that is switched on and returns fixed hits.
+type enabledSearch struct{ hits []search.Hit }
+
+func (enabledSearch) Enabled() bool                                        { return true }
+func (enabledSearch) Index(context.Context, string, []ontology.Node) error { return nil }
+func (s enabledSearch) Search(context.Context, string, string, int) ([]search.Hit, error) {
+	return s.hits, nil
 }
 
 func truncate(s string, n int) string {

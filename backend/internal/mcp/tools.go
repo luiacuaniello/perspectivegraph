@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -209,8 +210,8 @@ func explainPath(api *API) Tool {
 func routesToTarget(api *API) Tool {
 	return Tool{
 		Name: "routes_to_target",
-		Description: "Enumerate the k best distinct routes that reach a named sensitive asset. Answers 'how many ways in ' +" +
-			"'are there, and do they share a choke point' - which single-path views hide. Cutting a hop that every route " +
+		Description: "Enumerate the k best distinct routes that reach a named sensitive asset. Answers 'how many ways in " +
+			"are there, and do they share a choke point' - which single-path views hide. Cutting a hop that every route " +
 			"traverses removes them all; cutting one that appears in a single route removes one.",
 		InputSchema: obj(map[string]any{
 			"target": map[string]any{"type": "string", "description": "Sensitive asset name, e.g. 'account-admin (effective)'."},
@@ -308,6 +309,16 @@ func simulateFix(api *API) Tool {
 	}
 }
 
+// ErrSearchDisabled is what search_assets answers on a deployment without OpenSearch.
+//
+// It is decided by asking the engine, not by reading error text. With OpenSearch off the
+// engine does not fail at all - its indexer answers "no hits" - so the old check (any
+// error mentioning "search") never fired in the case it was written for, and an agent
+// read an empty result as "no asset by that name exists". It fired instead on real
+// OpenSearch failures, whose message carries the `_search` URL, and called an outage a
+// missing feature.
+var ErrSearchDisabled = errors.New("full-text search is not enabled on this deployment (it needs OpenSearch); use list_attack_paths and get_posture instead")
+
 func searchAssets(api *API) Tool {
 	return Tool{
 		Name:        "search_assets",
@@ -321,13 +332,25 @@ func searchAssets(api *API) Tool {
 			if q == "" {
 				return "", fmt.Errorf("query is required")
 			}
-			var out json.RawMessage
-			err := api.query(ctx, fmt.Sprintf(`{ search(query: %s, size: %d) { id name label score } }`,
-				jsonString(q), intArg(args, "size", 10, 1, 50)), &out)
-			if err != nil && strings.Contains(err.Error(), "search") {
-				return "", fmt.Errorf("full-text search is not enabled on this deployment (it needs OpenSearch); use list_attack_paths and get_posture instead")
+			// searchEnabled rides in the same request: the dashboard uses it for exactly this,
+			// telling "feature off" apart from "no matches".
+			var out struct {
+				SearchEnabled bool            `json:"searchEnabled"`
+				Search        json.RawMessage `json:"search"`
 			}
-			return string(out), err
+			if err := api.query(ctx, fmt.Sprintf(`{ searchEnabled search(query: %s, size: %d) { id name label score } }`,
+				jsonString(q), intArg(args, "size", 10, 1, 50)), &out); err != nil {
+				return "", err
+			}
+			if !out.SearchEnabled {
+				return "", ErrSearchDisabled
+			}
+			hits := out.Search
+			if len(hits) == 0 || string(hits) == "null" {
+				hits = json.RawMessage("[]")
+			}
+			b, err := json.Marshal(map[string]json.RawMessage{"search": hits})
+			return string(b), err
 		},
 	}
 }

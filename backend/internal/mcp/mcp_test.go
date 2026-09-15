@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -164,6 +165,38 @@ func TestToolsSpeakToTheModelAboutTrust(t *testing.T) {
 				t.Errorf("tool %q mutates state; the MCP surface is read-only by design", tl.Name)
 			}
 		}
+	}
+}
+
+// A description is the whole of what a model knows about a tool, and it is assembled from
+// Go string literals - so a quote closed in the wrong place ships source code to the
+// model. routes_to_target told every agent "Answers 'how many ways in ' +'are there, ...".
+// Walks the input schemas too: argument descriptions reach the model the same way.
+func TestToolDescriptionsCarryNoConcatenationDebris(t *testing.T) {
+	debris := regexp.MustCompile(`['"]\s*\+|\+\s*['"]`)
+	var walk func(tool, where string, v any)
+	walk = func(tool, where string, v any) {
+		switch x := v.(type) {
+		case map[string]any:
+			for k, child := range x {
+				if s, ok := child.(string); ok && k == "description" {
+					if m := debris.FindString(s); m != "" {
+						t.Errorf("%s %s description carries %q from its Go source: %s", tool, where, m, s)
+					}
+				}
+				walk(tool, where+"."+k, child)
+			}
+		case []any:
+			for _, child := range x {
+				walk(tool, where, child)
+			}
+		}
+	}
+	for _, tl := range Tools(NewAPI("http://example.invalid", "")) {
+		if m := debris.FindString(tl.Description); m != "" {
+			t.Errorf("%s description carries %q from its Go source: %s", tl.Name, m, tl.Description)
+		}
+		walk(tl.Name, "inputSchema", tl.InputSchema)
 	}
 }
 

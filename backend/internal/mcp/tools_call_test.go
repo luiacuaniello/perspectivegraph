@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -149,7 +150,7 @@ func TestSimulateFixAsksWhatIf(t *testing.T) {
 }
 
 func TestSearchAssetsPassesTheQueryThrough(t *testing.T) {
-	f := newFakeEngine(t, `{"search":[{"id":"n1","name":"payments","label":"Container"}]}`)
+	f := newFakeEngine(t, `{"searchEnabled":true,"search":[{"id":"n1","name":"payments","label":"Container"}]}`)
 	out, err := callTool(t, f.api(""), "search_assets", map[string]any{"query": "payments"})
 	if err != nil {
 		t.Fatalf("call: %v", err)
@@ -159,6 +160,51 @@ func TestSearchAssetsPassesTheQueryThrough(t *testing.T) {
 	}
 	if !strings.Contains(out, "payments") {
 		t.Errorf("output lost the result: %s", out)
+	}
+}
+
+// With OpenSearch off the engine does not fail: its indexer answers "no hits". An agent
+// handed that reads "no asset by that name exists" - a false negative about the estate -
+// so the tool must ask whether search is on at all, and say so when it is not.
+func TestSearchAssetsSaysSearchIsOffRatherThanReportingNoMatches(t *testing.T) {
+	f := newFakeEngine(t, `{"searchEnabled":false,"search":null}`)
+	out, err := callTool(t, f.api(""), "search_assets", map[string]any{"query": "payments"})
+	if !errors.Is(err, ErrSearchDisabled) {
+		t.Fatalf("search off: got output %q and error %v, want ErrSearchDisabled", out, err)
+	}
+	if !strings.Contains(f.lastQuery, "searchEnabled") {
+		t.Errorf("the tool never asked whether search is enabled: %s", f.lastQuery)
+	}
+}
+
+// The mirror image: search IS on and the engine failed. Every OpenSearch error carries the
+// `_search` URL, and the old check - any error mentioning "search" - turned an outage into
+// "search is not enabled on this deployment", which is false and sends the operator
+// looking for a configuration problem that does not exist.
+func TestSearchAssetsReportsARealFailureAsTheFailure(t *testing.T) {
+	f := newFakeEngine(t, `null`)
+	f.errors = `[{"message":"POST http://opensearch:9200/pg-default/_search?ignore_unavailable=true: dial tcp 10.0.0.7:9200: connect: connection refused","path":["search"]}]`
+	_, err := callTool(t, f.api(""), "search_assets", map[string]any{"query": "payments"})
+	if err == nil {
+		t.Fatal("an engine error was swallowed")
+	}
+	if errors.Is(err, ErrSearchDisabled) || strings.Contains(err.Error(), "not enabled") {
+		t.Errorf("an OpenSearch outage was reported as search being disabled: %v", err)
+	}
+	if !strings.Contains(err.Error(), "connection refused") {
+		t.Errorf("the real cause did not reach the agent: %v", err)
+	}
+}
+
+// Search on, nothing found: an empty result is the answer, not an error.
+func TestSearchAssetsReturnsNoMatchesAsAnEmptyResult(t *testing.T) {
+	f := newFakeEngine(t, `{"searchEnabled":true,"search":[]}`)
+	out, err := callTool(t, f.api(""), "search_assets", map[string]any{"query": "nothing-like-this"})
+	if err != nil {
+		t.Fatalf("no matches returned an error: %v", err)
+	}
+	if !strings.Contains(out, `"search":[]`) {
+		t.Errorf("no matches should read as an empty list, got %s", out)
 	}
 }
 
