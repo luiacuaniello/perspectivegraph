@@ -9,7 +9,12 @@
 # architecture - so emulating the whole Node toolchain under QEMU to produce arm64
 # assets buys nothing and costs hours: vite/rolldown are native Rust binaries, and
 # emulated they crawl. Only the nginx stage below varies per target.
-FROM --platform=$BUILDPLATFORM node:24-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf AS build
+#
+# This line is the only place Node is named. CI's setup-node and `make lockfile` read it
+# through scripts/node-image.sh, so the bump Dependabot proposes here is complete. The tag
+# is the exact version, not `24-alpine`: a floating tag moves the Node version under an
+# unchanged-looking line, and nothing reading it could say which Node it is.
+FROM --platform=$BUILDPLATFORM node:24.21.0-alpine@sha256:be80f76cf40ec8e42b9bec49f60a55e0660f30af58d3e5a25530785b30ea67e2 AS build
 WORKDIR /app
 COPY package*.json ./
 # `npm ci`, never `npm install`: it installs exactly what package-lock.json pins and

@@ -182,14 +182,17 @@ dependency, say why in the pull request rather than widening the list quietly.
   build uses, because npm records the transitive dependencies of optional
   platform-specific packages only for the platform it runs on: regenerating on macOS
   silently drops entries the Linux build needs, and `npm ci` then fails in CI.
-- **Node is pinned, and npm comes with it.** CI pins an exact `node-version`, and the
-  release Dockerfile and `make lockfile` pin the same image by digest - Node 24.20.0,
-  which ships npm 11.19.0. Nothing installs npm over it: `npm install -g npm@x` pins a
-  version but fetches it unauthenticated, which is a supply-chain regression (OpenSSF
-  Scorecard reports it as an unpinned dependency) where the image digest is a
-  cryptographic pin. A Go test fails if any of those surfaces drifts, or if a global npm
-  install comes back. `engines.npm` records what that Node ships, so if your own npm
-  differs you get an `EBADENGINE` warning - the intended signal.
+- **Node is pinned once, and npm comes with it.** The only place Node is named is the
+  build stage of `frontend/Dockerfile`, by exact version and digest - Node 24.21.0, which
+  ships npm 11.19.0. CI's `setup-node` and `make lockfile` read it through
+  `scripts/node-image.sh`, so a Dependabot bump of that line is a complete one; to change
+  Node by hand, change that line and nothing else. Nothing installs npm over it:
+  `npm install -g npm@x` pins a version but fetches it unauthenticated, which is a
+  supply-chain regression (OpenSSF Scorecard reports it as an unpinned dependency) where
+  the image digest is a cryptographic pin. A Go test fails if Node is written out anywhere
+  else, if the tag floats, or if a global npm install comes back. `engines.npm` records
+  what that Node ships: CI fails if the pinned Node brings a different npm, and if your
+  own npm differs you get an `EBADENGINE` warning - the intended signal.
 - **Docs + Postman:** every user-facing feature updates the docs and
   `.env.example` **and** the Postman collection
   (`docs/perspectivegraph.postman_collection.json`). `README.md` is the landing

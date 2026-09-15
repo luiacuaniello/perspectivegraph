@@ -329,11 +329,31 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      # Node is named once, in frontend/Dockerfile, so CI builds with the Node the release
+      # image does and a Dependabot bump there is complete (see scripts/node-image.sh).
+      # Assigned first, not inlined into the echo: `echo "version=$(…)"` succeeds even when
+      # the script fails, writes an empty version, and setup-node then quietly uses
+      # whatever Node the runner image has.
+      - id: node
+        name: Node version from the release Dockerfile
+        run: |
+          version="$(bash ../scripts/node-image.sh --version)"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.20.0"
+          node-version: ${{ steps.node.outputs.version }}
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      # npm comes with Node, so a Node bump can carry a different npm - and npm is what
+      # writes the lockfile and talks to the audit endpoint. engines.npm states the one this
+      # project expects; when a new Node ships another, stop here and say so, rather than
+      # let the lockfile writer change underneath a green build.
+      - name: npm is the one engines.npm declares
+        run: |
+          have="$(npm -v)"
+          want="$(node -p 'require("./package.json").engines.npm')"
+          [ "$have" = "$want" ] || { echo "::error::Node $(node -v) ships npm ${have}, but package.json engines.npm is ${want} - update engines.npm and regenerate the lockfile with make lockfile"; exit 1; }
+          echo "npm ${have} (Node $(node -v))"
       # `npm ci`, never `npm install`: it installs exactly what the lockfile pins and
       # fails instead of resolving anything new, so CI tests the same dependency tree
       # the release image ships. It also means a pull request cannot silently pull in a
@@ -418,9 +438,14 @@ jobs:
           go run github.com/google/go-licenses@v1.6.0 report ./cmd/perspectivegraph 2>/dev/null \
             | grep -v "^github.com/luiacuaniello/perspectivegraph" | sort -t, -k3
 
+      - id: node
+        name: Node version from the release Dockerfile
+        run: |
+          version="$(bash scripts/node-image.sh --version)"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.20.0"
+          node-version: ${{ steps.node.outputs.version }}
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci --no-audit --no-fund
