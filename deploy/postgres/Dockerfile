@@ -31,12 +31,30 @@ WORKDIR /src
 # and signed, and its sha512 is published beside it. GitHub's `archive/refs/tags/...`
 # tarballs are regenerated on demand and have changed bytes across compression changes,
 # which would turn a pinned checksum into a build that breaks for no reason.
+#
+# Two hosts, one checksum. dlcdn.apache.org is Apache's CDN for current releases and served
+# this 5.5 MB file in 0.9s; archive.apache.org keeps every release forever but is throttled -
+# 12.5s for the same file, measured 2026-09-14 - and CI builds this image four times per run
+# from runners that share IPs. With it as the only source and no retry, one slow or reset
+# connection failed the build. So the CDN is tried first and the archive is the fallback,
+# which also keeps the build working the day 1.7.0 rotates off the CDN. The sha512 is what
+# makes the host irrelevant: whichever answers, the bytes are these or the build stops - a
+# tarball that fails the check on one host is discarded and the other is tried.
 ARG AGE_VERSION=1.7.0
 ARG AGE_SHA512=301f02088f6828adb8cfa70e7701d9fb541ee9212de97a99f2cf9106e0b0d8bce82f95c20579302bdac5efc3d5ffe35732755b1d093526cec4beba9f30ec82f0
 RUN set -eux; \
-    curl -fsSL -o age-src.tar.gz \
+    for url in \
+      "https://dlcdn.apache.org/age/PG17/${AGE_VERSION}/apache-age-${AGE_VERSION}-src.tar.gz" \
       "https://archive.apache.org/dist/age/PG17/${AGE_VERSION}/apache-age-${AGE_VERSION}-src.tar.gz"; \
-    echo "${AGE_SHA512}  age-src.tar.gz" | sha512sum -c -; \
+    do \
+      if curl -fsSL --retry 4 --retry-all-errors --retry-delay 3 --connect-timeout 20 --max-time 180 \
+           -o age-src.tar.gz "$url" \
+         && echo "${AGE_SHA512}  age-src.tar.gz" | sha512sum -c -; then \
+        break; \
+      fi; \
+      rm -f age-src.tar.gz; \
+    done; \
+    test -f age-src.tar.gz; \
     tar xzf age-src.tar.gz --strip-components=1; \
     rm age-src.tar.gz
 
