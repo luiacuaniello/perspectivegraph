@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.13.2](https://github.com/luiacuaniello/perspectivegraph/compare/v1.13.1...v1.13.2) (2026-09-15)
+
+
+### Bug Fixes
+
+* **mcp:** tell an agent search is off instead of reporting no matches ([#209](https://github.com/luiacuaniello/perspectivegraph/issues/209)) ([7eae37d](https://github.com/luiacuaniello/perspectivegraph/commit/7eae37d0f7341fd57a7bc3b24cfdb23c694ff15c))
+
 ## [1.13.1](https://github.com/luiacuaniello/perspectivegraph/compare/v1.13.0...v1.13.1) (2026-09-14)
 
 
