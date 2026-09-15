@@ -200,6 +200,29 @@ func TestToolDescriptionsCarryNoConcatenationDebris(t *testing.T) {
 	}
 }
 
+// A parameter without a description is a guess the model has to make: what `k` counts,
+// whether `from` wants an id or a name. MCP directories grade servers on exactly this, and
+// four parameters here had none. Nested schemas count - the fields of each simulate_fix cut
+// are what the model fills in.
+func TestEveryToolParameterIsDescribed(t *testing.T) {
+	var walk func(tool, where string, schema map[string]any)
+	walk = func(tool, where string, schema map[string]any) {
+		props, _ := schema["properties"].(map[string]any)
+		for name, raw := range props {
+			p, _ := raw.(map[string]any)
+			if d, _ := p["description"].(string); strings.TrimSpace(d) == "" {
+				t.Errorf("%s: parameter %s%s has no description", tool, where, name)
+			}
+			if items, ok := p["items"].(map[string]any); ok {
+				walk(tool, where+name+"[].", items)
+			}
+		}
+	}
+	for _, tl := range Tools(NewAPI("http://example.invalid", "")) {
+		walk(tl.Name, "", tl.InputSchema)
+	}
+}
+
 // TestToolsQueryTheEngine drives a tool against a stub API, proving the GraphQL
 // round-trip and that engine-side errors reach the model as readable text.
 func TestToolsQueryTheEngine(t *testing.T) {

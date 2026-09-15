@@ -215,7 +215,7 @@ func routesToTarget(api *API) Tool {
 			"traverses removes them all; cutting one that appears in a single route removes one.",
 		InputSchema: obj(map[string]any{
 			"target": map[string]any{"type": "string", "description": "Sensitive asset name, e.g. 'account-admin (effective)'."},
-			"k":      map[string]any{"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
+			"k":      map[string]any{"type": "integer", "minimum": 1, "maximum": 20, "default": 5, "description": "How many distinct routes to return, best first. Fewer routes come back when fewer exist."},
 			"from":   map[string]any{"type": "string", "description": "Optional entry-point name to start from."},
 		}, "target"),
 		Call: func(ctx context.Context, args map[string]any) (string, error) {
@@ -244,7 +244,7 @@ func listFixes(api *API) Tool {
 			"with the share of critical-path risk it eliminates and how many routes it cuts. This is usually the right " +
 			"answer to 'what should we do' - a hundred routes typically collapse into a handful of changes.",
 		InputSchema: obj(map[string]any{
-			"app": map[string]any{"type": "string", "description": "Optional application scope."},
+			"app": map[string]any{"type": "string", "description": "Optional application scope; omit for the whole environment."},
 		}),
 		Call: func(ctx context.Context, args map[string]any) (string, error) {
 			scope := ""
@@ -274,8 +274,8 @@ func simulateFix(api *API) Tool {
 				"type": "array", "minItems": 1, "maxItems": 20,
 				"description": "Relationships to remove. Use node ids from explain_attack_path steps (from/to).",
 				"items": obj(map[string]any{
-					"from": map[string]any{"type": "string"},
-					"to":   map[string]any{"type": "string"},
+					"from": map[string]any{"type": "string", "description": "Where the relationship starts: the `from` of a step in explain_attack_path (a node id or name)."},
+					"to":   map[string]any{"type": "string", "description": "Where the relationship ends: the `to` of the same step (a node id or name)."},
 				}, "from", "to"),
 			},
 		}, "cuts"),
@@ -324,8 +324,8 @@ func searchAssets(api *API) Tool {
 		Name:        "search_assets",
 		Description: "Full-text search across indexed assets and findings by name, CVE id, or keyword. Use it to resolve a name a human mentioned into the node ids the other tools take.",
 		InputSchema: obj(map[string]any{
-			"query": map[string]any{"type": "string", "description": "e.g. 'log4j', 'PII', 'CVE-2021-44228'."},
-			"size":  map[string]any{"type": "integer", "minimum": 1, "maximum": 50, "default": 10},
+			"query": map[string]any{"type": "string", "description": "Text matched against asset and finding names, labels, ids, severities and CWEs, e.g. 'log4j', 'PII', 'CVE-2021-44228'."},
+			"size":  map[string]any{"type": "integer", "minimum": 1, "maximum": 50, "default": 10, "description": "Maximum number of matches to return, best match first."},
 		}, "query"),
 		Call: func(ctx context.Context, args map[string]any) (string, error) {
 			q, _ := args["query"].(string)

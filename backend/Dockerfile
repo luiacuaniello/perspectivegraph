@@ -29,3 +29,8 @@ USER nonroot:nonroot
 HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=5 \
     CMD ["/perspectivegraph", "healthz"]
 ENTRYPOINT ["/perspectivegraph"]
+# The same image is the MCP server (`docker run -i --rm <image> mcp --api <url>`), and the
+# official MCP Registry verifies that an image belongs to the entry listing it by reading
+# this label: its value must equal the `name` in that entry. Without it the image cannot
+# be listed at all, so it ships in every release rather than being added at publish time.
+LABEL io.modelcontextprotocol.server.name="io.github.luiacuaniello/perspectivegraph"
