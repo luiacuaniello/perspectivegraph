@@ -42,8 +42,8 @@ output and seeded verdicts, not a real environment.*
 > not been closed with real outcomes.
 >
 > So read a score as *"what this model believes, and how sure it says it is"*, not as a
-> measured frequency. A path at 0.7 has not been shown to be exploited seven times in ten
-> - it has been shown to be what the model concludes from the evidence it was given, and
+> measured frequency. A path at 0.7 has not been shown to be exploited seven times in ten -
+> it has been shown to be what the model concludes from the evidence it was given, and
 > the interval beside it says how thin that evidence is.
 >
 > That is a statement about maturity, not about intent: the calibration harness exists
