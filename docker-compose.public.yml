@@ -1,0 +1,45 @@
+# A PUBLISHED instance: anyone who can reach it reads, nobody writes.
+#
+# This is the deployment behind a public demo, and the one to copy for a dashboard a whole
+# company may read. It is a third override on top of the demo, so it runs the published,
+# signed images and nothing here can drift from the stack it publishes:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.demo.yml -f docker-compose.public.yml \
+#     --profile app up -d
+#
+# WHAT MAKES IT SAFE TO PUBLISH
+#
+#   * API_ANONYMOUS_ROLE=viewer gives a credential-less caller the viewer role instead of a
+#     401. Writes stay admin-only IN THE BACKEND - a suppression, a verdict, a ticket or a
+#     remediation PR answers 403 - so the read-only property is enforced by the code that
+#     is under test, not by a rule in a proxy config that nothing verifies.
+#   * Every port in docker-compose.yml is already bound to 127.0.0.1. Put a reverse proxy
+#     (Caddy, nginx) in front of 127.0.0.1:3000 for TLS, and publish NOTHING else. The
+#     ingestion endpoint on 8081 is the write side of the graph: proxying it would let
+#     anyone forge the attack paths this instance shows.
+#   * A lower API rate limit, because the expensive calls are reachable without a
+#     credential: whatIf re-runs the whole simulation, kShortestPaths enumerates routes.
+#
+# WHAT THIS DOES NOT DO
+#
+#   * It does not make the DATA safe to publish. Seed it with sample data (`make seed`),
+#     never with a real estate's findings: everything the dashboard shows - assets,
+#     versions, reachable routes - becomes public, and an attack map is exactly what an
+#     attacker would ask for.
+#   * It does not turn on PG_ENV=production, which would refuse to start without ingest
+#     authentication. A public instance that ingests nothing does not need it; one that
+#     does needs INGEST_HMAC_SECRET and a private path to 8081.
+services:
+  backend:
+    environment:
+      # The whole point of this file. "viewer" is the only value the backend accepts.
+      API_ANONYMOUS_ROLE: viewer
+      # Anonymous callers can reach the costly queries, so the per-IP budget is smaller
+      # than the default 60/s. Raise it if a legitimate client (an MCP agent walking the
+      # graph) starts getting 429s.
+      API_RATE_RPS: ${API_RATE_RPS:-10}
+      # Left explicitly empty: a published instance has no reason to hold a token that
+      # opens pull requests, or to send what it shows to a third-party model.
+      GITHUB_TOKEN: ""
+      ANTHROPIC_API_KEY: ""
+      HF_TOKEN: ""

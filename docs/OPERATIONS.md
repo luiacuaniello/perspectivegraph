@@ -542,3 +542,51 @@ capability to gain.
 
 See the [threat model operator assumptions](THREAT-MODEL.md#operator-assumptions-what-you-must-do-for-production)
 for the rationale behind each item.
+
+## 11. Publishing a read-only instance
+
+The opposite deployment to §10: one meant to be *reached* by people who have no credential -
+a public demo, or an internal dashboard a whole company may read. The engine supports it
+directly rather than leaving it to a proxy rule, because a rule that lives outside the
+binary is one no test holds.
+
+```bash
+# API_ANONYMOUS_ROLE=viewer: a caller with NO credential gets the viewer role.
+docker compose -f docker-compose.yml -f docker-compose.demo.yml -f docker-compose.public.yml \
+  --profile app up -d
+```
+
+On Kubernetes the same switch is `auth.anonymousRole: viewer`.
+
+**What the backend enforces.** `viewer` is the only value it accepts: anything that can
+write must be tied to a credential, and a typo (`admin`, `viewr`) stops the process at
+startup rather than being quietly downgraded. Writes stay admin-only, so an anonymous
+suppression, verdict, ticket or remediation PR answers **403**. A presented-but-wrong token
+still fails with **401** - it does not fall through to anonymous, or revoking a leaked token
+would silently demote its holder to public read instead of locking them out.
+
+**What it does not do.**
+
+- **It does not make the data safe to publish.** Everything the dashboard shows - assets,
+  versions, reachable routes to crown jewels - becomes public. An attack map is precisely
+  what an attacker would ask for. Seed a published instance with sample data
+  (`make seed`), never with a real estate's findings.
+- **It does not close the write side.** `/ingest` is how the graph is built; never proxy
+  port 8081. Everything in `docker-compose.yml` already binds to 127.0.0.1, so publish
+  *only* the dashboard (3000) through your TLS terminator and nothing else.
+- **It does not slow anything down for you.** The costly queries (`whatIf` re-runs the
+  simulation, `kShortestPaths` enumerates routes) are now reachable without a credential,
+  so the override lowers `API_RATE_RPS` to 10 per client IP. Behind a proxy the limiter
+  sees the proxy, so rate-limit per real client at the gateway too (§2).
+
+**Checklist for a published instance**
+
+- [ ] `API_ANONYMOUS_ROLE=viewer`, and an unauthenticated `POST /suppressions` answers 403.
+- [ ] Sample data only; no connector credentials, no `GITHUB_TOKEN`, no AI keys.
+- [ ] Only the dashboard port is proxied; `/ingest` unreachable from the internet.
+- [ ] TLS at the proxy, and `API_RATE_RPS` low.
+- [ ] An `API_TOKENS` admin credential kept for yourself, if you need to change anything.
+
+An MCP client can be pointed at a published instance the same way the dashboard is: the
+server is a client of this API, so `perspectivegraph mcp --api https://<host>` answers from
+it without any credential.

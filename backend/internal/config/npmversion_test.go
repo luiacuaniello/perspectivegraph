@@ -78,9 +78,13 @@ func TestNodeIsNamedOnceInTheReleaseDockerfile(t *testing.T) {
 	}
 
 	// Everyone else asks the script, and the script answers with exactly that line. Run it,
+	// where there is a bash to run it with - see requireBash.
 	// rather than re-deriving its parse here: a test that re-implemented the regex would
 	// pass while the script CI actually runs returned something else.
 	for arg, want := range map[string]string{"": image, "--version": version} {
+		if _, err := exec.LookPath("bash"); err != nil {
+			break
+		}
 		args := []string{filepath.Join(root, "scripts", "node-image.sh")}
 		if arg != "" {
 			args = append(args, arg)

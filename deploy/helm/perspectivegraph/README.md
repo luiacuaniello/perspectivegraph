@@ -72,6 +72,7 @@ layers multiple replicas, pod spreading and a disruption budget on top of it.
 | `persistence.enabled` | `false` | A PVC for the file backend. Refuses to render with more than one replica, on purpose. |
 | `backend.replicas` | `1` | Above 1 requires `governanceBackend: postgres`; at-most-once side effects are gated by a leader election. |
 | `auth.apiTokens` / `auth.oidc` | empty | **Authentication is off by default.** A reachable install with neither is an unauthenticated map of how to breach your estate. |
+| `auth.anonymousRole` | `""` | `viewer` publishes the install **read-only**: a caller with no credential reads, every write still answers 403, and a wrong token still fails. Only `viewer` is accepted - anything else stops the backend at startup. For a demo or a company-wide dashboard, never for a real estate's findings ([OPERATIONS §11](../../../docs/OPERATIONS.md)). |
 | `repoAllowlist` | `[]` | The repositories the engine may write to. Empty refuses every PR comment, merge-gate status and remediation PR - the destination otherwise comes from ingested data. |
 | `backend.image.tag` | `""` | Empty resolves to the chart's `appVersion`. Pin a `@sha256:` digest if your policy asks for it. |
 | `service.type` | `ClusterIP` | `LoadBalancer` and `NodePort` publish the backend outside the cluster, and the chart **refuses to render either without a credential** — the same guard the ingress carries. |

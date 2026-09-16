@@ -332,6 +332,43 @@ func RequireRole(authn Authenticator, min Role, rec audit.Recorder, guard *secwa
 	})
 }
 
+// ── anonymous read-only access ──────────────────────────────────────
+//
+// Anonymous gives a request WITHOUT a credential a fixed role, so an instance can be
+// published read-only: a public demo, or an internal dashboard a whole company may read.
+// It is the anonymous counterpart of OIDC_DEFAULT_ROLE, and like it, a deliberate
+// widening the operator asks for by name.
+//
+// Two rules keep it from becoming a bypass:
+//
+//   - Only a role BELOW the write threshold is allowed, enforced at construction
+//     (NewAnonymous refuses anything above viewer). Writes stay admin-only, so a public
+//     instance answers 403 to a suppression or a verdict rather than accepting it.
+//   - A PRESENTED credential is never overridden. Anonymous answers only when there is no
+//     bearer token at all, so a wrong or expired token still fails authentication - it
+//     must, or a leaked token being revoked would silently downgrade to public access
+//     instead of failing, and brute-force detection would never see an attempt.
+type Anonymous struct{ role Role }
+
+// NewAnonymous returns an authenticator granting role to credential-less requests, or an
+// error when role is not one this may hand out.
+func NewAnonymous(role Role) (*Anonymous, error) {
+	if role > RoleViewer {
+		return nil, fmt.Errorf("anonymous access may only grant %q, not %q: a role that can write must be tied to a credential",
+			RoleViewer, role)
+	}
+	return &Anonymous{role: role}, nil
+}
+
+func (a *Anonymous) Enabled() bool { return a != nil && a.role >= RoleViewer }
+
+func (a *Anonymous) Authenticate(r *http.Request) (Principal, bool) {
+	if !a.Enabled() || bearer(r) != "" {
+		return Principal{}, false
+	}
+	return Principal{Subject: "anonymous", Role: a.role, Tenant: DefaultTenant}, true
+}
+
 func unauthorized(w http.ResponseWriter, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)

@@ -280,6 +280,14 @@ auth:
   # Empty ⇒ the read/write API is OPEN (no authentication). Generate with e.g.
   # --set auth.apiTokens="$(openssl rand -hex 16):admin".
   apiTokens: ""
+  # Publishes this instance READ-ONLY: a caller with no credential is given this role
+  # instead of being rejected. Empty (default) = anonymous callers get 401. The only
+  # accepted value is "viewer"; the backend refuses to start on anything else, because a
+  # role that can write must be tied to a credential. Writes stay admin-only (403), and a
+  # wrong token still fails rather than falling through to anonymous. Set it only where
+  # the data is meant to be readable by everyone who can reach the service - a public
+  # demo, or an internal dashboard - never for a real estate's findings.
+  anonymousRole: ""
   # Optional OIDC/JWT verification alongside (or instead of) static tokens.
   # Empty issuer ⇒ disabled. clientId/authorizeUrl/tokenUrl/scopes are the
   # SPA-facing coordinates the dashboard login gate reads from GET /auth/config to

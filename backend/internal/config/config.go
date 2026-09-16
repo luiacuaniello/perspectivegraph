@@ -172,6 +172,17 @@ type Config struct {
 	OIDCGroupRoles  string // "group=role,group=role"
 	OIDCDefaultRole string
 
+	// APIAnonymousRole publishes the API read-only: a request with NO credential is
+	// given this role instead of being rejected. Empty (the default) keeps the API
+	// closed to anonymous callers. Only "viewer" is accepted - writes stay admin-only,
+	// so a public instance answers 403 rather than accepting a suppression - and a
+	// presented-but-invalid token still fails rather than falling through to it.
+	//
+	// This is what a public demo needs, and the reason it lives here rather than in a
+	// proxy rule beside one: the instance people can reach must run the code they can
+	// install, and a rule enforced outside the binary is a rule no test can hold.
+	APIAnonymousRole string
+
 	// Audit (optional; tamper-evident hash-chained log file)
 	AuditLogPath string
 
@@ -405,6 +416,8 @@ func Load() Config {
 		OIDCAppsClaim:   getenv("OIDC_APPS_CLAIM", ""),
 		OIDCGroupRoles:  getenv("OIDC_GROUP_ROLES", ""),
 		OIDCDefaultRole: getenv("OIDC_DEFAULT_ROLE", ""),
+
+		APIAnonymousRole: getenv("API_ANONYMOUS_ROLE", ""),
 
 		AuditLogPath:      getenv("AUDIT_LOG_PATH", ""),
 		AuditRetention:    getdur("AUDIT_RETENTION", 0),

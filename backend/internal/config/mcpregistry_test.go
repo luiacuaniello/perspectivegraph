@@ -15,6 +15,7 @@ import (
 // that `perspectivegraph mcp` has no `--url` flag, or that the image label says a different
 // name. Every field below is one of those facts, held to the file that defines it.
 func TestMCPRegistryEntry(t *testing.T) {
+	requireBash(t)
 	root := repoRoot(t)
 	read := func(parts ...string) string {
 		return mustRead(t, append([]string{root}, parts...)...)

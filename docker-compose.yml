@@ -170,6 +170,9 @@ services:
       OIDC_TENANT_CLAIM: ${OIDC_TENANT_CLAIM:-}
       OIDC_APPS_CLAIM: ${OIDC_APPS_CLAIM:-}
       OIDC_DEFAULT_ROLE: ${OIDC_DEFAULT_ROLE:-}
+      # Publishes the API read-only (viewer for callers with no credential). Empty =
+      # anonymous callers are rejected. See .env.example before setting it.
+      API_ANONYMOUS_ROLE: ${API_ANONYMOUS_ROLE:-}
       # Triage/suppression persistence (optional). Empty → in-memory only. To
       # persist, point this at a path on a writable volume (the backend rootfs is
       # read-only) and mount one, e.g. a named volume at /var/lib/perspectivegraph.

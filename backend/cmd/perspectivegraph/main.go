@@ -662,6 +662,25 @@ func run(ctx context.Context, cfg config.Config) error {
 			"role", r.String())
 	}
 
+	// Anonymous read access, for an instance meant to be published: a public demo, or a
+	// dashboard a whole company may read. Refused rather than downgraded when it names a
+	// role that can write, because "API_ANONYMOUS_ROLE=admin" is a typo that would hand
+	// the estate to the internet, and a silent downgrade to viewer would hide it.
+	var anon *auth.Anonymous
+	if cfg.APIAnonymousRole != "" {
+		r, ok := auth.ParseRole(cfg.APIAnonymousRole)
+		if !ok {
+			return fmt.Errorf("API_ANONYMOUS_ROLE %q is not a role; the only value it accepts is viewer", cfg.APIAnonymousRole)
+		}
+		a, err := auth.NewAnonymous(r)
+		if err != nil {
+			return fmt.Errorf("API_ANONYMOUS_ROLE: %w", err)
+		}
+		anon = a
+		slog.Warn("API_ANONYMOUS_ROLE is set: ANYONE who can reach this API reads this environment's attack paths without a credential",
+			"role", r.String(), "writes", "still admin-only (403)")
+	}
+
 	// The iss/aud fail-closed rule is enforced by checkAuthConfig, before this
 	// function runs and before the process touches any dependency.
 	authn := auth.Chain{
@@ -677,6 +696,9 @@ func run(ctx context.Context, cfg config.Config) error {
 			GroupRoles:  groupRoles,
 			DefaultRole: defaultRole,
 		}),
+		// Last: a presented credential is decided by the authenticators above, so a
+		// wrong or expired token fails instead of falling back to anonymous.
+		anon,
 	}
 	if authn.Enabled() {
 		slog.Info("API auth: bearer credential required (GraphiQL disabled)")

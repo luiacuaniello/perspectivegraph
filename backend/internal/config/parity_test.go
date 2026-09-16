@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -37,6 +38,18 @@ func repoRoot(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return root
+}
+
+// requireBash skips a test that runs one of the repository's scripts where there is no
+// bash to run it with. The scripts are bash on purpose (`[[ =~ ]]`, here-strings) and CI
+// runs on ubuntu-latest, which has it; the case this guards is a local run inside a
+// golang:*-alpine container, where the suite otherwise fails on a missing interpreter and
+// says nothing about the code under test.
+func requireBash(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("no bash on this host; the scripts these assertions run need it (CI's ubuntu-latest has it)")
+	}
 }
 
 func mustRead(t *testing.T, parts ...string) string {
