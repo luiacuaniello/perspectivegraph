@@ -5,8 +5,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/auth"
+	"github.com/luiacuaniello/perspectivegraph/internal/clientip"
+	"github.com/luiacuaniello/perspectivegraph/internal/secwatch"
 )
 
 // A published instance - the public demo, or a dashboard a whole company may read - is the
@@ -95,4 +98,64 @@ func TestAPublishedInstanceStillHonoursCredentials(t *testing.T) {
 	if rec := serve(t, a, admin); rec.Code >= 400 {
 		t.Errorf("status %d for the admin token: %s", rec.Code, rec.Body.String())
 	}
+}
+
+// A published instance is reached through a proxy, always: in the compose recipe every
+// visitor comes through the dashboard's nginx, so the connecting peer is nginx for all of
+// them. Keyed on that peer the per-IP controls are global, and one person's wrong tokens
+// lock every visitor out. Reproduced on a real stack before the recipe trusted its proxy:
+// fifty bad tokens from one address, and a different visitor's read answered 429.
+//
+// The attacker here also writes the visitor's address into X-Forwarded-For, the other
+// way to aim a lockout at someone else. Only the hops the trusted proxies appended count.
+func TestAPublishedInstanceKeepsVisitorsApartBehindItsProxy(t *testing.T) {
+	const (
+		nginx    = "172.18.0.5:41234" // the dashboard container, on the compose network
+		hostHop  = "172.18.0.1"       // appended by nginx: the TLS proxy on the host, via Docker
+		attacker = "203.0.113.9"
+		visitor  = "198.51.100.7"
+	)
+	through := func(r *http.Request, forwarded string) *http.Request {
+		r.RemoteAddr = nginx
+		r.Header.Set("X-Forwarded-For", forwarded)
+		return r
+	}
+	read := func(from string) *http.Request {
+		r := httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(`{"query":"{ attackPaths(limit: 1) { id } }"}`))
+		r.Header.Set("Content-Type", "application/json")
+		return through(r, from+", "+hostHop)
+	}
+
+	run := func(t *testing.T, trusted []string) (attackerRead, visitorRead int) {
+		t.Helper()
+		ips, err := clientip.New(trusted)
+		if err != nil {
+			t.Fatal(err)
+		}
+		guard := secwatch.New(3, time.Minute, time.Minute, nil)
+		a := publicReadOnly(t).WithAbuseWatchers(nil, guard).WithClientIP(ips)
+		for range 3 {
+			guess := through(httptest.NewRequest(http.MethodGet, "/suppressions", nil), visitor+", "+attacker+", "+hostHop)
+			guess.Header.Set("Authorization", "Bearer guess")
+			serve(t, a, guess)
+		}
+		return serve(t, a, read(attacker)).Code, serve(t, a, read(visitor)).Code
+	}
+
+	t.Run("trusting the proxy, as the recipe does", func(t *testing.T) {
+		attackerRead, visitorRead := run(t, []string{"172.16.0.0/12"})
+		if attackerRead != http.StatusTooManyRequests {
+			t.Errorf("attacker read = %d, want 429: the lockout must still stop the one who guessed", attackerRead)
+		}
+		if visitorRead != http.StatusOK {
+			t.Errorf("visitor read = %d, want 200: someone else's guesses locked this visitor out", visitorRead)
+		}
+	})
+
+	// The failure the recipe exists to prevent, pinned so the test above is not vacuous.
+	t.Run("without it, one key for everybody", func(t *testing.T) {
+		if _, visitorRead := run(t, nil); visitorRead != http.StatusTooManyRequests {
+			t.Errorf("visitor read = %d, want 429 - if this no longer fails, the proxy default may be unnecessary", visitorRead)
+		}
+	})
 }

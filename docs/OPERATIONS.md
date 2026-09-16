@@ -582,8 +582,26 @@ open-instance banner. The backend tells the two apart; the page does not guess.
   *only* the dashboard (3000) through your TLS terminator and nothing else.
 - **It does not slow anything down for you.** The costly queries (`whatIf` re-runs the
   simulation, `kShortestPaths` enumerates routes) are now reachable without a credential,
-  so the override lowers `API_RATE_RPS` to 10 per client IP. Behind a proxy the limiter
-  sees the proxy, so rate-limit per real client at the gateway too (§2).
+  so the override lowers `API_RATE_RPS` to 10 per client IP.
+
+**Per visitor, not per proxy.** A published instance is always reached through a proxy:
+in the compose recipe every visitor comes through the dashboard's nginx. Keyed on that
+peer, the rate limit and the brute-force lockout are one key for everybody, and fifty wrong
+tokens from one person lock every visitor out. That was reproduced on a real stack. So the
+override sets `TRUSTED_PROXY_CIDRS=172.16.0.0/12`, the range Docker gives `docker0` and the
+compose networks after it, and the backend reads the real client from `X-Forwarded-For`.
+It believes only the hops those addresses appended, so a visitor cannot choose a key or
+aim a lockout at someone else. Two conditions:
+
+- Your TLS proxy must set `X-Forwarded-For`. Caddy, nginx and Traefik do by default; a
+  plain TCP forwarder does not.
+- The compose network must be in that range. Check with
+  `docker network inspect <project>_default`; if your daemon allocates elsewhere (a custom
+  address pool, or more than fifteen networks on the host), set `TRUSTED_PROXY_CIDRS` to
+  that subnet.
+
+On Kubernetes the ingress controller is the proxy: set `backend.trustedProxyCidrs` to its
+pod CIDR.
 
 **Checklist for a published instance**
 
@@ -593,6 +611,8 @@ open-instance banner. The backend tells the two apart; the page does not guess.
 - [ ] Sample data only; no connector credentials, no `GITHUB_TOKEN`, no AI keys.
 - [ ] Only the dashboard port is proxied; `/ingest` unreachable from the internet.
 - [ ] TLS at the proxy, and `API_RATE_RPS` low.
+- [ ] The backend logs `trusted proxies configured`, and the proxy CIDR covers the network
+      the dashboard runs on.
 - [ ] An `API_TOKENS` admin credential kept for yourself, if you need to change anything.
 
 An MCP client can be pointed at a published instance the same way the dashboard is: the

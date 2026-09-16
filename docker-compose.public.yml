@@ -19,6 +19,10 @@
 #     anyone forge the attack paths this instance shows.
 #   * A lower API rate limit, because the expensive calls are reachable without a
 #     credential: whatIf re-runs the whole simulation, kShortestPaths enumerates routes.
+#   * The rate limit and the brute-force lockout stay PER VISITOR. Every visitor reaches the
+#     backend through the dashboard's nginx, so without trusting that proxy the backend sees
+#     one client for everybody: fifty wrong tokens from one person lock every visitor out.
+#     Your TLS proxy must set X-Forwarded-For - Caddy, nginx and Traefik do by default.
 #
 # WHAT THIS DOES NOT DO
 #
@@ -38,6 +42,13 @@ services:
       # than the default 60/s. Raise it if a legitimate client (an MCP agent walking the
       # graph) starts getting 429s.
       API_RATE_RPS: ${API_RATE_RPS:-10}
+      # The dashboard's nginx is always in front of the backend here, and it sits on a
+      # Docker bridge network: 172.16.0.0/12 holds docker0 (172.17) and the compose
+      # networks after it, up to 172.31. X-Forwarded-For is believed only from those
+      # addresses and only for the hops they appended, so a visitor cannot pick their own
+      # key. If `docker network inspect <project>_default` shows another subnet (a custom
+      # daemon address pool, or more than fifteen networks on the host), set that instead.
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-172.16.0.0/12}
       # Left explicitly empty: a published instance has no reason to hold a token that
       # opens pull requests, or to send what it shows to a third-party model.
       GITHUB_TOKEN: ""
