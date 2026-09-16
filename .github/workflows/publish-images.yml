@@ -237,11 +237,17 @@ jobs:
       # to write a bundle to an unset path and died with `open : no such file or directory`
       # on an empty filename. Publishing one bundle is also the better artifact: a verifier
       # fetches one file instead of two that must be kept in step.
+      # Published under two names. SHA256SUMS.sigstore.json is the one OpenSSF Scorecard's
+      # Signed-Releases check recognises - it reads release assets by extension, and
+      # scored every release 0 while this signature was attached only as .bundle.
+      # SHA256SUMS.bundle stays, byte for byte the same file: the GitHub Action in this
+      # repository fetches that name, from this release and from every earlier one.
       - name: Sign the checksums (cosign keyless)
         run: |
           cosign sign-blob --yes \
             --bundle dist/SHA256SUMS.bundle \
             dist/SHA256SUMS
+          cp dist/SHA256SUMS.bundle dist/SHA256SUMS.sigstore.json
 
       # Verify what was just produced, here, rather than trusting that it is verifiable.
       # This is the exact command the release notes hand to a user: if it cannot pass on
@@ -249,15 +255,37 @@ jobs:
       - name: Verify the signature is usable
         run: |
           cosign verify-blob \
-            --bundle dist/SHA256SUMS.bundle \
+            --bundle dist/SHA256SUMS.sigstore.json \
             --certificate-identity-regexp 'https://github.com/${{ github.repository }}/.*' \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             dist/SHA256SUMS
 
       - name: SLSA build provenance
+        id: provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/perspectivegraph_*
+
+      # The attestation above is stored in GitHub's attestation API, which
+      # `gh attestation verify` reads but a release page does not show and Scorecard does
+      # not look at. The same Sigstore bundle goes next to the archives as an in-toto
+      # provenance file, so a downloaded binary can be checked with cosign alone and
+      # offline - and every archive is verified against it first, with the command the
+      # README gives users.
+      - name: Publish the provenance with the release
+        env:
+          BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          cp "$BUNDLE" dist/perspectivegraph.intoto.jsonl
+          for archive in dist/perspectivegraph_*; do
+            cosign verify-blob-attestation \
+              --bundle dist/perspectivegraph.intoto.jsonl --new-bundle-format \
+              --type https://slsa.dev/provenance/v1 \
+              --certificate-identity-regexp '^https://github.com/${{ github.repository }}/' \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "$archive"
+          done
 
       - name: Attach the binaries to the GitHub release
         env:

@@ -151,3 +151,9 @@ cosign verify-attestation --type spdxjson \
 # 3. SLSA build provenance
 gh attestation verify "oci://$IMG" --repo luiacuaniello/perspectivegraph
 ```
+
+The release **binaries** carry the same two guarantees as files attached to the release, so
+they can be checked with cosign alone and offline: `SHA256SUMS.sigstore.json` signs the
+checksum file covering every archive, and `perspectivegraph.intoto.jsonl` is the SLSA build
+provenance for all of them. The workflow verifies both before it uploads anything; the
+commands are in the [README](README.md#check-your-own-account-in-30-seconds).

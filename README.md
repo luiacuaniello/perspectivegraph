@@ -78,15 +78,25 @@ dry run that evaluates policy without performing anything, so it creates nothing
 costs nothing. It needs `iam:SimulatePrincipalPolicy` and `iam:ListRoles` - both inside
 `SecurityAudit`. Binaries for linux/macOS (amd64, arm64) and Windows are on the
 [releases page](https://github.com/luiacuaniello/perspectivegraph/releases/latest),
-signed with cosign and carrying SLSA build provenance. The signature covers `SHA256SUMS`,
-so one check covers every archive:
+signed with cosign and carrying SLSA build provenance, both attached to the release. The
+signature covers `SHA256SUMS`, so one check covers every archive; the provenance names the
+workflow run that built them:
 
 ```bash
-cosign verify-blob --bundle SHA256SUMS.bundle \
+cosign verify-blob --bundle SHA256SUMS.sigstore.json \
   --certificate-identity-regexp 'https://github.com/luiacuaniello/perspectivegraph/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   SHA256SUMS && sha256sum -c SHA256SUMS --ignore-missing
+
+cosign verify-blob-attestation --bundle perspectivegraph.intoto.jsonl --new-bundle-format \
+  --type https://slsa.dev/provenance/v1 \
+  --certificate-identity-regexp 'https://github.com/luiacuaniello/perspectivegraph/.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  perspectivegraph_darwin_arm64.tar.gz
 ```
+
+Releases before these files existed carry the same signature as `SHA256SUMS.bundle`, which
+every release still publishes.
 
 Add `-compare` and it also runs the engine over the same account and **exits non-zero
 where the two disagree** - each disagreement is a false positive or a miss, in the
