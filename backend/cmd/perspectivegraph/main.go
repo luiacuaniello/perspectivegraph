@@ -1093,7 +1093,13 @@ func hmacSecrets(cfg config.Config) map[string]string {
 // reads (GET /auth/config). It carries no secrets - only whether a credential is
 // required and the IdP's public coordinates for an SSO redirect.
 func authInfoFromConfig(cfg config.Config, authEnabled bool) api.AuthInfo {
-	info := api.AuthInfo{Required: authEnabled, Mode: "none"}
+	// "Required" is what the dashboard's login gate reads, and it means one thing: will an
+	// anonymous call be rejected? With API_ANONYMOUS_ROLE set it will not - so a published
+	// instance must report false, or the gate would ask a visitor for a credential the
+	// deployment does not want and the API does not need. Mode still describes what a
+	// credential WOULD be, because an admin signing in to the same instance is exactly how
+	// its owner works on it.
+	info := api.AuthInfo{Required: authEnabled && cfg.APIAnonymousRole == "", Mode: "none"}
 	if !authEnabled {
 		return info
 	}
