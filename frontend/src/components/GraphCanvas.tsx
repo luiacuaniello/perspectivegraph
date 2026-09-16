@@ -359,11 +359,15 @@ export default function GraphCanvas({ nodes, edges, highlightNodes, highlightEdg
     cy.animate({ fit: { eles: cy.elements(), padding: 50 } }, { duration: 250, easing: "ease-out" });
   };
 
+  // Below `sm` the legend leaves the canvas and sits under it. On a wide canvas it covers
+  // an empty corner; on a phone the fit spreads the route across the full width, and the
+  // overlay landed on the nodes it was meant to explain. So on a phone the canvas gets a
+  // fixed height of its own and the page, not the canvas, makes room for the legend.
   return (
-    <div className="relative h-full w-full">
+    <div className="relative flex w-full flex-col gap-2 sm:block sm:h-full">
       <div
         ref={containerRef}
-        className="graph-canvas-bg h-full w-full rounded-xl border border-[#1c2632] bg-[#0a0f14] shadow-card"
+        className="graph-canvas-bg h-[24rem] w-full shrink-0 rounded-xl border border-[#1c2632] bg-[#0a0f14] shadow-card sm:h-full"
       />
 
       {/* Zoom / fit controls */}
@@ -384,7 +388,7 @@ export default function GraphCanvas({ nodes, edges, highlightNodes, highlightEdg
           </svg>
         </GraphControl>
       </div>
-      <div className="pointer-events-none absolute bottom-3 left-3 rounded-lg border border-[#1c2632] bg-[#101821]/92 px-2.5 py-2 text-[10px] text-[#7b8896] shadow-card backdrop-blur-sm">
+      <div className="pointer-events-none rounded-lg border border-[#1c2632] bg-[#101821]/92 px-2.5 py-2 text-[10px] text-[#7b8896] shadow-card backdrop-blur-sm sm:absolute sm:bottom-3 sm:left-3">
         <div className="grid grid-cols-2 gap-x-3 gap-y-1">
           {(Object.keys(CATEGORY_STYLE) as Category[]).map((cat) => (
             <span key={cat} className="flex items-center gap-1.5">

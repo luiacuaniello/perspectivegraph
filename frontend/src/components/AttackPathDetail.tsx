@@ -800,7 +800,7 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
       <section className="rounded-xl border border-edge bg-panel shadow-card p-5">
         <h3 className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-muted">
           Kill chain
-          <InfoTip text="The step-by-step route, mapped to MITRE ATT&CK: each hop's probability (p), technique, and flags (exposure, sensitive asset, live alert, KEV). Hover a hop for a what-if cut." />
+          <InfoTip text="The step-by-step route, mapped to MITRE ATT&CK: each hop's probability (p), technique, and flags (exposure, sensitive asset, live alert, KEV). Hover a hop (or, on a touch screen, tap its what-if button) to simulate cutting it." />
         </h3>
 
         {whatIf && (
@@ -848,7 +848,9 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
                 </div>
               </div>
               {i < path.steps.length && (
-                <div className="group/step my-1 ml-4 flex items-center gap-2 border-l border-dashed border-edge py-1.5 pl-5">
+                // Wraps: a hop carries up to six chips, and on a phone the ones past the
+                // edge were clipped - the ATT&CK technique and the weight basis among them.
+                <div className="group/step my-1 ml-4 flex flex-wrap items-center gap-x-2 gap-y-1 border-l border-dashed border-edge py-1.5 pl-5">
                   <span className="rounded-sm bg-slate-500/10 px-2 py-0.5 font-mono text-[10px] text-slate-500">{path.steps[i].edgeType}</span>
                   <span className="text-[10px] tabular-nums text-slate-400">p = {path.steps[i].probability.toFixed(2)}</span>
                   {path.steps[i].attack && (
@@ -874,10 +876,12 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
                       heuristic join · {(path.steps[i].resolutionConfidence! * 100).toFixed(0)}%
                     </Badge>
                   )}
+                  {/* Revealed on hover where there is a hover. A touch screen has none, so
+                      there the cut was invisible and untappable: always show it. */}
                   <button
                     onClick={() => simulateCut(path.steps[i])}
                     disabled={cutting !== null}
-                    className="ml-1 inline-flex items-center gap-1 rounded-sm border border-edge px-1.5 py-0.5 text-[10px] text-slate-400 opacity-0 transition hover:border-accent/50 hover:text-accent focus-visible:opacity-100 group-hover/step:opacity-100 disabled:opacity-40"
+                    className="ml-1 inline-flex items-center gap-1 rounded-sm border border-edge px-1.5 py-0.5 text-[10px] text-slate-400 opacity-0 transition hover:border-accent/50 hover:text-accent focus-visible:opacity-100 group-hover/step:opacity-100 pointer-coarse:opacity-100 disabled:opacity-40"
                     title="Simulate cutting this edge and see the residual risk"
                   >
                     {cutting === `${path.steps[i].from}->${path.steps[i].to}` ? (

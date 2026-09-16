@@ -172,7 +172,7 @@
 								"config"
 							]
 						},
-						"description": "PUBLIC (no auth): tells the dashboard login gate whether auth is required and, for SSO, the OIDC coordinates (issuer/clientId/authorizeUrl/tokenUrl/scopes) to run the Authorization-Code + PKCE flow."
+						"description": "PUBLIC (no auth): tells the dashboard login gate whether auth is required and, for SSO, the OIDC coordinates (issuer/clientId/authorizeUrl/tokenUrl/scopes) to run the Authorization-Code + PKCE flow. On an instance published read-only (API_ANONYMOUS_ROLE=viewer) it also carries anonymousRole, which the dashboard uses to show a read-only notice instead of the open-instance banner."
 					}
 				}
 			]

@@ -47,6 +47,28 @@ describe("LoginGate", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  it("shows a read-only notice, not the alarm, on an instance published on purpose", async () => {
+    // A published instance reports authRequired false like an open one, but its writes are
+    // refused and its ingestion is not exposed. The alarm would tell every visitor of a
+    // public demo that it is misconfigured - and name settings only its owner can change.
+    vi.spyOn(client, "fetchAuthConfig").mockResolvedValue({
+      authRequired: false,
+      mode: "token",
+      anonymousRole: "viewer",
+    } as client.AuthConfig);
+
+    render(
+      <LoginGate>
+        <p>dashboard</p>
+      </LoginGate>,
+    );
+
+    expect(await screen.findByRole("status")).toHaveTextContent(/read-only instance/i);
+    expect(screen.getByText("dashboard")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByText(BANNER)).not.toBeInTheDocument();
+  });
+
   it("stays silent when /auth/config could not be reached", async () => {
     // The gate falls back to "open" so the dashboard still renders, but a failed fetch is
     // not evidence that the instance is open - and saying so would be the false alarm

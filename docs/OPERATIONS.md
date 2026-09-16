@@ -565,6 +565,12 @@ suppression, verdict, ticket or remediation PR answers **403**. A presented-but-
 still fails with **401** - it does not fall through to anonymous, or revoking a leaked token
 would silently demote its holder to public read instead of locking them out.
 
+**What the dashboard shows.** `GET /auth/config` answers `authRequired: false` with
+`anonymousRole: "viewer"`, so the dashboard opens without a sign-in and carries a quiet
+*read-only instance* notice, which is also what tells a visitor why a suppression is refused.
+An instance left open by accident reports no `anonymousRole` and keeps the red
+open-instance banner. The backend tells the two apart; the page does not guess.
+
 **What it does not do.**
 
 - **It does not make the data safe to publish.** Everything the dashboard shows - assets,
@@ -582,6 +588,8 @@ would silently demote its holder to public read instead of locking them out.
 **Checklist for a published instance**
 
 - [ ] `API_ANONYMOUS_ROLE=viewer`, and an unauthenticated `POST /suppressions` answers 403.
+- [ ] `/auth/config` shows `"anonymousRole":"viewer"`: the dashboard shows the read-only
+      notice, not the red open-instance banner.
 - [ ] Sample data only; no connector credentials, no `GITHUB_TOKEN`, no AI keys.
 - [ ] Only the dashboard port is proxied; `/ingest` unreachable from the internet.
 - [ ] TLS at the proxy, and `API_RATE_RPS` low.

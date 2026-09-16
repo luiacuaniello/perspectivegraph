@@ -598,6 +598,9 @@ export function hasRuntimeToken(): boolean {
 export interface AuthConfig {
   authRequired: boolean;
   mode: "none" | "token" | "oidc" | "both";
+  // Present only when the deployment lets a credential-less caller in on purpose
+  // (API_ANONYMOUS_ROLE): a published read-only instance, not an open one.
+  anonymousRole?: string;
   oidc?: {
     issuer?: string;
     audience?: string;

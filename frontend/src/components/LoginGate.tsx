@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { fetchAuthConfig, authToken, setAuthToken, type AuthConfig } from "../api/client";
 import { beginPkceLogin, completePkceLogin, randomString } from "../auth/pkce";
-import { AlertTriangleIcon } from "./icons";
+import { AlertTriangleIcon, InfoIcon } from "./icons";
 
 // OpenInstanceBanner is the only place an unauthenticated instance says so to a human.
 // The backend logs a warning at startup and /auth/config reports authRequired: false, but
@@ -27,6 +27,26 @@ function OpenInstanceBanner() {
         Anyone who can reach it can read these attack paths and post to the ingest endpoint.
         Set <code>API_TOKENS</code> or <code>OIDC_JWKS_URL</code>, and{" "}
         <code>INGEST_HMAC_SECRET</code>, before exposing it.
+      </span>
+    </div>
+  );
+}
+
+// ReadOnlyNotice replaces the alarm on an instance published read-only on purpose. It
+// reports authRequired false exactly like an open one, but its writes answer 403 and its
+// ingestion is not exposed - so the alarm's claims would be false there, and the visitor
+// it would reach is the one person who can do nothing about them. What that visitor does
+// need to know is why a suppress or a verdict is refused.
+function ReadOnlyNotice() {
+  return (
+    <div
+      role="status"
+      className="flex shrink-0 items-center gap-2 border-b border-edge/70 bg-panel px-4 py-2 text-xs text-muted"
+    >
+      <InfoIcon className="size-3.5 shrink-0" />
+      <span>
+        <strong className="font-semibold text-slate-700">Read-only instance.</strong> Explore every attack
+        path freely; changes such as suppressions, verdicts and tickets are turned off.
       </span>
     </div>
   );
@@ -101,9 +121,11 @@ export default function LoginGate({ children }: { children: ReactNode }) {
   if (!ready) return null;
   if (authed || !config) {
     const open = configKnown && config !== null && !config.authRequired;
+    const published = open && !!config?.anonymousRole;
     return (
       <>
-        {open && <OpenInstanceBanner />}
+        {open && !published && <OpenInstanceBanner />}
+        {published && <ReadOnlyNotice />}
         {children}
       </>
     );

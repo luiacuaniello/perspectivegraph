@@ -963,6 +963,7 @@ rebuild:
 curl -s localhost:8080/auth/config
 # open:  {"authRequired":false,"mode":"none"}
 # secured: {"authRequired":true,"mode":"both","oidc":{"clientId":"…","authorizeUrl":"…"}}
+# published read-only (API_ANONYMOUS_ROLE): {"authRequired":false,"mode":"token","anonymousRole":"viewer"}
 ```
 
 A user pastes a token or clicks **Sign in with SSO**, which runs the full **OIDC

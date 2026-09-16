@@ -14,6 +14,11 @@ type AuthInfo struct {
 	Required bool `json:"authRequired"`
 	// Mode is one of none|token|oidc|both - what the login gate should offer.
 	Mode string `json:"mode"`
+	// AnonymousRole names the role a caller with no credential gets when the deployment
+	// lets one in on purpose (API_ANONYMOUS_ROLE), and is absent otherwise. It is the only
+	// thing that separates a published read-only instance from one left open by accident:
+	// both report authRequired false, and only the second deserves the dashboard's alarm.
+	AnonymousRole string `json:"anonymousRole,omitempty"`
 	// OIDC is present only when single-sign-on is configured for login.
 	OIDC *OIDCInfo `json:"oidc,omitempty"`
 }

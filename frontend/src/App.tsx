@@ -244,9 +244,24 @@ export default function App() {
       });
   }, [graphOpen, graphData, app]);
 
+  // On a phone the list and the detail share one scrolling column, list first - so choosing
+  // a route changed something below every other route, and nothing the user could see
+  // moved. Bring the detail to them. A counter rather than a flag, so choosing a second
+  // route reveals again; and it runs after render, so a detail that is only now mounting
+  // (arriving from Today) is there to scroll to. On a desktop both panels are already on
+  // screen, and moving the page would only be a jolt.
+  const detailRef = useRef<HTMLDivElement>(null);
+  const [revealDetail, setRevealDetail] = useState(0);
+  const showDetail = () => setRevealDetail((n) => n + 1);
+  useEffect(() => {
+    if (revealDetail === 0 || window.matchMedia("(min-width: 64rem)").matches) return;
+    detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [revealDetail]);
+
   const openPath = (id: string) => {
     setSelectedPathId(id);
     setView("paths");
+    showDetail();
   };
 
   const meta = VIEW_META[view];
@@ -403,8 +418,13 @@ export default function App() {
             {view === "paths" && (
               // Mobile: one scrolling column (list above detail). Desktop: a 4/8
               // split where each panel scrolls on its own.
+              //
+              // min-h-0 belongs to the desktop split ONLY. In the mobile column it let
+              // both panels shrink to share the screen, their content overflowed the
+              // boxes, and the detail - kill chain, "Show in graph" - was painted
+              // underneath the list cards instead of after them.
               <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto lg:grid lg:grid-cols-12 lg:gap-5 lg:overflow-hidden">
-                <div className="min-h-0 lg:col-span-4 lg:overflow-y-auto lg:pr-1">
+                <div className="lg:col-span-4 lg:min-h-0 lg:overflow-y-auto lg:pr-1">
                   {suppressedCount > 0 && (
                     <label className="mb-2 flex items-center gap-2 text-[11px] text-slate-500">
                       <input
@@ -419,11 +439,14 @@ export default function App() {
                   <AttackPathList
                     paths={visiblePaths}
                     selectedId={selected?.id ?? null}
-                    onSelect={(p) => setSelectedPathId(p.id)}
+                    onSelect={(p) => {
+                      setSelectedPathId(p.id);
+                      showDetail();
+                    }}
                     onChanged={() => setReloadKey((k) => k + 1)}
                   />
                 </div>
-                <div className="min-h-0 lg:col-span-8 lg:overflow-y-auto lg:pr-1">
+                <div ref={detailRef} className="lg:col-span-8 lg:min-h-0 lg:overflow-y-auto lg:pr-1">
                   {selected && graphOpen ? (
                     // The graph earns its weight only as a lens on a route you have
                     // already chosen - never as a hairball you land on.
@@ -437,7 +460,14 @@ export default function App() {
                             </span>
                           )}
                         </span>
-                        <Button variant="secondary" size="sm" onClick={() => setGraphOpen(false)}>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => {
+                            setGraphOpen(false);
+                            showDetail();
+                          }}
+                        >
                           Back to detail
                         </Button>
                       </div>
@@ -458,7 +488,13 @@ export default function App() {
                   ) : selected ? (
                     <AttackPathDetail
                       path={selected}
-                      onShowInGraph={() => setGraphOpen(true)}
+                      onShowInGraph={() => {
+                        // The button sits at the foot of a long detail. The graph that
+                        // replaces it is shorter, so without this a phone is left
+                        // scrolled past it, looking at nothing.
+                        setGraphOpen(true);
+                        showDetail();
+                      }}
                       onTriaged={reload}
                       aiEnabled={data.aiEnabled}
                     />

@@ -1103,6 +1103,7 @@ func authInfoFromConfig(cfg config.Config, authEnabled bool) api.AuthInfo {
 	if !authEnabled {
 		return info
 	}
+	info.AnonymousRole = cfg.APIAnonymousRole
 	hasTokens := len(cfg.APITokens) > 0
 	hasOIDC := cfg.OIDCJWKSURL != ""
 	switch {
