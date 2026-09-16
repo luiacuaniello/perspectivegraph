@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.14.1](https://github.com/luiacuaniello/perspectivegraph/compare/v1.14.0...v1.14.1) (2026-09-16)
+
+
+### Bug Fixes
+
+* **auth:** a published instance must not ask a visitor to sign in ([#217](https://github.com/luiacuaniello/perspectivegraph/issues/217)) ([e90573e](https://github.com/luiacuaniello/perspectivegraph/commit/e90573ee5f66c47f28e6f382768c610ba20db87e))
+
 ## [1.14.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.13.3...v1.14.0) (2026-09-16)
 
 
