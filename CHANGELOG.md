@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.14.4](https://github.com/luiacuaniello/perspectivegraph/compare/v1.14.3...v1.14.4) (2026-09-16)
+
+
+### Bug Fixes
+
+* **deploy:** move NATS to 2.14.7, clearing its two medium advisories ([#224](https://github.com/luiacuaniello/perspectivegraph/issues/224)) ([70d7ce9](https://github.com/luiacuaniello/perspectivegraph/commit/70d7ce902789813a0e80d4bd7b25b60ee1d2df9c))
+
 ## [1.14.3](https://github.com/luiacuaniello/perspectivegraph/compare/v1.14.2...v1.14.3) (2026-09-16)
 
 
