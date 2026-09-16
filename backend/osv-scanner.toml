@@ -1,0 +1,11 @@
+# Advisories OSV reports against this module that do not affect it. OpenSSF Scorecard's
+# Vulnerabilities check reads this file; each entry says why, and
+# internal/config/osvignore_test.go fails if the reason stops being true.
+#
+# Module-level scanners flag a dependency whenever ANY package in it is advised against.
+# govulncheck, which CI runs, follows the call graph instead and reports nothing reachable.
+
+[[IgnoredVulns]]
+id = "GO-2026-5932"
+ignoreUntil = 2027-03-16
+reason = "golang.org/x/crypto/openpgp is unmaintained and unsafe by design, and the advisory covers every x/crypto version, so no upgrade clears it. This module never compiles it: x/crypto is indirect, through nats.go and nkeys, which use curve25519 and nacl only. Re-check by the date above."
