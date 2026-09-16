@@ -6,6 +6,7 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/13828/badge)](https://www.bestpractices.dev/projects/13828)
 [![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/perspectivegraph)](https://artifacthub.io/packages/helm/perspectivegraph/perspectivegraph)
+[![Live demo](https://img.shields.io/website?url=https%3A%2F%2Fdemo.a3thinker.it&label=live%20demo&up_message=online&down_message=offline)](https://demo.a3thinker.it)
 
 > **Catch the attack path in the pull request that opens it - then ship the fix as a PR.**
 
@@ -32,6 +33,13 @@ pull request.**
 *Twenty seconds of `make demo`: what is exploitable now → the ranked routes → one route's
 kill chain and the fix it generates → whether the scores can be trusted. Sample scanner
 output and seeded verdicts, not a real environment.*
+
+**Try it without installing anything: [demo.a3thinker.it](https://demo.a3thinker.it).** The
+same dashboard on the same sample scanner output, published read-only - every route, kill
+chain, graph and generated fix is there to explore, and nothing can be changed. It carries
+no seeded verdicts, so its Trust page reports insufficient data: with no recorded outcomes,
+that is the honest answer. It runs on a single free VM, so treat it as best-effort: the
+badge above says whether it is up.
 
 > ### What this has not done yet
 >
@@ -259,6 +267,10 @@ answers it could not have invented.
 ```bash
 make mcp    # or: perspectivegraph mcp --api http://localhost:8080
 ```
+
+No engine running? Point it at the live demo instead: `perspectivegraph mcp --api
+https://demo.a3thinker.it` answers every tool - `simulate_fix` included - from the sample
+data, with no credential.
 
 ```json
 {"mcpServers": {"perspectivegraph": {
