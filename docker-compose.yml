@@ -49,7 +49,7 @@ services:
     <<: *hardening
     # -scratch: the nats-server binary and nothing else. That removed twenty of this
     # image's twenty-three findings, which were all in the Alpine userland it never used.
-    image: nats:2.14.6-scratch@sha256:54eac64d71b1b04360c2bba312a6b652ff7da0b7e7328865c977518aa5e29d11
+    image: nats:2.14.7-scratch@sha256:e8c4a3d844994c8a9740e42f956d4b41461618acf591b62268300432bb6a3780
     container_name: perspective-nats
     command: ["-js", "-m", "8222"]
     ports:
