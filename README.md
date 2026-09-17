@@ -30,7 +30,7 @@ pull request.**
 
 ![PerspectiveGraph: from the day's exploitable routes to a generated fix](docs/demo.gif)
 
-*Twenty seconds of `make demo`: what is exploitable now → the ranked routes → one route's
+*Twelve seconds of `make demo`, signed in: what is exploitable now → the ranked routes → one route's
 kill chain and the fix it generates → whether the scores can be trusted. Sample scanner
 output and seeded verdicts, not a real environment.*
 
@@ -171,7 +171,7 @@ lower-scoring route can and does outrank a higher-scoring one.
 | ![Attack path detail](docs/screenshot-paths.png) | ![Score calibration](docs/screenshot-trust.png) |
 | Every hop, its probability, where that probability came from, and the ATT&CK technique. | Whether the engine's own scores held up against recorded outcomes. |
 
-*Every screenshot on this page is `make demo`: sample scanner output and **seeded**
+*Every screenshot on this page is `make demo`, signed in with a token: sample scanner output and **seeded**
 verdicts, not a real environment. That is why the calibration panel returns a verdict of
 "underconfident" - across 14 seeded outcomes the engine predicted 60% where 71% held up.
 Those outcomes were generated to exercise the instrument, not to flatter it. On a fresh

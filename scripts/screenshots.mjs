@@ -3,6 +3,16 @@
 //   make up-full && make seed && make seed-discovery && make seed-validation
 //   node scripts/screenshots.mjs
 //
+// Take them signed in. An instance with no credential carries the red open-instance banner
+// across the top of every view - right for that instance, wrong for pictures of the product
+// as it is meant to run. Recreate the backend with a throwaway admin token and pass it in:
+//
+//   TOKEN=$(openssl rand -hex 32)
+//   API_TOKENS="${TOKEN}:admin" docker compose -f docker-compose.yml -f docker-compose.demo.yml --profile app up -d backend
+//   PG_TOKEN="$TOKEN" node scripts/screenshots.mjs
+//
+// (Braces around TOKEN matter in zsh, where "$TOKEN:a" is a path modifier, not a colon.)
+//
 // Screenshots go stale silently: the dashboard was restructured while docs/*.png
 // still showed a navigation and a headline metric that no longer exist, which is
 // the worst kind of documentation rot because it looks fine until someone compares
@@ -21,6 +31,9 @@ import { join } from "node:path";
 const APP = process.env.APP_URL ?? "http://localhost:3000";
 const OUT = process.env.OUT_DIR ?? "docs";
 const PORT = 9333;
+// The session token the dashboard's login gate would store; empty takes the pictures of an
+// open instance, banner included.
+const TOKEN = process.env.PG_TOKEN ?? "";
 const CHROME =
   process.env.CHROME ??
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
@@ -31,9 +44,19 @@ const CHROME =
 // The app reads the view from the hash on mount only, so switching by URL after
 // load is a same-document navigation that changes nothing. Each shot therefore
 // clicks its way there, which is also what a reader does.
+//
+// Sections are tabs in the top bar (a bottom tab bar on a phone - both are a nav named
+// "Sections", and only the one CSS shows has an offsetParent). A tab that is not found
+// THROWS: this used to look for a sidebar, and when the sidebar went, `?.click()` on
+// nothing let every shot quietly capture Today under the other views' file names.
 const nav = (label) => `
-  [...document.querySelectorAll("aside button")]
-    .find(b => b.textContent.includes(${JSON.stringify(label)}))?.click();
+  (() => {
+    const tab = [...document.querySelectorAll('nav[aria-label="Sections"] button')].find(
+      (b) => b.offsetParent !== null && (b.getAttribute("aria-label") || b.textContent).startsWith(${JSON.stringify(label)}),
+    );
+    if (!tab) throw new Error("no section tab named " + ${JSON.stringify(label)});
+    tab.click();
+  })();
 `;
 
 const SHOTS = [
@@ -120,19 +143,34 @@ function send(ws, method, params = {}) {
   });
 }
 
+// signIn stores the token where the login gate keeps it. sessionStorage survives the
+// reload that follows, which is all a screenshot needs.
+const signIn = () => (TOKEN ? ` sessionStorage.setItem("pg-token", ${JSON.stringify(TOKEN)});` : "");
+
+// evaluate runs an expression in the page and fails when it throws. Runtime.evaluate
+// reports a page exception as a successful call with exceptionDetails attached, so without
+// this check a broken action was indistinguishable from one that worked.
+async function evaluate(ws, expression) {
+  const res = await send(ws, "Runtime.evaluate", { expression });
+  if (res.exceptionDetails) {
+    throw new Error(res.exceptionDetails.exception?.description ?? res.exceptionDetails.text);
+  }
+  return res;
+}
+
 async function capture(ws, shot) {
   // localStorage is per-origin, so the onboarding flag has to be written from a
   // page already loaded there; the reload after it starts the app already dismissed.
   await send(ws, "Page.navigate", { url: APP });
   await sleep(1200);
-  await send(ws, "Runtime.evaluate", {
-    expression: `localStorage.setItem("pg_intro_dismissed_v1", "1")`,
-  });
+  // The theme is set, not inherited: left to prefers-color-scheme, the pictures came out
+  // dark or light depending on the machine that took them.
+  await evaluate(ws, `localStorage.setItem("pg_intro_dismissed_v1", "1"); localStorage.setItem("pg-theme", "dark");` + signIn());
   await send(ws, "Page.reload", {});
   await sleep(2500);
 
   if (shot.act) {
-    await send(ws, "Runtime.evaluate", { expression: shot.act });
+    await evaluate(ws, shot.act);
     await sleep(shot.settle);
   }
 

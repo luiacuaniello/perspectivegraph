@@ -3,6 +3,16 @@
 //   make up-full && make seed && make seed-discovery && make seed-validation
 //   node scripts/demo-gif.mjs
 //
+// Take them signed in. An instance with no credential carries the red open-instance banner
+// across the top of every view - right for that instance, wrong for pictures of the product
+// as it is meant to run. Recreate the backend with a throwaway admin token and pass it in:
+//
+//   TOKEN=$(openssl rand -hex 32)
+//   API_TOKENS="${TOKEN}:admin" docker compose -f docker-compose.yml -f docker-compose.demo.yml --profile app up -d backend
+//   PG_TOKEN="$TOKEN" node scripts/demo-gif.mjs
+//
+// (Braces around TOKEN matter in zsh, where "$TOKEN:a" is a path modifier, not a colon.)
+//
 // The GIF is the first thing a visitor sees, and it goes stale the same silent way the
 // screenshots do - it kept showing the previous palette and a navigation that no longer
 // exists long after the UI had moved on. This makes refreshing it a command.
@@ -20,11 +30,17 @@ import { join } from "node:path";
 const APP = process.env.APP_URL ?? "http://localhost:3000";
 const OUT = process.env.OUT_DIR ?? "docs";
 const PORT = 9334; // not 9333: so this can run while screenshots.mjs is open
+// The session token the dashboard's login gate would store; empty records an open
+// instance, banner included.
+const TOKEN = process.env.PG_TOKEN ?? "";
+const signIn = () => (TOKEN ? ` sessionStorage.setItem("pg-token", ${JSON.stringify(TOKEN)});` : "");
 const CHROME =
   process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-// Pillow lives in the Homebrew python on this project's machines; the system python3
-// has no PIL. Override if yours differs.
-const PYTHON = process.env.PYTHON ?? "/usr/local/bin/python3";
+// Any python3 with Pillow. Not a fixed path: the one this used to name was an Intel
+// Homebrew install that an Apple Silicon machine without Rosetta cannot even start.
+//   python3 -m venv /tmp/pg-gif && /tmp/pg-gif/bin/pip install Pillow
+//   PYTHON=/tmp/pg-gif/bin/python node scripts/demo-gif.mjs
+const PYTHON = process.env.PYTHON ?? "python3";
 
 // The story the caption promises: what is exploitable now → the ranked routes → one
 // route's kill chain and its generated fix → whether the scores can be trusted.
@@ -32,9 +48,19 @@ const PYTHON = process.env.PYTHON ?? "/usr/local/bin/python3";
 // `hold` frames are what give a reader time to actually read a screen; without them the
 // GIF flicks through four views faster than anyone can follow, which is the failure mode
 // of most product GIFs.
+//
+// Sections are tabs in the top bar (a bottom tab bar on a phone - both are a nav named
+// "Sections", and only the one CSS shows has an offsetParent). A tab that is not found
+// THROWS: this used to look for a sidebar, and when the sidebar went, `?.click()` on
+// nothing let every shot quietly capture Today under the other views' file names.
 const nav = (label) => `
-  [...document.querySelectorAll("aside button")]
-    .find(b => b.textContent.includes(${JSON.stringify(label)}))?.click();
+  (() => {
+    const tab = [...document.querySelectorAll('nav[aria-label="Sections"] button')].find(
+      (b) => b.offsetParent !== null && (b.getAttribute("aria-label") || b.textContent).startsWith(${JSON.stringify(label)}),
+    );
+    if (!tab) throw new Error("no section tab named " + ${JSON.stringify(label)});
+    tab.click();
+  })();
 `;
 
 const SCENES = [
@@ -104,15 +130,13 @@ async function main() {
     await send(ws, "Page.navigate", { url: APP });
     await sleep(1500);
     // Dismiss onboarding from a page already on the origin, then reload into the app.
-    await send(ws, "Runtime.evaluate", {
-      expression: `localStorage.setItem("pg_intro_dismissed_v1", "1"); localStorage.setItem("pg-theme", "dark");`,
-    });
+    await evaluate(ws, `localStorage.setItem("pg_intro_dismissed_v1", "1"); localStorage.setItem("pg-theme", "dark");` + signIn());
     await send(ws, "Page.reload", {});
     await sleep(3000);
 
     for (const scene of SCENES) {
       if (scene.act) {
-        await send(ws, "Runtime.evaluate", { expression: scene.act });
+        await evaluate(ws, scene.act);
         await sleep(600); // let the view settle before the first frame of the scene
       }
       for (let i = 0; i < scene.hold; i++) {
@@ -141,6 +165,17 @@ async function main() {
   if (res.status !== 0) {
     throw new Error("assembling the GIF failed - is Pillow installed for " + PYTHON + "?");
   }
+}
+
+// evaluate runs an expression in the page and fails when it throws. Runtime.evaluate
+// reports a page exception as a successful call with exceptionDetails attached, so without
+// this check a broken scene was indistinguishable from one that worked.
+async function evaluate(ws, expression) {
+  const res = await send(ws, "Runtime.evaluate", { expression });
+  if (res.exceptionDetails) {
+    throw new Error(res.exceptionDetails.exception?.description ?? res.exceptionDetails.text);
+  }
+  return res;
 }
 
 // connect waits for Chrome's debugging endpoint, then attaches to its page target.
