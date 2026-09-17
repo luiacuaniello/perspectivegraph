@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.16.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.15.0...v1.16.0) (2026-09-17)
+
+
+### Features
+
+* **auth:** add GET /auth/me so the dashboard disables writes a role cannot make ([#229](https://github.com/luiacuaniello/perspectivegraph/issues/229)) ([eecde22](https://github.com/luiacuaniello/perspectivegraph/commit/eecde22a362886a2c0aff3f9232e501903caf7cb))
+
 ## [1.15.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.14.4...v1.15.0) (2026-09-17)
 
 
