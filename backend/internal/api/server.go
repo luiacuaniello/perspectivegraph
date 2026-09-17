@@ -169,6 +169,9 @@ func (a *API) Handler() (http.Handler, error) {
 	// Guard the query (depth + body size), then memoize one snapshot per request.
 	mux.Handle("/graphql", secured("graphql", withQueryGuard(a.introspectionAllowed(), withSnapshotCache(gql, a.manager))))
 	// SIEM enrichment export (NDJSON) and OSCAL assessment-results, same scoping.
+	// Who the caller is and whether they may write - read by the dashboard to disable the
+	// actions the server would refuse. Behind auth like the data it describes.
+	mux.Handle("GET /auth/me", secured("auth_me", http.HandlerFunc(a.handleAuthMe)))
 	mux.Handle("GET /export/ndjson", secured("export_ndjson", http.HandlerFunc(a.exportNDJSON)))
 	mux.Handle("GET /export/oscal", secured("export_oscal", http.HandlerFunc(a.exportOSCAL)))
 	// The export-signing public key is, by definition, public: open so any

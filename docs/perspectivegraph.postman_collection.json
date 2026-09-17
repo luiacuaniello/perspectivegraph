@@ -65,7 +65,7 @@
 					"    pm.request.headers.upsert({ key: 'X-PerspectiveGraph-Signature', value: sig });",
 					"  }",
 					"}",
-					"if (url.includes('/graphql') || url.includes('/export/') || url.includes('/suppressions') || url.includes('/tickets') || url.includes('/validations')) {",
+					"if (url.includes('/graphql') || url.includes('/export/') || url.includes('/suppressions') || url.includes('/tickets') || url.includes('/validations') || url.includes('/ai/') || url.includes('/remediation/') || url.includes('/auth/me')) {",
 					"  const token = pm.variables.get('apiToken');",
 					"  if (token) {",
 					"    pm.request.headers.upsert({ key: 'Authorization', value: 'Bearer ' + token });",
@@ -173,6 +173,24 @@
 							]
 						},
 						"description": "PUBLIC (no auth): tells the dashboard login gate whether auth is required and, for SSO, the OIDC coordinates (issuer/clientId/authorizeUrl/tokenUrl/scopes) to run the Authorization-Code + PKCE flow. On an instance published read-only (API_ANONYMOUS_ROLE=viewer) it also carries anonymousRole, which the dashboard uses to show a read-only notice instead of the open-instance banner."
+					}
+				},
+				{
+					"name": "Who am I (role + write permission)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{apiUrl}}/auth/me",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"auth",
+								"me"
+							]
+						},
+						"description": "What the bearer token (collection variable apiToken) resolved to: subject (the audit log's name for the caller - a fingerprint, never the token), role (viewer|operator|admin; absent when the API has no authentication), tenant, apps (when reads are scoped), anonymous (no credential presented) and canWrite (whether suppressions, tickets, verdicts and fix PRs would be accepted - admin only). Authenticated like the data: 401 for a missing or wrong token, which makes it the quickest check of a newly issued token. The dashboard reads it to disable the actions the server would refuse."
 					}
 				}
 			]

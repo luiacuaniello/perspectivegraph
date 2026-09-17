@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AttackPathList from "./AttackPathList";
 import type { AttackPath } from "../api/client";
-import { ReadOnlyContext } from "../auth/readOnly";
+import { READ_ONLY_REASON, ReadOnlyContext } from "../auth/readOnly";
 
 const route: AttackPath = {
   id: "ap-edge-admin",
@@ -53,10 +53,10 @@ describe("AttackPathList", () => {
     expect(screen.getByRole("button", { name: "Triage" })).toBeInTheDocument();
   });
 
-  it("does not offer row actions on a read-only instance", () => {
+  it("does not offer row actions when this tab cannot write", () => {
     // They reveal on hover; one that appears only to refuse is noise in a list.
     render(
-      <ReadOnlyContext.Provider value={true}>
+      <ReadOnlyContext.Provider value={READ_ONLY_REASON}>
         <AttackPathList paths={[route]} selectedId={null} onSelect={() => {}} />
       </ReadOnlyContext.Provider>,
     );

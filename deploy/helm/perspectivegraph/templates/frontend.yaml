@@ -64,6 +64,10 @@ data:
         proxy_pass http://{{ include "perspectivegraph.backendHost" . }}:{{ .Values.service.apiPort }}/auth/config;
         proxy_set_header Host $host;
       }
+      location /auth/me {
+        proxy_pass http://{{ include "perspectivegraph.backendHost" . }}:{{ .Values.service.apiPort }}/auth/me;
+        proxy_set_header Host $host;
+      }
       location /ai/ {
         proxy_pass http://{{ include "perspectivegraph.backendHost" . }}:{{ .Values.service.apiPort }}/ai/;
         proxy_set_header Host $host;

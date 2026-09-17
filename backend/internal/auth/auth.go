@@ -30,6 +30,11 @@ import (
 // DefaultTenant is the tenant used when auth is open or no tenant is specified.
 const DefaultTenant = "default"
 
+// AnonymousSubject is the subject of a caller who presented no credential: on an open
+// instance, and on one published read-only (API_ANONYMOUS_ROLE). An API credential always
+// resolves to a prefixed subject ("token:", "jwt:"), so none can resolve to this one.
+const AnonymousSubject = "anonymous"
+
 // Role is an RBAC role; higher value = more privilege.
 type Role int
 
@@ -123,7 +128,7 @@ func PrincipalFromContext(ctx context.Context) Principal {
 	if p, ok := ctx.Value(ctxKey{}).(Principal); ok {
 		return p
 	}
-	return Principal{Subject: "anonymous", Tenant: DefaultTenant}
+	return Principal{Subject: AnonymousSubject, Tenant: DefaultTenant}
 }
 
 // Authenticator resolves a request to a Principal.
@@ -366,7 +371,7 @@ func (a *Anonymous) Authenticate(r *http.Request) (Principal, bool) {
 	if !a.Enabled() || bearer(r) != "" {
 		return Principal{}, false
 	}
-	return Principal{Subject: "anonymous", Role: a.role, Tenant: DefaultTenant}, true
+	return Principal{Subject: AnonymousSubject, Role: a.role, Tenant: DefaultTenant}, true
 }
 
 func unauthorized(w http.ResponseWriter, msg string) {

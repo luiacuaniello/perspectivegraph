@@ -146,9 +146,10 @@ export default function AttackPathList({
                 Absolutely positioned so they cost no height while hidden: reserving the
                 space made every row taller for an affordance most rows never show. They
                 overlay the right end of the metadata line, which is empty. */}
-            {/* Not offered at all on a read-only instance: these reveal on hover, and a
-                control that appears only to refuse is noise in a list. The detail panel
-                still shows its actions, disabled, with the reason. */}
+            {/* Not offered at all when this tab cannot write - a read-only instance, or a
+                role below admin: these reveal on hover, and a control that appears only to
+                refuse is noise in a list. The detail panel still shows its actions,
+                disabled, with the reason. */}
             {!readOnly && (
               <div className="absolute bottom-2 right-3 flex justify-end">
                 <RouteActions path={p} onChanged={() => onChanged?.()} />

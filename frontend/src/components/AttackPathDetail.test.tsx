@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import AttackPathDetail from "./AttackPathDetail";
 import type { AttackPath } from "../api/client";
-import { READ_ONLY_REASON, ReadOnlyContext } from "../auth/readOnly";
+import { READ_ONLY_REASON, ReadOnlyContext, roleReason } from "../auth/readOnly";
 
 // The detail panel is where the engine's honesty layers become a claim a human
 // reads: the headline exploit score, the epistemic credible interval, and the
@@ -146,7 +146,7 @@ describe("AttackPathDetail on a read-only instance", () => {
 
   it("disables every write and says why", () => {
     render(
-      <ReadOnlyContext.Provider value={true}>
+      <ReadOnlyContext.Provider value={READ_ONLY_REASON}>
         <AttackPathDetail path={base} />
       </ReadOnlyContext.Provider>,
     );
@@ -154,6 +154,24 @@ describe("AttackPathDetail on a read-only instance", () => {
       expect(screen.getByRole("button", { name })).toBeDisabled();
     }
     expect(screen.getByText(READ_ONLY_REASON)).toBeInTheDocument();
+  });
+
+  it("names the role when it is the role that cannot write", () => {
+    // A viewer on a working instance is not on a read-only one: telling them so would send
+    // them looking for a setting instead of a different role.
+    const reason = roleReason("viewer");
+    render(
+      <ReadOnlyContext.Provider value={reason}>
+        <AttackPathDetail path={base} />
+      </ReadOnlyContext.Provider>,
+    );
+    for (const name of writes) {
+      const button = screen.getByRole("button", { name });
+      expect(button).toBeDisabled();
+      expect(button).toHaveAttribute("title", reason);
+    }
+    expect(screen.getByText(reason)).toBeInTheDocument();
+    expect(screen.queryByText(READ_ONLY_REASON)).not.toBeInTheDocument();
   });
 
   it("leaves them enabled everywhere else", () => {

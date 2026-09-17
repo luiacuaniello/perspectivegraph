@@ -46,6 +46,11 @@ export default defineConfig({
         target: process.env.PERSPECTIVE_API ?? "http://localhost:8080",
         changeOrigin: true,
       },
+      // Who the caller is and whether they may write.
+      "/auth/me": {
+        target: process.env.PERSPECTIVE_API ?? "http://localhost:8080",
+        changeOrigin: true,
+      },
       // AI assistant (summary / query / explain).
       "/ai": {
         target: process.env.PERSPECTIVE_API ?? "http://localhost:8080",

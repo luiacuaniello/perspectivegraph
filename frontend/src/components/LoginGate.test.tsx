@@ -1,8 +1,8 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import LoginGate from "./LoginGate";
 import * as client from "../api/client";
-import { useReadOnly } from "../auth/readOnly";
+import { READ_ONLY_REASON, roleReason, useReadOnly } from "../auth/readOnly";
 
 // The banner is the only place an unauthenticated instance says so to a human. The
 // backend logs it at start-up and /auth/config reports it, but a log scrolls past and an
@@ -13,6 +13,11 @@ import { useReadOnly } from "../auth/readOnly";
 
 const BANNER = /requires no credential/i;
 
+// No /auth/me answer unless a test gives one: the gate must work against a backend that
+// predates it.
+beforeEach(() => {
+  vi.spyOn(client, "fetchMe").mockResolvedValue(null);
+});
 afterEach(() => vi.restoreAllMocks());
 
 describe("LoginGate", () => {
@@ -95,6 +100,69 @@ describe("LoginGate", () => {
       </LoginGate>,
     );
     expect(await screen.findByText("writable")).toBeInTheDocument();
+  });
+
+  it("tells a signed-in viewer that their role, not the instance, is why nothing can change", async () => {
+    // /auth/config describes the instance and cannot tell a viewer from an admin; the
+    // viewer used to be offered every write and meet a 403.
+    vi.spyOn(client, "fetchAuthConfig").mockResolvedValue({ authRequired: true, mode: "token" } as client.AuthConfig);
+    vi.spyOn(client, "authToken").mockReturnValue("viewer-token");
+    vi.spyOn(client, "fetchMe").mockResolvedValue({
+      subject: "token:1a2b3c4d",
+      role: "viewer",
+      tenant: "default",
+      anonymous: false,
+      canWrite: false,
+    });
+    const Probe = () => <p>{useReadOnly() ?? "writable"}</p>;
+
+    render(
+      <LoginGate>
+        <Probe />
+      </LoginGate>,
+    );
+
+    expect(await screen.findByText(roleReason("viewer"))).toBeInTheDocument();
+    expect(screen.queryByText(READ_ONLY_REASON)).not.toBeInTheDocument();
+  });
+
+  it("sends a rejected credential back to the gate, and says so", async () => {
+    // Anything pasted used to open the dashboard, which then failed every request.
+    vi.spyOn(client, "fetchAuthConfig").mockResolvedValue({ authRequired: true, mode: "token" } as client.AuthConfig);
+    vi.spyOn(client, "authToken").mockReturnValue("mistyped");
+    vi.spyOn(client, "hasRuntimeToken").mockReturnValue(true);
+    const cleared = vi.spyOn(client, "clearAuthToken").mockImplementation(() => {});
+    vi.spyOn(client, "fetchMe").mockRejectedValue(new client.CredentialRejected("credential not accepted"));
+
+    render(
+      <LoginGate>
+        <p>dashboard</p>
+      </LoginGate>,
+    );
+
+    expect(await screen.findByText(/was not accepted/i)).toBeInTheDocument();
+    expect(screen.getByText("Sign in to PerspectiveGraph")).toBeInTheDocument();
+    expect(screen.queryByText("dashboard")).not.toBeInTheDocument();
+    expect(cleared).toHaveBeenCalled();
+  });
+
+  it("keeps the dashboard when /auth/me fails for any other reason", async () => {
+    // A network blip says nothing about the credential; signing someone out over one would.
+    vi.spyOn(client, "fetchAuthConfig").mockResolvedValue({ authRequired: true, mode: "token" } as client.AuthConfig);
+    vi.spyOn(client, "authToken").mockReturnValue("good");
+    vi.spyOn(client, "hasRuntimeToken").mockReturnValue(true);
+    const cleared = vi.spyOn(client, "clearAuthToken").mockImplementation(() => {});
+    vi.spyOn(client, "fetchMe").mockRejectedValue(new Error("network"));
+
+    render(
+      <LoginGate>
+        <p>dashboard</p>
+      </LoginGate>,
+    );
+
+    expect(await screen.findByText("dashboard")).toBeInTheDocument();
+    await waitFor(() => expect(client.fetchMe).toHaveBeenCalled());
+    expect(cleared).not.toHaveBeenCalled();
   });
 
   it("stays silent when /auth/config could not be reached", async () => {

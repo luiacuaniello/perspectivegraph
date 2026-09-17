@@ -974,6 +974,24 @@ and rides as a Bearer - never written to disk or the bundle. Token validation
 stays on the JWKS / issuer / audience the backend already enforces (fail-closed:
 it refuses to start with a JWKS URL but no `iss`/`aud`).
 
+Once past the gate, the dashboard asks **`GET /auth/me`** what the credential resolved to,
+so it offers only what the server will accept. A viewer or operator sees Suppress, Validate,
+Create ticket and Open fix PR disabled with the reason, instead of pressing one and meeting
+a 403; a mistyped, expired or revoked token sends the tab back to the sign-in screen instead
+of opening a dashboard that fails every request. The endpoint sits behind the same
+authentication as the data (401 without a valid credential) and describes only the caller:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" localhost:8080/auth/me
+# {"subject":"token:1a2b3c4d","role":"viewer","tenant":"default","anonymous":false,"canWrite":false}
+```
+
+`subject` is the caller's name in the audit log - a fingerprint, never the token.
+`canWrite` is the server's own write check answered in advance: suppressions, tickets,
+verdicts and fix PRs need `admin`. `apps` appears when reads are scoped to applications, and
+`anonymous` is true for a caller with no credential - on an open instance, or a visitor to
+a published one.
+
 #### Trying SSO end-to-end on a laptop (the bundled Keycloak)
 
 An opt-in compose profile stands up a demo IdP, so the login gate can be exercised
@@ -1588,6 +1606,29 @@ expiry, and store the hash rather than the value:
 API_TOKENS='sha256$9f2b…:operator:acme:2026-12-31,sha256$41ac…:viewer:acme'
 ```
 
+A token is any string that is hard to guess and contains no `:` or `,`; nothing is
+registered anywhere. Generate one, keep only its digest in the configuration, and hand the
+token itself to the client:
+
+```bash
+TOKEN=$(openssl rand -hex 32)                  # what the client sends: Authorization: Bearer $TOKEN
+printf '%s' "$TOKEN" | sha256sum                # printf, not echo: a trailing newline changes the digest
+                                                # (older macOS without sha256sum: shasum -a 256)
+API_TOKENS='sha256$<that digest>:viewer:acme:2026-12-31'
+```
+
+**In a Compose `.env` file, keep the single quotes** (or write `sha256$$…`). Compose expands
+`$` in `.env` values, so an unquoted `sha256$9f2b…` reaches the backend as `sha256:viewer`
+with the digest gone - and all it says is a warning about an unset variable. Then check what
+each token resolves to before handing it over:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" https://pg.example.com/auth/me
+# 401                 → a wrong token, or its entry was dropped at startup (the log says why)
+# "anonymous": true   → the API is not checking credentials at all
+# anything else       → the role, tenant and apps this token grants
+```
+
 The honest limit: `API_TOKENS` is read **once at startup**. Withdrawing a static
 token before its expiry means restarting the process (a rolling restart on
 Kubernetes). That is acceptable for machine credentials on a scheduled rotation, and
@@ -2030,6 +2071,8 @@ request must be signed/authorized - otherwise you get `401`.
 
 - **API** (`API_TOKENS` set): send `Authorization: Bearer <viewer-token>` on
   every GraphQL request. The in-browser playground is disabled when auth is on.
+  `GET /auth/me` with the same header shows what the token resolved to - the quickest way
+  to tell a wrong token (401) from a role that is too low (`"canWrite": false`).
 
 - **Multi-tenant** (`INGEST_HMAC_SECRETS` / token `:tenant` suffix): add
   `-H "X-Tenant: <your-tenant>"` to ingest requests and sign with *that tenant's*

@@ -1,5 +1,14 @@
-import { beforeEach, describe, expect, it } from "vitest";
-import { authToken, clearAuthToken, exportUrl, hasRuntimeToken, humanDuration, setAuthToken } from "./client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  authToken,
+  clearAuthToken,
+  CredentialRejected,
+  exportUrl,
+  fetchMe,
+  hasRuntimeToken,
+  humanDuration,
+  setAuthToken,
+} from "./client";
 
 // client.ts is the contract layer between the dashboard and the API. Its pure
 // helpers are small but load-bearing: humanDuration renders the "how long has
@@ -60,5 +69,42 @@ describe("exportUrl", () => {
     // Same-origin matters: these are downloaded with the session's credentials.
     expect(exportUrl("ndjson")).toBe("/export/ndjson");
     expect(exportUrl("oscal")).toBe("/export/oscal");
+  });
+});
+
+// fetchMe separates the one answer that is a verdict on the credential (401) from every
+// answer that is not. Collapsing them would either sign someone out over a network blip or
+// leave a mistyped token looking signed in.
+describe("fetchMe", () => {
+  const answer = (status: number, body: string, contentType = "application/json") =>
+    vi.fn().mockResolvedValue(new Response(body, { status, headers: { "Content-Type": contentType } }));
+
+  beforeEach(() => clearAuthToken());
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("sends this tab's credential and returns what it resolved to", async () => {
+    setAuthToken("tok-123");
+    const fetch = answer(200, JSON.stringify({ subject: "token:1a2b3c4d", role: "viewer", tenant: "default", anonymous: false, canWrite: false }));
+    vi.stubGlobal("fetch", fetch);
+
+    expect(await fetchMe()).toMatchObject({ role: "viewer", canWrite: false });
+    expect(fetch.mock.calls[0][0]).toBe("/auth/me");
+    expect(fetch.mock.calls[0][1].headers.Authorization).toBe("Bearer tok-123");
+  });
+
+  it("rejects on 401, and only on 401", async () => {
+    vi.stubGlobal("fetch", answer(401, '{"errors":[{"message":"unauthorized"}]}'));
+    await expect(fetchMe()).rejects.toBeInstanceOf(CredentialRejected);
+  });
+
+  it("answers unknown for a backend without the endpoint, a proxy that serves the page, or no network", async () => {
+    vi.stubGlobal("fetch", answer(404, "404 page not found", "text/plain"));
+    expect(await fetchMe()).toBeNull();
+
+    vi.stubGlobal("fetch", answer(200, "<!doctype html><html></html>", "text/html"));
+    expect(await fetchMe()).toBeNull();
+
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+    expect(await fetchMe()).toBeNull();
   });
 });

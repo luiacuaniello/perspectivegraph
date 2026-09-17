@@ -34,7 +34,8 @@ can build on it and know what a version bump means.
    [MANUAL §5](MANUAL.md)): a value outside it is rejected with `400`. Adding a label or
    an edge type is minor; removing one is breaking.
 3. **Operational endpoints.** `GET /healthz`, `GET /metrics` (the `perspectivegraph_*`
-   metric names), and `GET /auth/config` (the fields the dashboard login gate reads).
+   metric names), `GET /auth/config` (the fields the dashboard login gate reads), and
+   `GET /auth/me` (the fields the dashboard reads to decide which actions to offer).
 4. **Configuration.** The environment-variable **names and semantics** documented in
    [`.env.example`](../.env.example). A new opt-in knob with a safe default is minor;
    renaming or removing a variable, or changing a default in a way that alters behavior, is

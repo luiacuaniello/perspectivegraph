@@ -1,8 +1,18 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { fetchAuthConfig, authToken, setAuthToken, type AuthConfig } from "../api/client";
+import {
+  fetchAuthConfig,
+  fetchMe,
+  authToken,
+  setAuthToken,
+  clearAuthToken,
+  hasRuntimeToken,
+  CredentialRejected,
+  type AuthConfig,
+  type Me,
+} from "../api/client";
 import { beginPkceLogin, completePkceLogin, randomString } from "../auth/pkce";
 import { AlertTriangleIcon, InfoIcon } from "./icons";
-import { ReadOnlyContext } from "../auth/readOnly";
+import { ReadOnlyContext, writeRestriction } from "../auth/readOnly";
 
 // OpenInstanceBanner is the only place an unauthenticated instance says so to a human.
 // The backend logs a warning at startup and /auth/config reports authRequired: false, but
@@ -73,6 +83,10 @@ export default function LoginGate({ children }: { children: ReactNode }) {
   const [configKnown, setConfigKnown] = useState(false);
   const [token, setToken] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // Who the credential resolved to (GET /auth/me). Null until it answers, and for good on a
+  // backend that predates it - the read-only decision then falls back to what
+  // /auth/config alone can tell.
+  const [me, setMe] = useState<Me | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -119,6 +133,35 @@ export default function LoginGate({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // Ask who we are once the dashboard is let through. A token used to be taken on trust:
+  // anything pasted opened the dashboard, which then failed every request with a 401 and
+  // counted each poll toward the brute-force lockout. Now a rejected credential is dropped
+  // and the gate comes back saying so.
+  useEffect(() => {
+    if (!ready || !authed) return;
+    let alive = true;
+    fetchMe()
+      .then((m) => {
+        if (alive) setMe(m);
+      })
+      .catch((e) => {
+        // Only a credential this tab supplied can be withdrawn here; a build-time token
+        // would come straight back, and asking again would loop.
+        if (!alive || !(e instanceof CredentialRejected) || !hasRuntimeToken()) return;
+        clearAuthToken();
+        if (config?.authRequired) {
+          setError("That credential was not accepted. It may be mistyped, expired or revoked.");
+          setAuthed(false);
+        } else {
+          // A published instance: without the token this tab is an ordinary visitor.
+          window.location.reload();
+        }
+      });
+    return () => {
+      alive = false;
+    };
+  }, [ready, authed, config]);
+
   if (!ready) return null;
   if (authed || !config) {
     const open = configKnown && config !== null && !config.authRequired;
@@ -128,7 +171,7 @@ export default function LoginGate({ children }: { children: ReactNode }) {
     // than the window, so a phone scrolled the whole document by the banner's height on top
     // of each view's own scrolling - and the bottom tab bar rode over a page that moved.
     return (
-      <ReadOnlyContext.Provider value={published && !authToken()}>
+      <ReadOnlyContext.Provider value={writeRestriction(me, published && !authToken())}>
         <div className="flex h-full flex-col">
           {open && !published && <OpenInstanceBanner />}
           {published && <ReadOnlyNotice />}
@@ -148,6 +191,8 @@ export default function LoginGate({ children }: { children: ReactNode }) {
       return;
     }
     setAuthToken(t);
+    setMe(null);
+    setError(null);
     setAuthed(true);
   };
 

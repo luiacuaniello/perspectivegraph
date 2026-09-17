@@ -32,7 +32,7 @@ import {
 } from "./icons";
 import InfoTip from "./InfoTip";
 import Button from "./ui/Button";
-import { READ_ONLY_REASON, useReadOnly } from "../auth/readOnly";
+import { useReadOnly } from "../auth/readOnly";
 import Badge, { type Tone } from "./ui/Badge";
 import { ModelAttribution } from "./ModelAttribution";
 
@@ -111,7 +111,7 @@ function TriageControl({ path, onTriaged }: { path: AttackPath; onTriaged?: () =
             <span className="font-semibold text-slate-700">Suppressed</span> · {reasonLabel(s.reason)} · {s.owner}
             {s.expiresAt ? ` · until ${new Date(s.expiresAt).toLocaleDateString()}` : " · no expiry"}
           </span>
-          <Button variant="secondary" onClick={unsuppress} disabled={busy || readOnly} title={readOnly ? READ_ONLY_REASON : undefined}>
+          <Button variant="secondary" onClick={unsuppress} disabled={busy || !!readOnly} title={readOnly ?? undefined}>
             {busy ? "…" : "Un-suppress"}
           </Button>
         </div>
@@ -126,8 +126,8 @@ function TriageControl({ path, onTriaged }: { path: AttackPath; onTriaged?: () =
       <Button
         variant="secondary"
         onClick={() => setOpen(true)}
-        disabled={readOnly}
-        title={readOnly ? READ_ONLY_REASON : "Triage this path: accept the risk, mark a false positive, note a mitigating control or a duplicate"}
+        disabled={!!readOnly}
+        title={readOnly ?? "Triage this path: accept the risk, mark a false positive, note a mitigating control or a duplicate"}
       >
         ⊘ Suppress / triage
       </Button>
@@ -233,7 +233,7 @@ function TicketControl({ path, onChanged }: { path: AttackPath; onChanged?: () =
             open ↗
           </a>
         )}
-        <Button variant="ghost" onClick={close} disabled={busy || readOnly} title={readOnly ? READ_ONLY_REASON : undefined} className="text-emerald-700 hover:bg-emerald-500/10">
+        <Button variant="ghost" onClick={close} disabled={busy || !!readOnly} title={readOnly ?? undefined} className="text-emerald-700 hover:bg-emerald-500/10">
           {busy ? "…" : "close"}
         </Button>
         {err && <span className="text-flag">{err}</span>}
@@ -242,7 +242,7 @@ function TicketControl({ path, onChanged }: { path: AttackPath; onChanged?: () =
   }
   if (!open) {
     return (
-      <Button variant="secondary" onClick={() => setOpen(true)} disabled={readOnly} icon={<TicketIcon className="h-3.5 w-3.5" />} title={readOnly ? READ_ONLY_REASON : "Open an owned, tracked remediation ticket for this path"}>
+      <Button variant="secondary" onClick={() => setOpen(true)} disabled={!!readOnly} icon={<TicketIcon className="h-3.5 w-3.5" />} title={readOnly ?? "Open an owned, tracked remediation ticket for this path"}>
         Create ticket
       </Button>
     );
@@ -333,9 +333,9 @@ function RemediationPRControl({ path }: { path: AttackPath }) {
       <Button
         variant="secondary"
         onClick={open}
-        disabled={busy || readOnly}
+        disabled={busy || !!readOnly}
         icon={<ScissorsIcon className="h-3.5 w-3.5" />}
-        title={readOnly ? READ_ONLY_REASON : "Open a pull request with the generated fix for this path (needs a GitHub token on the backend)"}
+        title={readOnly ?? "Open a pull request with the generated fix for this path (needs a GitHub token on the backend)"}
       >
         {busy ? "Opening PR…" : "Open fix PR"}
       </Button>
@@ -387,7 +387,7 @@ function ValidationControl({ path, onChanged }: { path: AttackPath; onChanged?: 
 
   if (!open) {
     return (
-      <Button variant="secondary" onClick={() => setOpen(true)} disabled={readOnly} icon={<CheckIcon className="h-3.5 w-3.5" />} title={readOnly ? READ_ONLY_REASON : "Record a red-team / BAS test result for this path (confirmed, refuted or partial)"}>
+      <Button variant="secondary" onClick={() => setOpen(true)} disabled={!!readOnly} icon={<CheckIcon className="h-3.5 w-3.5" />} title={readOnly ?? "Record a red-team / BAS test result for this path (confirmed, refuted or partial)"}>
         {path.validation ? "Re-validate" : "Validate"}
       </Button>
     );
@@ -824,7 +824,7 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
           {readOnly && (
             <span className="flex w-full items-center justify-end gap-1.5 text-[12px] text-muted">
               <LockIcon className="h-3.5 w-3.5" />
-              {READ_ONLY_REASON}
+              {readOnly}
             </span>
           )}
         </div>

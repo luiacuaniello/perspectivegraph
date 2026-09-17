@@ -618,6 +618,46 @@ export async function fetchAuthConfig(): Promise<AuthConfig> {
   return res.json();
 }
 
+// Me is GET /auth/me: what this tab's credential resolved to, and whether the server would
+// accept a write from it.
+export interface Me {
+  // "token:<fingerprint>", "jwt:<sub>" or "anonymous" - the audit log's name for the caller.
+  subject: string;
+  // viewer | operator | admin; absent when the API has no authentication at all.
+  role?: string;
+  tenant: string;
+  apps?: string[];
+  // No credential was presented: an open instance, or a visitor to a published one.
+  anonymous: boolean;
+  canWrite: boolean;
+}
+
+// CredentialRejected is a 401 from /auth/me: the token this tab holds is wrong, expired or
+// revoked. Distinct from every other failure, which says nothing about the credential.
+export class CredentialRejected extends Error {}
+
+// fetchMe returns null when the answer is unknown - a backend older than /auth/me, or a
+// network failure - so the caller keeps its best guess instead of treating it as a verdict.
+export async function fetchMe(): Promise<Me | null> {
+  const headers: Record<string, string> = { Accept: "application/json" };
+  const token = authToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  let res: Response;
+  try {
+    res = await fetch("/auth/me", { headers });
+  } catch {
+    return null;
+  }
+  if (res.status === 401) throw new CredentialRejected("credential not accepted");
+  if (!res.ok) return null;
+  try {
+    return (await res.json()) as Me;
+  } catch {
+    // An unproxied path falls through to the SPA and answers index.html with a 200.
+    return null;
+  }
+}
+
 // signOut drops the local credential and, for SSO, performs an RP-initiated
 // logout at the IdP's end-session endpoint so the IdP session ends too - without
 // it the next "Sign in with SSO" would silently re-authenticate from the still-live

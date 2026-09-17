@@ -528,6 +528,7 @@ capability to gain.
 ## 10. Pre-production checklist
 
 - [ ] API auth enabled (`API_TOKENS`/OIDC) and verified from an unauthenticated client.
+- [ ] `GET /auth/me` with each issued token answers the role you meant to grant.
 - [ ] Ingest HMAC (`INGEST_HMAC_SECRETS`) + `INGEST_RATE_RPS` set.
 - [ ] TLS everywhere (`TLS_*`, `POSTGRES_SSLMODE=verify-full`, `NATS_TLS_*`).
 - [ ] External Postgres+AGE chosen with §3 open (managed on Azure, self-managed on AWS/GCP),
@@ -613,7 +614,8 @@ pod CIDR.
 - [ ] TLS at the proxy, and `API_RATE_RPS` low.
 - [ ] The backend logs `trusted proxies configured`, and the proxy CIDR covers the network
       the dashboard runs on.
-- [ ] An `API_TOKENS` admin credential kept for yourself, if you need to change anything.
+- [ ] An `API_TOKENS` admin credential kept for yourself, if you need to change anything;
+      `/auth/me` with it answers `"canWrite": true`.
 
 An MCP client can be pointed at a published instance the same way the dashboard is: the
 server is a client of this API, so `perspectivegraph mcp --api https://<host>` answers from
