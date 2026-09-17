@@ -18,17 +18,17 @@ function FixRow({ fix, rank, cumulative }: { fix: Fix; rank: number; cumulative:
         onClick={() => setOpen((o) => !o)}
         className="flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-slate-50"
       >
-        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-accent/15 text-[11px] font-bold tabular-nums text-accent">
+        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-accent/15 text-[12px] font-bold tabular-nums text-accent">
           {rank}
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="shrink-0 rounded-sm border border-edge bg-ink px-2 py-0.5 font-mono text-[10px] text-slate-500">
+            <span className="shrink-0 rounded-sm border border-edge bg-ink px-2 py-0.5 font-mono text-[12px] text-slate-500">
               {fix.kind}
             </span>
             <span className="truncate text-sm font-medium text-slate-800">{fix.title}</span>
           </div>
-          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-500">
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-slate-500">
             <span>
               cuts {fix.pathCount} attack path{fix.pathCount === 1 ? "" : "s"} ·{" "}
               {(fix.coveragePct * 100).toFixed(0)}% of critical risk
@@ -36,7 +36,7 @@ function FixRow({ fix, rank, cumulative }: { fix: Fix; rank: number; cumulative:
             {fix.verification &&
               (fix.verification.verified ? (
                 <span
-                  className="inline-flex items-center gap-1 rounded-sm bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700"
+                  className="inline-flex items-center gap-1 rounded-sm bg-emerald-500/15 px-1.5 py-0.5 text-[12px] font-medium text-emerald-700"
                   title="Independently simulated (what-if): removing this edge actually removes the paths and drops the risk."
                 >
                   <CheckIcon className="h-3 w-3" /> verified · removes {fix.verification.pathsEliminated} path
@@ -47,7 +47,7 @@ function FixRow({ fix, rank, cumulative }: { fix: Fix; rank: number; cumulative:
                 </span>
               ) : (
                 <span
-                  className="inline-flex items-center gap-1 rounded-sm bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-700"
+                  className="inline-flex items-center gap-1 rounded-sm bg-amber-500/15 px-1.5 py-0.5 text-[12px] font-medium text-amber-700"
                   title="Simulating this fix did not measurably reduce paths/risk - review before applying."
                 >
                   <AlertTriangleIcon className="h-3 w-3" /> unverified
@@ -63,7 +63,7 @@ function FixRow({ fix, rank, cumulative }: { fix: Fix; rank: number; cumulative:
               style={{ width: `${Math.min(100, cumulative * 100)}%` }}
             />
           </span>
-          <span className="w-9 text-right text-[10px] tabular-nums text-slate-500">
+          <span className="w-9 text-right text-[12px] tabular-nums text-slate-500">
             {(cumulative * 100).toFixed(0)}%
           </span>
         </div>
@@ -74,16 +74,16 @@ function FixRow({ fix, rank, cumulative }: { fix: Fix; rank: number; cumulative:
         <div className="border-t border-edge px-4 py-3">
           <p className="mb-2 text-xs leading-relaxed text-slate-500">{fix.rationale}</p>
           <div className="mb-2 flex items-center justify-between">
-            <span className="font-mono text-[10px] text-slate-500">{fix.filename}</span>
+            <span className="font-mono text-[12px] text-slate-500">{fix.filename}</span>
             <button
               onClick={copy}
-              className="inline-flex items-center gap-1 rounded-md border border-edge px-2.5 py-1 text-[11px] text-slate-500 transition hover:border-slate-500 hover:text-slate-700"
+              className="inline-flex items-center gap-1 rounded-md border border-edge px-2.5 py-1 text-[12px] text-slate-500 transition hover:border-slate-500 hover:text-slate-700"
             >
               {copied && <CheckIcon className="h-3 w-3" />}
               {copied ? "copied" : "copy"}
             </button>
           </div>
-          <pre className="max-h-72 overflow-auto rounded-lg bg-ink p-3 font-mono text-[11px] leading-relaxed text-slate-600">
+          <pre className="max-h-72 overflow-auto rounded-lg bg-ink p-3 font-mono text-[12px] leading-relaxed text-slate-600">
             {fix.content}
           </pre>
         </div>
@@ -134,7 +134,7 @@ export default function RemediationPlan({
           />
         </div>
         {residual > 0 && (
-          <p className="mt-2 text-[11px] text-amber-700/80">
+          <p className="mt-2 text-[12px] text-amber-700/80">
             {residual} path{residual === 1 ? " has" : "s have"} no automated remediation - review
             manually.
           </p>

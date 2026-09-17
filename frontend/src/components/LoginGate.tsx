@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { fetchAuthConfig, authToken, setAuthToken, type AuthConfig } from "../api/client";
 import { beginPkceLogin, completePkceLogin, randomString } from "../auth/pkce";
 import { AlertTriangleIcon, InfoIcon } from "./icons";
+import { ReadOnlyContext } from "../auth/readOnly";
 
 // OpenInstanceBanner is the only place an unauthenticated instance says so to a human.
 // The backend logs a warning at startup and /auth/config reports authRequired: false, but
@@ -122,12 +123,18 @@ export default function LoginGate({ children }: { children: ReactNode }) {
   if (authed || !config) {
     const open = configKnown && config !== null && !config.authRequired;
     const published = open && !!config?.anonymousRole;
+    // The notice and the app share the screen's height instead of adding up to more than
+    // it. The app fills 100% of what it is given; beside a banner that made the page taller
+    // than the window, so a phone scrolled the whole document by the banner's height on top
+    // of each view's own scrolling - and the bottom tab bar rode over a page that moved.
     return (
-      <>
-        {open && !published && <OpenInstanceBanner />}
-        {published && <ReadOnlyNotice />}
-        {children}
-      </>
+      <ReadOnlyContext.Provider value={published && !authToken()}>
+        <div className="flex h-full flex-col">
+          {open && !published && <OpenInstanceBanner />}
+          {published && <ReadOnlyNotice />}
+          <div className="min-h-0 flex-1">{children}</div>
+        </div>
+      </ReadOnlyContext.Provider>
     );
   }
 
@@ -183,7 +190,7 @@ export default function LoginGate({ children }: { children: ReactNode }) {
         )}
 
         {ssoAvailable && (
-          <div className="my-4 flex items-center gap-3 text-[11px] uppercase tracking-wide text-slate-400">
+          <div className="my-4 flex items-center gap-3 text-[12px] uppercase tracking-wide text-slate-400">
             <span className="h-px flex-1 bg-edge" />
             or use a token
             <span className="h-px flex-1 bg-edge" />
@@ -211,7 +218,7 @@ export default function LoginGate({ children }: { children: ReactNode }) {
           Continue
         </button>
 
-        <p className="mt-4 text-[11px] leading-relaxed text-slate-400">
+        <p className="mt-4 text-[12px] leading-relaxed text-slate-400">
           The token is stored only in this tab (sessionStorage) and sent as a Bearer credential. It is never
           written to disk or the bundle.
         </p>

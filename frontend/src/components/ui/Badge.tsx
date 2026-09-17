@@ -32,7 +32,7 @@ export default function Badge({
   return (
     <span
       title={title}
-      className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium ${TONE[tone]} ${
+      className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[12px] font-medium ${TONE[tone]} ${
         dashed ? "border border-dashed border-current/40" : ""
       } ${className}`}
     >

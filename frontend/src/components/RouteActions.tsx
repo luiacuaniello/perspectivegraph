@@ -119,7 +119,7 @@ export default function RouteActions({ path, onChanged }: { path: AttackPath; on
               onKeyDown={(e) => e.key === "Escape" && close()}
               placeholder="your name"
               aria-label="Who is accepting this"
-              className="w-24 rounded-md border border-edge bg-panel px-1.5 py-0.5 text-[11px] text-slate-900 outline-none focus:border-accent"
+              className="w-24 rounded-md border border-edge bg-panel px-1.5 py-0.5 text-[12px] text-slate-900 outline-none focus:border-accent"
             />
           )}
           {REASONS.map((r) => (
@@ -140,7 +140,7 @@ export default function RouteActions({ path, onChanged }: { path: AttackPath; on
             }}
             placeholder="owner"
             aria-label="Ticket owner"
-            className="w-24 rounded-md border border-edge bg-panel px-1.5 py-0.5 text-[11px] text-slate-900 outline-none focus:border-accent"
+            className="w-24 rounded-md border border-edge bg-panel px-1.5 py-0.5 text-[12px] text-slate-900 outline-none focus:border-accent"
           />
           <RowButton onClick={() => void assign()} disabled={busy} title="Open the ticket">
             {busy ? "…" : "Open"}
@@ -150,7 +150,7 @@ export default function RouteActions({ path, onChanged }: { path: AttackPath; on
       <RowButton onClick={close} title="Cancel">
         ✕
       </RowButton>
-      {err && <span className="w-full text-right text-[10px] text-flag">{err}</span>}
+      {err && <span className="w-full text-right text-[12px] text-flag">{err}</span>}
     </div>
   );
 }
@@ -172,7 +172,7 @@ function RowButton({
       onClick={onClick}
       title={title}
       disabled={disabled}
-      className="rounded-md border border-edge bg-panel px-1.5 py-0.5 text-[10.5px] text-slate-700 transition hover:border-accent hover:text-accent disabled:opacity-50"
+      className="rounded-md border border-edge bg-panel px-1.5 py-0.5 text-[12px] text-slate-700 transition hover:border-accent hover:text-accent disabled:opacity-50"
     >
       {children}
     </button>

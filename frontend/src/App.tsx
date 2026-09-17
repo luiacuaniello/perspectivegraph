@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { exportUrl, fetchDashboard, fetchGraph, fetchHistory, fetchStatus, type Dashboard, type GraphData, type History } from "./api/client";
-import Sidebar, { type View } from "./components/Sidebar";
+import { fetchDashboard, fetchGraph, fetchHistory, fetchStatus, type Dashboard, type GraphData, type History } from "./api/client";
+import { BottomBar, TopBar, type View } from "./components/Navigation";
+import ExportMenu from "./components/ExportMenu";
 import AttackPathList from "./components/AttackPathList";
 import { orderForDisplay } from "./components/routeChannels";
 import TodayView from "./components/TodayView";
@@ -69,7 +70,6 @@ export default function App() {
   const [analyzedAt, setAnalyzedAt] = useState<string | null>(null);
   const [pruned, setPruned] = useState<{ nodes: number; edges: number } | null>(null);
   const [history, setHistory] = useState<History | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   // Search is a palette, not a page; the graph is a lens on the selected path,
   // not a destination you navigate away to.
   const [searchOpen, setSearchOpen] = useState(false);
@@ -267,116 +267,87 @@ export default function App() {
   const meta = VIEW_META[view];
 
   return (
-    <div className="flex h-full">
-      <Sidebar
+    <div className="flex h-full flex-col">
+      <TopBar
         view={view}
         onNavigate={setView}
         pathCount={data?.posture.activePaths ?? 0}
-        onOpenSearch={data?.searchEnabled ? () => setSearchOpen(true) : undefined}
+        aiEnabled={data?.aiEnabled ?? false}
         live={!error}
         analyzedAt={analyzedAt}
         pruned={pruned}
-        open={sidebarOpen}
-        onClose={() => setSidebarOpen(false)}
-        aiEnabled={data?.aiEnabled ?? false}
-        showPlayground={!hasRuntimeToken()}
-      />
-      {/* Mobile drawer backdrop */}
-      {sidebarOpen && (
-        <div
-          onClick={() => setSidebarOpen(false)}
-          className="fixed inset-0 z-30 bg-black/40 lg:hidden"
-          aria-hidden="true"
-        />
-      )}
-
-      <main className="flex min-w-0 flex-1 flex-col">
-        <header className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2 border-b border-edge/70 px-4 pb-4 pt-6 sm:px-8">
-          <div className="flex items-center gap-2.5">
-            <button
-              onClick={() => setSidebarOpen(true)}
-              aria-label="Open menu"
-              className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-edge bg-panel text-slate-500 shadow-card transition hover:text-accent lg:hidden"
+        onOpenSearch={data?.searchEnabled ? () => setSearchOpen(true) : undefined}
+      >
+        {/* Ordered by consequence, not by convenience. The application scope changes what
+            every number on the page means, so it leads; exports follow; appearance and
+            session are utilities and come last. */}
+        {data && data.applications.length > 0 && (
+          <label className="flex min-w-0 items-center gap-2 text-[12px] text-muted">
+            <span className="sr-only xl:not-sr-only">Scope</span>
+            <select
+              value={app}
+              onChange={(e) => {
+                setApp(e.target.value);
+                setSelectedPathId(null);
+              }}
+              aria-label="Scope the dashboard to one application"
+              // min-w-0 + w-full: on a phone the select gives up width to the buttons beside
+              // it. With a fixed max width alone the label shrank but the select did not, and
+              // the Export button was drawn over its right edge.
+              className={`h-9 w-full min-w-0 max-w-[9.5rem] rounded-lg border bg-panel px-2.5 text-[13px] shadow-card outline-hidden focus:border-accent sm:w-auto sm:max-w-none ${
+                app ? "border-accent/60 text-slate-900" : "border-edge text-slate-700"
+              }`}
             >
-              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round">
-                <path d="M3 6h14M3 10h14M3 14h14" />
+              <option value="">All applications</option>
+              {data.applications.map((a) => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <ExportMenu canExport={!!data && data.posture.nodes > 0} showPlayground={!hasRuntimeToken()} />
+        <ThemeToggle />
+        {hasRuntimeToken() && (
+          // An icon below xl, where the bar has no room for the words beside the tabs, scope,
+          // export and theme; the label is still there for assistive technology.
+          <Button
+            variant="secondary"
+            size="md"
+            aria-label="Sign out"
+            title="Sign out"
+            className="shrink-0"
+            onClick={() => {
+              void signOut();
+            }}
+            icon={
+              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M8 4H5a1.5 1.5 0 0 0-1.5 1.5v9A1.5 1.5 0 0 0 5 16h3M12.5 13.5 16 10l-3.5-3.5M16 10H8" />
               </svg>
-            </button>
-            <div>
-              <h1 className="text-[22px] font-bold leading-tight tracking-tight text-slate-900">{meta.title}</h1>
-              <p className="mt-0.5 text-[13px] text-muted">{meta.subtitle}</p>
-            </div>
+            }
+          >
+            <span className="hidden xl:inline">Sign out</span>
+          </Button>
+        )}
+      </TopBar>
+
+      {/* On a phone the tab bar is fixed over the bottom of the page, so the page ends above it. */}
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-0">
+        <header className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2 px-4 pb-4 pt-6 sm:px-8">
+          <div>
+            <h1 className="text-[22px] font-bold leading-tight tracking-tight text-slate-900">{meta.title}</h1>
+            <p className="mt-0.5 text-[13px] text-muted">{meta.subtitle}</p>
           </div>
-          {/* Ordered by consequence, not by convenience. The application scope changes
-              what every number on the page means, so it leads; exports and help follow;
-              appearance and session are utilities and sit past a divider. */}
           <div className="flex flex-wrap items-center gap-2">
             {error && (
-              <span className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700">
+              <span className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-[12px] text-amber-700">
                 backend unreachable: {error}
               </span>
-            )}
-            {data && data.applications.length > 0 && (
-              <label className="flex items-center gap-2 text-xs text-muted">
-                <span className="sr-only sm:not-sr-only">Scope</span>
-                <select
-                  value={app}
-                  onChange={(e) => {
-                    setApp(e.target.value);
-                    setSelectedPathId(null);
-                  }}
-                  aria-label="Scope the dashboard to one application"
-                  className={`rounded-lg border bg-panel shadow-card px-2.5 py-1.5 text-xs outline-hidden focus:border-accent ${
-                    app ? "border-accent/60 text-slate-900" : "border-edge text-slate-700"
-                  }`}
-                >
-                  <option value="">All applications</option>
-                  {data.applications.map((a) => (
-                    <option key={a} value={a}>
-                      {a}
-                    </option>
-                  ))}
-                </select>
-              </label>
             )}
             {view === "today" && intro.dismissed && (
               <Button variant="secondary" size="md" onClick={intro.reopen} icon={<InfoIcon className="h-4 w-4" />}>
                 How to read this
-              </Button>
-            )}
-            {data && data.posture.nodes > 0 && (
-              <div className="flex items-center gap-1.5">
-                <Button
-                  variant="secondary"
-                  size="md"
-                  href={exportUrl("oscal")}
-                  download="perspectivegraph-oscal.json"
-                  title="Download the posture as a NIST OSCAL assessment-results document (for GRC/auditors)"
-                >
-                  ↓ OSCAL
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="md"
-                  href={exportUrl("ndjson")}
-                  download="perspectivegraph-enrichment.ndjson"
-                  title="Download per-asset risk enrichment as NDJSON (for Splunk/Elastic/Sentinel)"
-                >
-                  ↓ SIEM
-                </Button>
-              </div>
-            )}
-            <span className="mx-0.5 hidden h-5 w-px bg-edge sm:block" aria-hidden="true" />
-            <ThemeToggle />
-            {hasRuntimeToken() && (
-              <Button
-                variant="secondary"
-                size="md"
-                onClick={() => {
-                  void signOut();
-                }}
-              >
-                Sign out
               </Button>
             )}
           </div>
@@ -426,7 +397,7 @@ export default function App() {
               <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto lg:grid lg:grid-cols-12 lg:gap-5 lg:overflow-hidden">
                 <div className="lg:col-span-4 lg:min-h-0 lg:overflow-y-auto lg:pr-1">
                   {suppressedCount > 0 && (
-                    <label className="mb-2 flex items-center gap-2 text-[11px] text-slate-500">
+                    <label className="mb-2 flex items-center gap-2 text-[12px] text-slate-500">
                       <input
                         type="checkbox"
                         checked={showSuppressed}
@@ -519,10 +490,23 @@ export default function App() {
               </div>
             )}
 
-            {view === "assistant" && <AssistantView />}
+            {view === "assistant" && (
+              // Scrolls inside the content area like every other view, so a long answer
+              // does not carry the top bar away with it.
+              <div className="h-full min-h-0 overflow-y-auto pr-1">
+                <AssistantView />
+              </div>
+            )}
           </div>
         )}
       </main>
+
+      <BottomBar
+        view={view}
+        onNavigate={setView}
+        pathCount={data?.posture.activePaths ?? 0}
+        aiEnabled={data?.aiEnabled ?? false}
+      />
 
       {searchOpen && (
         <div
@@ -535,7 +519,7 @@ export default function App() {
           >
             <div className="mb-3 flex items-center justify-between">
               <span className="text-[12px] text-muted">Search assets and findings</span>
-              <kbd className="rounded border border-edge px-1.5 py-0.5 text-[10px] text-slate-400">esc</kbd>
+              <kbd className="rounded border border-edge px-1.5 py-0.5 text-[12px] text-slate-400">esc</kbd>
             </div>
             <SearchView enabled={data?.searchEnabled ?? false} />
           </div>

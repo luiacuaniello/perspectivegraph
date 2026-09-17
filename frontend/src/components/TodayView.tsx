@@ -84,7 +84,7 @@ export default function TodayView({
             {topFixes.length > 0 ? `Do these ${topFixes.length === 1 ? "one thing" : `${topFixes.length} things`}` : "Nothing to fix"}
           </h2>
           {plan.length > topFixes.length && (
-            <span className="text-[11px] text-muted">
+            <span className="text-[12px] text-muted">
               {plan.length - topFixes.length} more cover the rest
             </span>
           )}
@@ -146,7 +146,7 @@ function CoverageStrip({ coverage, openRoutes }: { coverage?: IngestSource[] | n
   const alarming = openRoutes === 0 && stale.length > 0;
   return (
     <div
-      className={`rounded-xl border px-4 py-2.5 text-[11px] ${
+      className={`rounded-xl border px-4 py-2.5 text-[12px] ${
         alarming ? "border-slate-400 bg-panel" : "border-edge bg-panel"
       }`}
     >
@@ -165,7 +165,7 @@ function CoverageStrip({ coverage, openRoutes }: { coverage?: IngestSource[] | n
         ))}
       </div>
       {alarming && (
-        <p className="mt-1 text-[11px] leading-relaxed text-slate-700">
+        <p className="mt-1 text-[12px] leading-relaxed text-slate-700">
           An empty board only means "no reachable path" for the parts of the estate that were actually
           reported. A source that stopped reporting cannot show you a route it never sent.
         </p>
@@ -237,7 +237,7 @@ function Briefing({
   const target = live[0]?.nodes?.[live[0].nodes.length - 1]?.name?.replace(/\s*\(.*\)\s*$/, "");
   return (
     <section className="flex flex-col gap-2">
-      <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Today</p>
+      <p className="font-mono text-[12px] uppercase tracking-[0.14em] text-muted">Today</p>
 
       {live.length > 0 ? (
         <h1 className="max-w-[34ch] text-[22px] font-semibold leading-[1.25] tracking-[-0.02em] text-slate-900">
@@ -264,7 +264,7 @@ function Briefing({
       )}
 
       {live.length > 0 && (
-        <p className="max-w-[62ch] text-[12.5px] leading-relaxed">
+        <p className="max-w-[62ch] text-[13px] leading-relaxed">
           {testers.length > 0 ? (
             <span className="text-slate-700">
               {live.length === 1 ? "It carries" : "They carry"} a recorded verdict from{" "}
@@ -342,10 +342,10 @@ function FixRow({ fix, rank }: { fix: Fix; rank: number }) {
   const pct = Math.round(fix.coveragePct * 100);
   return (
     <li className="flex items-center gap-3 rounded-xl border border-edge bg-panel px-4 py-3 transition hover:border-accent/50 sm:gap-5">
-      <span className="w-4 shrink-0 text-[11px] tabular-nums text-muted">{rank}</span>
+      <span className="w-4 shrink-0 text-[12px] tabular-nums text-muted">{rank}</span>
       <div className="min-w-0 flex-1">
         <div className="truncate text-[13px] font-medium text-slate-900">{fix.title}</div>
-        <div className="mt-0.5 truncate text-[11px] text-muted">
+        <div className="mt-0.5 truncate text-[12px] text-muted">
           {fix.kind} · cuts {fix.pathCount} route{fix.pathCount === 1 ? "" : "s"}
         </div>
       </div>
@@ -356,7 +356,7 @@ function FixRow({ fix, rank }: { fix: Fix; rank: number }) {
       </div>
       <div className="w-14 shrink-0 text-right">
         <div className="text-[15px] font-semibold tabular-nums text-accent">{pct}%</div>
-        <div className="text-[10px] text-muted">risk cut</div>
+        <div className="text-[12px] text-muted">risk cut</div>
       </div>
     </li>
   );
@@ -370,19 +370,27 @@ function PathRow({ path, onOpen }: { path: AttackPath; onOpen: () => void }) {
   const to = path.nodes[path.nodes.length - 1]?.name ?? "?";
   return (
     <li>
+      {/* Two lines, like the attack-path list: the target leads, the entry follows, and
+          neither is cut. On one line both names were truncated to fit, and on a phone their
+          minimum widths alone were wider than the screen, so the row ran off its edge. */}
       <button
         onClick={onOpen}
         className="flex w-full items-center gap-3 rounded-xl border border-edge bg-panel px-4 py-2.5 text-left transition hover:border-accent/50"
       >
-        <StatusPill status={routeStatus(path)} />
-        {path.runtimeConfirmed && (
-          <ZapIcon className="h-3.5 w-3.5 shrink-0 text-flag" aria-label="being walked in runtime" />
-        )}
-        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-[12.5px] text-slate-800">
-          <NodeName name={from} className="min-w-[3.75rem] truncate [flex-shrink:3]" />
-          <span className="shrink-0 text-muted">→</span>
-          <TargetIcon path={path} />
-          <NodeName name={to} className="min-w-[5rem] truncate [flex-shrink:1]" />
+        <span className="min-w-0 flex-1">
+          <span className="flex items-start gap-1.5 text-[13px] text-slate-800">
+            {path.runtimeConfirmed && (
+              <ZapIcon className="mt-[3px] h-3.5 w-3.5 shrink-0 text-flag" aria-label="being walked in runtime" />
+            )}
+            <TargetIcon path={path} className="mt-[4px]" />
+            <NodeName name={to} className="min-w-0 break-words" />
+          </span>
+          <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-muted">
+            <StatusPill status={routeStatus(path)} />
+            <span className="break-words">
+              from <NodeName name={from} />
+            </span>
+          </span>
         </span>
         <SeverityBar priority={path.priority} score={path.score} />
       </button>
@@ -397,13 +405,13 @@ function TrustCard({ calibration, onOpen }: { calibration?: Calibration; onOpen:
   return (
     <button
       onClick={onOpen}
-      className="rounded-2xl border border-edge bg-panel px-4 py-3.5 text-left transition hover:border-accent/50"
+      className="min-w-0 rounded-2xl border border-edge bg-panel px-4 py-3.5 text-left transition hover:border-accent/50"
     >
-      <div className="text-[11px] text-muted">Can you trust these numbers?</div>
+      <div className="text-[12px] text-muted">Can you trust these numbers?</div>
       <div className={`mt-1.5 text-[17px] font-semibold capitalize leading-none ${tone}`}>
         {verdict.replace(/-/g, " ")}
       </div>
-      <div className="mt-1.5 text-[11px] text-muted">
+      <div className="mt-1.5 text-[12px] text-muted">
         {has
           ? `measured against ${calibration!.samples} tested routes · see how →`
           : "no verdicts recorded yet · see how →"}
@@ -419,10 +427,12 @@ function ViolationCard({ count, violations }: { count: number; violations: Dashb
     // here - that overload is what made colour unreadable across the page. This is a
     // fact about the estate, not an alarm: it gets the same quiet card as everything
     // else, and earns attention by its number rather than by its border.
-    <div className="rounded-2xl border border-edge bg-panel px-4 py-3.5">
-      <div className="text-[11px] text-muted">Policy invariants broken</div>
+    // min-w-0: a grid item is as wide as its longest unbreakable line by default, and the
+    // truncated id list below is one - it pushed both cards past a phone's edge.
+    <div className="min-w-0 rounded-2xl border border-edge bg-panel px-4 py-3.5">
+      <div className="text-[12px] text-muted">Policy invariants broken</div>
       <div className="mt-1.5 text-[17px] font-semibold leading-none text-slate-900">{count}</div>
-      <div className="mt-1.5 truncate text-[11px] text-muted">{ids}</div>
+      <div className="mt-1.5 truncate text-[12px] text-muted">{ids}</div>
     </div>
   );
 }

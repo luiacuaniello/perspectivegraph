@@ -58,7 +58,7 @@ export default function SearchView({ enabled = true }: { enabled?: boolean }) {
             isn’t configured. Everything else works without it.
           </p>
           <div className="mt-4 rounded-xl bg-ink px-4 py-3 text-left text-[12px]">
-            <div className="mb-1 text-[11px] font-medium text-muted">Enable it</div>
+            <div className="mb-1 text-[12px] font-medium text-muted">Enable it</div>
             <code className="block font-mono text-teal-700">
               docker compose --profile app --profile search up -d --build
             </code>
@@ -95,7 +95,7 @@ export default function SearchView({ enabled = true }: { enabled?: boolean }) {
           className="w-full rounded-xl border border-edge bg-panel shadow-card py-3 pl-10 pr-4 text-sm text-slate-800 placeholder:text-slate-400 outline-hidden transition focus:border-accent focus:ring-2 focus:ring-accent/15"
         />
         {busy && (
-          <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[11px] text-slate-500">
+          <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[12px] text-slate-500">
             searching…
           </span>
         )}
@@ -130,7 +130,7 @@ export default function SearchView({ enabled = true }: { enabled?: boolean }) {
                     className="h-2.5 w-2.5 shrink-0 rounded-full"
                     style={{ background: labelColor(h.label) }}
                   />
-                  <span className="w-28 shrink-0 text-[11px] uppercase tracking-wide text-slate-500">
+                  <span className="w-28 shrink-0 text-[12px] uppercase tracking-wide text-slate-500">
                     {h.label}
                   </span>
                   <span className="min-w-0 flex-1 truncate text-sm text-slate-800">{h.name}</span>
@@ -141,7 +141,7 @@ export default function SearchView({ enabled = true }: { enabled?: boolean }) {
                         style={{ width: `${Math.max(8, (h.score / maxScore) * 100)}%` }}
                       />
                     </span>
-                    <span className="text-[10px] tabular-nums text-slate-500">{h.score.toFixed(2)}</span>
+                    <span className="text-[12px] tabular-nums text-slate-500">{h.score.toFixed(2)}</span>
                   </span>
                 </li>
               ))}

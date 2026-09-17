@@ -25,7 +25,7 @@ export default function Legend() {
         <span className="text-muted">{open ? "−" : "+"}</span>
       </button>
       {open && (
-        <div className="grid gap-x-6 gap-y-3 border-t border-edge px-4 py-3.5 text-[11px] text-muted sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-x-6 gap-y-3 border-t border-edge px-4 py-3.5 text-[12px] text-muted sm:grid-cols-2 lg:grid-cols-3">
           <Row badge={<Badge tone="info" icon={<GlobeIcon className="h-3 w-3" />}>internet-exposed</Badge>}>
             A valid attack <b>entry point</b> (seed) - reachable from the internet.
           </Row>
@@ -38,7 +38,7 @@ export default function Legend() {
           <Row badge={<Badge tone="danger" icon={<FlameIcon className="h-3 w-3" />} className="font-bold uppercase">KEV</Badge>}>
             CVE in CISA’s <b>Known Exploited Vulnerabilities</b> catalog - exploited in the wild.
           </Row>
-          <Row badge={<span className="text-[10px] font-medium text-emerald-700">● high confidence</span>}>
+          <Row badge={<span className="text-[12px] font-medium text-emerald-700">● high confidence</span>}>
             How much to <b>trust the score</b>: evidence-backed weights raise it, guesses lower it.
           </Row>
           <Row badge={<Badge tone="ok">KEV</Badge>}>
@@ -58,7 +58,7 @@ export default function Legend() {
           </Row>
           <Row
             badge={
-              <span className="inline-flex items-center gap-1 rounded-sm bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent">
+              <span className="inline-flex items-center gap-1 rounded-sm bg-accent/10 px-1.5 py-0.5 text-[12px] font-medium text-accent">
                 <CrosshairIcon className="h-3 w-3" />
                 T1190 · Initial Access
               </span>

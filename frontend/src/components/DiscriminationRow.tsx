@@ -26,7 +26,7 @@ function Line({ label, tip, d, emptyText }: { label: string; tip: string; d?: Di
   const defined = !!d?.hasData && d.auc != null;
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <span className="flex w-24 shrink-0 items-center gap-1 text-[11px] font-medium text-muted">
+      <span className="flex w-24 shrink-0 items-center gap-1 text-[12px] font-medium text-muted">
         {label}
         <InfoTip text={tip} />
       </span>
@@ -42,10 +42,10 @@ function Line({ label, tip, d, emptyText }: { label: string; tip: string; d?: Di
               [{d.aucLow?.toFixed(2)}–{d.aucHigh?.toFixed(2)}]
             </span>
           </span>
-          <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-medium ${style.cls}`}>{style.label}</span>
+          <span className={`rounded-md px-1.5 py-0.5 text-[12px] font-medium ${style.cls}`}>{style.label}</span>
         </>
       ) : (
-        <span className="text-[11px] text-slate-400">{emptyText}</span>
+        <span className="text-[12px] text-slate-400">{emptyText}</span>
       )}
     </div>
   );

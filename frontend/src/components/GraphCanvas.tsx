@@ -388,7 +388,7 @@ export default function GraphCanvas({ nodes, edges, highlightNodes, highlightEdg
           </svg>
         </GraphControl>
       </div>
-      <div className="pointer-events-none rounded-lg border border-[#1c2632] bg-[#101821]/92 px-2.5 py-2 text-[10px] text-[#7b8896] shadow-card backdrop-blur-sm sm:absolute sm:bottom-3 sm:left-3">
+      <div className="pointer-events-none rounded-lg border border-[#1c2632] bg-[#101821]/92 px-2.5 py-2 text-[12px] text-[#7b8896] shadow-card backdrop-blur-sm sm:absolute sm:bottom-3 sm:left-3">
         <div className="grid grid-cols-2 gap-x-3 gap-y-1">
           {(Object.keys(CATEGORY_STYLE) as Category[]).map((cat) => (
             <span key={cat} className="flex items-center gap-1.5">

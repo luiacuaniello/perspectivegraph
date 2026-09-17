@@ -1,5 +1,6 @@
 import type { AttackPath } from "../api/client";
 import RouteActions from "./RouteActions";
+import { useReadOnly } from "../auth/readOnly";
 import { ZapIcon } from "./icons";
 import { routeStatus } from "./routeChannels";
 import { StatusPill, TargetIcon , NodeName } from "./routeChannelViews";
@@ -32,6 +33,7 @@ export default function AttackPathList({
   onSelect,
   onChanged,
 }: Props) {
+  const readOnly = useReadOnly();
   if (paths.length === 0) {
     return (
       <div className="rounded-xl border border-edge bg-panel shadow-card p-4 text-sm text-slate-500">
@@ -60,9 +62,9 @@ export default function AttackPathList({
               onClick={() => onSelect(p)}
               className="w-full p-3.5 text-left"
             >
-              <div className="flex items-center gap-2.5">
+              <div className="flex items-start gap-2.5">
                 <span
-                  className={`grid h-6 w-6 shrink-0 place-items-center rounded-md text-[11px] font-bold tabular-nums ${
+                  className={`grid h-6 w-6 shrink-0 place-items-center rounded-md text-[12px] font-bold tabular-nums ${
                     selected
                       ? "bg-accent/20 text-slate-800"
                       : "bg-ink text-slate-500"
@@ -70,24 +72,33 @@ export default function AttackPathList({
                 >
                   {rank + 1}
                 </span>
-                {/* The target is the crown jewel - the part of the route that must survive
-                  truncation - so the entry gives up space three times faster. */}
-                <span className="flex min-w-0 flex-1 items-center gap-1.5 text-[13px] font-medium text-slate-800">
-                  {p.runtimeConfirmed && (
-                    <ZapIcon
-                      className="h-3.5 w-3.5 shrink-0 text-flag"
-                      aria-label="Runtime-confirmed by Falco"
-                    />
-                  )}
-                  {/* The entry keeps its qualifier here rather than being shortened: in
-                      this list "(0.0.0.0/0)" is the difference between an internal hop
-                      and something the whole internet can reach. */}
-                  <NodeName name={entry?.name} className="min-w-[3.75rem] truncate [flex-shrink:3]" />
-                  <span className="shrink-0 text-slate-500">→</span>
-                  <TargetIcon path={p} />
-                  <NodeName name={target?.name} className="min-w-[5rem] truncate [flex-shrink:1]" />
+                {/* Two lines, never truncated. The row used to squeeze entry → target onto one
+                    line and cut both - "edge-al… → payments-admi…" - so the one thing a
+                    route is, its two ends, was the thing the list could not show. The target
+                    leads, because it is what the route costs you; the entry follows with its
+                    qualifier intact, since "(0.0.0.0/0)" is the difference between an
+                    internal hop and something the whole internet can reach. */}
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-start gap-1.5 text-[14px] font-medium leading-snug text-slate-800">
+                    {p.runtimeConfirmed && (
+                      <ZapIcon
+                        className="mt-[3px] h-3.5 w-3.5 shrink-0 text-flag"
+                        aria-label="Runtime-confirmed by Falco"
+                      />
+                    )}
+                    <TargetIcon path={p} className="mt-[4px]" />
+                    <NodeName name={target?.name} className="min-w-0 break-words" />
+                  </span>
+                  {/* The lifecycle pill rides on this line, as on Today: on line one it took
+                      the width the target's name needs, and at 1024px the column is narrow
+                      enough that "(AdministratorAccess)" broke in the middle of the word. */}
+                  <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-slate-500">
+                    <StatusPill status={routeStatus(p)} />
+                    <span className="break-words">
+                      from <NodeName name={entry?.name} /> · {p.steps.length} {p.steps.length === 1 ? "hop" : "hops"}
+                    </span>
+                  </span>
                 </span>
-                <StatusPill status={routeStatus(p)} />
                 {p.priority != null ? (
                   <span
                     className="shrink-0 text-right"
@@ -101,7 +112,7 @@ export default function AttackPathList({
                     <span className="block text-[15px] font-semibold leading-none tabular-nums text-slate-900">
                       {p.priority.toFixed(0)}
                     </span>
-                    <span className="mt-0.5 block text-[9px] font-semibold uppercase tracking-[0.08em] text-muted">
+                    <span className="mt-0.5 block text-[12px] font-semibold uppercase tracking-[0.06em] text-muted">
                       {p.priorityLabel ?? "priority"}
                     </span>
                   </span>
@@ -127,11 +138,6 @@ export default function AttackPathList({
                   />
                 </div>
               )}
-              <div className="mt-1.5 truncate pl-[34px] text-[11px] text-slate-500">
-                {p.steps.length} hops
-                {" · "}
-                {p.nodes.map((n) => n.label).join(" → ")}
-              </div>
             </button>
             {/* Actions sit OUTSIDE the row button - a button cannot contain buttons, and
                 nesting them made the whole row one hit target where a "Triage" click also
@@ -140,9 +146,14 @@ export default function AttackPathList({
                 Absolutely positioned so they cost no height while hidden: reserving the
                 space made every row taller for an affordance most rows never show. They
                 overlay the right end of the metadata line, which is empty. */}
-            <div className="absolute bottom-2 right-3 flex justify-end">
-              <RouteActions path={p} onChanged={() => onChanged?.()} />
-            </div>
+            {/* Not offered at all on a read-only instance: these reveal on hover, and a
+                control that appears only to refuse is noise in a list. The detail panel
+                still shows its actions, disabled, with the reason. */}
+            {!readOnly && (
+              <div className="absolute bottom-2 right-3 flex justify-end">
+                <RouteActions path={p} onChanged={() => onChanged?.()} />
+              </div>
+            )}
           </div>
         );
       })}

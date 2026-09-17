@@ -1343,7 +1343,7 @@ harder questions, and PerspectiveGraph answers them:
   not-satisfied finding - the language GRC tooling and auditors actually consume.
 
 Both exports - OSCAL and the SIEM NDJSON enrichment feed - download straight from
-the dashboard header (**↓ OSCAL** / **↓ SIEM**), or over HTTP:
+the dashboard's **Export** menu in the top bar, or over HTTP:
 
 ```bash
 curl -s "$API/export/oscal" > oscal.json   # NIST OSCAL assessment-results

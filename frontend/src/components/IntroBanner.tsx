@@ -61,7 +61,7 @@ export default function IntroBanner({ onDismiss }: { onDismiss: () => void }) {
         />
       </div>
 
-      <ul className="mt-4 grid gap-x-6 gap-y-2 text-[12.5px] text-slate-600 sm:grid-cols-2">
+      <ul className="mt-4 grid gap-x-6 gap-y-2 text-[13px] text-slate-600 sm:grid-cols-2">
         <li className="flex gap-2">
           <span className="font-semibold text-flag">%</span>
           <span>
@@ -96,7 +96,7 @@ export default function IntroBanner({ onDismiss }: { onDismiss: () => void }) {
         <Button variant="primary" size="md" onClick={onDismiss}>
           Got it
         </Button>
-        <span className="text-[11px] text-slate-400">You can reopen this from “How to read this” in the header.</span>
+        <span className="text-[12px] text-slate-400">You can reopen this from “How to read this” in the header.</span>
       </div>
     </section>
   );

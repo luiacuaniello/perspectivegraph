@@ -35,7 +35,7 @@ export default function TrustView({ calibration, trend, validation, risk }: Prop
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto pr-1">
       <section className="rounded-2xl border border-edge bg-panel px-5 py-5">
-        <div className="text-[11px] text-muted">Verdict on the engine's own scores</div>
+        <div className="text-[12px] text-muted">Verdict on the engine's own scores</div>
         <div className="mt-1.5 flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <h2 className="text-[26px] font-semibold capitalize leading-none text-slate-900">
             {(calibration?.verdict ?? "not measured").replace(/-/g, " ")}
@@ -67,7 +67,7 @@ export default function TrustView({ calibration, trend, validation, risk }: Prop
 
       {validation && validation.tested > 0 && (
         <section className="rounded-2xl border border-edge bg-panel px-5 py-4">
-          <div className="mb-3 flex items-center gap-1 text-[11px] text-muted">
+          <div className="mb-3 flex items-center gap-1 text-[12px] text-muted">
             Red-team and BAS verdicts
             <InfoTip text="Outcomes recorded against surfaced paths. Precision is how many tested paths turned out real; recall is how many real paths the engine had surfaced." />
           </div>
@@ -91,7 +91,7 @@ export default function TrustView({ calibration, trend, validation, risk }: Prop
 
       {risk && (
         <section className="rounded-2xl border border-edge bg-panel px-5 py-4">
-          <div className="mb-2 flex items-center gap-1 text-[11px] text-muted">
+          <div className="mb-2 flex items-center gap-1 text-[12px] text-muted">
             Where the headline risk is uncertain
             <InfoTip text="The modeled band comes from resampling every edge probability from its evidence, so a wide band means the number rests on soft inputs rather than measurements." />
           </div>
@@ -167,7 +167,7 @@ function EdgeTrack({ edge }: { edge: Calibration }) {
   const said = Math.round(edge.meanPredicted * 100);
   return (
     <section className="rounded-2xl border border-edge bg-panel px-5 py-4">
-      <div className="mb-3 flex items-center gap-1 text-[11px] text-muted">
+      <div className="mb-3 flex items-center gap-1 text-[12px] text-muted">
         Per-CVE forecasts, graded after the fact
         <InfoTip text="Sealed before the outcome existed: for each CVE that was not yet known-exploited, the engine recorded what it predicted from that day's evidence, and was graded a window later against whether the CVE entered CISA's KEV catalogue. No red team needed - it builds itself from public feeds." />
       </div>
@@ -193,7 +193,7 @@ function Figure({ label, value, tone = "text-slate-800" }: { label: string; valu
   return (
     <div>
       <div className={`text-[20px] font-semibold tabular-nums leading-none ${tone}`}>{value}</div>
-      <div className="mt-1 text-[11px] text-muted">{label}</div>
+      <div className="mt-1 text-[12px] text-muted">{label}</div>
     </div>
   );
 }
@@ -242,30 +242,30 @@ function MissedFigure({ count }: { count: number }) {
         <div className={`text-[22px] font-semibold leading-none tabular-nums ${count > 0 ? "text-flag" : "text-slate-900"}`}>
           {count}
         </div>
-        <div className="mt-1 flex items-center gap-1 text-[11px] text-muted">
+        <div className="mt-1 flex items-center gap-1 text-[12px] text-muted">
           Missed
-          {count > 0 && <span className="text-[10px]">{open ? "▾" : "▸"}</span>}
+          {count > 0 && <span className="text-[12px]">{open ? "▾" : "▸"}</span>}
         </div>
       </button>
 
       {open && (
         <div className="col-span-full mt-3 flex flex-col gap-2">
-          {err && <p className="text-[11px] text-flag">{err}</p>}
-          {!err && !rows && <p className="text-[11px] text-muted">Loading…</p>}
+          {err && <p className="text-[12px] text-flag">{err}</p>}
+          {!err && !rows && <p className="text-[12px] text-muted">Loading…</p>}
           {rows?.length === 0 && (
-            <p className="text-[11px] text-muted">
+            <p className="text-[12px] text-muted">
               The count says {count}, but no verdict carries the detail. Older records may predate the
               route being stored.
             </p>
           )}
           {rows?.map((r, i) => (
             <div key={r.id ?? i} className="rounded-lg border border-edge bg-panel-2 px-3 py-2">
-              <div className="font-mono text-[11.5px] text-slate-900">{r.route || r.path_id || "unnamed route"}</div>
-              <div className="mt-1 text-[10.5px] text-muted">
+              <div className="font-mono text-[12px] text-slate-900">{r.route || r.path_id || "unnamed route"}</div>
+              <div className="mt-1 text-[12px] text-muted">
                 found by {r.source || "unknown"}
                 {r.tested_at ? ` · ${new Date(r.tested_at).toLocaleDateString()}` : ""}
               </div>
-              {r.evidence && <div className="mt-1 text-[11px] leading-relaxed text-slate-600">{r.evidence}</div>}
+              {r.evidence && <div className="mt-1 text-[12px] leading-relaxed text-slate-600">{r.evidence}</div>}
             </div>
           ))}
         </div>
@@ -297,7 +297,7 @@ function DetectionRow({ detection }: { detection: DetectionStats }) {
   const missedCount = detection.tested - detection.detected;
   return (
     <section className="rounded-2xl border border-edge bg-panel px-5 py-4">
-      <div className="mb-2 flex items-center gap-1 text-[11px] text-muted">
+      <div className="mb-2 flex items-center gap-1 text-[12px] text-muted">
         What the detection stack caught
         <InfoTip text="Of the routes a red-team or BAS run CONFIRMED exploitable and that carried a detection report, how many were caught or blocked. Unlike calibration this needs no sample size to act on: an exploitable route nobody detected is a gap whatever the count." />
       </div>

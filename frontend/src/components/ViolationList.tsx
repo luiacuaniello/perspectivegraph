@@ -47,7 +47,7 @@ export default function ViolationList({ violations }: { violations: Violation[] 
               </Badge>
               <code className="text-sm font-medium text-slate-800">{head.invariantId}</code>
               {group.length > 1 && (
-                <span className="text-[11px] tabular-nums text-muted">{group.length} instances</span>
+                <span className="text-[12px] tabular-nums text-muted">{group.length} instances</span>
               )}
             </div>
             {head.description && <p className="mt-2 text-xs leading-relaxed text-muted">{head.description}</p>}
@@ -58,12 +58,12 @@ export default function ViolationList({ violations }: { violations: Violation[] 
                   className="flex flex-wrap items-center gap-1.5 border-t border-edge/60 py-2 first:border-t-0 first:pt-0"
                 >
                   {group.length > 1 && (
-                    <span className="w-4 shrink-0 text-[11px] tabular-nums text-slate-500">{i + 1}</span>
+                    <span className="w-4 shrink-0 text-[12px] tabular-nums text-slate-500">{i + 1}</span>
                   )}
                   {v.nodes.map((n) => (
                     <span
                       key={n.id}
-                      className="inline-flex items-center gap-1 rounded-md border border-edge bg-ink px-2 py-1 text-[11px] text-slate-600"
+                      className="inline-flex items-center gap-1 rounded-md border border-edge bg-ink px-2 py-1 text-[12px] text-slate-600"
                     >
                       <span className="text-slate-400">{n.label} ·</span>
                       {n.name}

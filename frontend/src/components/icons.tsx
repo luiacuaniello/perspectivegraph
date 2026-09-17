@@ -212,6 +212,13 @@ export const InfoIcon = make(
   </>,
 );
 
+export const LockIcon = make(
+  <>
+    <rect x="4" y="11" width="16" height="10" rx="2" />
+    <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+  </>,
+);
+
 const PackageIcon = make(
   <>
     <line x1="16.5" y1="9.4" x2="7.5" y2="4.21" />

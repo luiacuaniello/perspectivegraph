@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import LoginGate from "./LoginGate";
 import * as client from "../api/client";
+import { useReadOnly } from "../auth/readOnly";
 
 // The banner is the only place an unauthenticated instance says so to a human. The
 // backend logs it at start-up and /auth/config reports it, but a log scrolls past and an
@@ -67,6 +68,33 @@ describe("LoginGate", () => {
     expect(screen.getByText("dashboard")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByText(BANNER)).not.toBeInTheDocument();
+  });
+
+  it("tells the dashboard it is read-only only on an instance published on purpose", async () => {
+    // The controls decide from this whether to offer writes. An open instance takes writes,
+    // so it must not be told otherwise; a published one refuses them.
+    const Probe = () => <p>{useReadOnly() ? "read-only" : "writable"}</p>;
+
+    vi.spyOn(client, "fetchAuthConfig").mockResolvedValue({
+      authRequired: false,
+      mode: "token",
+      anonymousRole: "viewer",
+    } as client.AuthConfig);
+    const published = render(
+      <LoginGate>
+        <Probe />
+      </LoginGate>,
+    );
+    expect(await screen.findByText("read-only")).toBeInTheDocument();
+    published.unmount();
+
+    vi.spyOn(client, "fetchAuthConfig").mockResolvedValue({ authRequired: false, mode: "none" } as client.AuthConfig);
+    render(
+      <LoginGate>
+        <Probe />
+      </LoginGate>,
+    );
+    expect(await screen.findByText("writable")).toBeInTheDocument();
   });
 
   it("stays silent when /auth/config could not be reached", async () => {

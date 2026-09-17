@@ -18,7 +18,7 @@ export default function EmptyState() {
         </p>
 
         <div className="mt-5 rounded-xl bg-ink px-4 py-3 text-left">
-          <div className="mb-1 text-[11px] font-medium text-muted">
+          <div className="mb-1 text-[12px] font-medium text-muted">
             Feed the sample data
           </div>
           <code className="block font-mono text-[13px] text-teal-700">make seed</code>
@@ -27,7 +27,7 @@ export default function EmptyState() {
           </code>
         </div>
 
-        <p className="mt-4 text-[11px] text-slate-400">
+        <p className="mt-4 text-[12px] text-slate-400">
           Paths appear within one analysis cycle (~30s) - this page refreshes itself.
         </p>
       </div>

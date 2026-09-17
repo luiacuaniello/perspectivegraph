@@ -13,7 +13,7 @@ export function StatusPill({ status }: { status: RouteStatus }) {
   const filled = status === "proven";
   return (
     <span
-      className={`inline-flex shrink-0 items-center gap-1.5 text-[10.5px] font-medium ${meta.className}`}
+      className={`inline-flex shrink-0 items-center gap-1.5 text-[12px] font-medium ${meta.className}`}
       title={meta.hint}
     >
       {!filled && <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />}

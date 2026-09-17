@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import AttackPathDetail from "./AttackPathDetail";
 import type { AttackPath } from "../api/client";
+import { READ_ONLY_REASON, ReadOnlyContext } from "../auth/readOnly";
 
 // The detail panel is where the engine's honesty layers become a claim a human
 // reads: the headline exploit score, the epistemic credible interval, and the
@@ -27,10 +28,27 @@ const base: AttackPath = {
 const path = (over: Partial<AttackPath>): AttackPath => ({ ...base, ...over });
 
 describe("AttackPathDetail probability display", () => {
-  it("headlines the exploit score as a whole percentage", () => {
+  it("shows the exploit probability as a whole percentage, labelled", () => {
     render(<AttackPathDetail path={path({ score: 0.5 })} />);
     expect(screen.getByText("50%")).toBeInTheDocument();
-    expect(screen.getByText(/exploit score/)).toBeInTheDocument();
+    expect(screen.getByText(/Exploit probability/)).toBeInTheDocument();
+  });
+
+  it("leads with priority when there is one, and names both numbers", () => {
+    // The list ranks by priority while the detail used to headline the exploit score, so
+    // a route read as "60" in one place and "55%" in the other with nothing saying they
+    // were different measures. Both are shown, each under its own name.
+    render(<AttackPathDetail path={path({ score: 0.55, priority: 60, priorityLabel: "P2" })} />);
+    expect(screen.getByText("Priority")).toBeInTheDocument();
+    expect(screen.getByText("P2")).toBeInTheDocument();
+    expect(screen.getByText("60")).toBeInTheDocument();
+    expect(screen.getByText(/Exploit probability/)).toBeInTheDocument();
+    expect(screen.getByText("55%")).toBeInTheDocument();
+  });
+
+  it("does not invent a priority the backend did not send", () => {
+    render(<AttackPathDetail path={path({ score: 0.5, priority: null })} />);
+    expect(screen.queryByText("Priority")).not.toBeInTheDocument();
   });
 
   it("shows the 90% credible interval when the band is wide enough to inform", () => {
@@ -117,6 +135,33 @@ describe("AttackPathDetail probability display", () => {
   it("flags a runtime-confirmed path as actively exploited", () => {
     render(<AttackPathDetail path={path({ runtimeConfirmed: true })} />);
     expect(screen.getByText("ACTIVELY EXPLOITED")).toBeInTheDocument();
+  });
+});
+
+// On an instance published read-only every write answers 403. The actions stay on screen -
+// they are how a visitor learns what the product does - but disabled, with the reason, so
+// pressing one no longer produces an error that makes a working demo look broken.
+describe("AttackPathDetail on a read-only instance", () => {
+  const writes = [/Validate/, /Open fix PR/, /Suppress \/ triage/, /Create ticket/];
+
+  it("disables every write and says why", () => {
+    render(
+      <ReadOnlyContext.Provider value={true}>
+        <AttackPathDetail path={base} />
+      </ReadOnlyContext.Provider>,
+    );
+    for (const name of writes) {
+      expect(screen.getByRole("button", { name })).toBeDisabled();
+    }
+    expect(screen.getByText(READ_ONLY_REASON)).toBeInTheDocument();
+  });
+
+  it("leaves them enabled everywhere else", () => {
+    render(<AttackPathDetail path={base} />);
+    for (const name of writes) {
+      expect(screen.getByRole("button", { name })).toBeEnabled();
+    }
+    expect(screen.queryByText(READ_ONLY_REASON)).not.toBeInTheDocument();
   });
 });
 
