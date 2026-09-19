@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.17.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.16.1...v1.17.0) (2026-09-19)
+
+
+### Features
+
+* **ingest:** let a pull request's manifests put its commit on the merge gate ([#234](https://github.com/luiacuaniello/perspectivegraph/issues/234)) ([106cf86](https://github.com/luiacuaniello/perspectivegraph/commit/106cf8645ed58c06d1aa438ba61df1bc92ce78f6))
+
 ## [1.16.1](https://github.com/luiacuaniello/perspectivegraph/compare/v1.16.0...v1.16.1) (2026-09-17)
 
 
