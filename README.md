@@ -203,6 +203,12 @@ request's scan, and answers in-process with the same engine:
     report: trivy.json
 ```
 
+The scan is not the only thing a pull request can send: a rendered manifest set
+(`helm template`, `kustomize build`) posted to `/ingest/k8s?slug=&sha=` attributes the
+objects it contains to that commit, so a change that publishes a Service fails the check
+the same way a vulnerable dependency does. That matters because manifests are how most
+routes actually open.
+
 An estate is not optional, and that is the point: without one there are no attack paths,
 only a flat list of findings - the thing this replaces. If you collect your estate on its
 own schedule, pass `estate: estate.json` (what `perspectivegraph awscollect -json` writes)

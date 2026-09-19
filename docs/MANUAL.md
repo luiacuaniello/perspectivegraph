@@ -2254,6 +2254,24 @@ kubectl get ingress,service,pod,serviceaccount,role,clusterrole,rolebinding,clus
 curl -sS -X POST "$INGEST_URL/ingest/k8s" -H 'Content-Type: application/json' --data-binary @cluster.json
 ```
 
+**From a pull request, send what the pull request renders.** A change to a manifest is
+how most routes actually open - publish a Service, widen an RBAC rule - and until the
+merge gate could attribute that change to a commit it stayed silent on exactly the kind of
+work that opens a path. So the dump accepts the same `?slug=&sha=&pr=` the scanner
+endpoints take, and stamps the objects it CONTAINS with them:
+
+```bash
+helm template . > rendered.json   # or: kustomize build . | yq -o json
+curl -sS -X POST "$INGEST_URL/ingest/k8s?slug=$SLUG&sha=$(git rev-parse HEAD)&pr=42" \
+  -H 'Content-Type: application/json' --data-binary @rendered.json
+```
+
+Two rules keep the attribution honest, and both are tested. Objects the dump only
+*mentions* are never stamped: `cluster-admin` is shipped by Kubernetes and every
+escalation ends at it, so attributing it to your commit would put that commit on every
+route in the cluster. And a dump sent without those parameters - a nightly snapshot of the
+live cluster, say - belongs to no commit and is stamped with nothing, exactly as before.
+
 #### Cloud network reachability (auto-discovered)
 
 Post security groups + instances + VPC peerings; PerspectiveGraph derives who can

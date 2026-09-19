@@ -466,13 +466,25 @@
 							}
 						],
 						"url": {
-							"raw": "{{ingestUrl}}/ingest/k8s",
+							"raw": "{{ingestUrl}}/ingest/k8s?slug={{slug}}&sha={{sha}}",
 							"host": [
 								"{{ingestUrl}}"
 							],
 							"path": [
 								"ingest",
 								"k8s"
+							],
+							"query": [
+								{
+									"key": "slug",
+									"value": "{{slug}}",
+									"description": "Optional. With sha, attributes the objects THIS DUMP CONTAINS to a commit, so a pull request that renders manifests can fail the merge gate the way a scanner report does. Objects the dump only mentions (cluster-admin, a ServiceAccount named by a binding) are never attributed. Leave both out for a snapshot of a live cluster, which belongs to no commit."
+								},
+								{
+									"key": "sha",
+									"value": "{{sha}}",
+									"description": "Optional, with slug. The commit the manifests were rendered from."
+								}
 							]
 						},
 						"body": {

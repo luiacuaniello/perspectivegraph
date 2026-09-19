@@ -17,6 +17,27 @@ digest, take the backup, stage it.
 
 ---
 
+## 1.17.0
+
+### The Kubernetes feed can now put a commit on the merge gate
+
+**Affects you if** you post cluster dumps to `/ingest/k8s` *with* `?slug=&sha=`, and you
+run the merge gate.
+
+Those parameters used to be ignored by this collector: the gate blocks when a node on a
+path carries the commit, and only the scanner feeds stamped one - so a pull request that
+changed a manifest, which is how most routes open, could not turn the check red, while a
+dependency bump could. The dump now stamps the objects it contains, so those routes count.
+
+**Action: none, unless you were already sending those parameters.** If you were, and the
+dump is a snapshot of the live cluster rather than what the pull request renders, the gate
+will start attributing the whole snapshot to that commit. Drop the parameters for snapshot
+feeds; keep them for `helm template` / `kustomize build` output of the commit under test.
+Objects the dump only references (`cluster-admin`, a ServiceAccount named by a binding)
+are never stamped.
+
+---
+
 ## 1.12.7
 
 ### The chart could not install at all, and now can

@@ -358,3 +358,92 @@ func TestAbsentSpecIsNotAnError(t *testing.T) {
 		t.Fatalf("a pod with no spec was rejected: %v", err)
 	}
 }
+
+// The merge gate answers "is this commit on a path" by looking for the commit's stamp on
+// the nodes of a route. Until this, the Kubernetes feed threw its options away, so the one
+// change that opens a route - the manifest that publishes a service - could never turn a
+// check red, while a dependency bump could. A pull request that renders these manifests
+// owns the objects in them, and now says so.
+func TestPullRequestContextStampsWhatTheDumpDefines(t *testing.T) {
+	const slug, sha = "acme/platform", "cafe1234"
+	in := `[
+	  {"kind":"Ingress","metadata":{"name":"pay","namespace":"prod"},
+	   "spec":{"rules":[{"host":"pay.example.com","http":{"paths":[{"backend":{"service":{"name":"pay"}}}]}}]}},
+	  {"kind":"Service","metadata":{"name":"pay","namespace":"prod"},
+	   "spec":{"selector":{"app":"pay"},"type":"ClusterIP"}},
+	  {"kind":"Pod","metadata":{"name":"pay-1","namespace":"prod","labels":{"app":"pay"}},
+	   "spec":{"serviceAccountName":"pay-sa","containers":[{"image":"pay:1.0.0"}]}},
+	  {"kind":"ServiceAccount","metadata":{"name":"pay-sa","namespace":"prod"}},
+	  {"kind":"Role","metadata":{"name":"secret-reader","namespace":"prod"},
+	   "rules":[{"verbs":["get"],"resources":["secrets"],"apiGroups":[""]}]},
+	  {"kind":"RoleBinding","metadata":{"name":"b1","namespace":"prod"},
+	   "roleRef":{"kind":"Role","name":"secret-reader"},
+	   "subjects":[{"kind":"ServiceAccount","name":"pay-sa","namespace":"prod"}]},
+	  {"kind":"RoleBinding","metadata":{"name":"b2","namespace":"prod"},
+	   "roleRef":{"kind":"ClusterRole","name":"cluster-admin"},
+	   "subjects":[{"kind":"ServiceAccount","name":"ops-sa","namespace":"prod"}]}
+	]`
+	events, err := New().Parse(strings.NewReader(in), ingestion.Options{RepoSlug: slug, CommitSHA: sha, PRNumber: 42})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]ontology.Node{}
+	for _, n := range events[0].Nodes {
+		byID[n.ID] = n
+	}
+	stamped := func(id string) bool { return ontology.StampedWith(byID[id].Properties, slug, sha) }
+
+	for name, id := range map[string]string{
+		"ingress":        ontology.NewID(ontology.LabelLoadBalancer, "ing/prod/pay"),
+		"service":        ontology.NewID(ontology.LabelLoadBalancer, "svc/prod/pay"),
+		"pod":            ontology.NewID(ontology.LabelContainer, "prod/pay-1"),
+		"serviceaccount": ontology.NewID(ontology.LabelServiceAccount, "prod/pay-sa"),
+		"role":           ontology.NewID(ontology.LabelIAMRole, "secret-reader"),
+	} {
+		if _, ok := byID[id]; !ok {
+			t.Fatalf("%s missing from the graph", name)
+		}
+		if !stamped(id) {
+			t.Errorf("%s should carry the commit that rendered it: %+v", name, byID[id].Properties)
+		}
+	}
+	if pr := byID[ontology.NewID(ontology.LabelContainer, "prod/pay-1")].Properties[ontology.PropPRNumber]; pr != 42 {
+		t.Errorf("pod should carry the pull-request number, got %v", pr)
+	}
+
+	// The two the dump only MENTIONS. cluster-admin is shipped by Kubernetes and every
+	// escalation ends at it: stamping it would put this commit on every route in the
+	// cluster, and a gate that is red for everything is a gate nobody reads. ops-sa is
+	// named by a binding and defined somewhere else.
+	for name, id := range map[string]string{
+		"cluster-admin (referenced by a binding)": ontology.NewID(ontology.LabelIAMRole, "cluster-admin"),
+		"ops-sa (referenced by a binding)":        ontology.NewID(ontology.LabelServiceAccount, "prod/ops-sa"),
+	} {
+		if _, ok := byID[id]; !ok {
+			t.Fatalf("%s missing from the graph", name)
+		}
+		if stamped(id) {
+			t.Errorf("%s must not be attributed to this commit: %+v", name, byID[id].Properties)
+		}
+	}
+}
+
+// A cluster snapshot belongs to no commit, and a feed without PR context must keep
+// producing exactly the graph it always did.
+func TestWithoutPullRequestContextNothingIsStamped(t *testing.T) {
+	f, err := os.Open("../../../testdata/k8s-sample.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	events, err := New().Parse(f, ingestion.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range events[0].Nodes {
+		if n.Properties[ontology.PropRepoSlug] != nil || n.Properties[ontology.PropCommitSHA] != nil {
+			t.Errorf("node %q carries a commit nobody sent: %+v", n.Name, n.Properties)
+		}
+	}
+}

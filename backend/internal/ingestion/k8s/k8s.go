@@ -56,16 +56,23 @@ type item struct {
 	} `json:"rules"`
 }
 
-func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, error) {
+func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event, error) {
 	items, err := decode(r)
 	if err != nil {
 		return nil, err
 	}
 
-	g := &builder{nodes: map[string]ontology.Node{}}
+	// The PR context, when CI sends one. It is carried onto the objects this dump
+	// CONTAINS - see builder.stamp for why not onto the ones it merely mentions.
+	g := &builder{nodes: map[string]ontology.Node{}, stamp: opts.PRProps()}
 	var pods, services, ingresses, sas, bindings []item
 	adminRoles := map[string]bool{}        // role name -> wildcard-admin
 	escalationRoles := map[string]string{} // role name -> escalation primitive it grants
+	// Roles the dump DEFINES, as opposed to the ones its bindings merely name. Only the
+	// first kind belongs to the pull request that rendered it: `cluster-admin` is shipped
+	// by Kubernetes, every escalation ends there, and stamping it would put the commit on
+	// every route in the cluster.
+	definedRoles := map[string]bool{}
 
 	for _, it := range items {
 		switch strings.ToLower(it.Kind) {
@@ -80,6 +87,7 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 		case "rolebinding", "clusterrolebinding":
 			bindings = append(bindings, it)
 		case "role", "clusterrole":
+			definedRoles[it.Metadata.Name] = true
 			if isAdminRole(it) {
 				adminRoles[it.Metadata.Name] = true
 			} else if reason := escalateReason(it); reason != "" {
@@ -113,7 +121,7 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 		if escape != "" {
 			props["k8s_escape"] = escape
 		}
-		g.upsert(ontology.Node{ID: id, Label: ontology.LabelContainer, Name: p.Metadata.Name, Properties: props})
+		g.own(ontology.Node{ID: id, Label: ontology.LabelContainer, Name: p.Metadata.Name, Properties: props})
 		podsByNS[ns] = append(podsByNS[ns], podRef{id: id, labels: p.Metadata.Labels})
 
 		// A host-breaking pod can escape its container to the node - and from the
@@ -142,7 +150,7 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 		if spec.Type == "LoadBalancer" || spec.Type == "NodePort" {
 			props[ontology.PropInternetExposed] = true
 		}
-		g.upsert(ontology.Node{ID: id, Label: ontology.LabelLoadBalancer, Name: s.Metadata.Name, Properties: props})
+		g.own(ontology.Node{ID: id, Label: ontology.LabelLoadBalancer, Name: s.Metadata.Name, Properties: props})
 		svcID[key] = id
 
 		for _, pod := range podsByNS[ns] {
@@ -166,7 +174,7 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 				host = rule.Host
 			}
 		}
-		g.upsert(ontology.Node{ID: id, Label: ontology.LabelLoadBalancer, Name: in.Metadata.Name,
+		g.own(ontology.Node{ID: id, Label: ontology.LabelLoadBalancer, Name: in.Metadata.Name,
 			Properties: map[string]any{"k8s_ns": ns, "k8s_kind": "Ingress", "host": host, ontology.PropInternetExposed: true}})
 
 		for _, rule := range spec.Rules {
@@ -191,7 +199,7 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 	for _, sa := range sas {
 		ns := nsOf(sa.Metadata)
 		saID := ontology.NewID(ontology.LabelServiceAccount, ns+"/"+sa.Metadata.Name)
-		g.upsert(ontology.Node{ID: saID,
+		g.own(ontology.Node{ID: saID,
 			Label: ontology.LabelServiceAccount, Name: ns + "/" + sa.Metadata.Name,
 			Properties: map[string]any{"k8s_ns": ns}})
 		saByNS[ns] = append(saByNS[ns], saID)
@@ -211,7 +219,12 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 			props["k8s_escalation"] = escalation
 		}
 		roleID := ontology.NewID(ontology.LabelIAMRole, roleName)
-		g.upsert(ontology.Node{ID: roleID, Label: ontology.LabelIAMRole, Name: roleName, Properties: props})
+		role := ontology.Node{ID: roleID, Label: ontology.LabelIAMRole, Name: roleName, Properties: props}
+		if definedRoles[roleName] {
+			g.own(role)
+		} else {
+			g.upsert(role)
+		}
 		// A non-admin role that grants an escalation primitive can reach cluster-admin,
 		// weighted by how reliably that specific primitive actually gets there (not all
 		// are equal - see escalationProb).
@@ -230,6 +243,8 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 			case "user":
 				// A named user (e.g. an OIDC identity) has no cluster-visible workload
 				// to pin it to a pod, but record the grant so the privesc stays visible.
+				// Not `own`: the dump contains the binding, not the person. An OIDC
+				// identity belongs to a directory, not to the commit that granted it.
 				uid := ontology.NewID(ontology.LabelUser, "user/"+subj.Name)
 				g.upsert(ontology.Node{ID: uid, Label: ontology.LabelUser, Name: "user:" + subj.Name,
 					Properties: map[string]any{"k8s_user": subj.Name}})
@@ -375,6 +390,28 @@ type ingSpec struct {
 type builder struct {
 	nodes map[string]ontology.Node
 	edges []ontology.Edge
+	// stamp is the pull request's identity (repo_slug / commit_sha / pr), or nil when
+	// the dump arrived without one - a live cluster snapshot, say, which belongs to no
+	// commit. It is applied by `own`, never by `upsert` or `stub`, because the gate asks
+	// "is this commit on a path" and answers by looking for exactly these properties:
+	// stamping a node the dump only REFERENCES (a ServiceAccount named by a binding, the
+	// synthetic cluster-admin every escalation ends at) would put the commit on routes it
+	// has nothing to do with, and a gate that is red for everything is a gate nobody reads.
+	stamp map[string]any
+}
+
+// own records a node this dump actually contains, stamped with the pull request that
+// rendered it when there is one.
+func (b *builder) own(n ontology.Node) {
+	if len(b.stamp) > 0 {
+		if n.Properties == nil {
+			n.Properties = map[string]any{}
+		}
+		for k, v := range b.stamp {
+			n.Properties[k] = v
+		}
+	}
+	b.upsert(n)
 }
 
 func (b *builder) upsert(n ontology.Node) {
