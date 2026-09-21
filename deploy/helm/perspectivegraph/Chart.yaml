@@ -1,6 +1,9 @@
 apiVersion: v2
 name: perspectivegraph
-description: PerspectiveGraph - The Open DevSecOps Context Engine
+# The line Artifact Hub puts under the package name and in its search results - the
+# chart's equivalent of the repository description, so it says the same thing. Quoted:
+# the colon inside it would otherwise end the scalar.
+description: 'Attack-path analysis in the pull request: from internet exposure, through too much privilege, to a sensitive asset.'
 type: application
 version: 1.17.0 # x-release-please-version
 appVersion: "1.17.0" # x-release-please-version
@@ -23,6 +26,8 @@ keywords:
   - security
   - devsecops
   - attack-paths
+  - attack-path
+  - kubernetes
   - graph
 home: https://github.com/luiacuaniello/perspectivegraph
 sources:
