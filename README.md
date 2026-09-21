@@ -2,63 +2,36 @@
 
 [![CI](https://github.com/luiacuaniello/perspectivegraph/actions/workflows/ci.yml/badge.svg)](https://github.com/luiacuaniello/perspectivegraph/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/luiacuaniello/perspectivegraph?sort=semver)](https://github.com/luiacuaniello/perspectivegraph/releases)
-[![Go](https://img.shields.io/github/go-mod/go-version/luiacuaniello/perspectivegraph?filename=backend%2Fgo.mod)](backend/go.mod)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/13828/badge)](https://www.bestpractices.dev/projects/13828)
-[![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/perspectivegraph)](https://artifacthub.io/packages/helm/perspectivegraph/perspectivegraph)
 [![Live demo](https://img.shields.io/website?url=https%3A%2F%2Fdemo.a3thinker.it&label=live%20demo&up_message=online&down_message=offline)](https://demo.a3thinker.it)
 
-> **Catch the attack path in the pull request that opens it - then ship the fix as a PR.**
+> **Your scanners find issues. This finds the way in.**
 
-On every pull request, PerspectiveGraph (open source, Apache 2.0) answers one question against a
-graph of your *real* environment - built from the scanners you already run (Trivy, Semgrep, Cloud
-Custodian, Falco):
+PerspectiveGraph joins what you already run - Trivy, Semgrep, Cloud Custodian, Falco, plus your
+AWS and Kubernetes state - into one graph of your *real* environment, and asks a single question
+of it:
 
-> *Does this change open a path from the internet, through excessive privilege, to something valuable?*
+> *can someone get from the internet, through privilege that is too broad, to something worth
+> stealing?*
 
-When it does, the **PR check goes red** - a required status you can block the merge on - and you get
-the **fix as its own one-click pull request**. The reachable attack path is caught and closed in code
-review, where it's cheapest, not months later in production. This is **shift-left attack-path
-analysis**: not a scanner bolted onto CI, not a runtime CNAPP you log into after the fact - the
-reachability question, answered *in the developer's workflow*.
-
-That gate is powered by a full attack-path correlation engine, so the same graph also gives you the
-rest: a queryable dashboard of your **~5 critical attack paths** (not 10,000 flat findings), triage,
-runtime confirmation, an AI summary, and always-current architecture maps. **But the wedge is the
-pull request.**
-
+On a pull request it asks that question **before the merge**: the check goes red only when *this
+change* opens a route, and the fix comes back as its own pull request. Open source (Apache 2.0),
+runs on your infrastructure, collects no telemetry.
 
 ![PerspectiveGraph: from the day's exploitable routes to a generated fix](docs/demo.gif)
 
-*Twelve seconds of `make demo`, signed in: what is exploitable now → the ranked routes → one route's
-kill chain and the fix it generates → whether the scores can be trusted. Sample scanner
-output and seeded verdicts, not a real environment.*
+*Twelve seconds of `make demo`: what is exploitable now → the ranked routes → one route's kill
+chain and the fix it generates → whether the scores can be trusted. Sample scanner output and
+seeded verdicts, not a real environment.*
 
-**Try it without installing anything: [demo.a3thinker.it](https://demo.a3thinker.it).** The
-same dashboard on the same sample scanner output, published read-only - every route, kill
-chain, graph and generated fix is there to explore, and nothing can be changed. It carries
-no seeded verdicts, so its Trust page reports insufficient data: with no recorded outcomes,
-that is the honest answer. It runs on a single free VM, so treat it as best-effort: the
-badge above says whether it is up.
+- **[See it running](https://demo.a3thinker.it)** - the same dashboard, published read-only. Nothing to install.
+- **[Check your own AWS account](#check-your-own-account-in-30-seconds)** - one read-only command, thirty seconds, no deployment.
+- **[Put it on your pull requests](#block-the-pull-request-that-opens-the-path)** - ten lines of YAML.
 
-> ### What this has not done yet
->
-> The engine reports probabilities, credible intervals and its own calibration - Brier
-> score, ECE, a reliability diagram. **None of that has been calibrated against field
-> data.** Nobody has yet run it over a real estate, tested the paths it surfaced, and fed
-> the verdicts back. The machinery for that closed loop is built and tested; the loop has
-> not been closed with real outcomes.
->
-> So read a score as *"what this model believes, and how sure it says it is"*, not as a
-> measured frequency. A path at 0.7 has not been shown to be exploited seven times in ten -
-> it has been shown to be what the model concludes from the evidence it was given, and
-> the interval beside it says how thin that evidence is.
->
-> That is a statement about maturity, not about intent: the calibration harness exists
-> precisely so that number can be earned rather than asserted, and the
-> [CloudGoat benchmark](backend/testdata/cloudgoat/README.md) grades the path-finding itself on public,
-> reproducible scenarios today. If you run this on a real environment and record what you
-> find, [that is the contribution that matters most](CONTRIBUTING.md).
+A score here is what the model concludes from the evidence it was given, not a measured
+frequency: **nothing has been calibrated against field data yet**, and the engine says so itself
+rather than rounding up. [What is measured, and what is not](#project-status--maturity).
+
 
 ## Check your own account in 30 seconds
 
@@ -77,26 +50,9 @@ It is **read-only and free**: every check is one `iam:SimulatePrincipalPolicy` c
 dry run that evaluates policy without performing anything, so it creates nothing and
 costs nothing. It needs `iam:SimulatePrincipalPolicy` and `iam:ListRoles` - both inside
 `SecurityAudit`. Binaries for linux/macOS (amd64, arm64) and Windows are on the
-[releases page](https://github.com/luiacuaniello/perspectivegraph/releases/latest),
-signed with cosign and carrying SLSA build provenance, both attached to the release. The
-signature covers `SHA256SUMS`, so one check covers every archive; the provenance names the
-workflow run that built them:
-
-```bash
-cosign verify-blob --bundle SHA256SUMS.sigstore.json \
-  --certificate-identity-regexp 'https://github.com/luiacuaniello/perspectivegraph/.*' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  SHA256SUMS && sha256sum -c SHA256SUMS --ignore-missing
-
-cosign verify-blob-attestation --bundle perspectivegraph.intoto.jsonl --new-bundle-format \
-  --type https://slsa.dev/provenance/v1 \
-  --certificate-identity-regexp 'https://github.com/luiacuaniello/perspectivegraph/.*' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  perspectivegraph_darwin_arm64.tar.gz
-```
-
-Releases before these files existed carry the same signature as `SHA256SUMS.bundle`, which
-every release still publishes.
+[releases page](https://github.com/luiacuaniello/perspectivegraph/releases/latest), signed
+with cosign and carrying SLSA build provenance - two commands
+[verify both](SECURITY.md#our-own-supply-chain) before you run anything.
 
 Add `-compare` and it also runs the engine over the same account and **exits non-zero
 where the two disagree** - each disagreement is a false positive or a miss, in the
@@ -136,25 +92,17 @@ docker pull ghcr.io/luiacuaniello/perspectivegraph-postgres:v1.17.0 # x-release-
 On Kubernetes, the Helm chart is published the same way - no clone needed, and a version
 you can pin and verify. It is listed on
 [Artifact Hub](https://artifacthub.io/packages/helm/perspectivegraph/perspectivegraph) as an
-**official** package from a verified publisher, which is Artifact Hub's way of saying the
-chart is published by the people who wrote the software rather than by a third party
-repackaging it:
+**official** package from a verified publisher - Artifact Hub's way of saying it comes from the
+people who wrote the software rather than a third party repackaging it:
 
 ```bash
 helm install perspectivegraph oci://ghcr.io/luiacuaniello/charts/perspectivegraph \
   --version 1.17.0 # x-release-please-version
 ```
 
-They are signed with cosign keyless and carry an SPDX SBOM plus a SLSA build
-provenance attestation - verify before you run, rather than taking the supply chain
-on trust:
-
-```bash
-cosign verify \
-  --certificate-identity-regexp 'https://github.com/luiacuaniello/perspectivegraph/.*' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  ghcr.io/luiacuaniello/perspectivegraph:v1.17.0 # x-release-please-version
-```
+Images and chart are signed with cosign keyless and carry an SPDX SBOM plus a SLSA build
+provenance attestation - [verify them](SECURITY.md#our-own-supply-chain) rather than taking the
+supply chain on trust.
 
 The dashboard opens on the decision, not the inventory: what is being exploited right
 now, the fewest changes that remove the most risk, and how much the numbers can be
@@ -176,18 +124,35 @@ verdicts, not a real environment. That is why the calibration panel returns a ve
 "underconfident" - across 14 seeded outcomes the engine predicted 60% where 71% held up.
 Those outcomes were generated to exercise the instrument, not to flatter it. On a fresh
 install the same page reads **"insufficient data"** and withholds a verdict until real
-outcomes exist, because a risk score you cannot check is worth less than an honest blank.*
+outcomes exist, because a risk score you cannot check is worth less than an honest blank. The
+public demo at [demo.a3thinker.it](https://demo.a3thinker.it) is this same dashboard with no
+seeded verdicts at all, so its Trust page reports insufficient data; it runs on a single free
+VM, so treat it as best-effort - the badge at the top says whether it is up.*
 
 ## Why?
 
-Modern security teams don't suffer from a lack of tools - they suffer from **noise, fragmentation,
-and missing context**.
+Modern security teams don't suffer from a lack of tools - they suffer from **noise,
+fragmentation and missing context**. A scanner reports that a container carries a critical CVE.
+It cannot report that the container sits behind an internet-facing load balancer, runs with a
+role that reads the production database, and is therefore the one finding out of ten thousand
+worth doing something about this week. That second question needs the other tools' output in
+the same graph, which is what this builds.
 
 | Role | Pain today | What PerspectiveGraph gives them |
 | --- | --- | --- |
 | **Developer** | CI/CD blocked by thousands of irrelevant CVEs | A PR check that goes red *only* when the change opens a real internet→sensitive-asset path - plus the fix as a one-click PR |
 | **Security** | Triage on flat lists of 10,000 findings | A ranked list of ~5 critical **attack paths**, queryable like a database |
 | **Architect** | No live view of how IaC becomes attack surface | Auto-generated, always-current architecture & data-flow maps + drift detection |
+
+It answers that question **in the developer's workflow** rather than in a console someone logs
+into afterwards: the reachable path is caught and closed in code review, where it is cheapest,
+not months later in production. This is shift-left attack-path analysis - not a scanner bolted
+onto CI, and not a runtime CNAPP you log into after the fact.
+
+The gate is powered by a full attack-path correlation engine, so the same graph also gives you
+the rest: a queryable dashboard of your **~5 critical attack paths** (not 10,000 flat findings),
+triage, runtime confirmation, an AI summary, and always-current architecture maps. **But the
+wedge is the pull request.**
 
 
 ## Block the pull request that opens the path
@@ -321,19 +286,32 @@ not of the engine's scores:
 
 ## Project status & maturity
 
-**The short version, if you read nothing else.** The engine and its public API are
-complete, documented and tested. The AWS connector is verified against a real account.
-The path *scores* are **not** calibrated against real exploited outcomes yet, and the
-*order* they produce has not been graded against them either - the instruments for both
-exist, the field verdicts do not. What is measured today is whether a surfaced path is
-real (the benchmark below). So: use it to find and cut routes, and don't put its risk
-percentage in front of a board. What is and isn't claimed is spelled out in
-[positioning](docs/POSITIONING.md). It collects **no telemetry**: out of the box it opens
-no outbound connection at all - GitHub, the AI assistant and the KEV/EPSS feeds each stay
-dark until you set a key or flag (`THREATINTEL` is `off` by default).
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/13828/badge)](https://www.bestpractices.dev/projects/13828)
+[![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/perspectivegraph)](https://artifacthub.io/packages/helm/perspectivegraph/perspectivegraph)
+[![Go](https://img.shields.io/github/go-mod/go-version/luiacuaniello/perspectivegraph?filename=backend%2Fgo.mod)](backend/go.mod)
 
-**The benchmark, as of v1.17.0.** <!-- x-release-please-version --> `make bench-cloudgoat`
-runs four CloudGoat-shaped scenarios in CI and grades the engine on each:
+**The short version, if you read nothing else.** The engine and its public API are complete,
+documented and tested, and the AWS connector is verified against a real account. What is **not**
+done is calibration: the path *scores*, and the *order* they produce, have not been graded
+against real exploited outcomes. Nobody has yet run this over a real estate, tested the paths it
+surfaced and fed the verdicts back. The machinery for that loop is built and tested; the loop is
+not closed.
+
+So read a score as *what this model believes, and how sure it says it is*, not as a measured
+frequency. A path at 0.7 has not been shown to be exploited seven times in ten - it is what the
+model concludes from the evidence it was given, with an interval beside it saying how thin that
+evidence is. On a fresh install the calibration page reports **insufficient data** and withholds
+a verdict, because a risk score you cannot check is worth less than an honest blank. Use this to
+find and cut routes; don't put its percentage in front of a board. What is and isn't claimed is
+spelled out in [positioning](docs/POSITIONING.md). It collects **no telemetry**: out of the box
+it opens no outbound connection at all - GitHub, the AI assistant and the KEV/EPSS feeds each
+stay dark until you set a key or a flag (`THREATINTEL` is `off` by default).
+
+**What is measured today, as of v1.17.0.** <!-- x-release-please-version --> Two things, both
+reproducible without taking anyone's word for them.
+
+`make bench-cloudgoat` runs four [CloudGoat-shaped scenarios](backend/testdata/cloudgoat/README.md)
+in CI and grades the engine on each:
 
 | Scenario | Expects | Result |
 |---|---|---|
@@ -342,91 +320,54 @@ runs four CloudGoat-shaped scenarios in CI and grades the engine on each:
 | `ec2_private_subnet_no_path` | **no** path (open SG, private subnet) | produced none |
 | `iam_privesc_denied_by_guardrail` | **no** path (explicit Deny wins) | produced none |
 
-Precision and recall are 1.00 on all four. Read that for what it is: four scenarios, two
-of them negative controls - a regression gate against known shapes, not a measurement of
-field accuracy on your estate.
+Precision and recall are 1.00 on all four. Read that for what it is: four scenarios, two of them
+negative controls - a regression gate against known shapes, not a measurement of field accuracy
+on your estate. On real AWS, `make reachability-lab-aws` makes the same kind of check for free:
+two instances behind one wide-open security group, only one routed to an internet gateway, and
+only that one may be reported as exposed.
 
-The long version follows. PerspectiveGraph is **1.x and in active development**, built in
-the open. The GraphQL schema is frozen and drift-guarded and the CLI/config surface is
-documented, so a breaking change goes through a major version rather than arriving in a
-patch - see the [API stability policy](docs/API-STABILITY.md). What's next is in the
-[roadmap](ROADMAP.md); read this before you rely on it:
+`make redteam-aws` grades the engine's privilege-escalation claims against **AWS's own policy
+evaluator** - read-only, free, and it applies the service control policies, permission boundaries
+and condition keys the engine's policy reader skips. That grading has already paid for itself: it
+caught the engine reporting an escalation a permissions boundary made impossible. The bug is
+fixed, and `make boundary-lab-aws` is now its regression test - engine and AWS side by side on a
+real account, **exiting non-zero when they disagree** in either direction. It deliberately does
+not rescale the path scores, and
+[the manual explains why it cannot](docs/MANUAL.md#closing-the-loop-calibration-against-observed-outcomes):
+those verdicts are one-sided, and a censored sample is not a measurement.
 
-- **Engine: feature-complete.** The correlation engine, agentless connectors, triage,
-  SSO, the PR merge-gate, the AI assistant, and the scale work are all implemented and
-  covered by tests. The public API contract (GraphQL, ingest events, config, CLI) is
-  documented and the GraphQL schema is frozen + drift-guarded - see the
-  [API stability policy](docs/API-STABILITY.md).
-- **Connector: validated against a real AWS account; scores: not yet field-calibrated.**
-  The live connector, its read-only grant (`SecurityAudit` covers every call), cross-account
-  `AssumeRole`, and the network↔identity join (`instance --ASSUMES--> role`) are **verified
-  against a real account** - that last edge was in fact a gap only real-account testing
-  exposed (the fixtures already contained edges AWS makes you derive). The
-  reachability-precision claim is verified there too: `make reachability-lab-aws` stands up
-  two instances behind **the same wide-open security group**, one in a subnet routed to an
-  internet gateway and one in a subnet with no default route, and the engine marks only the
-  first as exposed - suppressing the second with the reason, on real AWS rather than
-  fixtures. What is **not** yet
-  done is calibrating the path *scores* against real exploited outcomes: the self-calibration
-  flywheel has run end-to-end only on deliberately-vulnerable synthetic targets (a log4shell
-  app, a `kind` RBAC scenario). Treat the scores as **directionally honest, not
-  production-calibrated**. One half of that gap is now closed against real AWS for free:
-  `make redteam-aws` grades the engine's privilege-escalation claims with AWS's own policy
-  evaluator - a read-only dry run that creates nothing and applies the SCPs and condition keys
-  the engine's policy reader skips. That grading has already paid for itself: `make
-  boundary-lab-aws` stands up two roles with an identical privesc policy that differ only in a
-  permissions boundary, and it caught the engine calling both escalating where AWS allowed one
-  and denied the other. **That false positive is now fixed** - the connector carries the
-  boundary through and the evaluator intersects it - and the lab is the regression test,
-  running the engine and AWS side by side on a real account and failing if they disagree.
-  It deliberately does **not** rescale the path scores, and
-  [the manual explains why it cannot](docs/MANUAL.md#closing-the-loop-calibration-against-observed-outcomes):
-  those verdicts are one-sided, and a censored sample is not a measurement. The `make validate-aws`, `make validate-harness-aws`, and
-  `make validate-harness*` harnesses are the path to closing that on your own environment.
-  For an offline, CI-gated check that the engine actually finds the *right* paths, `make
-  bench-cloudgoat` grades it against a battery of [CloudGoat-shaped ground-truth
-  scenarios](backend/testdata/cloudgoat/README.md) (precision/recall) - including the
-  reachability-precision case (an open SG on a private-subnet box must **not** form a path)
-  and the credential-origin case (a leaked-key privesc is invisible until `SEED_IAM_USERS`
-  is on). It runs under `make test`, so a regression that loses or invents a path fails the build.
-- **Deployment: demo-grade defaults, with a production switch.** The **backend** is
-  hardened wherever it runs (distroless, non-root, read-only rootfs, all capabilities
-  dropped, digest-pinned 0-CVE images, opt-in TLS). Under `docker compose` the bundled
-  dependencies - the dashboard's nginx, NATS, the demo Postgres - run as their images
-  ship, because the demo has to stay one command. Under **Helm every workload, init
-  containers included, satisfies the `restricted` Pod Security Standard**, asserted in CI
-  on both value sets, so a namespace that enforces it admits the chart unmodified. The
-  demo defaults are otherwise deliberately open. Set **`PG_ENV=production`** and the backend **refuses to start** unless both the
-  API and ingest are authenticated - the permissive default cannot be reached by forgetting
-  to configure it. A production rollout still needs your own hardening beyond that: an
-  external PostgreSQL+AGE - **managed only on Azure, self-managed on AWS and GCP, because
-  neither offers the AGE extension** ([the matrix](docs/OPERATIONS.md#3-the-database-postgresql--apache-age)) -
-  secrets in a manager (not env vars), TLS on by default,
-  backups, and HA for the leader-gated scheduler. **If you terminate at a reverse proxy or
-  ingress, set `TRUSTED_PROXY_CIDRS`** to it: per-IP controls (rate limit, brute-force
-  lockout, the address in the audit trail) otherwise key on the connecting peer - correct
-  and unspoofable, but behind a proxy that is one key for everybody, so one attacker's
-  failed logins lock out every user. `X-Forwarded-For` is believed only from the proxies
-  named there, and only the hops they added. For people use OIDC, so revoking access is
-  your IdP's job rather than a token rotation - see the
-  [operations & hardening runbook](docs/OPERATIONS.md), [`SECURITY.md`](SECURITY.md), and the
+**The long version.** PerspectiveGraph is **1.x and in active development**, built in the open.
+[What is next](ROADMAP.md) - and read this before you rely on it:
+
+- **Engine: feature-complete.** Correlation, agentless connectors, triage, SSO, the merge gate,
+  the AI assistant and the scale work are implemented and covered by tests. The GraphQL schema is
+  frozen and drift-guarded, so a breaking change goes through a major version rather than
+  arriving in a patch - [API stability policy](docs/API-STABILITY.md).
+- **Clouds: AWS is live, Azure is fixtures only, there is no GCP connector.** The connector, its
+  read-only `SecurityAudit` grant, cross-account `AssumeRole` and the network↔identity join
+  (`instance --ASSUMES--> role`) are verified against a real account - that last edge was a gap
+  only real-account testing exposed. Closing the calibration loop on your own estate is what
+  `make validate-aws` and the [evaluation guide](docs/EVALUATION.md) are for.
+- **Deployment: demo-grade defaults, with a production switch.** The backend is hardened wherever
+  it runs (distroless, non-root, read-only rootfs, digest-pinned 0-CVE images, opt-in TLS) and
+  under Helm every workload satisfies the `restricted` Pod Security Standard, asserted in CI. The
+  compose defaults are deliberately open; `PG_ENV=production` makes the backend refuse to start
+  unless API and ingest are both authenticated. A real rollout needs more - external
+  PostgreSQL+AGE (**managed only on Azure**), secrets in a manager, TLS, backups, and
+  `TRUSTED_PROXY_CIDRS` set, or per-IP limits key on your proxy for everybody:
+  [operations runbook](docs/OPERATIONS.md), [`SECURITY.md`](SECURITY.md),
   [threat model](docs/THREAT-MODEL.md).
-- **Support: the newest release, and nothing behind it.** There are no backports and no LTS
-  branch - at six minor releases in the eight days after 1.0, a maintenance branch would be
-  a promise one maintainer breaks. What is promised instead is a clock on security fixes
-  (Critical 7 days, High 30, from confirmation) and an upgrade specified rather than hoped
-  for: semver over an enumerated stable surface, a drift-guarded schema, no migration step,
-  and rollback by redeploying the previous digest. [SUPPORT.md](SUPPORT.md) is the policy,
-  including how to run this where change control applies.
-- **Scope.** It answers the reachable attack-path question in the developer workflow. It is
-  not a scanner, a CNAPP, or a compliance product, and it does not replace them.
-
+- **Support: the newest release, and nothing behind it.** No backports, no LTS branch - at six
+  minor releases in the eight days after 1.0, a maintenance branch is a promise one maintainer
+  breaks. Promised instead: a clock on security fixes (Critical 7 days, High 30) and an upgrade
+  specified rather than hoped for. [SUPPORT.md](SUPPORT.md) is the policy.
+- **Scope.** It answers the reachable attack-path question in the developer workflow. Not a
+  scanner, a CNAPP or a compliance product, and it replaces none of them.
 - **How it is written.** Developed by a human working with Claude (Anthropic): the design
   decisions and what ships are the maintainer's, a large share of the implementation and its
   tests came out of that collaboration. Said plainly for the same reason the engine reports its
-  own calibration - a claim you can check beats one you have to accept. Check it:
-  `make test`, `make bench-cloudgoat`, `govulncheck ./...`, `gosec ./...`. See
-  [CONTRIBUTING](CONTRIBUTING.md).
+  own calibration - a claim you can check beats one you have to accept: `make test`,
+  `make bench-cloudgoat`, `govulncheck ./...`. See [CONTRIBUTING](CONTRIBUTING.md).
 
 Issues and PRs are welcome. Nothing here is claimed beyond what the tests and the listed
 validation cover.

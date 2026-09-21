@@ -155,5 +155,22 @@ gh attestation verify "oci://$IMG" --repo luiacuaniello/perspectivegraph
 The release **binaries** carry the same two guarantees as files attached to the release, so
 they can be checked with cosign alone and offline: `SHA256SUMS.sigstore.json` signs the
 checksum file covering every archive, and `perspectivegraph.intoto.jsonl` is the SLSA build
-provenance for all of them. The workflow verifies both before it uploads anything; the
-commands are in the [README](README.md#check-your-own-account-in-30-seconds).
+provenance for all of them. The workflow verifies both before it uploads anything, and so can
+you - one signature check covers every archive, and the provenance names the workflow run that
+built them:
+
+```bash
+cosign verify-blob --bundle SHA256SUMS.sigstore.json \
+  --certificate-identity-regexp 'https://github.com/luiacuaniello/perspectivegraph/.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  SHA256SUMS && sha256sum -c SHA256SUMS --ignore-missing
+
+cosign verify-blob-attestation --bundle perspectivegraph.intoto.jsonl --new-bundle-format \
+  --type https://slsa.dev/provenance/v1 \
+  --certificate-identity-regexp 'https://github.com/luiacuaniello/perspectivegraph/.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  perspectivegraph_darwin_arm64.tar.gz
+```
+
+Releases made before these files existed carry the same signature as `SHA256SUMS.bundle`, which
+every release still publishes.
