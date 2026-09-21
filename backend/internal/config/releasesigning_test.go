@@ -57,11 +57,20 @@ func TestReleaseBinariesPublishSignaturesScorecardRecognises(t *testing.T) {
 		t.Error("the binaries job must keep publishing SHA256SUMS.bundle, as the same file as SHA256SUMS.sigstore.json")
 	}
 
-	// What users are told to run must name files that exist.
-	readme := mustRead(t, root, "README.md")
+	// What users are told to run must name files that exist. The commands live in
+	// SECURITY.md, beside the rest of the supply-chain story, and the README sends readers
+	// there rather than repeating them - so both halves of that route are held here. A
+	// renamed asset breaks the instructions; so does a dropped link, silently.
+	security := mustRead(t, root, "SECURITY.md")
 	for _, name := range []string{"SHA256SUMS.sigstore.json", "perspectivegraph.intoto.jsonl"} {
-		if !strings.Contains(readme, "--bundle "+name) {
-			t.Errorf("README does not show how to verify with %s", name)
+		if !strings.Contains(security, "--bundle "+name) {
+			t.Errorf("SECURITY.md does not show how to verify with %s", name)
 		}
+	}
+	if !strings.Contains(security, "## Our own supply chain") {
+		t.Error(`SECURITY.md lost the "Our own supply chain" heading the README links to`)
+	}
+	if !strings.Contains(mustRead(t, root, "README.md"), "SECURITY.md#our-own-supply-chain") {
+		t.Error("the README no longer points anyone at the verification commands")
 	}
 }
