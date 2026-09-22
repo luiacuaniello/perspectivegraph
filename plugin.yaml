@@ -1,0 +1,55 @@
+# Trivy plugin manifest - what `trivy plugin install github.com/luiacuaniello/perspectivegraph`
+# reads, and what the plugin index (aquasecurity/trivy-plugin-index) points at.
+#
+# There is no plugin code: the plugin IS the release binary, which already reads a Trivy
+# report on stdin (`gate -report -`). An output plugin receives exactly that - Trivy pipes
+# the JSON report in and passes --output-plugin-arg as the arguments - so the archives
+# below are the ones every release already signs and publishes.
+#
+# The version and the four URLs are rewritten by release-please at every release (the
+# x-release-please-version markers), the same way the chart's are, so this file never
+# points at a release other than the current one. Windows ships as a .zip and Trivy
+# plugins take tar.gz only, so it is not listed.
+name: perspectivegraph
+version: "1.17.0" # x-release-please-version
+repository: github.com/luiacuaniello/perspectivegraph
+maintainer: luiacuaniello
+output: true
+summary: Fail the pull request that puts a scanned image on an attack path
+description: |-
+  Joins a Trivy report to your estate and answers the question a CVE list cannot: does
+  this image sit on a route from internet exposure, through too much privilege, to a
+  sensitive asset - and does this commit open it? A critical CVE on something nothing
+  routes to does not fail; an exposure with no CVE at all can.
+
+  As a command, which keeps the gate's exit codes (0 clean, 1 blocked, 2 unknown,
+  3 error):
+    trivy image -f json myapp:pr-42 | trivy perspectivegraph gate -local -aws-region eu-west-1 -report -
+
+  Or as an output plugin, where Trivy folds every verdict but clean into exit 1:
+    trivy image -f json -o plugin=perspectivegraph \
+      --output-plugin-arg "gate -local -aws-region eu-west-1 -report -" myapp:pr-42
+
+  Read-only against the account. -slug and -sha default to GitHub Actions'
+  GITHUB_REPOSITORY and GITHUB_SHA. https://github.com/luiacuaniello/perspectivegraph
+platforms:
+  - selector:
+      os: linux
+      arch: amd64
+    uri: https://github.com/luiacuaniello/perspectivegraph/releases/download/v1.17.0/perspectivegraph_linux_amd64.tar.gz # x-release-please-version
+    bin: ./perspectivegraph
+  - selector:
+      os: linux
+      arch: arm64
+    uri: https://github.com/luiacuaniello/perspectivegraph/releases/download/v1.17.0/perspectivegraph_linux_arm64.tar.gz # x-release-please-version
+    bin: ./perspectivegraph
+  - selector:
+      os: darwin
+      arch: amd64
+    uri: https://github.com/luiacuaniello/perspectivegraph/releases/download/v1.17.0/perspectivegraph_darwin_amd64.tar.gz # x-release-please-version
+    bin: ./perspectivegraph
+  - selector:
+      os: darwin
+      arch: arm64
+    uri: https://github.com/luiacuaniello/perspectivegraph/releases/download/v1.17.0/perspectivegraph_darwin_arm64.tar.gz # x-release-please-version
+    bin: ./perspectivegraph

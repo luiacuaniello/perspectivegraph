@@ -29,6 +29,10 @@
         {
           "type": "generic",
           "path": "docker-compose.demo.yml"
+        },
+        {
+          "type": "generic",
+          "path": "plugin.yaml"
         }
       ]
     }

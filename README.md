@@ -220,6 +220,18 @@ perspectivegraph gate -local -aws-region eu-west-1 \
   -report trivy.json -slug owner/name -sha "$COMMIT_SHA"
 ```
 
+Already running Trivy? The same gate installs as a Trivy plugin, so the answer arrives
+where the CVE list does:
+
+```bash
+trivy plugin install github.com/luiacuaniello/perspectivegraph
+trivy image -f json myapp:pr-42 | trivy perspectivegraph gate -local -aws-region eu-west-1 -report -
+```
+
+Run like that, it keeps the gate's exit codes. As an output plugin
+(`-o plugin=perspectivegraph --output-plugin-arg "gate ..."`) it works the same way, but
+Trivy folds every verdict other than clean into exit 1.
+
 > **Two things to settle before wiring it up.**
 >
 > **Fork pull requests.** The gate needs secrets, and GitHub gives a fork's `pull_request`
