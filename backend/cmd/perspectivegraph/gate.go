@@ -95,6 +95,10 @@ func runGate(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	stdin, err := drainStdinReport(os.Stdin, *report, reports)
+	if err != nil {
+		return err
+	}
 	if *slug == "" || *sha == "" {
 		return errors.New("-slug and -sha are required (GITHUB_REPOSITORY and GITHUB_SHA supply them on GitHub Actions)")
 	}
@@ -120,6 +124,7 @@ func runGate(args []string) error {
 			slug: *slug, sha: *sha, pr: *pr, repository: *repo,
 			reports: specs, estate: *estate,
 			awsRegion: *awsRegion, awsRole: *awsRole,
+			stdin: stdin,
 		})
 		if err != nil {
 			return err
@@ -139,7 +144,7 @@ func runGate(args []string) error {
 	// was already correct, and turn a clean build red.
 	var floor time.Time
 	if *report != "" {
-		body, err := readGateReport(*report)
+		body, err := readGateReport(*report, stdin)
 		if err != nil {
 			return err
 		}
@@ -197,9 +202,9 @@ func shortSHA(sha string) string {
 	return sha
 }
 
-func readGateReport(path string) ([]byte, error) {
+func readGateReport(path string, stdin []byte) ([]byte, error) {
 	if path == "-" {
-		return io.ReadAll(os.Stdin)
+		return stdin, nil // already drained by runGate, see drainStdinReport
 	}
 	b, err := os.ReadFile(path) // #nosec G304 G703 -- operator-supplied path to their own scanner output
 	if err != nil {

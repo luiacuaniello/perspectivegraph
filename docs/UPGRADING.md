@@ -17,6 +17,26 @@ digest, take the backup, stage it.
 
 ---
 
+## 1.18.0
+
+### A Trivy scan of an image archive now reaches the merge gate
+
+**Affects you if** you scan images from an archive - `docker save`, then
+`trivy image --input image.tar` - and run the merge gate.
+
+Trivy reports an archive scan under its file path, and a path matches no workload. The
+image's libraries and CVEs arrived joined to nothing, the commit still counted as
+analysed, and the gate answered **clean** on routes that ran through that image. The
+collector now names the image by the tag the archive was saved with, which Trivy records
+in the report, so those routes count.
+
+**Action: none - but expect pull requests that used to pass to fail.** They were passing
+because the scan was never connected to the workload, not because the change was safe.
+An archive saved by image ID carries no tag and still cannot be joined; save it under the
+reference you deploy (`docker save name:tag`), or scan the image by reference.
+
+---
+
 ## 1.17.0
 
 ### The Kubernetes feed can now put a commit on the merge gate

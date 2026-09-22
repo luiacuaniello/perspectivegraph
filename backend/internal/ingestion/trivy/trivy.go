@@ -22,7 +22,13 @@ import (
 type report struct {
 	ArtifactName string `json:"ArtifactName"`
 	ArtifactType string `json:"ArtifactType"`
-	Results      []struct {
+	// Metadata carries the image's own reference, which is what names it when
+	// ArtifactName does not - see imageName.
+	Metadata struct {
+		Reference string   `json:"Reference"`
+		RepoTags  []string `json:"RepoTags"`
+	} `json:"Metadata"`
+	Results []struct {
 		Target          string `json:"Target"`
 		Type            string `json:"Type"`
 		Vulnerabilities []struct {
@@ -53,15 +59,16 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 		return nil, fmt.Errorf("trivy report missing ArtifactName")
 	}
 
-	imageID := ontology.NewID(ontology.LabelImage, rep.ArtifactName)
 	imageProps := map[string]any{"artifact_type": rep.ArtifactType}
+	name := imageName(rep, imageProps)
+	imageID := ontology.NewID(ontology.LabelImage, name)
 	for k, v := range opts.PRProps() { // PR context for the action layer
 		imageProps[k] = v
 	}
 	image := ontology.Node{
 		ID:         imageID,
 		Label:      ontology.LabelImage,
-		Name:       rep.ArtifactName,
+		Name:       name,
 		Properties: imageProps,
 	}
 
@@ -129,6 +136,59 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 		Nodes:      nodes,
 		Edges:      edges,
 	}}, nil
+}
+
+// imageName is the name the scanned image is known by in the estate: the key a running
+// workload is joined to it on.
+//
+// Usually that is ArtifactName. Scanning an archive - `trivy image --input image.tar`,
+// the usual way to scan in CI without a Docker daemon - makes ArtifactName the FILE PATH
+// instead, and a path matches no workload. The libraries and CVEs then arrive joined to
+// nothing, and a gate reading the report answers CLEAN for a commit it never connected
+// to anything: a false negative that looks exactly like a pass. Trivy still records the
+// tag the archive was saved with, in Metadata.Reference and RepoTags, so the name is
+// recoverable.
+//
+// It is recovered only in place of a path, never in place of a name somebody scanned
+// by: `trivy image nginx` reports Reference "nginx:latest", and a workload that runs
+// "nginx" must keep joining the image it always joined. What was substituted is recorded
+// on the node, so the graph shows where the name came from.
+func imageName(rep report, props map[string]any) string {
+	if rep.ArtifactType != "container_image" || !isArchivePath(rep.ArtifactName) {
+		return rep.ArtifactName
+	}
+	props["scanned_archive"] = rep.ArtifactName
+	if ref := rep.Metadata.Reference; ref != "" && !isArchivePath(ref) {
+		props["name_source"] = "Metadata.Reference"
+		return ref
+	}
+	for _, tag := range rep.Metadata.RepoTags {
+		if tag != "" {
+			props["name_source"] = "Metadata.RepoTags"
+			return tag
+		}
+	}
+	// An archive saved by image ID carries no tag at all. Nothing in the report says which
+	// workload runs it, so it is kept under its path - and says so, rather than passing
+	// for an image that was looked at and found unreachable.
+	props["name_note"] = "scanned from an archive saved without an image tag, so nothing says which workload runs it " +
+		"and it cannot join the estate; save it with a tag (docker save name:tag) or scan the image by reference"
+	return rep.ArtifactName
+}
+
+// isArchivePath reports whether an ArtifactName is a filesystem path rather than an
+// image reference. A reference always starts with a letter or digit, so a leading "/",
+// "." or "~" - or a Windows separator - is a path; so is an archive extension, which
+// covers a relative "image.tar".
+func isArchivePath(name string) bool {
+	if name == "" {
+		return false
+	}
+	if strings.ContainsAny(name[:1], "/.~") || strings.Contains(name, `\`) {
+		return true
+	}
+	lower := strings.ToLower(name)
+	return strings.HasSuffix(lower, ".tar") || strings.HasSuffix(lower, ".tar.gz") || strings.HasSuffix(lower, ".tgz")
 }
 
 // severityProbability maps Trivy severity to an exploit probability for the
