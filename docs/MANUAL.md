@@ -2127,6 +2127,14 @@ The report's `ArtifactName` becomes the Image node - pass the **full image ref**
 you actually deploy. `slug`/`pr`/`sha` attach PR context so the action layer can
 comment on the right pull request.
 
+Scanning an archive instead - `trivy image --input image.tar`, the usual route in CI
+without a Docker daemon - makes `ArtifactName` the file path, which matches no
+workload. The Image node then takes the tag the archive was saved with, which Trivy
+records in `Metadata.Reference`, so save it under the ref you deploy:
+`docker save registry.example.com/payments-api:1.4.2 -o image.tar`. An archive saved
+by image ID carries no tag at all: its node keeps the path, says why on the node
+(`name_note`), and joins nothing.
+
 ```bash
 trivy image --format json --output trivy.json registry.example.com/payments-api:1.4.2
 
@@ -2137,8 +2145,9 @@ curl -sS -X POST "$INGEST_URL/ingest/trivy?slug=$SLUG&pr=42&sha=$(git rev-parse 
 #### CI build provenance (the link that connects code findings)
 
 Emit this from CI **right after pushing the image**. Without it, Semgrep findings
-float disconnected from the running workload. `image` must match Trivy's
-`ArtifactName`; `repository` must match Semgrep's `repo` (next step).
+float disconnected from the running workload. `image` must match the image Trivy
+reported - its `ArtifactName`, or the saved tag for an archive scan; `repository` must
+match Semgrep's `repo` (next step).
 
 ```bash
 curl -sS -X POST "$INGEST_URL/ingest/build" -H 'Content-Type: application/json' -d '{

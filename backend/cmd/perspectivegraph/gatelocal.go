@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -69,6 +72,39 @@ func (r *reportFlag) Set(v string) error {
 	return nil
 }
 
+// drainStdinReport reads the report a "-" asks for, and does it first.
+//
+// An output plugin - `trivy image -f json -o plugin=perspectivegraph` - hands the report
+// over stdin and waits for it to be taken. A process that exits before reading it, on a
+// missing -sha or an unreadable estate or anything else, leaves the writer blocked:
+// measured, Trivy 0.71 then hangs indefinitely instead of failing, and the pipeline
+// stalls with the real error buried in its log. So stdin is drained before anything in
+// the gate can fail. It is one stream, so only one report can come from it.
+func drainStdinReport(stdin io.Reader, single string, many reportFlag) ([]byte, error) {
+	n := 0
+	if single == "-" {
+		n++
+	}
+	for _, s := range many {
+		if s.path == "-" {
+			n++
+		}
+	}
+	if n == 0 {
+		return nil, nil
+	}
+	// Read even when the invocation is about to be refused: the refusal is exactly the
+	// early exit that would otherwise leave the writer hanging.
+	b, err := io.ReadAll(stdin)
+	if err != nil {
+		return nil, fmt.Errorf("read -report from stdin: %w", err)
+	}
+	if n > 1 {
+		return nil, errors.New("only one report can come from stdin (-report -)")
+	}
+	return b, nil
+}
+
 // resolveSources fills in the collector for bare -report values and rejects unknown ones
 // up front, rather than after an AWS collection has already been paid for.
 func (r reportFlag) resolveSources(defaultSource string) ([]reportSpec, error) {
@@ -94,6 +130,9 @@ type localOpts struct {
 	estate     string // events JSON, as written by `awscollect -json`
 	awsRegion  string
 	awsRole    string
+	// stdin is the report read from standard input, for a -report of "-". It is read by
+	// the caller before anything else, for the reason drainStdinReport gives.
+	stdin []byte
 
 	// collectAWSFn is the live collection, swapped out in tests. Reaching the real SDK
 	// is the one part of this pipeline a test cannot exercise, and the merge of the two
@@ -278,12 +317,20 @@ func (o localOpts) parseReports() ([]ontology.Event, error) {
 		if !ok {
 			return nil, fmt.Errorf("no collector for source %q", spec.source)
 		}
-		f, err := os.Open(spec.path) // #nosec G304 G703 -- operator-supplied path to their own scanner output
-		if err != nil {
-			return nil, fmt.Errorf("open -report %s: %w", spec.path, err)
+		var (
+			events []ontology.Event
+			err    error
+		)
+		if spec.path == "-" {
+			events, err = c.Parse(bytes.NewReader(o.stdin), opts)
+		} else {
+			f, openErr := os.Open(spec.path) // #nosec G304 G703 -- operator-supplied path to their own scanner output
+			if openErr != nil {
+				return nil, fmt.Errorf("open -report %s: %w", spec.path, openErr)
+			}
+			events, err = c.Parse(f, opts)
+			_ = f.Close()
 		}
-		events, err := c.Parse(f, opts)
-		_ = f.Close()
 		if err != nil {
 			return nil, fmt.Errorf("parse %s report %s: %w", spec.source, spec.path, err)
 		}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -122,6 +123,104 @@ func TestLocalModeFindsThePathThroughTheCommit(t *testing.T) {
 	}
 	if v.AnalysedAt == "" {
 		t.Error("no analysedAt, so the verdict is not comparable with the server's")
+	}
+}
+
+// workloadEstateEvents is the shape live collectors actually produce: the workload
+// declares the image it runs, and the resolver joins it to whatever Image node a scanner
+// reports under that name. Unlike estateEvents, nothing here names the Image node, so a
+// report that names the image wrongly is not an error - it just joins nothing.
+//
+//	load balancer (internet) --exposes--> container (runs payments-api:1.4.2)
+//	                                          --hosts--> image --> library --> CVE --exploits--> secret
+func workloadEstateEvents() []ontology.Event {
+	lbID := ontology.NewID(ontology.LabelLoadBalancer, "edge-alb")
+	podID := ontology.NewID(ontology.LabelContainer, "payments")
+	cveID := ontology.NewID(ontology.LabelCVE, "CVE-2021-44228")
+	jewelID := ontology.NewID(ontology.LabelSecret, "secrets-vault")
+
+	return []ontology.Event{{
+		Source:     "test-estate",
+		Kind:       ontology.KindAsset,
+		ObservedAt: time.Now().UTC(),
+		Nodes: []ontology.Node{
+			{ID: lbID, Label: ontology.LabelLoadBalancer, Name: "edge-alb",
+				Properties: map[string]any{ontology.PropInternetExposed: true}},
+			{ID: podID, Label: ontology.LabelContainer, Name: "payments",
+				Properties: map[string]any{ontology.PropImageRef: localImage}},
+			{ID: jewelID, Label: ontology.LabelSecret, Name: "secrets-vault",
+				Properties: map[string]any{ontology.PropCrownJewel: true, ontology.PropCrownJewelBasis: "tagged:operator"}},
+		},
+		Edges: []ontology.Edge{
+			{Type: ontology.EdgeExposes, From: lbID, To: podID, ExploitProbability: 0.9},
+			{Type: ontology.EdgeExploits, From: cveID, To: jewelID, ExploitProbability: 0.9},
+		},
+	}}
+}
+
+// The same pull request, scanned the way CI usually has to without a Docker daemon:
+// `docker save` the image, then `trivy image --input image.tar`. Trivy then reports the
+// FILE PATH as ArtifactName, and a path matches no workload: the libraries and CVEs
+// arrived joined to nothing, the commit still counted as analysed, and the gate answered
+// CLEAN on a route it had simply failed to connect - a false negative that looks exactly
+// like a pass. The report does carry the tag the archive was saved with, in
+// Metadata.Reference and RepoTags, as real Trivy writes them (captured from
+// `trivy image --input` against a `docker save` tarball).
+//
+// The by-reference scan of the same image is the control: without it, a test that
+// simply stopped finding paths would read the same as this one.
+//
+// Verified to bite: without the name recovery in the trivy collector, the archive case
+// fails with "answered CLEAN" while the control still blocks.
+func TestLocalModeJoinsAnImageScannedFromAnArchive(t *testing.T) {
+	raw, err := os.ReadFile(trivySampleSpec(t).path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rep map[string]any
+	if err := json.Unmarshal(raw, &rep); err != nil {
+		t.Fatal(err)
+	}
+	rep["ArtifactName"] = "/builds/acme/payments/image.tar"
+	rep["Metadata"] = map[string]any{"Reference": localImage, "RepoTags": []string{localImage}}
+	archived, err := json.Marshal(rep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archivePath := filepath.Join(t.TempDir(), "trivy-archive.json")
+	if err := os.WriteFile(archivePath, archived, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		report reportSpec
+	}{
+		{"scanned by reference (control)", trivySampleSpec(t)},
+		{"scanned from a docker-save archive", reportSpec{source: "trivy", path: archivePath}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := baseOpts(t)
+			o.estate = writeEstate(t, workloadEstateEvents())
+			o.reports = []reportSpec{tc.report}
+			v, err := localVerdict(context.Background(), o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !v.Analysed {
+				t.Fatal("the scan did not reach the graph at all")
+			}
+			if v.CriticalPaths == 0 {
+				t.Fatalf("answered CLEAN: no critical path attributed to the commit, on a route that runs through the scanned image (%+v)", v)
+			}
+			for _, p := range v.Paths {
+				for _, n := range p.Nodes {
+					if strings.Contains(n.Name, "image.tar") {
+						t.Errorf("the route names the archive path %q, not the image the workload runs", n.Name)
+					}
+				}
+			}
+		})
 	}
 }
 
@@ -533,4 +632,79 @@ func TestPartialEstateStillBlocksOnARealPath(t *testing.T) {
 	if !strings.Contains(buf.String(), "BLOCKED") {
 		t.Errorf("a real path was downgraded because the estate read was partial: %q", buf.String())
 	}
+}
+
+// The path an output plugin takes: `trivy image -f json -o plugin=perspectivegraph
+// --output-plugin-arg "gate -local ... -report -"` pipes the report in on stdin. Local mode
+// used to open a file literally named "-", so the plugin failed on its first invocation -
+// and Trivy, left holding a pipe nobody read, hung instead of failing.
+func TestLocalModeReadsTheReportFromStdin(t *testing.T) {
+	raw, err := os.ReadFile(trivySampleSpec(t).path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := baseOpts(t)
+	o.reports = []reportSpec{{source: "trivy", path: "-"}}
+	o.stdin = raw
+	v, err := localVerdict(context.Background(), o)
+	if err != nil {
+		t.Fatalf("a report on stdin was not read: %v", err)
+	}
+	if v.CriticalPaths == 0 {
+		t.Fatalf("the stdin report reached no path: %+v", v)
+	}
+}
+
+// failingReader fails the test if anything reads it: stdin must be left alone when no
+// report asks for it, or a gate run from a terminal would sit waiting for EOF.
+type failingReader struct{ t *testing.T }
+
+func (f failingReader) Read([]byte) (int, error) {
+	f.t.Error("stdin was read although no report asked for it")
+	return 0, io.EOF
+}
+
+// countingReader records whether it was drained to EOF.
+type countingReader struct {
+	r       io.Reader
+	drained bool
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	if err == io.EOF {
+		c.drained = true
+	}
+	return n, err
+}
+
+func TestDrainStdinReport(t *testing.T) {
+	t.Run("nothing asks for stdin", func(t *testing.T) {
+		b, err := drainStdinReport(failingReader{t}, "trivy.json", reportFlag{{source: "semgrep", path: "s.json"}})
+		if err != nil || b != nil {
+			t.Fatalf("got %q, %v", b, err)
+		}
+	})
+	t.Run("-report -", func(t *testing.T) {
+		b, err := drainStdinReport(strings.NewReader(`{"report":1}`), "-", nil)
+		if err != nil || string(b) != `{"report":1}` {
+			t.Fatalf("got %q, %v", b, err)
+		}
+	})
+	t.Run("-reports trivy=-", func(t *testing.T) {
+		b, err := drainStdinReport(strings.NewReader(`{}`), "", reportFlag{{source: "trivy", path: "-"}})
+		if err != nil || string(b) != `{}` {
+			t.Fatalf("got %q, %v", b, err)
+		}
+	})
+	t.Run("two reports cannot share one stream, and stdin is still drained", func(t *testing.T) {
+		in := &countingReader{r: strings.NewReader(`{}`)}
+		_, err := drainStdinReport(in, "-", reportFlag{{source: "semgrep", path: "-"}})
+		if err == nil {
+			t.Fatal("accepted two reports from one stdin")
+		}
+		if !in.drained {
+			t.Error("refused without draining stdin, which is the early exit that leaves an output plugin's writer hanging")
+		}
+	})
 }

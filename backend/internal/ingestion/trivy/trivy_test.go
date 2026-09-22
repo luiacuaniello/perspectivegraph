@@ -1,6 +1,7 @@
 package trivy
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -181,4 +182,75 @@ func FuzzParse(f *testing.F) {
 			}
 		}
 	})
+}
+
+// imageFrom parses a one-vulnerability report and returns its Image node, which is all
+// the naming tests look at.
+func imageFrom(t *testing.T, artifactName, artifactType, metadata string) ontology.Node {
+	t.Helper()
+	doc := `{"ArtifactName": ` + strconvQuote(artifactName) + `, "ArtifactType": ` + strconvQuote(artifactType) +
+		`, "Metadata": ` + metadata + `, "Results": [{"Target": "app", "Type": "jar", "Vulnerabilities": [
+		{"VulnerabilityID": "CVE-2021-44228", "PkgName": "log4j-core", "InstalledVersion": "2.14.1", "Severity": "CRITICAL"}]}]}`
+	events, err := New().Parse(strings.NewReader(doc), ingestion.Options{})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	for _, n := range events[0].Nodes {
+		if n.Label == ontology.LabelImage {
+			return n
+		}
+	}
+	t.Fatal("no image node")
+	return ontology.Node{}
+}
+
+func strconvQuote(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+// The name an image is joined on. An archive scan reports the FILE PATH as ArtifactName,
+// which joins no workload; the saved tag is recovered from Metadata instead - but only
+// ever in place of a path, never in place of a name somebody scanned by.
+func TestImageNameForArchiveScans(t *testing.T) {
+	const tagged = `{"Reference": "payments-api:1.0.0", "RepoTags": ["payments-api:1.0.0"]}`
+	for _, tc := range []struct {
+		name, artifact, artifactType, metadata string
+		want, source                           string
+		archive, note                          bool
+	}{
+		// Exactly what `trivy image --input /work/image.tar` wrote for a `docker save` tarball.
+		{"docker-save archive", "/work/image.tar", "container_image", tagged, "payments-api:1.0.0", "Metadata.Reference", true, false},
+		{"relative archive", "image.tar", "container_image", tagged, "payments-api:1.0.0", "Metadata.Reference", true, false},
+		{"compressed archive", "./out/image.tar.gz", "container_image", tagged, "payments-api:1.0.0", "Metadata.Reference", true, false},
+		{"windows path", `C:\ci\image.tar`, "container_image", tagged, "payments-api:1.0.0", "Metadata.Reference", true, false},
+		{"tags but no reference", "/work/image.tar", "container_image", `{"RepoTags": ["payments-api:1.0.0"]}`, "payments-api:1.0.0", "Metadata.RepoTags", true, false},
+		// Saved by image ID: nothing names it. Kept under the path, and flagged.
+		{"untagged archive", "/work/image.tar", "container_image", `{}`, "/work/image.tar", "", true, true},
+		// Scanned by name: the name is the join key and must not move, even though Trivy
+		// normalises the Reference to something else.
+		{"scanned by reference", "nginx", "container_image", `{"Reference": "nginx:latest", "RepoTags": ["nginx:latest"]}`, "nginx", "", false, false},
+		{"registry reference", "ghcr.io/acme/app:2.0", "container_image", tagged, "ghcr.io/acme/app:2.0", "", false, false},
+		// Not an image at all: a filesystem scan's ArtifactName is a path by design.
+		{"filesystem scan", ".", "filesystem", `{}`, ".", "", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			img := imageFrom(t, tc.artifact, tc.artifactType, tc.metadata)
+			if img.Name != tc.want {
+				t.Errorf("image named %q, want %q", img.Name, tc.want)
+			}
+			if img.ID != ontology.NewID(ontology.LabelImage, tc.want) {
+				t.Errorf("the id is not derived from the name, so the join would still miss")
+			}
+			if got, _ := img.Properties["name_source"].(string); got != tc.source {
+				t.Errorf("name_source = %q, want %q", got, tc.source)
+			}
+			if _, ok := img.Properties["scanned_archive"]; ok != tc.archive {
+				t.Errorf("scanned_archive present = %v, want %v", ok, tc.archive)
+			}
+			if _, ok := img.Properties["name_note"]; ok != tc.note {
+				t.Errorf("name_note present = %v, want %v", ok, tc.note)
+			}
+		})
+	}
 }
