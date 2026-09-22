@@ -33,7 +33,7 @@ export default function IntroBanner({ onDismiss }: { onDismiss: () => void }) {
       <button
         onClick={onDismiss}
         aria-label="Dismiss"
-        className="absolute right-3 top-3 grid h-6 w-6 place-items-center rounded-md text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+        className="absolute right-3 top-3 grid h-6 w-6 place-items-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-600"
       >
         <XIcon className="h-3.5 w-3.5" />
       </button>
@@ -51,9 +51,9 @@ export default function IntroBanner({ onDismiss }: { onDismiss: () => void }) {
           label="Internet-exposed (entry)"
           tone="bg-accent/12 text-accent"
         />
-        <span className="text-slate-400">→</span>
+        <span className="text-slate-500">→</span>
         <FlowChip icon={<LayersIcon className="h-3.5 w-3.5" />} label="your assets, CVEs, identities" tone="bg-slate-500/10 text-slate-600" />
-        <span className="text-slate-400">→</span>
+        <span className="text-slate-500">→</span>
         <FlowChip
           icon={<GemIcon className="h-3.5 w-3.5" />}
           label="Sensitive asset (target)"
@@ -96,7 +96,7 @@ export default function IntroBanner({ onDismiss }: { onDismiss: () => void }) {
         <Button variant="primary" size="md" onClick={onDismiss}>
           Got it
         </Button>
-        <span className="text-[12px] text-slate-400">You can reopen this from “How to read this” in the header.</span>
+        <span className="text-[12px] text-slate-500">You can reopen this from “How to read this” in the header.</span>
       </div>
     </section>
   );

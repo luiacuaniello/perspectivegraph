@@ -84,7 +84,7 @@
   --c-accent: 31 95 87; /* #1f5f57 fir - the single accent */
   --c-accent-strong: 22 74 68; /* #164a44 */
   --c-accent-soft: 230 239 237; /* #e6efed accent tint surface */
-  --c-muted: 111 106 98; /* #6f6a62 secondary text */
+  --c-muted: 109 104 97; /* #6d6861 secondary text - 4.5:1 or better on every light surface, the selected row included */
   --c-fg: 25 23 19; /* #191713 base text */
 
   /* The product's only red. It means "wrong, now": a route being walked in runtime,
@@ -96,7 +96,7 @@
   /* ── Direction B: status is a channel of its own ────────────────────────
      Colour encodes WHERE A ROUTE IS in its lifecycle - not how bad it is. Those
      were the same hue before, which is why nothing could be read at a glance. */
-  --c-status-new: 180 112 12; /* #b4700c untriaged */
+  --c-status-new: 149 93 10; /* #955d0a untriaged - 4.5:1 on every light surface; #b4700c was 3.3-4.0 */
   --c-status-triaged: 47 111 208; /* #2f6fd0 seen, decided */
   --c-status-fixing: 107 70 193; /* #6b46c1 a fix is open */
   --c-status-verified: 23 121 94; /* #17795e proven cut */
@@ -120,13 +120,15 @@
   --glass-blur: 8px;
 
   /* Warm neutral ramp, replacing the cool slate. Same names so no component had
-     to change; every border, label and heading in the app moves with it. */
+     to change; every border, label and heading in the app moves with it.
+     400 is for borders, fills and placeholders' surroundings only: it cannot reach 4.5:1
+     as small text in either theme, so text starts at 500 (WCAG 2.2 AA, 1.4.3). */
   --c-slate-50: 250 249 246;
   --c-slate-100: 242 239 233;
   --c-slate-200: 230 225 216;
   --c-slate-300: 211 204 191;
   --c-slate-400: 169 161 150;
-  --c-slate-500: 111 106 98;
+  --c-slate-500: 109 104 97;
   --c-slate-600: 86 81 74;
   --c-slate-700: 64 60 54;
   --c-slate-800: 42 39 35;
@@ -217,7 +219,8 @@
 /* Status colors stay Tailwind defaults in light; in dark the dark `-600/-700`
    text shades are too low-contrast on dark surfaces, so lighten them. The
    substring selector also covers alpha variants (e.g. text-amber-700/70). */
-.dark [class*="text-amber-700"] {
+.dark [class*="text-amber-700"],
+.dark [class*="text-amber-800"] {
   color: #fcd34d;
 }
 .dark [class*="text-amber-600"] {
@@ -234,6 +237,9 @@
 }
 .dark [class*="text-emerald-600"] {
   color: #34d399;
+}
+.dark [class*="text-indigo-700"] {
+  color: #a5b4fc;
 }
 .dark [class*="text-teal-700"] {
   color: #5eead4;

@@ -23,11 +23,11 @@ export default function EmptyState() {
           </div>
           <code className="block font-mono text-[13px] text-teal-700">make seed</code>
           <code className="mt-1 block font-mono text-[12px] text-slate-500">
-            make seed-discovery <span className="text-slate-400"># + Kubernetes, cloud network &amp; IAM privesc</span>
+            make seed-discovery <span className="text-slate-500"># + Kubernetes, cloud network &amp; IAM privesc</span>
           </code>
         </div>
 
-        <p className="mt-4 text-[12px] text-slate-400">
+        <p className="mt-4 text-[12px] text-slate-500">
           Paths appear within one analysis cycle (~30s) - this page refreshes itself.
         </p>
       </div>

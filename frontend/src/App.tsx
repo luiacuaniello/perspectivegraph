@@ -519,7 +519,7 @@ export default function App() {
           >
             <div className="mb-3 flex items-center justify-between">
               <span className="text-[12px] text-muted">Search assets and findings</span>
-              <kbd className="rounded border border-edge px-1.5 py-0.5 text-[12px] text-slate-400">esc</kbd>
+              <kbd className="rounded border border-edge px-1.5 py-0.5 text-[12px] text-slate-500">esc</kbd>
             </div>
             <SearchView enabled={data?.searchEnabled ?? false} />
           </div>

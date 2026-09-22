@@ -157,7 +157,7 @@ function CoverageStrip({ coverage, openRoutes }: { coverage?: IngestSource[] | n
         {coverage.map((c) => (
           <span key={c.source} className={c.stale ? "font-medium text-slate-900" : "text-slate-600"}>
             {c.source}
-            <span className={c.stale ? "text-slate-600" : "text-slate-400"}>
+            <span className={c.stale ? "text-slate-600" : "text-slate-500"}>
               {" "}
               {c.stale ? `silent ${c.silentFor}` : "current"}
             </span>

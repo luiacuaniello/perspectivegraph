@@ -235,7 +235,7 @@ export default function LoginGate({ children }: { children: ReactNode }) {
         )}
 
         {ssoAvailable && (
-          <div className="my-4 flex items-center gap-3 text-[12px] uppercase tracking-wide text-slate-400">
+          <div className="my-4 flex items-center gap-3 text-[12px] uppercase tracking-wide text-slate-500">
             <span className="h-px flex-1 bg-edge" />
             or use a token
             <span className="h-px flex-1 bg-edge" />
@@ -263,7 +263,7 @@ export default function LoginGate({ children }: { children: ReactNode }) {
           Continue
         </button>
 
-        <p className="mt-4 text-[12px] leading-relaxed text-slate-400">
+        <p className="mt-4 text-[12px] leading-relaxed text-slate-500">
           The token is stored only in this tab (sessionStorage) and sent as a Bearer credential. It is never
           written to disk or the bundle.
         </p>

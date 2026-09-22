@@ -49,7 +49,7 @@ export default function SearchView({ enabled = true }: { enabled?: boolean }) {
     return (
       <div className="grid h-full place-items-center">
         <div className="max-w-lg rounded-2xl border border-edge bg-panel shadow-card p-7 text-center">
-          <div className="mx-auto mb-3 grid h-11 w-11 place-items-center rounded-xl bg-slate-500/10 text-slate-400">
+          <div className="mx-auto mb-3 grid h-11 w-11 place-items-center rounded-xl bg-slate-500/10 text-slate-500">
             <SearchIcon className="h-5 w-5" />
           </div>
           <h2 className="text-base font-semibold text-slate-900">Full-text search is off</h2>
@@ -92,7 +92,7 @@ export default function SearchView({ enabled = true }: { enabled?: boolean }) {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search assets & findings - try “log4j”, “PII”, “secret”, a CVE id…"
-          className="w-full rounded-xl border border-edge bg-panel shadow-card py-3 pl-10 pr-4 text-sm text-slate-800 placeholder:text-slate-400 outline-hidden transition focus:border-accent focus:ring-2 focus:ring-accent/15"
+          className="w-full rounded-xl border border-edge bg-panel shadow-card py-3 pl-10 pr-4 text-sm text-slate-800 placeholder:text-slate-500 outline-hidden transition focus:border-accent focus:ring-2 focus:ring-accent/15"
         />
         {busy && (
           <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[12px] text-slate-500">
@@ -151,7 +151,7 @@ export default function SearchView({ enabled = true }: { enabled?: boolean }) {
       )}
 
       {!error && hits === null && (
-        <div className="grid flex-1 place-items-center text-sm text-slate-400">
+        <div className="grid flex-1 place-items-center text-sm text-slate-500">
           Type to search the indexed environment.
         </div>
       )}

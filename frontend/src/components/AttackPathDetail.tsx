@@ -147,7 +147,7 @@ function TriageControl({ path, onTriaged }: { path: AttackPath; onTriaged?: () =
               </option>
             ))}
           </select>
-          <span className="text-[12px] text-slate-400">{REASONS.find((r) => r.value === reason)?.hint}</span>
+          <span className="text-[12px] text-slate-500">{REASONS.find((r) => r.value === reason)?.hint}</span>
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-muted">Owner (accountable)</span>
@@ -544,8 +544,15 @@ function ArtifactCard({ r, tone = "emerald" }: { r: Artifact; tone?: "emerald" |
       </div>
       <div className="px-4 py-3">
         <p className="mb-2 text-xs leading-relaxed text-muted">{r.rationale}</p>
-        <div className="mb-1 font-mono text-[12px] text-slate-400">{r.filename}</div>
-        <pre className="max-h-72 overflow-auto rounded-lg bg-ink p-3 font-mono text-[12px] leading-relaxed text-slate-600">{r.content}</pre>
+        <div className="mb-1 font-mono text-[12px] text-slate-500">{r.filename}</div>
+        <pre
+          tabIndex={0}
+          role="region"
+          aria-label={`Generated fix: ${r.filename}`}
+          className="max-h-72 overflow-auto rounded-lg bg-ink p-3 font-mono text-[12px] leading-relaxed text-slate-600"
+        >
+          {r.content}
+        </pre>
       </div>
     </div>
   );
@@ -850,7 +857,7 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
                   {(whatIf.result.afterRisk.anyCompromiseProbability * 100).toFixed(1)}%
                 </span>
               </span>
-              <span className="text-slate-400">·</span>
+              <span className="text-slate-500">·</span>
               <span>
                 {whatIf.result.riskReduction > 0.0005 ? (
                   <span className="text-emerald-700">↓ {(whatIf.result.riskReduction * 100).toFixed(1)} pts removed</span>
@@ -858,7 +865,7 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
                   <span className="text-amber-700">no global drop - other paths still reach a sensitive asset</span>
                 )}
               </span>
-              <span className="text-slate-400">·</span>
+              <span className="text-slate-500">·</span>
               <span>
                 {whatIf.result.after.length} attack path{whatIf.result.after.length === 1 ? "" : "s"} remain
               </span>
@@ -886,7 +893,7 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
                 // edge were clipped - the ATT&CK technique and the weight basis among them.
                 <div className="group/step my-1 ml-4 flex flex-wrap items-center gap-x-2 gap-y-1 border-l border-dashed border-edge py-1.5 pl-5">
                   <span className="rounded-sm bg-slate-500/10 px-2 py-0.5 font-mono text-[12px] text-slate-500">{path.steps[i].edgeType}</span>
-                  <span className="text-[12px] tabular-nums text-slate-400">p = {path.steps[i].probability.toFixed(2)}</span>
+                  <span className="text-[12px] tabular-nums text-slate-500">p = {path.steps[i].probability.toFixed(2)}</span>
                   {path.steps[i].attack && (
                     <a
                       href={path.steps[i].attack!.url}
@@ -915,7 +922,7 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
                   <button
                     onClick={() => simulateCut(path.steps[i])}
                     disabled={cutting !== null}
-                    className="ml-1 inline-flex items-center gap-1 rounded-sm border border-edge px-1.5 py-0.5 text-[12px] text-slate-400 opacity-0 transition hover:border-accent/50 hover:text-accent focus-visible:opacity-100 group-hover/step:opacity-100 pointer-coarse:opacity-100 disabled:opacity-40"
+                    className="ml-1 inline-flex items-center gap-1 rounded-sm border border-edge px-1.5 py-0.5 text-[12px] text-slate-500 opacity-0 transition hover:border-accent/50 hover:text-accent focus-visible:opacity-100 group-hover/step:opacity-100 pointer-coarse:opacity-100 disabled:opacity-40"
                     title="Simulate cutting this edge and see the residual risk"
                   >
                     {cutting === `${path.steps[i].from}->${path.steps[i].to}` ? (

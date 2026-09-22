@@ -201,7 +201,7 @@ export function TopBar({
             >
               <SearchIcon className="h-4 w-4" />
               <span className="hidden lg:inline">Search</span>
-              <kbd className="hidden rounded border border-edge px-1.5 text-[12px] tabular-nums text-slate-400 lg:inline">⌘K</kbd>
+              <kbd className="hidden rounded border border-edge px-1.5 text-[12px] tabular-nums text-slate-500 lg:inline">⌘K</kbd>
             </button>
           )}
           {children}

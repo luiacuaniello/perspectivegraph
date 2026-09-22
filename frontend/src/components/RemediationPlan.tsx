@@ -83,7 +83,12 @@ function FixRow({ fix, rank, cumulative }: { fix: Fix; rank: number; cumulative:
               {copied ? "copied" : "copy"}
             </button>
           </div>
-          <pre className="max-h-72 overflow-auto rounded-lg bg-ink p-3 font-mono text-[12px] leading-relaxed text-slate-600">
+          <pre
+            tabIndex={0}
+            role="region"
+            aria-label={`Generated fix: ${fix.filename}`}
+            className="max-h-72 overflow-auto rounded-lg bg-ink p-3 font-mono text-[12px] leading-relaxed text-slate-600"
+          >
             {fix.content}
           </pre>
         </div>

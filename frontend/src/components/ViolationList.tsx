@@ -65,7 +65,7 @@ export default function ViolationList({ violations }: { violations: Violation[] 
                       key={n.id}
                       className="inline-flex items-center gap-1 rounded-md border border-edge bg-ink px-2 py-1 text-[12px] text-slate-600"
                     >
-                      <span className="text-slate-400">{n.label} ·</span>
+                      <span className="text-slate-500">{n.label} ·</span>
                       {n.name}
                       {n.internetExposed && <GlobeIcon className="h-3 w-3 text-accent" />}
                       {n.crownJewel && <GemIcon className="h-3 w-3 text-amber-700" />}

@@ -367,6 +367,8 @@ export default function GraphCanvas({ nodes, edges, highlightNodes, highlightEdg
     <div className="relative flex w-full flex-col gap-2 sm:block sm:h-full">
       <div
         ref={containerRef}
+        role="img"
+        aria-label="Graph of this route and the assets around it. The same route is listed hop by hop, with each probability, in the detail view."
         className="graph-canvas-bg h-[24rem] w-full shrink-0 rounded-xl border border-[#1c2632] bg-[#0a0f14] shadow-card sm:h-full"
       />
 

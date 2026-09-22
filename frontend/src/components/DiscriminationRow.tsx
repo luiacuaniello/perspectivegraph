@@ -34,7 +34,7 @@ function Line({ label, tip, d, emptyText }: { label: string; tip: string; d?: Di
         <>
           <span
             data-testid={`${label}-auc`}
-            className={`text-[12px] tabular-nums ${JUDGED.has(d.verdict) ? "text-slate-700" : "text-slate-400"}`}
+            className={`text-[12px] tabular-nums ${JUDGED.has(d.verdict) ? "text-slate-700" : "text-slate-500"}`}
             title={`${d.positives} confirmed · ${d.negatives} refuted · 95% interval ${d.aucLow?.toFixed(2)}–${d.aucHigh?.toFixed(2)}`}
           >
             AUC {d.auc!.toFixed(2)}{" "}
@@ -45,7 +45,7 @@ function Line({ label, tip, d, emptyText }: { label: string; tip: string; d?: Di
           <span className={`rounded-md px-1.5 py-0.5 text-[12px] font-medium ${style.cls}`}>{style.label}</span>
         </>
       ) : (
-        <span className="text-[12px] text-slate-400">{emptyText}</span>
+        <span className="text-[12px] text-slate-500">{emptyText}</span>
       )}
     </div>
   );

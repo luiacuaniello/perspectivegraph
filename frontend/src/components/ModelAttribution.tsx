@@ -15,7 +15,7 @@ export function ModelAttribution({ answer }: { answer: AIAnswer }) {
   return (
     <p className="mt-2 text-[12px] text-slate-500">
       Written by <span className="font-medium text-slate-600">{answer.model}</span>
-      {answer.provider && <span className="text-slate-400"> · {answer.provider}</span>} · grounded in your current
+      {answer.provider && <span className="text-slate-500"> · {answer.provider}</span>} · grounded in your current
       attack paths, and an estimate rather than a measurement
     </p>
   );

@@ -43,7 +43,7 @@ describe("DiscriminationRow", () => {
     render(<DiscriminationRow discrimination={thin} priorityDiscrimination={null} />);
     const fig = screen.getByTestId("Score order-auc");
     expect(fig).toHaveTextContent("AUC 1.00");
-    expect(fig.className).toContain("text-slate-400");
+    expect(fig.className).toContain("text-slate-500");
     expect(screen.getByText("insufficient data")).toBeInTheDocument();
   });
 });

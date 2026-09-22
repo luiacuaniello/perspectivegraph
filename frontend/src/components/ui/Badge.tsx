@@ -5,7 +5,7 @@ export type Tone = "neutral" | "danger" | "warn" | "ok" | "info" | "accent";
 const TONE: Record<Tone, string> = {
   neutral: "bg-slate-500/10 text-slate-600",
   danger: "bg-red-500/15 text-red-700",
-  warn: "bg-amber-500/15 text-amber-700",
+  warn: "bg-amber-500/15 text-amber-800",
   ok: "bg-emerald-500/15 text-emerald-700",
   info: "bg-accent/15 text-accent",
   accent: "bg-accent/15 text-accent",
