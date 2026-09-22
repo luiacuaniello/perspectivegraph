@@ -9,6 +9,19 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.18.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.17.0...v1.18.0) (2026-09-22)
+
+
+### Features
+
+* install the merge gate as a Trivy plugin ([#246](https://github.com/luiacuaniello/perspectivegraph/issues/246)) ([19bddba](https://github.com/luiacuaniello/perspectivegraph/commit/19bddba33ecfa5f6d18a46e15595ef048fef61ae))
+
+
+### Bug Fixes
+
+* **dashboard:** say what the page is when a link to it is shared ([#244](https://github.com/luiacuaniello/perspectivegraph/issues/244)) ([6762f90](https://github.com/luiacuaniello/perspectivegraph/commit/6762f90808bfb003ffe3eda67b94f23a5f80c291))
+* **gate:** join Trivy archive scans to their workload, and read a report from stdin in local mode ([#243](https://github.com/luiacuaniello/perspectivegraph/issues/243)) ([0f84b4c](https://github.com/luiacuaniello/perspectivegraph/commit/0f84b4c3ddfa022adc74a1ee4e84c59812536728))
+
 ## [1.17.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.16.1...v1.17.0) (2026-09-19)
 
 
