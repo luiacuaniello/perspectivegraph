@@ -84,9 +84,9 @@ Prefer not to build? The release images are published to GHCR (`latest` also tra
 newest release; the pinned tag is the one to use if you care about reproducibility):
 
 ```bash
-docker pull ghcr.io/luiacuaniello/perspectivegraph:v1.18.0 # x-release-please-version
-docker pull ghcr.io/luiacuaniello/perspectivegraph-dashboard:v1.18.0 # x-release-please-version
-docker pull ghcr.io/luiacuaniello/perspectivegraph-postgres:v1.18.0 # x-release-please-version
+docker pull ghcr.io/luiacuaniello/perspectivegraph:v1.18.1 # x-release-please-version
+docker pull ghcr.io/luiacuaniello/perspectivegraph-dashboard:v1.18.1 # x-release-please-version
+docker pull ghcr.io/luiacuaniello/perspectivegraph-postgres:v1.18.1 # x-release-please-version
 ```
 
 On Kubernetes, the Helm chart is published the same way - no clone needed, and a version
@@ -97,7 +97,7 @@ people who wrote the software rather than a third party repackaging it:
 
 ```bash
 helm install perspectivegraph oci://ghcr.io/luiacuaniello/charts/perspectivegraph \
-  --version 1.18.0 # x-release-please-version
+  --version 1.18.1 # x-release-please-version
 ```
 
 Images and chart are signed with cosign keyless and carry an SPDX SBOM plus a SLSA build
@@ -319,7 +319,7 @@ spelled out in [positioning](docs/POSITIONING.md). It collects **no telemetry**:
 it opens no outbound connection at all - GitHub, the AI assistant and the KEV/EPSS feeds each
 stay dark until you set a key or a flag (`THREATINTEL` is `off` by default).
 
-**What is measured today, as of v1.18.0.** <!-- x-release-please-version --> Two things, both
+**What is measured today, as of v1.18.1.** <!-- x-release-please-version --> Two things, both
 reproducible without taking anyone's word for them.
 
 `make bench-cloudgoat` runs four [CloudGoat-shaped scenarios](backend/testdata/cloudgoat/README.md)

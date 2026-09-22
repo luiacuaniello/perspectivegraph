@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.18.1](https://github.com/luiacuaniello/perspectivegraph/compare/v1.18.0...v1.18.1) (2026-09-22)
+
+
+### Bug Fixes
+
+* **dashboard:** meet WCAG 2.2 AA contrast and keyboard access, and keep it that way ([#247](https://github.com/luiacuaniello/perspectivegraph/issues/247)) ([e0055dd](https://github.com/luiacuaniello/perspectivegraph/commit/e0055ddb15eda767446b8aee753b645f42e19831))
+
 ## [1.18.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.17.0...v1.18.0) (2026-09-22)
 
 
