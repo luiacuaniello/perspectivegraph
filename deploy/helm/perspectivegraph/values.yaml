@@ -171,7 +171,7 @@ nats:
   # That userland was twenty of this image's twenty-three findings, two of them high; what
   # is left is the binary itself. A broker reachable from every workload in the namespace
   # is a poor place to keep a shell and a package manager it never uses.
-  image: nats:2.14.7-scratch@sha256:e8c4a3d844994c8a9740e42f956d4b41461618acf591b62268300432bb6a3780
+  image: nats:2.15.0-scratch@sha256:c0d27f3054601a99055aa5ec897b0a55bf1869ae50f454e659acfbbea11d2ab7
   stream: PERSPECTIVE
   subject: perspective.events.*
   # App-level TLS to a TLS-enabled NATS (typically external; use a tls:// URL).
