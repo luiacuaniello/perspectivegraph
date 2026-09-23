@@ -3,10 +3,6 @@
 Where to take a question, a bug or a security report - then what is supported, for how
 long, and what to do if your organisation cannot simply "run the latest".
 
-This document exists because "supported versions: the latest release" is a *policy*, and a
-policy a change-advisory board reads has to say more than a maintainer assumes. Everything
-below is written so it can be checked or refused rather than taken on trust.
-
 ## Where to go
 
 The routing, first, because GitHub surfaces this file to someone who is already
@@ -137,10 +133,6 @@ the risk, because no fix will be issued for it here.
 - **There is no commercial support, no SLA and no paid tier.** Nobody is on call.
 - **Issues and pull requests are best-effort**, answered when the maintainer has time. The
   only stated response times in this project are for security reports.
-- **Security reports do not go in public issues** - use private reporting, see
-  [SECURITY.md](SECURITY.md).
-- Questions about *using* it belong in [Discussions](https://github.com/luiacuaniello/perspectivegraph/discussions),
-  not in issues - see the routing at the top.
 
 ## Continuity
 

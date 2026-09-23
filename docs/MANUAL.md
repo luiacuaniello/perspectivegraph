@@ -530,9 +530,6 @@ would otherwise be built), so there is no Go or Node toolchain to install and no
 measured at 23 seconds from an empty image cache. `make demo-build` is the same demo from
 your working tree, for when you are changing the code.
 
-The [README's walk-through](../README.md#see-the-whole-engine-in-90-seconds) shows what
-that prints, and how to turn the fix into a real PR.
-
 **Or step by step (everything in containers):**
 
 ```bash
@@ -620,6 +617,90 @@ refusal is logged with the slug it declined.
 Everything below - the connectors, topology discovery, scoring, runtime
 confirmation, the dashboard - exists so that red check is *true*: a real, reachable
 path, not noise.
+
+#### The merge gate: GitHub Action, CLI and Trivy plugin
+
+**Local mode needs no deployment.** The runner reads your estate read-only, ingests this pull
+request's scan, and answers in-process with the same engine:
+
+```yaml
+- uses: luiacuaniello/perspectivegraph@v1
+  with:
+    mode: local
+    aws-region: eu-west-1     # read-only; give the job an OIDC role with SecurityAudit
+    report: trivy.json
+```
+
+An estate is not optional, and that is the point: without one there are no attack paths, only
+a flat list of findings - the thing this replaces. If you collect your estate on its own
+schedule, pass `estate: estate.json` (what `perspectivegraph awscollect -json` writes) instead
+of `aws-region`.
+
+**Server mode points at a running engine**, which keeps the graph across pull requests, plus
+triage, history and the dashboard:
+
+```yaml
+- uses: luiacuaniello/perspectivegraph@v1
+  with:
+    api: https://perspectivegraph.internal
+    ingest: https://perspectivegraph.internal:8081
+    report: trivy.json
+    hmac-secret: ${{ secrets.PG_INGEST_HMAC }}
+```
+
+Both modes run the same normalizer, the same pathfinder and the same triage priority, and
+return the same verdict - a test asserts they agree path-for-path on identical input.
+
+The scan is not the only thing a pull request can send: a rendered manifest set
+(`helm template`, `kustomize build`) posted to `/ingest/k8s?slug=&sha=` attributes the objects
+it contains to that commit, so a change that publishes a Service fails the check the same way a
+vulnerable dependency does. That matters because manifests are how most routes actually open.
+
+**It has three outcomes, and the third is the point.** Every two-state gate gives a pipeline
+whose scanner output never arrived the same green tick as one that is genuinely clean. Here
+that is `unknown`, and it fails the build by default:
+
+| Verdict | Exit | Meaning |
+| --- | --- | --- |
+| `clean` | 0 | The engine analysed this commit and found no path through it |
+| `blocked` | 1 | Critical attack paths run through it - the check names them |
+| `unknown` | 2 | **Nobody analysed it.** The scan, the ingest or the SHA is wrong |
+
+Set `allow-unknown: true` while you roll the gate out. Leaving it on afterwards turns a broken
+ingest back into a green check, which is the one thing this gate is for.
+
+**Without GitHub Actions**, the action is a thin wrapper over one command:
+
+```bash
+perspectivegraph gate -local -aws-region eu-west-1 \
+  -report trivy.json -slug owner/name -sha "$COMMIT_SHA"
+```
+
+**As a Trivy plugin**, the answer arrives where the CVE list does:
+
+```bash
+trivy plugin install github.com/luiacuaniello/perspectivegraph
+trivy image -f json myapp:pr-42 | trivy perspectivegraph gate -local -aws-region eu-west-1 -report -
+```
+
+Run like that, it keeps the gate's exit codes. As an output plugin
+(`-o plugin=perspectivegraph --output-plugin-arg "gate ..."`) it works the same way, but Trivy
+folds every verdict other than clean into exit 1.
+
+**Two things to settle before wiring it up.**
+
+- **Fork pull requests.** The gate needs secrets, and GitHub gives a fork's `pull_request` run
+  none - so a fork PR cannot be analysed and fails closed as `unknown`. Do **not** reach for
+  `pull_request_target` to work around it: that event runs with your secrets against the
+  contributor's code, and in local mode your secrets are cloud credentials. Run the gate on
+  `push` to your own branches instead, and let fork PRs go without it.
+- **Public repositories.** When it blocks, the check prints the route - real asset names, the
+  CVE linking them, the sensitive asset at the end - into the job log and summary, which on a
+  public repository are public. Use `soft-fail` and post the detail somewhere private, or keep
+  the gate on a private repository.
+
+Full input reference in [`action.yml`](../action.yml); the underlying query is `prVerdict` in
+the [API schema](api/schema.graphql).
 
 ### Agentless connectors: pull, don't wait for an upload
 
@@ -842,6 +923,50 @@ Because the graph *is* the org's attack map, sending a compacted view of it to a
 external model is a deliberate opt-in: the feature is off until you set the key,
 and **every AI call is audited** (`ai.query` / `ai.summary` / `ai.explain`) into
 the same tamper-evident log as the rest of the read path.
+
+### Letting an agent query it (MCP)
+
+A language model is weak at exactly what this engine is good at: it cannot enumerate thousands
+of edges reliably, it does not run Dijkstra, and asked for "the attack paths in my account" it
+will produce plausible routes that do not exist. So the engine speaks
+[MCP](https://modelcontextprotocol.io) - an agent calls it and reasons over answers it could not
+have invented.
+
+```bash
+make mcp    # or: perspectivegraph mcp --api http://localhost:8080
+```
+
+```json
+{"mcpServers": {"perspectivegraph": {
+  "command": "perspectivegraph",
+  "args": ["mcp", "--api", "http://localhost:8080"]}}}
+```
+
+No engine running? `perspectivegraph mcp --api https://demo.a3thinker.it` answers every tool -
+`simulate_fix` included - from the public demo's sample data, with no credential.
+
+Eight tools: `get_posture`, `list_attack_paths`, `explain_attack_path`, `routes_to_target`,
+`list_fixes`, **`simulate_fix`**, `search_assets`, `get_score_trust`. The one worth the
+integration is `simulate_fix` - it re-runs the whole simulation with the given edges cut and
+reports what actually changes, settling "would this help" with a deterministic counterfactual
+instead of an argument.
+
+The surface is **read-only**: nothing suppresses a path, opens a PR or records a verdict,
+because an agent that can silently accept a risk is a liability rather than a feature. Every
+tool declares that on the wire (`readOnlyHint`), so a host can decide what to run unattended
+without taking this paragraph's word for it - and a test fails if a tool is ever added without
+that decision. The descriptions also tell the model the scores are expert estimates, and to call
+`get_score_trust` before quoting one as a probability. Every tool is run against the real engine
+in the test suite, not only a stub, so a query naming a field the schema lacks fails the build
+instead of an agent's call. `search_assets` asks the engine whether full-text search is on:
+without OpenSearch an agent is told so, instead of receiving an empty result that reads as "no
+asset by that name".
+
+The server is in the official [MCP Registry](https://registry.modelcontextprotocol.io) as
+`io.github.luiacuaniello/perspectivegraph`, published from every stable release, and on
+[Glama](https://glama.ai/mcp/servers/luiacuaniello/perspectivegraph), which builds it, inspects
+the tools it exposes and grades their definitions - a grade of the MCP surface, not of the
+engine's scores.
 
 ### Honest probabilities: provenance, not false precision
 

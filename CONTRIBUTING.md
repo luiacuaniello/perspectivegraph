@@ -17,7 +17,12 @@ backend/                 Go backend (CGO_ENABLED=0 → static binary, pure-Go re
                          `verify-audit <file>` subcommands.
   internal/
     ingestion/           webhook server + collectors: trivy, semgrep, custodian,
-                         falco, build, supplychain, k8s, cloudnet, iam, sso
+                         falco, build, supplychain, k8s, cloudnet, iam, sso, dataclass
+    connector/           agentless pull connectors (AWS live, Azure fixtures)
+    redteam/             AWS policy-simulator oracle (`redteam`, `-compare`)
+    benchmark/           CloudGoat-shaped precision/recall battery
+    mcp/                 read-only MCP server over the GraphQL API
+    ai/                  optional Claude / OpenAI-compatible assistant
     broker/              NATS JetStream wrapper (stream/consumer, dead-letter, backoff)
     normalization/       identity resolution (join confidence) → graph upsert
     graph/               Store interface + memory & Apache AGE backends + per-tenant Manager
@@ -72,7 +77,7 @@ make test            # Go tests (CGO disabled for static, portable binaries)
 cd backend
 GOTOOLCHAIN=go1.26.8 CGO_ENABLED=0 go build ./... && go vet ./... && go test ./...
 go run golang.org/x/vuln/cmd/govulncheck@latest ./...
-go run github.com/securego/gosec/v2/cmd/gosec@latest -exclude=G104,G404,G401,G505,G304 ./...
+go run github.com/securego/gosec/v2/cmd/gosec@latest -quiet -exclude=G104 ./...
 
 # Frontend: types, build, unit tests
 cd ../frontend && npx tsc --noEmit && npm run build && npm test
@@ -109,21 +114,10 @@ different tools correlate onto the same asset.
 
 PerspectiveGraph is developed by a human working with Claude (Anthropic). Design
 decisions, the threat model and what ships are the maintainer's; a large share of
-the implementation and its tests were written in that collaboration.
-
-That is stated here for the same reason the engine reports its own calibration:
-you should not have to take a claim on trust when it can be checked. Every gate is
-reproducible on your machine, and they are what the project actually asks to be
-judged on:
-
-```bash
-make test              # backend + frontend suites
-make bench-cloudgoat   # precision/recall against known-vulnerable scenarios
-cd backend && go run golang.org/x/vuln/cmd/govulncheck@latest ./...
-cd backend && go run github.com/securego/gosec/v2/cmd/gosec@latest -quiet -exclude=G104 ./...
-```
-
-Contributions written the same way are welcome; hold them to the same gates.
+the implementation and its tests were written in that collaboration. It is said here
+so it does not have to be taken on trust: the gates above are what the project asks to
+be judged on, and they run on your machine. Contributions written the same way are
+welcome; hold them to the same gates.
 
 ## Signing your work
 

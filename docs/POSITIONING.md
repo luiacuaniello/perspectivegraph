@@ -199,16 +199,16 @@ The three tracks are also never merged: path-scoped, target-scoped and edge-scop
 verdicts grade different events, and pooling them would bias the report.
 
 Two residues are open rather than closed. The in-sample fallback above is real whenever
-the store is small. And the lab that Milestone 3 builds will need its own separation: if
-the scenarios that shape the heuristics are the scenarios that get exploited, the
-resulting calibration measures the fit, not the model.
+the store is small. And the exploitation lab specified in `deploy/redteam-lab` will need its
+own separation once it is built: if the scenarios that shape the heuristics are the
+scenarios that get exploited, the resulting calibration measures the fit, not the model.
 
 ## Verifying the claims
 
 None of the above asks to be taken on trust. Note which question each command answers:
 
 ```bash
-make test              # backend + frontend suites
+make test              # the Go suites (the dashboard's: cd frontend && npm test)
 make bench-cloudgoat   # DETECTION: precision/recall against known-vulnerable scenarios
 make seed-validation   # CALIBRATION + DISCRIMINATION on synthetic verdicts - proves the instrument, not the engine
 cd backend && go run golang.org/x/vuln/cmd/govulncheck@latest ./...
