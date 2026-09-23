@@ -61,7 +61,8 @@ is signed with cosign and carries SLSA provenance, and two commands
 Add `-compare` and it also runs the engine over the same account, **exiting non-zero where the
 two disagree**. That is how the engine's
 [first real false positive](docs/MANUAL.md#the-engines-first-demonstrated-false-positive---found-then-closed)
-was found, and how it stays fixed. From here, [how to evaluate this](docs/EVALUATION.md) walks to a
+was found, and how it stays fixed. If it disagrees on yours,
+[report it](https://github.com/luiacuaniello/perspectivegraph/issues/new?template=engine-vs-aws.yml): no report is more useful. From here, [how to evaluate this](docs/EVALUATION.md) walks to a
 verdict on your own estate in stages that each end in an answer.
 
 ## See the whole engine in 90 seconds

@@ -27,7 +27,7 @@ Roughly in order of what moves the project:
 
 1. **A false positive or a miss with a reproducer.** Something the engine claims that is not
    true, or a route it should have found and did not, is the most valuable report this
-   project can receive - and the
+   project can receive - the [field report](https://github.com/luiacuaniello/perspectivegraph/issues/new?template=engine-vs-aws.yml) template asks for exactly that - and the
    [CloudGoat benchmark](backend/testdata/cloudgoat/README.md) is where a fix for one gets
    pinned so it stays fixed.
 2. **Something a real deployment cannot do.** A gap found by running it beats a gap found by

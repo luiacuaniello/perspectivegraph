@@ -14,6 +14,7 @@ the New Issue page actually offers.
 |---|---|
 | a question, an idea, or "is this supposed to work like this?" | [Discussions](https://github.com/luiacuaniello/perspectivegraph/discussions) |
 | something that looks like a bug | the **Bug report** issue template |
+| a `redteam -compare` run - a disagreement with AWS, or a clean run | the **Field report: engine vs AWS** issue template |
 | a feature or a change in behaviour to propose | the **Feature request** issue template - and read the [roadmap](ROADMAP.md) first, so we can agree on the shape before you write code |
 | a security problem | **never a public issue** - [private reporting](https://github.com/luiacuaniello/perspectivegraph/security/advisories/new), see [SECURITY.md](SECURITY.md) |
 

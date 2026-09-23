@@ -1,0 +1,74 @@
+name: "Field report: engine vs AWS"
+description: You ran `perspectivegraph redteam -compare` on a real account. A disagreement is the most useful report this project can get; a clean run is worth reporting too.
+title: "field report: "
+labels: ["field-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for running it. `-compare` puts the engine's escalation claims next to what AWS's own policy evaluator says, and every disagreement is a false positive or a miss. That is how the engine's first real false positive, a permissions boundary it ignored, was found.
+
+        **Before you paste anything:** the table `-compare` prints shows `role/<name>` without the account ID, but policy documents usually contain full ARNs. Remove account IDs, and rename roles or policies whose names say something about your organisation. If you would rather not post the details in public, say so below and the maintainer will ask for them privately.
+
+  - type: dropdown
+    id: outcome
+    attributes:
+      label: What did the comparison show?
+      options:
+        - "A false positive: the engine says ESCALATES, AWS says no privesc"
+        - "A miss: the engine says no privesc, AWS says ESCALATES"
+        - "Every settled principal agreed"
+        - "Something else: an error, a crash, or a result that makes no sense"
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: The output
+      description: The table `-compare` printed, or at least the rows marked DISAGREE and the summary line. Remove account IDs.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: policies
+    attributes:
+      label: What the disagreeing principal is allowed to do
+      description: |
+        For each DISAGREE row, the statements that matter: identity policies, the permissions boundary, and any SCP or Condition you know applies. The smallest policy that still reproduces the disagreement is ideal. Redacted.
+      render: json
+
+  - type: dropdown
+    id: context
+    attributes:
+      label: What applies to this account?
+      multiple: true
+      options:
+        - A standalone account
+        - A member of an AWS Organization with SCPs
+        - Principals with permissions boundaries
+        - Policies with Condition keys (MFA, aws:SourceIp, tags...)
+        - A lab account (IAM Vulnerable, CloudGoat or similar)
+
+  - type: textarea
+    id: judgement
+    attributes:
+      label: Which side do you think is right, and why?
+      description: Optional, but it is what turns a disagreement into a fix. "I don't know" is a fine answer.
+
+  - type: input
+    id: version
+    attributes:
+      label: Release
+      description: The release you downloaded, for example v1.18.1, or the commit if you built it.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: redacted
+    attributes:
+      label: Before submitting
+      options:
+        - label: I removed account IDs and anything else I would not want public.
+          required: true

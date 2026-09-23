@@ -43,7 +43,9 @@ your real principals - and where it does not. Add `-compare` and it runs the eng
 the same account and **exits non-zero on every disagreement**; each one is a false positive
 or a miss, in the engine or in your assumptions.
 
-**Done when** you have looked at one disagreement and decided which side was right.
+**Done when** you have looked at one disagreement and decided which side was right. If the
+engine was the one that was wrong, [report it](https://github.com/luiacuaniello/perspectivegraph/issues/new?template=engine-vs-aws.yml) - it is the most useful thing you can send
+this project, and a clean run is worth reporting too.
 
 ## Stage 1 - an afternoon, still no deployment
 
