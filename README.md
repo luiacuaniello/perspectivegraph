@@ -82,7 +82,7 @@ On Kubernetes, the chart is an
 
 ```bash
 helm install perspectivegraph oci://ghcr.io/luiacuaniello/charts/perspectivegraph \
-  --version 1.18.1 # x-release-please-version
+  --version 1.19.0 # x-release-please-version
 ```
 
 The chart and the three images it runs (`ghcr.io/luiacuaniello/perspectivegraph`, `-dashboard`
@@ -193,7 +193,7 @@ score as what the model believes and how sure it says it is, not as a measured f
 to find and cut routes; don't put its percentage in front of a board.
 [Positioning](docs/POSITIONING.md) spells out what is and isn't claimed.
 
-**What is measured today, as of v1.18.1.** <!-- x-release-please-version -->
+**What is measured today, as of v1.19.0.** <!-- x-release-please-version -->
 `make bench-cloudgoat` grades the engine in CI on four
 [CloudGoat-shaped scenarios](backend/testdata/cloudgoat/README.md):
 

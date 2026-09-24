@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.19.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.18.1...v1.19.0) (2026-09-24)
+
+
+### Features
+
+* a bounded event bus, event writes in one locked transaction, and a budget for heavy API analyses ([#251](https://github.com/luiacuaniello/perspectivegraph/issues/251)) ([25a4f0e](https://github.com/luiacuaniello/perspectivegraph/commit/25a4f0e138e01269b74a4be631dc603ac23f4a97))
+
 ## [1.18.1](https://github.com/luiacuaniello/perspectivegraph/compare/v1.18.0...v1.18.1) (2026-09-22)
 
 

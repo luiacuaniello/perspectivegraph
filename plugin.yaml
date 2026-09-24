@@ -11,7 +11,7 @@
 # points at a release other than the current one. Windows ships as a .zip and Trivy
 # plugins take tar.gz only, so it is not listed.
 name: perspectivegraph
-version: "1.18.1" # x-release-please-version
+version: "1.19.0" # x-release-please-version
 repository: github.com/luiacuaniello/perspectivegraph
 maintainer: luiacuaniello
 output: true
@@ -36,20 +36,20 @@ platforms:
   - selector:
       os: linux
       arch: amd64
-    uri: https://github.com/luiacuaniello/perspectivegraph/releases/download/v1.18.1/perspectivegraph_linux_amd64.tar.gz # x-release-please-version
+    uri: https://github.com/luiacuaniello/perspectivegraph/releases/download/v1.19.0/perspectivegraph_linux_amd64.tar.gz # x-release-please-version
     bin: ./perspectivegraph
   - selector:
       os: linux
       arch: arm64
-    uri: https://github.com/luiacuaniello/perspectivegraph/releases/download/v1.18.1/perspectivegraph_linux_arm64.tar.gz # x-release-please-version
+    uri: https://github.com/luiacuaniello/perspectivegraph/releases/download/v1.19.0/perspectivegraph_linux_arm64.tar.gz # x-release-please-version
     bin: ./perspectivegraph
   - selector:
       os: darwin
       arch: amd64
-    uri: https://github.com/luiacuaniello/perspectivegraph/releases/download/v1.18.1/perspectivegraph_darwin_amd64.tar.gz # x-release-please-version
+    uri: https://github.com/luiacuaniello/perspectivegraph/releases/download/v1.19.0/perspectivegraph_darwin_amd64.tar.gz # x-release-please-version
     bin: ./perspectivegraph
   - selector:
       os: darwin
       arch: arm64
-    uri: https://github.com/luiacuaniello/perspectivegraph/releases/download/v1.18.1/perspectivegraph_darwin_arm64.tar.gz # x-release-please-version
+    uri: https://github.com/luiacuaniello/perspectivegraph/releases/download/v1.19.0/perspectivegraph_darwin_arm64.tar.gz # x-release-please-version
     bin: ./perspectivegraph
