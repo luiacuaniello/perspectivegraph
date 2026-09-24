@@ -525,18 +525,22 @@ const dashboardQuery = (app?: string) => {
 // the whole simulation to show the paths really disappear. That is one full-graph
 // simulation per fix, so asking for it across the plan on every 5s poll is what
 // pinned the dashboard at nginx's 60s timeout on a mid-size estate - the plan alone
-// answers in 0.5s, the plan with verification does not finish in two minutes. It is
-// now fetched for a single fix, on demand, when someone asks to see the proof.
+// answers in 0.5s, the plan with verification does not finish in two minutes.
+//
+// So it is asked for ONE fix, by title. This used to request the whole plan with
+// verification and keep the matching entry - still every fix's simulation, measured
+// at over five minutes on a 75-fix plan, for one proof - and the API now refuses a
+// request past twenty such analyses anyway.
 export const verifyFix = (title: string, app?: string) => {
-  const args = app ? `(app: ${JSON.stringify(app)})` : "";
+  const args = [`title: ${JSON.stringify(title)}`, ...(app ? [`app: ${JSON.stringify(app)}`] : [])].join(", ");
   return gql<{ remediationPlan: Fix[] }>(`
   {
-    remediationPlan${args} {
+    remediationPlan(${args}) {
       title
       verification { removedEdges pathsBefore pathsAfter pathsEliminated riskReductionPct verified }
     }
   }
-`).then((d) => d.remediationPlan.find((f) => f.title === title)?.verification ?? null);
+`).then((d) => d.remediationPlan[0]?.verification ?? null);
 };
 
 export const fetchGraph = (app?: string) => {

@@ -33,6 +33,10 @@ var (
 		Help: "Edges carried by accepted ingest events.",
 	})
 
+	// NormalizeEvents counts every delivery the consumer handles: one "error" per failed
+	// attempt, so a redelivered event that then succeeds counts both. It was registered
+	// and never incremented, which left the PerspectiveGraphIngestErrors alert built on it
+	// unable to fire.
 	NormalizeEvents = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "perspectivegraph_normalize_events_total",
 		Help: "Events processed by the normalizer, by result (ok|error).",
@@ -41,6 +45,14 @@ var (
 	BrokerDeadLettered = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "perspectivegraph_broker_dead_lettered_total",
 		Help: "Events terminated after exhausting redeliveries (sent to the DLQ).",
+	})
+
+	// BrokerConnected is 1 while the NATS connection is up. It goes to 0 during a
+	// reconnect, when events are still accepted by nobody: ingest returns 502 and the
+	// consumer waits. Alert on it staying 0, not on a single dip.
+	BrokerConnected = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "perspectivegraph_broker_connected",
+		Help: "1 while the connection to the NATS event bus is up, 0 while it is reconnecting or closed.",
 	})
 
 	AnalyzerPasses = prometheus.NewCounter(prometheus.CounterOpts{
@@ -112,6 +124,16 @@ var (
 		Help: "HTTP requests served, by handler and status class.",
 	}, []string{"handler", "code"})
 
+	// APIHeavyRefused counts heavy analyses (what-ifs, fix verifications, custom risk
+	// simulations, k-shortest searches) the API refused: "budget" when one request asked
+	// for more than its share, "busy" when no slot freed up in time. A steady "busy" rate
+	// means real demand is outgrowing the cores; bursts of "budget" mean someone is
+	// asking for everything at once.
+	APIHeavyRefused = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "perspectivegraph_api_heavy_refused_total",
+		Help: "Heavy GraphQL analyses refused, by reason (budget|busy).",
+	}, []string{"reason"})
+
 	ConnectorRuns = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "perspectivegraph_connector_runs_total",
 		Help: "Agentless connector collection runs, by source and result (ok|error).",
@@ -128,14 +150,18 @@ func init() {
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 		IngestEvents, IngestNodes, IngestEdges,
-		NormalizeEvents, BrokerDeadLettered,
+		NormalizeEvents, BrokerDeadLettered, BrokerConnected,
 		AnalyzerPasses, AnalyzerPassSeconds, AnalyzerCriticalPaths,
 		AnalyzerGraphNodes, AnalyzerGraphEdges, AnalyzerPathfindSeconds,
 		AnalyzerSnapshotSeconds, AnalyzerSnapshots,
 		GraphPrunedNodes, GraphPrunedEdges, AuditPrunedRecords,
-		HTTPRequests,
+		HTTPRequests, APIHeavyRefused,
 		ConnectorRuns, ConnectorEvents,
 	)
+	// Both results exist from the first scrape, so a panel or a ratio reads 0 rather than
+	// "no data" on an instance that has not failed yet.
+	NormalizeEvents.WithLabelValues("ok")
+	NormalizeEvents.WithLabelValues("error")
 }
 
 // Handler serves the Prometheus exposition format for our registry.

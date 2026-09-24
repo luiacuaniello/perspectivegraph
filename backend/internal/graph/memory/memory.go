@@ -56,7 +56,7 @@ func (s *Store) UpsertEdge(_ context.Context, e ontology.Edge) error {
 	_, fromOK := s.nodes[e.From]
 	_, toOK := s.nodes[e.To]
 	if !fromOK || !toOK {
-		return fmt.Errorf("upsert edge %s %s->%s: endpoint node(s) not in graph yet", e.Type, e.From, e.To)
+		return fmt.Errorf("upsert edge %s %s->%s: %w", e.Type, e.From, e.To, graph.ErrEndpointsMissing)
 	}
 	s.edges[edgeKey{e.Type, e.From, e.To}] = e
 	return nil

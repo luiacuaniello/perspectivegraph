@@ -63,6 +63,17 @@ groups:
           summary: API 5xx error ratio above 5%
           description: The backend is returning server errors; check its logs and the database/bus health.
 
+      - alert: PerspectiveGraphBusDisconnected
+        # Reconnects are retried for ever, so a bus that never comes back does not end the
+        # process: while this is 0, ingest answers 502 and nothing new reaches the graph.
+        expr: perspectivegraph_broker_connected == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Backend {{ $labels.instance }} has had no event-bus connection for 5m
+          description: perspectivegraph_broker_connected is 0; check NATS and the network path to it. Scans and connector passes are being refused meanwhile.
+
       - alert: PerspectiveGraphDeadLettering
         # Poison events dropped after the redelivery cap point at a persistent bad feed.
         expr: increase(perspectivegraph_broker_dead_lettered_total[15m]) > 0

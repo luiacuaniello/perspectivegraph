@@ -138,14 +138,126 @@ func (s *Store) Ping(ctx context.Context) error {
 	})
 }
 
-// UpsertNode creates or updates a vertex with NATIVE agtype properties (so the
-// graph is queryable in Cypher - internet_exposed/crown_jewel drive the DB-side
-// path finder). `SET n += {…}` does the property-merge contract for us (later
-// writes win per key; omitted keys, e.g. an empty name, are preserved), so no
-// read-modify-write round-trip is needed.
+// UpsertNode creates or updates one vertex. It is a batch of one: see UpsertBatch.
 func (s *Store) UpsertNode(ctx context.Context, n ontology.Node) error {
+	return s.UpsertBatch(ctx, []ontology.Node{n}, nil)
+}
+
+// UpsertEdge creates or updates one directed relationship. It is a batch of one: see
+// UpsertBatch. When either endpoint is not in the graph yet it returns an error
+// wrapping graph.ErrEndpointsMissing instead of silently doing nothing: the
+// normalization consumer Naks the event, and the broker redelivers it so the edge
+// lands once its nodes arrive.
+func (s *Store) UpsertEdge(ctx context.Context, e ontology.Edge) error {
+	return s.UpsertBatch(ctx, nil, []ontology.Edge{e})
+}
+
+// UpsertBatch writes nodes, then edges, in ONE transaction that holds this graph's
+// write lock.
+//
+// One transaction per event rather than per element. Each element used to be its own
+// transaction - BEGIN, LOAD, SET search_path, the statement, COMMIT - so an event paid
+// five round trips and a commit for every node and edge it carried. Measured against
+// the bundled Postgres, a 2,000-node event took ten seconds, a third of the time
+// JetStream waits before redelivering it to another replica.
+//
+// The lock serialises writers to the same graph, across replicas. AGE has no unique
+// constraint, so two transactions that MERGE the same id at once each see no vertex
+// and each create one: measured, eight concurrent writers of the same fifty nodes left
+// between ten and twenty-four duplicates, and the first write of a new label failed
+// outright with "relation already exists" when two raced to create its table. Several
+// backend replicas share one consumer and write concurrently, so an HA deployment met
+// both. Nothing reads under this lock; only writers and the pruner wait on it.
+//
+// An edge whose endpoint is missing is skipped, the rest commits, and the error returned
+// afterwards wraps graph.ErrEndpointsMissing so the event is redelivered for it.
+func (s *Store) UpsertBatch(ctx context.Context, nodes []ontology.Node, edges []ontology.Edge) error {
+	// Every statement is built before the transaction opens, so a value the store
+	// refuses fails the event before anything is written.
+	nodeQs := make([]nodeStmts, 0, len(nodes))
+	labels := map[ontology.Label]bool{}
+	for _, n := range nodes {
+		q, err := s.nodeSQL(n)
+		if err != nil {
+			return err
+		}
+		nodeQs = append(nodeQs, q)
+		labels[n.Label] = true
+	}
+	edgeQs := make([]string, 0, len(edges))
+	for _, e := range edges {
+		q, err := s.edgeSQL(e)
+		if err != nil {
+			return err
+		}
+		edgeQs = append(edgeQs, q)
+	}
+
+	s.prepareLabels(ctx, labels)
+
+	var waiting []ontology.Edge
+	err := s.withAGE(ctx, func(tx *sql.Tx) error {
+		if err := s.lockForWrite(ctx, tx); err != nil {
+			return err
+		}
+		// Every statement below looks vertices up by id, one at a time, so a nested loop
+		// over the id indexes is always the right plan. The planner does not know that on
+		// a graph whose statistics predate the rows it is writing - the first large event
+		// into a new graph - and chose to sort the whole edge table for every edge instead,
+		// which made that event quadratic in its size.
+		if _, err := tx.ExecContext(ctx, `SET LOCAL enable_mergejoin = off`); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `SET LOCAL enable_hashjoin = off`); err != nil {
+			return err
+		}
+		for _, q := range nodeQs {
+			// Update if the vertex exists, create it if not. Under the write lock nothing
+			// else can create it in between, which is what MERGE could not promise.
+			found, err := execReturnsRow(ctx, tx, q.update)
+			if err != nil {
+				return err
+			}
+			if !found {
+				if _, err := tx.ExecContext(ctx, q.create); err != nil {
+					return err
+				}
+			}
+		}
+		for i, q := range edgeQs {
+			landed, err := execReturnsRow(ctx, tx, q)
+			if err != nil {
+				return err
+			}
+			if !landed {
+				waiting = append(waiting, edges[i])
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return graph.EndpointsMissing(waiting)
+}
+
+// nodeStmts is the upsert of one vertex: update returns a row when the vertex existed,
+// and create is run when it did not.
+type nodeStmts struct{ update, create string }
+
+// nodeSQL renders the upsert of one vertex with NATIVE agtype properties (so the graph
+// is queryable in Cypher - internet_exposed/crown_jewel drive the DB-side path finder).
+// `SET n += {…}` does the property-merge contract for us (later writes win per key;
+// omitted keys, e.g. an empty name, are preserved), so no read-modify-write round-trip
+// is needed.
+//
+// The id is matched with `WHERE n.id = …`, never with a property map. AGE turns
+// `{id: …}` into a containment test (`properties @> …`) that the btree id index cannot
+// serve, so every lookup written that way scanned the whole label table - this store
+// created the index for years and never used it.
+func (s *Store) nodeSQL(n ontology.Node) (nodeStmts, error) {
 	if !ontology.IsValidLabel(n.Label) {
-		return fmt.Errorf("refusing to upsert node with unknown label %q", n.Label)
+		return nodeStmts{}, fmt.Errorf("refusing to upsert node with unknown label %q", n.Label)
 	}
 	props := make(map[string]any, len(n.Properties)+1)
 	for k, v := range n.Properties {
@@ -154,31 +266,29 @@ func (s *Store) UpsertNode(ctx context.Context, n ontology.Node) error {
 	if n.Name != "" {
 		props["name"] = n.Name // omitted when empty → a stub upsert never erases the stored name
 	}
-
-	inner := fmt.Sprintf(`MERGE (n:%s {id: %s})`, n.Label, cypherQuote(n.ID))
+	set := ""
 	if len(props) > 0 {
-		inner += " SET n += " + cypherMap(props)
+		set = " SET n += " + cypherMap(props)
 	}
-	q, err := s.cypherSQL(inner, `v agtype`)
+	update, err := s.cypherSQL(fmt.Sprintf(`MATCH (n:%s) WHERE n.id = %s%s RETURN 1`,
+		n.Label, cypherQuote(n.ID), set), `v agtype`)
 	if err != nil {
-		return err
+		return nodeStmts{}, err
 	}
-	return s.withAGE(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, q); err != nil {
-			return err
-		}
-		s.ensureLabelIndex(ctx, tx, n.Label)
-		return nil
-	})
+	create, err := s.cypherSQL(fmt.Sprintf(`CREATE (n:%s {id: %s})%s`,
+		n.Label, cypherQuote(n.ID), set), `v agtype`)
+	if err != nil {
+		return nodeStmts{}, err
+	}
+	return nodeStmts{update: update, create: create}, nil
 }
 
-// UpsertEdge creates or updates a directed relationship. When either endpoint
-// is not in the graph yet, the MATCH yields no rows and the upsert returns an
-// error instead of silently doing nothing: the normalization consumer Naks the
-// event, and the broker redelivers it so the edge lands once its nodes arrive.
-func (s *Store) UpsertEdge(ctx context.Context, e ontology.Edge) error {
+// edgeSQL renders the upsert of one relationship. It RETURNs a row only when both
+// endpoints matched, which is how the caller tells a landed edge from a waiting one.
+// Endpoints are matched with WHERE for the same reason as in nodeSQL.
+func (s *Store) edgeSQL(e ontology.Edge) (string, error) {
 	if !ontology.IsValidEdgeType(e.Type) {
-		return fmt.Errorf("refusing to upsert edge with unknown type %q", e.Type)
+		return "", fmt.Errorf("refusing to upsert edge with unknown type %q", e.Type)
 	}
 	// Native agtype edge properties, consistent with nodes: `p` (clamped) plus any
 	// edge attributes, so they're queryable too (e.g. the privesc `primitives`).
@@ -188,26 +298,38 @@ func (s *Store) UpsertEdge(ctx context.Context, e ontology.Edge) error {
 	}
 	props["p"] = clampProb(e.ExploitProbability)
 	inner := fmt.Sprintf(
-		`MATCH (a {id: %s}), (b {id: %s}) MERGE (a)-[e:%s]->(b) SET e += %s RETURN 1`,
+		`MATCH (a), (b) WHERE a.id = %s AND b.id = %s MERGE (a)-[e:%s]->(b) SET e += %s RETURN 1`,
 		cypherQuote(e.From), cypherQuote(e.To), e.Type, cypherMap(props))
-	q, err := s.cypherSQL(inner, `v agtype`)
+	return s.cypherSQL(inner, `v agtype`)
+}
+
+// execReturnsRow runs q and reports whether it produced at least one row.
+func execReturnsRow(ctx context.Context, tx *sql.Tx, q string) (bool, error) {
+	rows, err := tx.QueryContext(ctx, q)
 	if err != nil {
-		return err
+		return false, err
 	}
-	return s.withAGE(ctx, func(tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx, q)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		if !rows.Next() {
-			if err := rows.Err(); err != nil {
-				return err
-			}
-			return fmt.Errorf("upsert edge %s %s->%s: endpoint node(s) not in graph yet", e.Type, e.From, e.To)
-		}
-		return rows.Err()
-	})
+	defer rows.Close()
+	got := rows.Next()
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return got, nil
+}
+
+// graphWriteLockClass namespaces the per-graph write lock. It uses the two-key form of
+// the advisory lock, which PostgreSQL keeps apart from the single bigint keys the
+// leader election, the audit chain and the migrations take, so the hash of a graph name
+// can never collide with one of them. The value spells "PGWR".
+const graphWriteLockClass = 0x50475752
+
+// lockForWrite takes this graph's write lock for the rest of the transaction.
+func (s *Store) lockForWrite(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1, hashtext($2))`,
+		graphWriteLockClass, s.graph); err != nil {
+		return fmt.Errorf("graph write lock: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) Snapshot(ctx context.Context) (graph.Snapshot, error) {
@@ -440,6 +562,11 @@ func (s *Store) Prune(ctx context.Context, before time.Time) (graph.PruneStats, 
 
 	var stats graph.PruneStats
 	err = s.withAGE(ctx, func(tx *sql.Tx) error {
+		// Under the write lock, so a prune never interleaves with an event that is
+		// writing an edge to a node this is deleting.
+		if err := s.lockForWrite(ctx, tx); err != nil {
+			return err
+		}
 		// Count what's stale before deleting (DETACH DELETE removes a node's
 		// remaining edges silently; the edge count captures edges stale in their
 		// own right). Then delete edges, then nodes.
@@ -563,19 +690,53 @@ func parseRawPath(ns, rs string) (graph.RawPath, bool) {
 	return rp, true
 }
 
-// ensureLabelIndex creates a btree index on the label's `id` property the first
-// time the process touches that label, turning the per-upsert `MATCH {id: …}`
-// from a sequential scan into an index lookup. Best-effort: a failure is left to
-// retry on the next upsert (the work still succeeds without the index).
-func (s *Store) ensureLabelIndex(ctx context.Context, tx *sql.Tx, label ontology.Label) {
-	if _, done := s.indexed.Load(label); done {
-		return
-	}
-	idx := sanitizeIdent(fmt.Sprintf("%s_%s_id_idx", s.graph, strings.ToLower(string(label))))
-	stmt := fmt.Sprintf(
-		`CREATE INDEX IF NOT EXISTS "%s" ON "%s"."%s" USING btree (agtype_access_operator(properties, '"id"'::agtype))`,
-		idx, s.graph, label)
-	if _, err := tx.ExecContext(ctx, stmt); err == nil {
+// prepareLabels makes sure each label the write is about to use has its table and a
+// btree index on its `id` property, turning the per-upsert `MATCH {id: …}` from a
+// sequential scan into an index lookup. It runs once per label per process.
+//
+// It runs BEFORE the write, in a transaction of its own, and creates the label's table
+// if no vertex of it exists yet - AGE otherwise creates it on the first MERGE, too late
+// to index for the rest of the event. The first write of a label used to create the
+// index inside the same transaction, right after its first vertex; doing it after the
+// batch instead left a first 2,000-node event matching every vertex by sequential scan,
+// measured slower than the per-element writes it replaced. And a failed statement
+// aborts the transaction it is in, so an index that failed inside the write took the
+// write down with it.
+//
+// Best-effort: a failure is logged and left to retry on the next write, which still
+// succeeds without the index.
+func (s *Store) prepareLabels(ctx context.Context, labels map[ontology.Label]bool) {
+	for label := range labels {
+		if _, done := s.indexed.Load(label); done {
+			continue
+		}
+		// The label table is created with bound values. The index needs the names as
+		// identifiers, which cannot be bound; they are validated ones (graphNameRe, the
+		// ontology allowlist), so they are safe to interpolate there.
+		const createLabel = `SELECT create_vlabel($1, $2) WHERE NOT EXISTS (
+			SELECT 1 FROM ag_catalog.ag_label l JOIN ag_catalog.ag_graph g ON l.graph = g.graphid
+			WHERE g.name = $3 AND l.name = $4)`
+		idx := sanitizeIdent(fmt.Sprintf("%s_%s_id_idx", s.graph, strings.ToLower(string(label))))
+		createIndex := fmt.Sprintf(
+			`CREATE INDEX IF NOT EXISTS "%s" ON "%s"."%s" USING btree (agtype_access_operator(properties, '"id"'::agtype))`,
+			idx, s.graph, label)
+		err := s.withAGE(ctx, func(tx *sql.Tx) error {
+			// Under the write lock: two replicas creating the same label table or index
+			// at once is the race the lock exists for.
+			if err := s.lockForWrite(ctx, tx); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, createLabel, s.graph, string(label), s.graph, string(label)); err != nil {
+				return fmt.Errorf("create label: %w", err)
+			}
+			_, err := tx.ExecContext(ctx, createIndex)
+			return err
+		})
+		if err != nil {
+			slog.Warn("age: could not index a label; writes to it will scan until a later write succeeds",
+				"graph", s.graph, "label", label, "err", err)
+			continue
+		}
 		s.indexed.Store(label, true)
 	}
 }

@@ -17,6 +17,114 @@ digest, take the backup, stage it.
 
 ---
 
+## 1.19.0
+
+### The event stream keeps what is still to be processed, and nothing else
+
+**Affects you if** you upgrade a deployment whose NATS already holds the `PERSPECTIVE`
+stream - which is every upgrade.
+
+The stream used to keep every event ever ingested: limits retention with no limit set, on
+a volume nothing emptied. It now uses interest retention, so an event leaves as soon as the
+backend acknowledges it, and `NATS_MAX_AGE` (default `168h`) drops one nobody drains. The
+dead-letter stream keeps its events for the same `NATS_MAX_AGE`. The backend updates both
+streams in place on its first start, and NATS then deletes every event already processed,
+so the disk that history held is freed at once; events still waiting are kept and handled
+as before, and nothing is replayed. Settings you made on the stream yourself - replicas,
+above all, on a clustered NATS - are now kept: the backend used to reset them at every
+start.
+
+**Action: none, with two exceptions.**
+
+- **A NATS older than 2.10** refuses to change a stream's retention, and the backend stops
+  at startup with `stream configuration update can not change retention policy`. Upgrade
+  NATS (the chart and Compose ship 2.15), or delete the stream and let the backend
+  recreate it.
+- **A consumer of your own on the stream** now holds events back: under interest
+  retention an event stays until *every* consumer has acknowledged it. Remove consumers
+  you no longer read from.
+
+### A listener that cannot start now stops the process
+
+**Affects you if** your logs from the previous version contain `http server failed`.
+
+That line meant the listener named in it - `api`, `ingestion` or `metrics` - never served,
+while the process stayed up without it. A taken port or an unreadable certificate now exits
+with status 1 and the reason on the last line, and so does a bus connection that closes
+for good or a consumer that stops.
+
+**Action:** fix whatever the old log line named before upgrading, or the new version
+crash-loops on it - which is the point: the old one was silently missing a port.
+
+### Replicas no longer write the same asset twice
+
+**Affects you if** you ran more than one backend replica against Apache AGE -
+`values-ha.yaml`, or `backend.replicas` above 1.
+
+AGE has no unique constraint, and replicas write concurrently, so two events naming the same
+asset at the same moment could each create a vertex for it. Writes to a graph now take a
+lock and converge on one vertex, but duplicates created before the upgrade stay: an update
+reaches all of them, so they never go stale and the TTL pruner never removes them.
+
+**Action:** check each tenant's graph (`perspective` is the default tenant's; others are
+`perspective_<tenant>`):
+
+```sql
+LOAD 'age'; SET search_path = ag_catalog, "$user", public;
+SELECT * FROM cypher('perspective', $$
+  MATCH (n) WITH n.id AS id, count(*) AS copies WHERE copies > 1 RETURN id, copies
+$$) AS (id agtype, copies agtype);
+```
+
+No rows: nothing to do. Rows: the graph is derived from the feeds, so the clean fix is to
+rebuild it - take the backup (OPERATIONS §4), drop the graph
+(`SELECT drop_graph('perspective', true);`), restart the backend, and let the scanners and
+connectors re-ingest. Suppressions, tickets and the audit log are not in the graph and are
+not affected.
+
+### An edge waiting for its endpoint no longer holds back the rest of its event
+
+**Affects you if** your feeds send edges to assets another feed describes.
+
+The graph refused such an edge until its endpoint arrived, and stopped the event there: the
+edges listed after it waited too, and after eight redeliveries (about four minutes) went to
+the dead-letter stream along with it. Now every node and every other edge is written, and
+only the waiting edges are retried. **Action: none.** Expect fewer dead-lettered events and
+routes that used to appear late, or not at all, to appear on the first pass.
+
+### A request may run at most twenty heavy analyses
+
+**Affects you if** a script asks for many what-ifs in one request - typically
+`verification` across a whole `remediationPlan`, or
+`attackPaths { remediations { verification } }`.
+
+Each fix's verification, each `whatIf`, each `riskSimulation` with its own `iterations` or
+`seed`, and each `kShortestPaths` search is a full computation over the graph, and the
+query guard, which prices a document before it runs, cannot see how long a list will be. On
+a 4,344-node estate, verification across a 75-fix plan did not finish in five minutes. A
+request now runs the first twenty of them - identical ones count once - and the rest of
+its heavy fields answer with an error saying so. At most half the cores run them at once;
+a request that waits 20 s for one is told the server is busy.
+
+**Action:** ask for one fix's proof at a time with the new argument,
+`remediationPlan(title: "…") { verification { … } }`, or split the request.
+
+### AI answers need a signed-in caller, and have a rate limit of their own
+
+**Affects you if** you publish a read-only instance (`API_ANONYMOUS_ROLE=viewer`) with an
+AI key configured, or several people share one client address.
+
+`/ai/*` asked only for the viewer role, which a public instance gives every visitor - so
+the operator paid for anyone's questions. Anonymous callers now get 403 whenever auth is on,
+and `aiEnabled` answers `false` to them, so the dashboard hides the AI features. Every
+caller is also limited by `AI_RATE_PER_MIN` (default 10 per client per minute).
+
+**Action:** sign in to use the AI features on a published instance. If a team reaches the
+backend through one address, set `TRUSTED_PROXY_CIDRS` so each person is a client of their
+own, or raise `AI_RATE_PER_MIN`.
+
+---
+
 ## 1.18.0
 
 ### A Trivy scan of an image archive now reaches the merge gate

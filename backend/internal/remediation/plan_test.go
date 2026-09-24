@@ -1,6 +1,8 @@
 package remediation
 
 import (
+	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/analyzer"
@@ -69,5 +71,32 @@ func TestPlanPrioritizesSharedChokePoint(t *testing.T) {
 	}
 	if cumulative > 1.0001 {
 		t.Errorf("cumulative coverage %.3f exceeds 1.0", cumulative)
+	}
+}
+
+// The plan is read on every dashboard poll, so the same paths must give the same plan -
+// the same order and the same numbers. Summing a fix's risk while ranging over a map
+// added the scores in a different order each call, and float addition depends on order:
+// the coverage moved in its last digits between polls, and so could the ranking of two
+// fixes covering the same risk.
+func TestPlanIsTheSameEveryTime(t *testing.T) {
+	lb := ontology.Node{ID: "LoadBalancer:edge", Label: ontology.LabelLoadBalancer, Name: "edge"}
+	web := ontology.Node{ID: "Container:web", Label: ontology.LabelContainer, Name: "web"}
+	var paths []analyzer.AttackPath
+	for i := 0; i < 40; i++ {
+		jewel := ontology.Node{ID: fmt.Sprintf("IAM_Role:r%d", i), Label: ontology.LabelIAMRole, Name: fmt.Sprintf("r%d", i),
+			Properties: map[string]any{ontology.PropCrownJewel: true}}
+		paths = append(paths, analyzer.AttackPath{ID: fmt.Sprintf("p%d", i), Score: 0.1 + float64(i)*0.013717,
+			Nodes: []ontology.Node{lb, web, jewel},
+			Steps: []analyzer.Step{
+				{EdgeType: ontology.EdgeExposes, From: lb.ID, To: web.ID},
+				{EdgeType: ontology.EdgeAssumes, From: web.ID, To: jewel.ID},
+			}})
+	}
+	first := Plan(paths)
+	for n := 0; n < 50; n++ {
+		if again := Plan(paths); !reflect.DeepEqual(again, first) {
+			t.Fatalf("call %d gave a different plan: top fix covers %v, first call %v", n+2, again[0].RiskCovered, first[0].RiskCovered)
+		}
 	}
 }

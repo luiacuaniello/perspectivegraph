@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/nats-io/nats.go/jetstream"
 )
 
 func TestNormalizeSubject(t *testing.T) {
@@ -115,5 +117,38 @@ func TestDeadLetterSubjectIsOutsideTheEventStream(t *testing.T) {
 	// second refuses to start.
 	if dlqSubjectFor("PROD") == dlqSubjectFor("STAGING") {
 		t.Error("the dead-letter subject is not scoped to the stream, so two deployments collide")
+	}
+}
+
+// The stream holds the backlog, not the history: interest retention drops an event once
+// its consumer acks it, and MaxAge drops one nobody drains. The DLQ has no consumer, so
+// under interest retention it would keep nothing - it stays on limits with the same age.
+func TestStreamConfigsBoundWhatTheyKeep(t *testing.T) {
+	week := 7 * 24 * time.Hour
+	s := streamConfig("PERSPECTIVE", "perspective.events.>", week)
+	if s.Retention != jetstream.InterestPolicy || s.MaxAge != week {
+		t.Errorf("event stream: retention %s, max age %v; want interest, %v", s.Retention, s.MaxAge, week)
+	}
+	d := dlqStreamConfig("PERSPECTIVE", week)
+	if d.Retention != jetstream.LimitsPolicy || d.MaxAge != week {
+		t.Errorf("dlq stream: retention %s, max age %v; want limits, %v", d.Retention, d.MaxAge, week)
+	}
+	if d.Subjects[0] == s.Subjects[0] || strings.HasPrefix(d.Subjects[0], "perspective.events") {
+		t.Errorf("dlq subject %q overlaps the event stream's %q", d.Subjects[0], s.Subjects[0])
+	}
+}
+
+// The ack wait must be set, and longer than the interval at which a handler still
+// working asks for more time - otherwise the keep-alive arrives after the redelivery.
+func TestConsumerAckWaitOutlastsTheKeepAlive(t *testing.T) {
+	c := consumerConfig("perspective.events.>")
+	if c.AckWait == 0 {
+		t.Fatal("AckWait unset: the 30s server default redelivers any event that takes longer")
+	}
+	if c.AckWait <= 2*progressEvery {
+		t.Errorf("AckWait %v leaves no margin over a keep-alive every %v", c.AckWait, progressEvery)
+	}
+	if c.MaxDeliver != maxDeliver || c.AckPolicy != jetstream.AckExplicitPolicy {
+		t.Errorf("consumer lost its redelivery policy: %+v", c)
 	}
 }

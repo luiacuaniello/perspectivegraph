@@ -900,6 +900,13 @@ handed a compact, capped context, so it summarizes your data rather than inventi
 assets. The transport is a **hand-rolled** call to Anthropic's `/v1/messages` (no
 SDK, no new dependencies - the engine stays pure-Go and auditable).
 
+**Who may ask, and how often.** Each answer is a paid call to the model provider, so
+the `/ai/*` endpoints need a signed-in caller: on a read-only public instance
+(`API_ANONYMOUS_ROLE=viewer`) anonymous visitors get 403, and `aiEnabled` answers
+`false` for them so the dashboard does not offer the buttons. They also have a rate limit
+of their own, `AI_RATE_PER_MIN` (default 10 per client per minute), on top of
+`API_RATE_RPS`. With auth off entirely - the local demo - everyone may ask.
+
 **Prefer a free model?** If you don't set `ANTHROPIC_API_KEY` but set `HF_TOKEN`
 (a free [HuggingFace](https://huggingface.co/settings/tokens) access token), the
 same features run against HuggingFace's OpenAI-compatible Inference router instead.
@@ -1859,12 +1866,25 @@ Beyond the container surface, the backend itself is built defensively:
 - **Fail-loud persistence.** `GRAPH_STRICT=true` refuses to start if Apache AGE is
   unreachable instead of silently falling back to the non-persistent in-memory
   store. Events that exhaust redelivery go to a **dead-letter stream**, not the void.
+- **A bounded bus.** A handled event leaves the stream as soon as it is acknowledged;
+  `NATS_MAX_AGE` (default `168h`) caps how long an unhandled one waits, and how long a
+  dead-lettered one is kept. A dropped connection is retried for as long as it takes,
+  and a NATS that comes back empty gets its stream and consumer recreated.
+- **No half-alive process.** A listener that cannot bind, or a bus connection or
+  consumer that stops for good, ends the process with an error instead of a log line,
+  so the orchestrator restarts it rather than routing to a replica that has lost part
+  of itself.
 - **Observability built in.** Prometheus metrics at **`GET /metrics`** (ingest /
-  normalize / analyzer-pass timing / dead-letters + Go runtime), so you don't
-  operate it blind.
+  normalize / analyzer-pass timing / dead-letters / bus connection + Go runtime), so
+  you don't operate it blind.
 - **Throughput.** The AGE store uses a real connection pool (not a single pinned
-  connection) and creates a per-label `id` index, turning per-upsert scans into
-  index lookups.
+  connection), writes each event in **one transaction**, and looks vertices up by id
+  through a per-label index - so an event's cost grows linearly with its size (5,000
+  nodes and edges each in under ten seconds on a laptop; see
+  [SCALE.md](SCALE.md#writing-an-event)).
+- **Concurrent replicas converge.** Writes to one tenant's graph take a
+  transaction-scoped advisory lock, so two replicas writing the same asset at once
+  update one vertex instead of creating two.
 - **Queryable graph, honest traversal.** Node and edge properties are stored as
   **native agtype** (the graph is queryable in Cypher, not a JSON blob). Path
   finding uses the **in-process Dijkstra by default** - polynomial and bounded. A
@@ -2641,8 +2661,12 @@ to trust them.
 A remediation you can't trust is a scaffold. Each generated fix records the edge
 it cuts, so the API *verifies* it by simulating the removal - the plan shows
 `verification { verified pathsEliminated riskReductionPct }`, i.e. "this provably
-removes N paths and drops risk by X%", not just "here's a YAML". Then turn a path
-into an **owned, tracked ticket** so it actually gets done:
+removes N paths and drops risk by X%", not just "here's a YAML". Each proof is a
+full what-if over the graph, so ask for them one fix at a time -
+`remediationPlan(title: "…") { verification { … } }` - rather than across the whole
+plan: one request may run at most 20 such analyses (what-ifs, verifications, custom
+risk simulations, k-shortest searches), and the rest of its heavy fields answer with an
+error. Then turn a path into an **owned, tracked ticket** so it actually gets done:
 
 ```bash
 # Open a ticket (admin when auth is on). One open ticket per path; with

@@ -270,7 +270,7 @@ type Query {
   kShortestPaths(from: String, k: Int, target: String!): [AttackPath]
   posture: Posture
   prVerdict(sha: String!, slug: String!): PRVerdict
-  remediationPlan(app: String): [Fix]
+  remediationPlan(app: String, title: String): [Fix]
   riskSimulation(iterations: Int, seed: Int): RiskSimulation
   search(query: String!, size: Int): [SearchHit]
   searchEnabled: Boolean

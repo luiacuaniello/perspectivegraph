@@ -276,7 +276,8 @@ Pin to a signed, digest-referenced image and verify it before rollout (see
 - `GET /healthz` - liveness/readiness (the container HEALTHCHECK uses the `healthz`
   subcommand; distroless has no shell).
 - `GET /metrics` - Prometheus metrics: `perspectivegraph_connector_*`,
-  `perspectivegraph_analyzer_*`, ingest and auth counters.
+  `perspectivegraph_analyzer_*`, ingest and auth counters, and
+  `perspectivegraph_broker_connected` (0 while the bus is reconnecting).
 - Suggested SLOs to alert on: ingest error rate, analyzer pass duration vs
   `ANALYZER_INTERVAL`, connector `last_error`, and `auth.deny` spikes (possible
   credential stuffing) from the audit log.
@@ -307,6 +308,22 @@ Two changes close that:
   so nothing downstream mistakes it for a working deployment. A deployment that runs
   in-memory **by design** stays healthy - that is the demo working as intended, not a
   failure.
+
+`/healthz` does **not** fail while the event bus is down, on purpose: the API still
+serves the graph it has, and taking every replica out of rotation for a NATS restart
+would turn a pause in ingest into an outage of the dashboard. The bus is covered in two
+other ways instead:
+
+- **A reconnect is retried for as long as it takes**, and on reconnecting the backend
+  recreates its stream and consumer if the server came back empty. Watch
+  `perspectivegraph_broker_connected`; the shipped `PerspectiveGraphBusDisconnected`
+  alert fires when it stays 0.
+- **What cannot recover ends the process.** A listener that cannot bind (a taken port,
+  an unreadable certificate), a connection closed for good, or a consumer that stops
+  exits with status 1 and the reason on the last log line, so Kubernetes or Compose
+  restarts it. It used to log once and keep running without that part of itself - and
+  the liveness probe, which only checks that the API port accepts connections, saw
+  nothing wrong.
 
 ### Logs
 
@@ -382,10 +399,13 @@ Two single points of failure it does **not** remove, and neither is hidden:
 - **The database.** Every replica shares one Postgres+AGE. Use a managed instance with a
   replica and automatic failover - §3 covers where AGE is actually available, which is
   narrower than it looks.
-- **The event bus.** The bundled NATS is one replica whose JetStream store lives in the
-  container's writable layer, so a restart drops in-flight events. The HA overlay therefore
+- **The event bus.** The bundled NATS is one replica whose JetStream store lives on an
+  `emptyDir`, so rescheduling the pod drops in-flight events (the backend recreates the
+  stream on reconnecting, so ingest resumes on its own). The HA overlay therefore
   refuses to inherit it: it sets `nats.enabled: false` and the chart will not render until
-  `nats.externalUrl` points at a NATS you run clustered. What that outage costs is the
+  `nats.externalUrl` points at a NATS you run clustered - and give the stream replicas
+  there (`nats stream edit PERSPECTIVE --replicas 3`): the backend sets only the stream's
+  subjects, retention and age limit, and keeps every other setting you make. What that outage costs is the
   events in flight, not the graph - the graph is derived and the feeds re-ingest it - but
   the analyzer is blind for the duration.
 
@@ -583,7 +603,12 @@ open-instance banner. The backend tells the two apart; the page does not guess.
   *only* the dashboard (3000) through your TLS terminator and nothing else.
 - **It does not slow anything down for you.** The costly queries (`whatIf` re-runs the
   simulation, `kShortestPaths` enumerates routes) are now reachable without a credential,
-  so the override lowers `API_RATE_RPS` to 10 per client IP.
+  so the override lowers `API_RATE_RPS` to 10 per client IP. Each request may run at most
+  20 of those analyses and half the cores run them at once, so one visitor cannot take the
+  machine; `perspectivegraph_api_heavy_refused_total` counts what was turned away.
+- **It does not answer AI questions for visitors.** `/ai/*` needs a signed-in caller, so
+  anonymous visitors get none even if a key is configured - but keep keys off a published
+  instance anyway.
 
 **Per visitor, not per proxy.** A published instance is always reached through a proxy:
 in the compose recipe every visitor comes through the dashboard's nginx. Keyed on that

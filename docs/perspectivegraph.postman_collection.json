@@ -44,6 +44,10 @@
 		{
 			"key": "ticketId",
 			"value": "tk-replace-me"
+		},
+		{
+			"key": "fixTitle",
+			"value": "replace-me"
 		}
 	],
 	"event": [
@@ -875,11 +879,53 @@
 						"body": {
 							"mode": "graphql",
 							"graphql": {
-								"query": "{ remediationPlan { title kind pathCount coveragePct verification { verified pathsEliminated riskReductionPct removedEdges } } }",
+								"query": "{ remediationPlan { title kind pathCount coveragePct } }",
 								"variables": ""
 							}
 						},
-						"description": "The fewest fixes that eliminate the most critical-path risk, ranked by a greedy choke-point set-cover. Each fix carries the ready-to-apply artifact (content) and the paths it cuts. Add (app: \"...\") to scope to one application."
+						"description": "The fewest fixes that eliminate the most critical-path risk, ranked by a greedy choke-point set-cover. Each fix carries the ready-to-apply artifact (content) and the paths it cuts. Add (app: \"...\") to scope to one application. Ask for a fix's verification with the next request, one fix at a time: each proof is a full what-if, and one request may run at most 20 of them."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"// Capture the top fix's title so 'Verify one fix' can prove it.",
+									"const plan = pm.response.json().data.remediationPlan || [];",
+									"if (plan.length) pm.collectionVariables.set('fixTitle', plan[0].title);"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Verify one fix (closed-loop proof)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{apiUrl}}/graphql",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "query ($title: String) { remediationPlan(title: $title) { title coveragePct verification { verified pathsEliminated riskReductionPct removedEdges } } }",
+								"variables": "{\"title\": \"{{fixTitle}}\"}"
+							}
+						},
+						"description": "Simulate removing one fix's edge over the current graph and report what it provably eliminates. title: picks the fix (the previous request stores the top one in fixTitle), so only that fix's what-if runs - asking for verification across the whole plan runs one per fix, and a request past 20 of these analyses gets errors for the rest."
 					}
 				},
 				{

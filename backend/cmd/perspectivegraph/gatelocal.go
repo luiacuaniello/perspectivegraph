@@ -342,7 +342,7 @@ func (o localOpts) parseReports() ([]ontology.Event, error) {
 // danglingEdge reports whether the store refused an edge because it has not seen an
 // endpoint yet - a forward reference, not a broken graph.
 func danglingEdge(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "endpoint node(s) not in graph yet")
+	return errors.Is(err, graph.ErrEndpointsMissing)
 }
 
 // applyEvents feeds every event through the normalizer, independently of the order they

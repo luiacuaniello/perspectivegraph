@@ -8,8 +8,10 @@ package graph_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -48,7 +50,11 @@ func TestAGEStoreContract(t *testing.T) {
 	if err != nil {
 		t.Skipf("postgres connection: %v", err)
 	}
-	defer conn.Close()
+	// Closed by a cleanup, not a defer: cleanups run after the test function has
+	// returned, so a deferred Close left the drop_graph cleanup below a closed
+	// connection. The graph was never dropped, every run started from the last one's
+	// data, and assertions that a node exists passed on leftovers.
+	t.Cleanup(func() { _ = conn.Close() })
 	// `LOAD 'age'` is deliberately outside the skip list below. Only a superuser may
 	// LOAD a library, so on every managed PostgreSQL it fails with 42501 while AGE
 	// itself works, preloaded through shared_preload_libraries - and this test used to
@@ -61,8 +67,10 @@ func TestAGEStoreContract(t *testing.T) {
 	setup := []string{
 		`CREATE EXTENSION IF NOT EXISTS age`, // self-sufficient: works on a bare Postgres+AGE image
 		`SET search_path = ag_catalog, "$user", public`,
-		fmt.Sprintf(`SELECT create_graph('%s')
-		 WHERE NOT EXISTS (SELECT 1 FROM ag_catalog.ag_graph WHERE name = '%s')`, testGraph, testGraph),
+		// Start from nothing, whatever an interrupted earlier run left behind.
+		fmt.Sprintf(`SELECT drop_graph('%s', true)
+		 WHERE EXISTS (SELECT 1 FROM ag_catalog.ag_graph WHERE name = '%s')`, testGraph, testGraph),
+		fmt.Sprintf(`SELECT create_graph('%s')`, testGraph),
 	}
 	for _, q := range setup {
 		if _, err := conn.ExecContext(ctx, q); err != nil {
@@ -82,6 +90,59 @@ func TestAGEStoreContract(t *testing.T) {
 
 	runStoreContract(t, store)
 	assertPathfinderEquivalence(t, store)
+	assertConcurrentWritersDoNotDuplicate(t, store)
+}
+
+// Several backend replicas share one consumer, so two events that mention the same
+// asset are written at the same time. AGE has no unique constraint: two transactions
+// that each look for a vertex, find none and create one leave two. Measured before the
+// write lock, eight writers of the same fifty nodes left ten to twenty-four duplicates,
+// and the first write of a label failed with "relation already exists" when two raced to
+// create its table. Bucket is used by nothing else in this suite, so its table is
+// created here, under the race.
+func assertConcurrentWritersDoNotDuplicate(t *testing.T, store graph.Store) {
+	t.Helper()
+	ctx := context.Background()
+	ev := ontology.Event{Source: "aws", ObservedAt: time.Now()}
+	for i := 0; i < 50; i++ {
+		ev.Nodes = append(ev.Nodes, ontology.Node{
+			ID: fmt.Sprintf("Bucket:race-%d", i), Label: ontology.LabelBucket, Name: fmt.Sprintf("race-%d", i),
+		})
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 8)
+	for w := 0; w < 8; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- graph.ApplyEvent(ctx, store, ev)
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Errorf("concurrent write failed: %v", err)
+		}
+	}
+	snap, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vertices := map[string]int{}
+	for _, n := range snap.Nodes {
+		if n.Label == ontology.LabelBucket {
+			vertices[n.ID]++
+		}
+	}
+	if len(vertices) != 50 {
+		t.Errorf("%d distinct buckets after the race, want 50", len(vertices))
+	}
+	for id, c := range vertices {
+		if c != 1 {
+			t.Errorf("%s has %d vertices; concurrent writers must converge on one", id, c)
+		}
+	}
 }
 
 // assertPathfinderEquivalence proves the DB-side Cypher path finder agrees with
@@ -231,8 +292,8 @@ func runStoreContract(t *testing.T, s graph.Store) {
 	// edge silently (or dropping it) would diverge between implementations.
 	if err := s.UpsertEdge(ctx, ontology.Edge{
 		Type: ontology.EdgeAffects, From: cveID, To: "Image:not-ingested-yet",
-	}); err == nil {
-		t.Errorf("edge with missing endpoint accepted; want an error so the broker can redeliver")
+	}); !errors.Is(err, graph.ErrEndpointsMissing) {
+		t.Errorf("edge with missing endpoint: err = %v; want one wrapping ErrEndpointsMissing so the broker can redeliver", err)
 	}
 
 	// An edge between existing nodes round-trips with its probability.
@@ -268,6 +329,51 @@ func runStoreContract(t *testing.T, s graph.Store) {
 		t.Errorf("injection-payload node missing - value was not stored verbatim")
 	} else if n.Name != nastyName {
 		t.Errorf("injection payload mangled: name = %q, want %q", n.Name, nastyName)
+	}
+
+	// ── One event, written through ApplyEvent ───────────────────────────
+	// An edge waiting for a node that has not arrived must not hold back the rest of
+	// the event. It used to stop the write where it stood, so every edge listed after
+	// it waited on a node it had nothing to do with - and was lost with it, once the
+	// event ran out of redeliveries, if that node never came.
+	evt := ontology.Event{
+		Source: "k8s", ObservedAt: time.Now(),
+		Nodes: []ontology.Node{
+			{ID: "evt-lb", Label: ontology.LabelLoadBalancer, Name: "edge"},
+			{ID: "evt-web", Label: ontology.LabelContainer, Name: "web", Properties: map[string]any{"ns": "prod"}},
+			// The same node twice in one event: both observations must land on one vertex.
+			{ID: "evt-web", Label: ontology.LabelContainer, Properties: map[string]any{"team": "payments"}},
+		},
+		Edges: []ontology.Edge{
+			{Type: ontology.EdgeExposes, From: "evt-lb", To: "evt-not-here-yet", ExploitProbability: 0.9},
+			{Type: ontology.EdgeExposes, From: "evt-lb", To: "evt-web", ExploitProbability: 0.9},
+		},
+	}
+	if err := graph.ApplyEvent(ctx, s, evt); !errors.Is(err, graph.ErrEndpointsMissing) {
+		t.Errorf("ApplyEvent with a waiting edge: err = %v; want one wrapping ErrEndpointsMissing", err)
+	}
+	snap, err = s.Snapshot(ctx)
+	must(err, "snapshot after event")
+	webs := 0
+	for _, n := range snap.Nodes {
+		if n.ID == "evt-web" {
+			webs++
+			if n.Name != "web" || fmt.Sprint(n.Properties["ns"]) != "prod" || fmt.Sprint(n.Properties["team"]) != "payments" {
+				t.Errorf("a node seen twice in one event lost an observation: %+v", n)
+			}
+		}
+	}
+	if webs != 1 {
+		t.Errorf("a node seen twice in one event became %d vertices, want 1", webs)
+	}
+	landed := false
+	for _, e := range snap.Edges {
+		if e.From == "evt-lb" && e.To == "evt-web" {
+			landed = true
+		}
+	}
+	if !landed {
+		t.Error("an edge whose endpoints both exist was held back by an earlier edge waiting for its own")
 	}
 
 	// ── Staleness pruning ───────────────────────────────────────────────
@@ -360,5 +466,52 @@ func TestApplyEventDropsVocabularyOutsideTheOntology(t *testing.T) {
 		if !ontology.IsValidEdgeType(e.Type) {
 			t.Errorf("kept an edge type outside the ontology: %q", e.Type)
 		}
+	}
+}
+
+// batchOnly is a store whose batch write reports an edge left waiting.
+type batchOnly struct {
+	graph.Store
+	calls int
+}
+
+func (b *batchOnly) UpsertBatch(context.Context, []ontology.Node, []ontology.Edge) error {
+	b.calls++
+	return graph.EndpointsMissing([]ontology.Edge{{Type: ontology.EdgeHosts, From: "a", To: "b"}})
+}
+
+// The write version is how the analyzer notices a change. A batch that landed its nodes
+// and left one edge waiting did change the graph, so it must move the version - or the
+// analyzer skips the pass and the new nodes stay invisible until something else writes.
+func TestVersionedStoreCountsAPartlyLandedBatch(t *testing.T) {
+	inner := &batchOnly{Store: memory.New()}
+	v := graph.NewVersionedStore(inner)
+	err := graph.ApplyEvent(context.Background(), v, ontology.Event{
+		Nodes: []ontology.Node{{ID: "a", Label: ontology.LabelContainer}},
+	})
+	if !errors.Is(err, graph.ErrEndpointsMissing) {
+		t.Fatalf("err = %v, want ErrEndpointsMissing passed through", err)
+	}
+	if inner.calls != 1 {
+		t.Fatalf("the batch writer was called %d times, want once for the whole event", inner.calls)
+	}
+	if v.Version() != 1 {
+		t.Errorf("version = %d after a partly landed batch, want 1", v.Version())
+	}
+}
+
+// A store with no batch writer still gets the whole contract through ApplyEvent: the
+// memory store takes the element-by-element path, and each write counts.
+func TestVersionedStoreWithoutABatchWriterCountsEachWrite(t *testing.T) {
+	v := graph.NewVersionedStore(memory.New())
+	err := graph.ApplyEvent(context.Background(), v, ontology.Event{
+		Nodes: []ontology.Node{{ID: "a", Label: ontology.LabelContainer}, {ID: "b", Label: ontology.LabelImage}},
+		Edges: []ontology.Edge{{Type: ontology.EdgeHosts, From: "a", To: "b", ExploitProbability: 0.5}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Version() != 3 {
+		t.Errorf("version = %d, want 3 (two nodes, one edge)", v.Version())
 	}
 }

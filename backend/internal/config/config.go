@@ -26,6 +26,10 @@ type Config struct {
 	NATSTLSCAFile   string
 	NATSTLSCertFile string
 	NATSTLSKeyFile  string
+	// NATSMaxAge is how long an event may wait unprocessed in the stream, and how long
+	// a dead-lettered one is kept (NATS_MAX_AGE, default 168h). Processed events are
+	// removed as soon as they are acked, so this bounds a backlog, not the history.
+	NATSMaxAge time.Duration
 
 	// Env names the deployment profile. "demo" (the default) keeps the frictionless
 	// path `make demo` relies on: no credentials configured means an open API, with
@@ -227,6 +231,9 @@ type Config struct {
 	// Rate limiting (per client IP). 0 disables.
 	IngestRateRPS float64
 	APIRateRPS    float64
+	// AIRatePerMin caps /ai/* per client (AI_RATE_PER_MIN, default 10 a minute), on top
+	// of APIRateRPS: every call there is a paid request to the model provider.
+	AIRatePerMin float64
 
 	// Graph core: when true, refuse to start if Apache AGE is unreachable
 	// instead of silently falling back to the in-memory store.
@@ -346,6 +353,7 @@ func Load() Config {
 		NATSTLSCAFile:   getenv("NATS_TLS_CA", ""),
 		NATSTLSCertFile: getenv("NATS_TLS_CERT", ""),
 		NATSTLSKeyFile:  getenv("NATS_TLS_KEY", ""),
+		NATSMaxAge:      getdur("NATS_MAX_AGE", 7*24*time.Hour),
 
 		Env:         getenv("PG_ENV", "demo"),
 		APIAddr:     getenv("API_ADDR", ":8080"),
@@ -433,6 +441,7 @@ func Load() Config {
 
 		IngestRateRPS: getfloat("INGEST_RATE_RPS", 30),
 		APIRateRPS:    getfloat("API_RATE_RPS", 60),
+		AIRatePerMin:  getfloat("AI_RATE_PER_MIN", 10),
 		GraphStrict:   getbool("GRAPH_STRICT", false),
 		GraphTTL:      getdur("GRAPH_TTL", 0),
 		ScrubIngest:   getbool("SCRUB_INGEST", true),

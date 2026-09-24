@@ -7,6 +7,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strconv"
 	"sync"
@@ -72,6 +73,8 @@ type API struct {
 	authInfo         AuthInfo           // public auth config for the SPA login gate
 	prOpener         action.PROpener    // opens remediation pull requests (nil → disabled)
 	ai               ai.Client          // AI-native layer (nil/Nop → disabled)
+	aiLimiter        *ratelimit.Limiter // per-client cap on /ai/* (nil → none)
+	heavySlots       chan struct{}      // process-wide cap on heavy analyses; see compute.go
 }
 
 func New(manager *graph.Manager, svc *analyzer.Service, idx search.Indexer) *API {
@@ -90,6 +93,7 @@ func New(manager *graph.Manager, svc *analyzer.Service, idx search.Indexer) *API
 		// Sensible default so the dev/demo dashboards work; overridden by
 		// WithCORSOrigins from CORS_ALLOWED_ORIGINS.
 		corsOrigins: []string{"http://localhost:5173", "http://localhost:3000"},
+		heavySlots:  make(chan struct{}, heavyConcurrency()),
 	}
 }
 
@@ -990,7 +994,8 @@ func (a *API) Schema() (graphql.Schema, error) {
 				Type:        graphql.NewList(fixType),
 				Description: "Optimized remediation plan: the fewest fixes that eliminate the most critical-path risk, ranked (greedy choke-point set-cover). Optionally scoped to one application.",
 				Args: graphql.FieldConfigArgument{
-					"app": &graphql.ArgumentConfig{Type: graphql.String, Description: "Only consider paths touching this application."},
+					"app":   &graphql.ArgumentConfig{Type: graphql.String, Description: "Only consider paths touching this application."},
+					"title": &graphql.ArgumentConfig{Type: graphql.String, Description: "Return only the fix with this title - the way to ask for one fix's verification without paying for every fix's."},
 				},
 				Resolve: func(p graphql.ResolveParams) (any, error) {
 					paths := a.scopedLatest(p.Context)
@@ -1003,7 +1008,19 @@ func (a *API) Schema() (graphql.Schema, error) {
 						}
 						paths = filtered
 					}
-					return remediation.Plan(paths), nil
+					plan := remediation.Plan(paths)
+					// The plan is ranked over all paths first and filtered after, so the one
+					// fix returned carries the same rank, coverage and cut as in the full plan.
+					if title, _ := p.Args["title"].(string); title != "" {
+						one := plan[:0:0]
+						for _, f := range plan {
+							if f.Suggestion.Title == title {
+								one = append(one, f)
+							}
+						}
+						plan = one
+					}
+					return plan, nil
 				},
 			},
 			"invariantViolations": &graphql.Field{
@@ -1214,9 +1231,9 @@ func (a *API) Schema() (graphql.Schema, error) {
 			},
 			"aiEnabled": &graphql.Field{
 				Type:        graphql.Boolean,
-				Description: "Whether the AI-native layer (ANTHROPIC_API_KEY) is configured. The UI uses this to show/hide the AI assistant, summary, and explain features.",
-				Resolve: func(graphql.ResolveParams) (any, error) {
-					return a.aiEnabled(), nil
+				Description: "Whether the AI-native layer (ANTHROPIC_API_KEY) is configured and open to this caller - it is not to an anonymous visitor of a read-only instance. The UI uses this to show/hide the AI assistant, summary, and explain features.",
+				Resolve: func(p graphql.ResolveParams) (any, error) {
+					return a.aiAvailableTo(p.Context), nil
 				},
 			},
 			"riskSimulation": &graphql.Field{
@@ -1234,17 +1251,22 @@ func (a *API) Schema() (graphql.Schema, error) {
 					if iters <= 0 && seed == 1 {
 						return a.analyzer.LatestRisk(tenantOf(p.Context)), nil
 					}
+					if iters > maxRiskIterations {
+						iters = maxRiskIterations
+					}
+					// Read outside the analysis: the snapshot is cached for the whole request
+					// by whoever loads it first, and a load under the analysis's deadline
+					// could cache that deadline's error for every field after it.
 					snap, err := a.snapshot(p.Context)
 					if err != nil {
 						return nil, err
 					}
-					if iters > maxRiskIterations {
-						iters = maxRiskIterations
-					}
-					// p.Context, not Background: when the request is abandoned or its
-					// deadline passes, the simulation stops instead of running a core to
-					// completion for an answer nobody will read.
-					return analyzer.SimulateRisk(p.Context, snap, iters, uint64(seed)) // #nosec G115 -- PRNG seed; any 64-bit value is acceptable
+					return a.heavy(p.Context, fmt.Sprintf("risk|%d|%d", iters, seed), func(ctx context.Context) (any, error) {
+						// The request's context, not Background: when the request is
+						// abandoned or its deadline passes, the simulation stops instead of
+						// running a core to completion for an answer nobody will read.
+						return analyzer.SimulateRisk(ctx, snap, iters, uint64(seed)) // #nosec G115 -- PRNG seed; any 64-bit value is acceptable
+					})
 				},
 			},
 			"kShortestPaths": &graphql.Field{
@@ -1271,10 +1293,14 @@ func (a *API) Schema() (graphql.Schema, error) {
 					if k > maxShortestPaths {
 						k = maxShortestPaths
 					}
-					paths, err := analyzer.KShortestToTarget(p.Context, snap, resolveNodeRef(snap, from), target, k)
+					fromID := resolveNodeRef(snap, from)
+					v, err := a.heavy(p.Context, fmt.Sprintf("kshortest|%s|%s|%d", fromID, target, k), func(ctx context.Context) (any, error) {
+						return analyzer.KShortestToTarget(ctx, snap, fromID, target, k)
+					})
 					if err != nil {
 						return nil, err
 					}
+					paths := v.([]analyzer.AttackPath)
 					a.auditView(p.Context, "view.attack_paths", map[string]any{
 						"query": "kShortestPaths", "target": targetRef, "count": len(paths), "paths": pathIDsCapped(paths, 200),
 					})
@@ -1300,7 +1326,9 @@ func (a *API) Schema() (graphql.Schema, error) {
 						iters = maxRiskIterations
 					}
 					seed, _ := p.Args["seed"].(int)
-					return analyzer.WhatIf(p.Context, snap, cuts, iters, uint64(seed)) // #nosec G115 -- PRNG seed; any 64-bit value is acceptable
+					return a.heavy(p.Context, fmt.Sprintf("whatif|%v|%d|%d", cuts, iters, seed), func(ctx context.Context) (any, error) {
+						return analyzer.WhatIf(ctx, snap, cuts, iters, uint64(seed)) // #nosec G115 -- PRNG seed; any 64-bit value is acceptable
+					})
 				},
 			},
 			"graph": &graphql.Field{
@@ -1365,16 +1393,33 @@ func (a *API) verifyCut(ctx context.Context, cut remediation.CutEdge) (any, erro
 	if cut.From == "" || cut.To == "" {
 		return nil, nil
 	}
+	// Read outside the analyses below, for the reason given in riskSimulation.
 	snap, err := a.snapshot(ctx)
 	if err != nil {
 		return nil, err
 	}
-	res, err := analyzer.WhatIf(ctx, snap,
-		[]analyzer.EdgeCut{{From: cut.From, To: cut.To, Type: ontology.EdgeType(cut.Type)}},
-		verifyIterations, 1)
+	// The uncut graph's simulation is the same for every fix, and it is half of each
+	// proof's cost, so the request runs it once. The key is the one riskSimulation uses
+	// for the same arguments, so either can reuse the other's result. It is a call of its
+	// own rather than nested in the proof below, which would hold one slot while waiting
+	// for another.
+	base, err := a.heavy(ctx, fmt.Sprintf("risk|%d|%d", verifyIterations, 1), func(ctx context.Context) (any, error) {
+		return analyzer.SimulateRisk(ctx, snap, verifyIterations, 1)
+	})
 	if err != nil {
 		return nil, err
 	}
+	// Several fixes, and several paths, often cut the same edge: through heavy, the
+	// request proves each distinct cut once.
+	v, err := a.heavy(ctx, "verify|"+cut.Type+"|"+cut.From+"|"+cut.To, func(ctx context.Context) (any, error) {
+		return analyzer.WhatIfFrom(ctx, snap, base.(analyzer.RiskSimulation),
+			[]analyzer.EdgeCut{{From: cut.From, To: cut.To, Type: ontology.EdgeType(cut.Type)}},
+			verifyIterations, 1)
+	})
+	if err != nil {
+		return nil, err
+	}
+	res := v.(analyzer.WhatIfResult)
 	eliminated := len(res.Before) - len(res.After)
 	rr := res.RiskReduction()
 	return map[string]any{

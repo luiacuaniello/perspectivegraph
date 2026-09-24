@@ -14,6 +14,7 @@ package normalization
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 
@@ -84,15 +85,19 @@ func (n *Normalizer) Handle(ctx context.Context, ev ontology.Event) error {
 	if err != nil {
 		return err
 	}
-	if err := graph.ApplyEvent(ctx, store, ev); err != nil {
-		return err
+	// An edge still waiting for its endpoint does not stop the rest of the event, so the
+	// nodes are in the graph even when the event comes back for a redelivery - and they
+	// belong in the search index too.
+	applyErr := graph.ApplyEvent(ctx, store, ev)
+	if applyErr != nil && !errors.Is(applyErr, graph.ErrEndpointsMissing) {
+		return applyErr
 	}
 	if n.indexer.Enabled() {
 		if err := n.indexer.Index(ctx, tenant, ev.Nodes); err != nil {
 			slog.Warn("full-text index failed (continuing)", "tenant", tenant, "err", err)
 		}
 	}
-	return nil
+	return applyErr
 }
 
 // canonicalize rewrites node ids through image-ref normalization so duplicate

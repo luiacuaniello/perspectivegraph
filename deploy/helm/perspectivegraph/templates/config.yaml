@@ -40,6 +40,7 @@ data:
   NATS_URL: {{ include "perspectivegraph.natsUrl" . | quote }}
   NATS_STREAM: {{ .Values.nats.stream | quote }}
   NATS_SUBJECT: {{ .Values.nats.subject | quote }}
+  NATS_MAX_AGE: {{ .Values.nats.maxAge | quote }}
   API_ADDR: {{ printf ":%d" (int .Values.service.apiPort) | quote }}
   INGEST_ADDR: {{ printf ":%d" (int .Values.service.ingestPort) | quote }}
   ANALYZER_INTERVAL: {{ .Values.backend.analyzerInterval | quote }}
@@ -124,6 +125,7 @@ data:
   ANTHROPIC_MODEL: {{ .Values.ai.model | quote }}
   ANTHROPIC_BASE_URL: {{ .Values.ai.baseUrl | quote }}
   AI_MAX_TOKENS: {{ .Values.ai.maxTokens | quote }}
+  AI_RATE_PER_MIN: {{ .Values.ai.ratePerMin | quote }}
   HF_MODEL: {{ .Values.ai.hf.model | quote }}
   HF_BASE_URL: {{ .Values.ai.hf.baseUrl | quote }}
   # Where triage decisions live. "postgres" shares them across replicas and takes the

@@ -166,8 +166,9 @@ func (a *API) Handler() (http.Handler, error) {
 		return a.limiter.Middleware(counting(name, h))
 	}
 
-	// Guard the query (depth + body size), then memoize one snapshot per request.
-	mux.Handle("/graphql", secured("graphql", withQueryGuard(a.introspectionAllowed(), withSnapshotCache(gql, a.manager))))
+	// Guard the query (depth + body size), give the request its heavy-analysis budget
+	// (compute.go), then memoize one snapshot per request.
+	mux.Handle("/graphql", secured("graphql", withQueryGuard(a.introspectionAllowed(), withComputeScope(withSnapshotCache(gql, a.manager)))))
 	// SIEM enrichment export (NDJSON) and OSCAL assessment-results, same scoping.
 	// Who the caller is and whether they may write - read by the dashboard to disable the
 	// actions the server would refuse. Behind auth like the data it describes.
@@ -193,9 +194,10 @@ func (a *API) Handler() (http.Handler, error) {
 	mux.Handle("POST /remediation/pr", secured("remediation_pr", http.HandlerFunc(a.openRemediationPR)))
 	// AI-native layer (self-gated on ANTHROPIC_API_KEY): NL query, exec summary,
 	// and plain-English path explanation.
-	mux.Handle("GET /ai/summary", secured("ai_summary", http.HandlerFunc(a.handleAISummary)))
-	mux.Handle("POST /ai/query", secured("ai_query", http.HandlerFunc(a.handleAIQuery)))
-	mux.Handle("POST /ai/explain", secured("ai_explain", http.HandlerFunc(a.handleAIExplain)))
+	// Signed-in callers only, and a rate limit of their own: see aiGate.
+	mux.Handle("GET /ai/summary", secured("ai_summary", a.aiGate(http.HandlerFunc(a.handleAISummary))))
+	mux.Handle("POST /ai/query", secured("ai_query", a.aiGate(http.HandlerFunc(a.handleAIQuery))))
+	mux.Handle("POST /ai/explain", secured("ai_explain", a.aiGate(http.HandlerFunc(a.handleAIExplain))))
 
 	// Red-team / BAS validation verdicts + precision/recall. GET needs viewer;
 	// writes additionally require admin (checked inside, when auth is on).

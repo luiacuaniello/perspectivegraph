@@ -174,6 +174,9 @@ nats:
   image: nats:2.15.0-scratch@sha256:c0d27f3054601a99055aa5ec897b0a55bf1869ae50f454e659acfbbea11d2ab7
   stream: PERSPECTIVE
   subject: perspective.events.*
+  # How long an event may wait unprocessed, and how long a dead-lettered one is kept.
+  # A handled event leaves the stream at once; this bounds a backlog, not a history.
+  maxAge: 168h
   # App-level TLS to a TLS-enabled NATS (typically external; use a tls:// URL).
   # secretName references a Secret with ca.crt (+ tls.crt/tls.key for mutual TLS);
   # it's mounted and the backend trusts the CA / presents the client cert.
@@ -237,6 +240,9 @@ ai:
   model: ""
   baseUrl: ""
   maxTokens: ""
+  # Calls to /ai/* per client per minute. Each one is paid for; anonymous visitors of a
+  # read-only instance get none at all.
+  ratePerMin: 10
   hf:
     token: ""
     model: ""

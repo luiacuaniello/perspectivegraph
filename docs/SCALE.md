@@ -67,6 +67,36 @@ genload: posted 4000 nodes + 14000 edges in 8 events (1731 KiB) -> 202 Accepted
 (The resident graph is smaller than what `genload` posts because dangling edges - whose
 endpoints have not arrived yet - are rejected and redelivered, and duplicate nodes merge.)
 
+## Writing an event
+
+The analyzer is not the only cost that grows with the estate: every event is written to
+the graph before anything can reason about it, and a large cluster or cloud account
+arrives as one large event. Measured against the bundled Postgres + AGE on one laptop,
+one event carrying a chain of containers (N nodes, N-1 edges), written to an empty graph
+and then again unchanged - the second is what a connector pass does every fifteen
+minutes:
+
+| event | 1.18.1: first write / again | now: first write / again |
+|---|---|---|
+| 500 nodes, 499 edges | 2.0 s / 2.0 s | 0.95 s / 0.65 s |
+| 2,000 nodes, 1,999 edges | 10.1 s / 11.0 s | 3.6 s / 2.6 s |
+| 5,000 nodes, 4,999 edges | 36.4 s / 40.4 s | 9.8 s / 6.7 s |
+
+Three things made the old column grow faster than the event:
+
+- **A transaction per element.** Each node and edge paid BEGIN, the AGE setup, its
+  statement and a COMMIT. An event is now one transaction.
+- **An index nothing used.** Vertices were matched with `{id: …}`, which AGE turns into a
+  containment test the per-label `id` index cannot serve, so every lookup scanned the
+  label's table. They are matched with `WHERE n.id = …` now, which the index serves.
+- **A plan chosen on stale statistics.** On a graph whose statistics predate the rows being
+  written, the planner sorted the whole edge table for every edge. Writes now ask for
+  nested loops over the indexes, which is always the right plan for a lookup by id.
+
+At 36 seconds the 5,000-node event also outlasted the 30 seconds JetStream then waited
+before handing it to another replica, which started writing the same nodes while the
+first was still at it.
+
 ## How the cost grows
 
 The sample above is one point. This is the shape, measured on the synthetic layered graph
@@ -127,6 +157,13 @@ that sentence matter:
   advisory lock, so if the leader dies its connection drops, the lock releases, and another
   replica takes over on its next check. No external coordinator. This is active whenever the
   store backend is `apache-age`.
+- **Graph writes converge.** Replicas share one consumer, so two events that name the
+  same asset are written at the same time. AGE has no unique constraint: before this was
+  locked, eight concurrent writers of the same fifty nodes left between ten and
+  twenty-four duplicate vertices, and the first write of a new label failed when two
+  replicas raced to create its table. Each write now holds a transaction-scoped advisory
+  lock on its tenant's graph - transaction-scoped, so it works through a PgBouncer in
+  transaction mode, unlike the leader election above. Readers never take it.
 - **The governance stores can live in the database.** `GOVERNANCE_BACKEND=postgres`
   moves **suppressions, tickets, posture history, red-team validations and the KEV
   holdout** into PostgreSQL, where every replica reads the same rows. The schema is

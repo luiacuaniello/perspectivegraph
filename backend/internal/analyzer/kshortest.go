@@ -304,11 +304,20 @@ func (r WhatIfResult) RiskReduction() float64 {
 // It runs TWO full simulations - before and after - so it costs twice what a plain
 // risk simulation does, and an abandoned request must stop both.
 func WhatIf(ctx context.Context, snap graph.Snapshot, cuts []EdgeCut, iterations int, seed uint64) (WhatIfResult, error) {
-	reduced := cutEdges(snap, cuts)
 	before, err := SimulateRisk(ctx, snap, iterations, seed)
 	if err != nil {
 		return WhatIfResult{}, err
 	}
+	return WhatIfFrom(ctx, snap, before, cuts, iterations, seed)
+}
+
+// WhatIfFrom is WhatIf with the uncut simulation already in hand: before must be
+// SimulateRisk(ctx, snap, iterations, seed). A caller proving several cuts over one
+// graph - every fix in a plan - runs that simulation once instead of once per cut, which
+// is half the work: the simulation is nearly all of a what-if's cost (9 s of 18 on a
+// 4,000-node graph, against 78 ms for the path searches).
+func WhatIfFrom(ctx context.Context, snap graph.Snapshot, before RiskSimulation, cuts []EdgeCut, iterations int, seed uint64) (WhatIfResult, error) {
+	reduced := cutEdges(snap, cuts)
 	after, err := SimulateRisk(ctx, reduced, iterations, seed)
 	if err != nil {
 		return WhatIfResult{}, err

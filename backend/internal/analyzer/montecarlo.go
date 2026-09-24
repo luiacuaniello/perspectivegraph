@@ -288,6 +288,15 @@ func anyCompromiseCredibleBand(ctx context.Context, seeds, jewels []string, adj 
 	for k, es := range adj {
 		sampled[k] = make([]probEdge, len(es))
 	}
+	// The draws below are handed to edges in the order the sources are visited, so that
+	// order has to be fixed: ranging over the map itself gave every run its own order,
+	// and the band came out different on every call with the same seed - measured, twenty
+	// repeats out of twenty - although `seed` is documented as the way to reproduce it.
+	sources := make([]string, 0, len(adj))
+	for k := range adj {
+		sources = append(sources, k)
+	}
+	sort.Strings(sources)
 
 	causeU := make(map[string]float64)
 	present := comonotonicPresent(innerRng, causeU)
@@ -296,8 +305,8 @@ func anyCompromiseCredibleBand(ctx context.Context, seeds, jewels []string, adj 
 		if e := ctx.Err(); e != nil {
 			return 0, 0, e
 		}
-		for k, es := range adj {
-			dst := sampled[k]
+		for _, k := range sources {
+			es, dst := adj[k], sampled[k]
 			for i, e := range es {
 				a, b := betaParams(e.p, e.conf, e.evid)
 				dst[i] = probEdge{to: e.to, p: sampleBeta(outerRng, a, b), cause: e.cause}

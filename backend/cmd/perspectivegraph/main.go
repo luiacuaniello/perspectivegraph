@@ -320,7 +320,15 @@ const (
 	govMaxIdleConns = 4
 )
 
-func run(ctx context.Context, cfg config.Config) error {
+func run(parent context.Context, cfg config.Config) error {
+	// fatal stops the process with an error, for a failure nothing inside it will
+	// recover from: a listener that could not bind, a bus connection that closed for
+	// good, a consumer that stopped. Each of those used to be one log line while the
+	// process stayed up without that part of itself - and the orchestrator, seeing a
+	// live process, never restarted it.
+	ctx, fatal := context.WithCancelCause(parent)
+	defer fatal(nil)
+
 	// Validate the deployment profile before touching any dependency.
 	if err := checkProductionConfig(cfg); err != nil {
 		return err
@@ -346,10 +354,14 @@ func run(ctx context.Context, cfg config.Config) error {
 	defer manager.Close()
 
 	// ── Event bus ───────────────────────────────────────────────────
-	bus, err := broker.Connect(ctx, cfg.NATSURL, cfg.NATSStream, cfg.NATSSubject, broker.TLSConfig{
-		CAFile:   cfg.NATSTLSCAFile,
-		CertFile: cfg.NATSTLSCertFile,
-		KeyFile:  cfg.NATSTLSKeyFile,
+	bus, err := broker.Connect(ctx, cfg.NATSURL, cfg.NATSStream, cfg.NATSSubject, broker.Options{
+		TLS: broker.TLSConfig{
+			CAFile:   cfg.NATSTLSCAFile,
+			CertFile: cfg.NATSTLSCertFile,
+			KeyFile:  cfg.NATSTLSKeyFile,
+		},
+		MaxAge:   cfg.NATSMaxAge,
+		OnClosed: fatal,
 	})
 	if err != nil {
 		return err
@@ -713,6 +725,9 @@ func run(ctx context.Context, cfg config.Config) error {
 	if ingestLimiter.Enabled() || apiLimiter.Enabled() {
 		slog.Info("rate limiting enabled", "ingest_rps", cfg.IngestRateRPS, "api_rps", cfg.APIRateRPS)
 	}
+	// The AI endpoints get their own, much lower cap: each call is paid for. A burst of
+	// a fifth of the minute's allowance lets someone ask a follow-up without waiting.
+	aiLimiter := ratelimit.New(cfg.AIRatePerMin/60, max(1, int(cfg.AIRatePerMin/5))).WithClientIP(ips)
 
 	// ── Triage/suppression store ─────────────────────────────────────
 	//
@@ -842,7 +857,7 @@ func run(ctx context.Context, cfg config.Config) error {
 		provider, model := ai.Provider(aiCfg)
 		slog.Info("AI-native layer enabled", "provider", provider, "model", model)
 	}
-	apiHandler, err := buildAPI(manager, analyzerSvc, indexer, authn, auditRec, apiLimiter, suppressStore, historyStore, ticketStore, validationStore, cfg.CORSAllowedOrigins, exportSigner, exfilWatcher, authGuard, authInfoFromConfig(cfg, authn.Enabled()), prOpener, aiClient, coverageStore, degradedReason(backend, cfg.Env), cfg.MetricsAddr != "", ips, cfg.GraphQLIntrospection)
+	apiHandler, err := buildAPI(manager, analyzerSvc, indexer, authn, auditRec, apiLimiter, suppressStore, historyStore, ticketStore, validationStore, cfg.CORSAllowedOrigins, exportSigner, exfilWatcher, authGuard, authInfoFromConfig(cfg, authn.Enabled()), prOpener, aiClient, aiLimiter, coverageStore, degradedReason(backend, cfg.Env), cfg.MetricsAddr != "", ips, cfg.GraphQLIntrospection)
 	if err != nil {
 		return err
 	}
@@ -853,9 +868,9 @@ func run(ctx context.Context, cfg config.Config) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := bus.Consume(ctx, "normalizer", normalizer.Handle); err != nil &&
+		if err := bus.Consume(ctx, normalizer.Handle); err != nil &&
 			!errors.Is(err, context.Canceled) {
-			slog.Error("normalizer stopped", "err", err)
+			fatal(fmt.Errorf("normalizer stopped: %w", err))
 		}
 	}()
 
@@ -902,8 +917,8 @@ func run(ctx context.Context, cfg config.Config) error {
 		IdleTimeout:       120 * time.Second,
 		TLSConfig:         tlsConf,
 	}
-	serveHTTP(ctx, &wg, "ingestion", ingestHTTP, cfg.TLSCertFile, cfg.TLSKeyFile)
-	serveHTTP(ctx, &wg, "api", apiHTTP, cfg.TLSCertFile, cfg.TLSKeyFile)
+	serveHTTP(ctx, &wg, fatal, "ingestion", ingestHTTP, cfg.TLSCertFile, cfg.TLSKeyFile)
+	serveHTTP(ctx, &wg, fatal, "api", apiHTTP, cfg.TLSCertFile, cfg.TLSKeyFile)
 
 	// Metrics on their own listener when asked. Deliberately plain HTTP even when the
 	// API speaks TLS: this is meant for an address the outside cannot reach (bind it to
@@ -921,7 +936,7 @@ func run(ctx context.Context, cfg config.Config) error {
 			WriteTimeout:      30 * time.Second,
 			IdleTimeout:       60 * time.Second,
 		}
-		serveHTTP(ctx, &wg, "metrics", metricsHTTP, "", "")
+		serveHTTP(ctx, &wg, fatal, "metrics", metricsHTTP, "", "")
 		slog.Info("metrics on a separate listener - not on the API port", "addr", cfg.MetricsAddr)
 	}
 
@@ -933,9 +948,15 @@ func run(ctx context.Context, cfg config.Config) error {
 		"api", cfg.APIAddr, "ingest", cfg.IngestAddr, "graph", backend, "scheme", scheme)
 
 	<-ctx.Done()
-	slog.Info("signal received, draining…")
+	if parent.Err() != nil {
+		slog.Info("signal received, draining…")
+		wg.Wait()
+		return nil
+	}
+	cause := context.Cause(ctx)
+	slog.Error("stopping: a component failed and will not recover in this process", "err", cause)
 	wg.Wait()
-	return nil
+	return cause
 }
 
 // buildConnectors assembles the enabled agentless connectors into a leader-gated
@@ -1128,11 +1149,15 @@ func authInfoFromConfig(cfg config.Config, authEnabled bool) api.AuthInfo {
 	return info
 }
 
-func buildAPI(manager *graph.Manager, svc *analyzer.Service, idx search.Indexer, authn auth.Authenticator, rec audit.Recorder, limiter *ratelimit.Limiter, suppressStore suppress.Suppressions, historyStore history.Temporal, ticketStore ticket.Tickets, validationStore validation.Verdicts, corsOrigins []string, exportSigner *exportsign.Signer, exfilWatcher, authGuard *secwatch.Watcher, authInfo api.AuthInfo, prOpener action.PROpener, aiClient ai.Client, coverageStore *coverage.Store, degraded string, metricsElsewhere bool, ips *clientip.Resolver, introspection string) (http.Handler, error) {
-	return api.New(manager, svc, idx).WithAuth(authn, rec).WithRateLimit(limiter).WithSuppress(suppressStore).WithHistory(historyStore).WithTickets(ticketStore).WithValidation(validationStore).WithCORSOrigins(corsOrigins).WithExportSigner(exportSigner).WithAbuseWatchers(exfilWatcher, authGuard).WithClientIP(ips).WithIntrospection(introspection).WithAuthInfo(authInfo).WithRemediationPR(prOpener).WithAI(aiClient).WithCoverage(coverageStore).WithDegraded(degraded).WithMetricsElsewhere(metricsElsewhere).Handler()
+func buildAPI(manager *graph.Manager, svc *analyzer.Service, idx search.Indexer, authn auth.Authenticator, rec audit.Recorder, limiter *ratelimit.Limiter, suppressStore suppress.Suppressions, historyStore history.Temporal, ticketStore ticket.Tickets, validationStore validation.Verdicts, corsOrigins []string, exportSigner *exportsign.Signer, exfilWatcher, authGuard *secwatch.Watcher, authInfo api.AuthInfo, prOpener action.PROpener, aiClient ai.Client, aiLimiter *ratelimit.Limiter, coverageStore *coverage.Store, degraded string, metricsElsewhere bool, ips *clientip.Resolver, introspection string) (http.Handler, error) {
+	return api.New(manager, svc, idx).WithAuth(authn, rec).WithRateLimit(limiter).WithSuppress(suppressStore).WithHistory(historyStore).WithTickets(ticketStore).WithValidation(validationStore).WithCORSOrigins(corsOrigins).WithExportSigner(exportSigner).WithAbuseWatchers(exfilWatcher, authGuard).WithClientIP(ips).WithIntrospection(introspection).WithAuthInfo(authInfo).WithRemediationPR(prOpener).WithAI(aiClient).WithAIRateLimit(aiLimiter).WithCoverage(coverageStore).WithDegraded(degraded).WithMetricsElsewhere(metricsElsewhere).Handler()
 }
 
-func serveHTTP(ctx context.Context, wg *sync.WaitGroup, name string, srv *http.Server, certFile, keyFile string) {
+// serveHTTP runs srv until ctx ends. A listener that fails - a port already taken, a
+// certificate it cannot read - calls fatal, because a process serving the API without
+// its ingest port (or the other way round) looks healthy to every probe that checks the
+// port that did bind.
+func serveHTTP(ctx context.Context, wg *sync.WaitGroup, fatal func(error), name string, srv *http.Server, certFile, keyFile string) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -1146,7 +1171,7 @@ func serveHTTP(ctx context.Context, wg *sync.WaitGroup, name string, srv *http.S
 			err = srv.ListenAndServe()
 		}
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			slog.Error("http server failed", "name", name, "err", err)
+			fatal(fmt.Errorf("%s listener on %s: %w", name, srv.Addr, err))
 		}
 	}()
 	wg.Add(1)

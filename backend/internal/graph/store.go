@@ -5,6 +5,8 @@ package graph
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"sync/atomic"
 	"time"
@@ -100,6 +102,21 @@ type PathStore interface {
 	CriticalPaths(ctx context.Context, maxHops int) ([]RawPath, error)
 }
 
+// ErrEndpointsMissing is wrapped by a write that could not place an edge because one
+// of its endpoints is not in the graph yet. It is worth a redelivery - the node it
+// waits for may be in an event still on its way - and it never stops the rest of the
+// event: every node and every other edge is written first.
+var ErrEndpointsMissing = errors.New("edge endpoint(s) not in the graph yet")
+
+// BatchWriter is an OPTIONAL Store capability: write an event's nodes, then its edges,
+// as one unit. A store with a per-write cost - a transaction, a round trip - pays it
+// once per event instead of once per element. An edge whose endpoint is missing is
+// skipped, everything else is written, and the call then returns an error wrapping
+// ErrEndpointsMissing.
+type BatchWriter interface {
+	UpsertBatch(ctx context.Context, nodes []ontology.Node, edges []ontology.Edge) error
+}
+
 // Store is the persistence contract for the graph core. Writes are idempotent
 // upserts keyed by node/edge identity so re-ingesting the same scan is safe.
 type Store interface {
@@ -107,9 +124,9 @@ type Store interface {
 	// with previous observations (see MergeProps).
 	UpsertNode(ctx context.Context, n ontology.Node) error
 	// UpsertEdge creates or updates a directed relationship between two nodes.
-	// It returns an error when either endpoint is not in the graph yet: the
-	// broker redelivers the event with backoff, so the edge lands once its
-	// nodes arrive (eventual consistency instead of dangling edges).
+	// It returns an error wrapping ErrEndpointsMissing when either endpoint is not
+	// in the graph yet: the broker redelivers the event with backoff, so the edge
+	// lands once its nodes arrive (eventual consistency instead of dangling edges).
 	UpsertEdge(ctx context.Context, e ontology.Edge) error
 	// Snapshot returns the full graph for traversal/visualization.
 	Snapshot(ctx context.Context) (Snapshot, error)
@@ -158,6 +175,21 @@ func (v *VersionedStore) UpsertNode(ctx context.Context, n ontology.Node) error 
 func (v *VersionedStore) UpsertEdge(ctx context.Context, e ontology.Edge) error {
 	err := v.Store.UpsertEdge(ctx, e)
 	if err == nil {
+		v.version.Add(1)
+	}
+	return err
+}
+
+// UpsertBatch writes through the wrapped store's BatchWriter when it has one, and
+// element by element otherwise. The version moves whenever something was written -
+// including a batch that landed everything but an edge still waiting for its endpoint.
+func (v *VersionedStore) UpsertBatch(ctx context.Context, nodes []ontology.Node, edges []ontology.Edge) error {
+	bw, ok := v.Store.(BatchWriter)
+	if !ok {
+		return upsertEach(ctx, v, nodes, edges) // through v, so each write counts
+	}
+	err := bw.UpsertBatch(ctx, nodes, edges)
+	if (err == nil || errors.Is(err, ErrEndpointsMissing)) && len(nodes)+len(edges) > 0 {
 		v.version.Add(1)
 	}
 	return err
@@ -234,6 +266,13 @@ func AsPruner(s Store) (Pruner, bool) {
 // before edges so edge endpoints always exist. Each element is stamped with the
 // event's observation time (last_seen) so the staleness pruner can later tell a
 // still-present asset from one that fell out of the feeds.
+//
+// A store that is a BatchWriter gets the whole event in one call. An edge whose
+// endpoint is not in the graph yet no longer stops the event where it stands: the
+// nodes and the other edges are written, and the error returned afterwards (wrapping
+// ErrEndpointsMissing) earns the event a redelivery for the edges that are left. It
+// used to return at the first such edge, so every edge listed after it waited on a
+// node it had nothing to do with - and was lost with it if that node never came.
 func ApplyEvent(ctx context.Context, s Store, ev ontology.Event) error {
 	seen := ev.ObservedAt
 	if seen.IsZero() {
@@ -252,6 +291,7 @@ func ApplyEvent(ctx context.Context, s Store, ev ontology.Event) error {
 	// forever. The endpoint-missing error below stays an error precisely because that
 	// one IS worth redelivering - the node it waits for is still arriving.
 	dropped := map[string]bool{}
+	nodes := make([]ontology.Node, 0, len(ev.Nodes))
 	for _, n := range ev.Nodes {
 		if !ontology.IsValidLabel(n.Label) {
 			slog.Warn("dropping node outside the ontology",
@@ -260,10 +300,9 @@ func ApplyEvent(ctx context.Context, s Store, ev ontology.Event) error {
 			continue
 		}
 		n.Properties = withLastSeen(n.Properties, ts)
-		if err := s.UpsertNode(ctx, n); err != nil {
-			return err
-		}
+		nodes = append(nodes, n)
 	}
+	edges := make([]ontology.Edge, 0, len(ev.Edges))
 	for _, e := range ev.Edges {
 		// An edge to a node this event dropped can never land, so it is dropped with it
 		// rather than left to fail the endpoint check and be redelivered forever.
@@ -273,11 +312,45 @@ func ApplyEvent(ctx context.Context, s Store, ev ontology.Event) error {
 			continue
 		}
 		e.Properties = withLastSeen(e.Properties, ts)
-		if err := s.UpsertEdge(ctx, e); err != nil {
+		edges = append(edges, e)
+	}
+	if bw, ok := s.(BatchWriter); ok {
+		return bw.UpsertBatch(ctx, nodes, edges)
+	}
+	return upsertEach(ctx, s, nodes, edges)
+}
+
+// upsertEach is the element-by-element write for a store that is not a BatchWriter,
+// with the same contract: nodes, then every edge that can land, then an error wrapping
+// ErrEndpointsMissing for the ones that could not.
+func upsertEach(ctx context.Context, s Store, nodes []ontology.Node, edges []ontology.Edge) error {
+	for _, n := range nodes {
+		if err := s.UpsertNode(ctx, n); err != nil {
 			return err
 		}
 	}
-	return nil
+	var waiting []ontology.Edge
+	for _, e := range edges {
+		if err := s.UpsertEdge(ctx, e); err != nil {
+			if errors.Is(err, ErrEndpointsMissing) {
+				waiting = append(waiting, e)
+				continue
+			}
+			return err
+		}
+	}
+	return EndpointsMissing(waiting)
+}
+
+// EndpointsMissing reports the edges a write had to leave out, or nil if there were
+// none. The first one is named, so the log line says what the event is waiting for.
+func EndpointsMissing(waiting []ontology.Edge) error {
+	if len(waiting) == 0 {
+		return nil
+	}
+	e := waiting[0]
+	return fmt.Errorf("%d edge(s) left for a redelivery, e.g. %s %s->%s: %w",
+		len(waiting), e.Type, e.From, e.To, ErrEndpointsMissing)
 }
 
 // withLastSeen returns a copy of props with the last_seen stamp set, without

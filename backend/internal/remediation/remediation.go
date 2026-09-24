@@ -162,9 +162,15 @@ type Fix struct {
 // earlier-picked fix are credited to the earlier one, so the list reads as an
 // ordered "do these in order" plan with cumulative coverage.
 func Plan(paths []analyzer.AttackPath) []Fix {
-	// fix key -> the suggestion, and the set of path indices it breaks.
+	// fix key -> the suggestion, and the indices of the paths it breaks, ascending.
+	//
+	// A slice in path order rather than a set: the risks below are summed over it, and a
+	// float sum depends on its order. Ranging over a map summed in a different order on
+	// every call, so a fix's coverage moved in its last digits from one pass to the next
+	// - and so could the plan's ORDER, because two fixes covering the same risk tie on
+	// `risk == bestRisk`, which that noise decides.
 	sugg := map[string]Suggestion{}
-	breaks := map[string]map[int]bool{}
+	breaks := map[string][]int{}
 	totalRisk := 0.0
 	for i, p := range paths {
 		totalRisk += p.Score
@@ -173,10 +179,9 @@ func Plan(paths []analyzer.AttackPath) []Fix {
 			if _, ok := sugg[key]; !ok {
 				sugg[key] = s
 			}
-			if breaks[key] == nil {
-				breaks[key] = map[int]bool{}
+			if b := breaks[key]; len(b) == 0 || b[len(b)-1] != i { // one path, once
+				breaks[key] = append(b, i)
 			}
-			breaks[key][i] = true
 		}
 	}
 
@@ -194,7 +199,7 @@ func Plan(paths []analyzer.AttackPath) []Fix {
 		bestKey, bestRisk, bestCount := "", 0.0, 0
 		for _, key := range keys {
 			risk, count := 0.0, 0
-			for i := range breaks[key] {
+			for _, i := range breaks[key] {
 				if !covered[i] {
 					risk += paths[i].Score
 					count++
@@ -209,7 +214,7 @@ func Plan(paths []analyzer.AttackPath) []Fix {
 		}
 
 		var ids []string
-		for i := range breaks[bestKey] {
+		for _, i := range breaks[bestKey] {
 			if !covered[i] {
 				covered[i] = true
 				ids = append(ids, paths[i].ID)
