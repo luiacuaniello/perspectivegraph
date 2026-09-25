@@ -50,10 +50,14 @@ type Step struct {
 	WeightBasis      string  `json:"weight_basis,omitempty"`
 	WeightConfidence float64 `json:"weight_confidence,omitempty"`
 	// EvidenceCount is the number of independent observations behind this hop's
-	// probability (from the edge's evidence_count), when known. It sets the Beta
-	// posterior's concentration directly (evidence-count epistemic uncertainty)
-	// instead of the basis-confidence heuristic. 0 ⇒ unknown ⇒ heuristic κ.
+	// probability (from the edge's evidence_count), when known. Each one adds to the
+	// concentration the basis gives the hop's Beta posterior. 0 ⇒ the basis alone.
 	EvidenceCount int `json:"evidence_count,omitempty"`
+	// WeightCause is the shared cause behind this hop's probability - a CVE, a leaked
+	// credential (the edge's weight_cause). Hops resting on one cause succeed or fail
+	// together, so a path counts that cause once, at its weakest hop: the same coupling
+	// the risk simulation samples. Empty ⇒ the hop is its own cause.
+	WeightCause string `json:"weight_cause,omitempty"`
 }
 
 // AttackPath is a scored route from an exposed seed to a crown jewel.
@@ -123,6 +127,12 @@ type AttackPath struct {
 	Priority        float64  `json:"priority,omitempty"`
 	PriorityLabel   string   `json:"priority_label,omitempty"`
 	PriorityFactors []string `json:"priority_factors,omitempty"`
+	// DirectAccess marks a crown jewel the attacker holds without crossing an edge - a
+	// bucket anyone may read, a role anyone may assume (ontology.Node.HeldByAttacker). Its
+	// path is the jewel alone: no hops, Score 1, because nothing stands in the way. It is
+	// listed so the path list agrees with the risk simulation, which counts such a jewel
+	// as compromised in every trial.
+	DirectAccess bool `json:"direct_access,omitempty"`
 }
 
 // Seed and target node of the path, for convenience.
@@ -176,18 +186,28 @@ func FindCriticalPaths(snap graph.Snapshot) []AttackPath {
 	adj := buildAdjacency(snap.Edges, nodes)
 
 	var seeds, jewels []string
+	listed := make(map[string]bool, len(snap.Nodes))
 	for _, n := range snap.Nodes {
-		// A path may originate from internet exposure (the default) or, when the operator
-		// opts in, from a credential-origin seed (an identity whose creds could leak).
-		if n.Bool(ontology.PropInternetExposed) || n.Bool(ontology.PropCredentialExposed) {
+		// A node listed twice - duplicate vertices written before 1.19 - is one seed and one
+		// jewel, not two: counted twice it returned every one of its paths twice.
+		if listed[n.ID] {
+			continue
+		}
+		listed[n.ID] = true
+		n = nodes[n.ID]
+		// A path may originate from internet exposure (the default), from a node open to
+		// anyone, or, when the operator opts in, from a credential-origin seed (an identity
+		// whose creds could leak).
+		if n.IsSeed() {
 			seeds = append(seeds, n.ID)
 		}
 		if n.Bool(ontology.PropCrownJewel) {
 			jewels = append(jewels, n.ID)
 		}
 	}
+	direct := directAccessPaths(snap)
 	if len(seeds) == 0 || len(jewels) == 0 {
-		return nil
+		return direct
 	}
 
 	// One result bucket per seed, filled in place so the flattened order matches
@@ -220,7 +240,7 @@ func FindCriticalPaths(snap graph.Snapshot) []AttackPath {
 		wg.Wait()
 	}
 
-	var paths []AttackPath
+	paths := direct
 	for _, ps := range perSeed {
 		paths = append(paths, ps...)
 	}
@@ -271,7 +291,7 @@ func CriticalPathsVia(ctx context.Context, store graph.Store, snap graph.Snapsho
 			qctx, cancel := context.WithTimeout(ctx, dbPathTimeout)
 			defer cancel()
 			if raws, err := pf.CriticalPaths(qctx, maxHops); err == nil {
-				return rankRawPaths(raws)
+				return rankRawPaths(raws, directAccessPaths(snap))
 			} else {
 				slog.Warn("db pathfinder failed/timed out, falling back to in-process Dijkstra", "err", err)
 			}
@@ -282,9 +302,13 @@ func CriticalPathsVia(ctx context.Context, store graph.Store, snap graph.Snapsho
 
 // rankRawPaths scores raw DB paths, keeps the highest-probability one per
 // (source, target), and sorts them like FindCriticalPaths (runtime-confirmed
-// first, then score descending).
-func rankRawPaths(raws []graph.RawPath) []AttackPath {
+// first, then score descending). The direct-access paths, which have no edge for
+// a database match to find, are ranked in with them.
+func rankRawPaths(raws []graph.RawPath, direct []AttackPath) []AttackPath {
 	best := map[string]AttackPath{}
+	for _, ap := range direct {
+		best[ap.Source().ID+"\x00"+ap.Target().ID] = ap
+	}
 	for _, rp := range raws {
 		ap, ok := attackPathFromRaw(rp)
 		if !ok {
@@ -320,7 +344,7 @@ func attackPathFromRaw(rp graph.RawPath) (AttackPath, bool) {
 		p := clampProb(e.ExploitProbability)
 		method, conf := resolutionOf(e.Properties)
 		basis, basisConf, evid := weightBasisOf(e, rp.Nodes[i], rp.Nodes[i+1])
-		steps = append(steps, Step{EdgeType: e.Type, From: e.From, To: e.To, Probability: p, ResolutionMethod: method, ResolutionConfidence: conf, WeightBasis: basis, WeightConfidence: basisConf, EvidenceCount: evid})
+		steps = append(steps, Step{EdgeType: e.Type, From: e.From, To: e.To, Probability: p, ResolutionMethod: method, ResolutionConfidence: conf, WeightBasis: basis, WeightConfidence: basisConf, EvidenceCount: evid, WeightCause: weightCauseOf(e)})
 	}
 	return assembleAttackPath(rp.Nodes, steps), true
 }
@@ -338,6 +362,41 @@ func clampProb(p float64) float64 {
 	return p
 }
 
+// directAccessConfidence is how much to trust a direct-access path: the grant that makes
+// the jewel open to anyone was read from the provider's own configuration, an observed
+// fact rather than an estimate - trusted like a KEV entry.
+const directAccessConfidence = 0.95
+
+// directAccessPath is the path of a crown jewel the attacker already holds: the jewel on
+// its own, no hops, Score 1.
+func directAccessPath(jewel ontology.Node) AttackPath {
+	ap := assembleAttackPath([]ontology.Node{jewel}, nil)
+	ap.DirectAccess = true
+	ap.Confidence, ap.ConfidenceLabel = directAccessConfidence, "high"
+	return ap
+}
+
+// directAccessPaths lists the direct-access path of every crown jewel the attacker holds,
+// each once however many times the snapshot lists it.
+func directAccessPaths(snap graph.Snapshot) []AttackPath {
+	var out []AttackPath
+	var index map[string]ontology.Node
+	seen := map[string]bool{}
+	for _, n := range snap.Nodes {
+		if seen[n.ID] {
+			continue
+		}
+		seen[n.ID] = true
+		if index == nil {
+			index = snap.NodeByID()
+		}
+		if n = index[n.ID]; n.Bool(ontology.PropCrownJewel) && n.HeldByAttacker() {
+			out = append(out, directAccessPath(n))
+		}
+	}
+	return out
+}
+
 // assembleAttackPath is the ONE place a scored AttackPath is built from its
 // ordered nodes and steps. Both entry points funnel through it - the in-process
 // Dijkstra (reconstruct) and the database pathfinder (attackPathFromRaw) - so the
@@ -348,14 +407,15 @@ func assembleAttackPath(nodes []ontology.Node, steps []Step) AttackPath {
 	if len(nodes) == 0 {
 		return AttackPath{}
 	}
-	score := 1.0
+	probs := make([]float64, len(steps))
 	minP := 1.0 // weakest hop → the comonotonic (shared-cause) upper bound on the path
-	for _, st := range steps {
-		score *= st.Probability
+	for i, st := range steps {
+		probs[i] = st.Probability
 		if st.Probability < minP {
 			minP = st.Probability
 		}
 	}
+	score := chainProbability(steps, probs)
 	runtime := false
 	for _, n := range nodes {
 		if n.Bool(ontology.PropRuntimeAlert) {
@@ -389,6 +449,40 @@ func assembleAttackPath(nodes []ontology.Node, steps []Step) AttackPath {
 	}
 }
 
+// chainProbability is the probability that every hop of a path succeeds, hop i with
+// probability p[i], under the coupling the risk simulation samples: hops resting on one
+// weight cause stand or fall together - the cause holds or it does not - so each cause
+// counts once, at its weakest hop, and the rest multiply. Without a shared cause it is
+// the plain product, computed in the same order, bit for bit.
+//
+// The path search still ranks routes by the plain product (-ln p is additive, a
+// weakest-hop-per-cause score is not), so on a graph with shared causes the route it
+// picks is the best by the product and scored by this - never lower than its product.
+func chainProbability(steps []Step, p []float64) float64 {
+	prod := 1.0
+	for i, st := range steps {
+		if st.WeightCause == "" {
+			prod *= p[i]
+			continue
+		}
+		first, weakest := true, p[i]
+		for j, other := range steps {
+			if other.WeightCause != st.WeightCause {
+				continue
+			}
+			if j < i {
+				first = false // counted at its first hop
+				break
+			}
+			weakest = math.Min(weakest, p[j])
+		}
+		if first {
+			prod *= weakest
+		}
+	}
+	return prod
+}
+
 // hopsCorrelated reports whether the path leans on a repeated weight basis - the
 // concrete, data-driven signal that its hops may share a common cause and so
 // violate the independence the product score assumes. Two hops resting on the
@@ -400,6 +494,16 @@ func assembleAttackPath(nodes []ontology.Node, steps []Step) AttackPath {
 func hopsCorrelated(steps []Step) bool {
 	if len(steps) < 2 {
 		return false
+	}
+	causes := make(map[string]bool, len(steps))
+	for _, s := range steps {
+		if s.WeightCause == "" {
+			continue
+		}
+		if causes[s.WeightCause] {
+			return true // two hops on one declared cause: correlated by construction
+		}
+		causes[s.WeightCause] = true
 	}
 	seen := make(map[string]int, len(steps))
 	for _, s := range steps {
@@ -426,6 +530,13 @@ type outEdge struct {
 	basis     string  // provenance of `prob` (kev|epss|runtime|cvss|severity|heuristic)
 	basisConf float64 // how much to trust `prob`, [0,1]
 	evid      int     // independent observations behind `prob` (0 = unknown)
+	cause     string  // shared cause behind `prob` (weight_cause), "" when its own
+}
+
+// weightCauseOf reads an edge's shared weight cause (ontology.PropWeightCause).
+func weightCauseOf(e ontology.Edge) string {
+	c, _ := e.Properties[ontology.PropWeightCause].(string)
+	return c
 }
 
 // weightBasisOf classifies where an edge's exploit probability came from and how
@@ -539,6 +650,7 @@ func buildAdjacency(edges []ontology.Edge, nodes map[string]ontology.Node) map[s
 			basis:     basis,
 			basisConf: basisConf,
 			evid:      evid,
+			cause:     weightCauseOf(e),
 		})
 	}
 	return adj
@@ -642,7 +754,7 @@ func dijkstra(src string, adj map[string][]outEdge, sc *scratch) (dist map[strin
 			nd := cur.d + e.weight
 			if old, ok := dist[e.to]; !ok || nd < old {
 				dist[e.to] = nd
-				prev[e.to] = Step{EdgeType: e.typ, From: cur.node, To: e.to, Probability: e.prob, ResolutionMethod: e.resMethod, ResolutionConfidence: e.resConf, WeightBasis: e.basis, WeightConfidence: e.basisConf, EvidenceCount: e.evid}
+				prev[e.to] = Step{EdgeType: e.typ, From: cur.node, To: e.to, Probability: e.prob, ResolutionMethod: e.resMethod, ResolutionConfidence: e.resConf, WeightBasis: e.basis, WeightConfidence: e.basisConf, EvidenceCount: e.evid, WeightCause: e.cause}
 				pq.push(heapItem{node: e.to, d: nd})
 			}
 		}

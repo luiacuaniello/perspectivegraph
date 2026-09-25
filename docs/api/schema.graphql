@@ -3,6 +3,7 @@ type AttackPath {
   confidenceLabel: String
   correlatedHops: Boolean
   detections: [Detection]
+  directAccess: Boolean
   firstSeen: String
   id: String
   mixtureScore: Float
@@ -306,6 +307,7 @@ type Remediation {
 }
 
 type RemediationEffect {
+  expectedReduction: Float
   pathsAfter: Int
   pathsBefore: Int
   pathsEliminated: Int
@@ -383,6 +385,7 @@ type WhatIfResult {
   afterRisk: RiskSimulation
   before: [AttackPath]
   beforeRisk: RiskSimulation
+  expectedReduction: Float
   removedEdges: Int
   riskReduction: Float
 }

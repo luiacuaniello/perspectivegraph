@@ -111,6 +111,13 @@ var Registry = []Rule{
 // Generate inspects a path and emits remediation artifacts for the edges that
 // are cheapest to cut, de-duplicated by kind+target.
 func Generate(p analyzer.AttackPath) []Suggestion {
+	if p.DirectAccess {
+		// No edge to cut: the jewel is open as it stands, and closing it is the fix.
+		if s, ok := closePublicAccess(p.Target()); ok {
+			return []Suggestion{s}
+		}
+		return nil
+	}
 	index := map[string]ontology.Node{}
 	for _, n := range p.Nodes {
 		index[n.ID] = n
@@ -262,15 +269,26 @@ var HintRegistry = []HintRule{
 	{ontology.LabelSecret, func(n ontology.Node) string {
 		return fmt.Sprintf("Rotate the exposed credential and remove it%s; load it from a secret manager instead.", location(n))
 	}},
+	{ontology.LabelIAMRole, func(n ontology.Node) string {
+		if !n.Bool(ontology.PropPublicAccess) {
+			return ""
+		}
+		// No artifact for this one: the right trust policy names the principals that
+		// truly need the role, which only its owner knows.
+		return fmt.Sprintf("**%s** can be assumed by anyone: restrict its trust policy (AssumeRolePolicyDocument) to the principals that need it, or add a condition such as `aws:PrincipalOrgID`.", n.Name)
+	}},
 }
 
-// Hints returns one fix hint per finding node on the path, in path order.
+// Hints returns one fix hint per finding node on the path, in path order. A renderer
+// returning "" has nothing to say about that node.
 func Hints(p analyzer.AttackPath) []string {
 	var out []string
 	for _, n := range p.Nodes {
 		for _, h := range HintRegistry {
 			if n.Label == h.Label {
-				out = append(out, h.Render(n))
+				if hint := h.Render(n); hint != "" {
+					out = append(out, hint)
+				}
 			}
 		}
 	}
@@ -289,6 +307,35 @@ func location(n ontology.Node) string {
 		return fmt.Sprintf(" (`%s:%d`)", path, line)
 	}
 	return fmt.Sprintf(" (`%s`)", path)
+}
+
+// closePublicAccess is the fix for a crown jewel open to anyone. For a bucket it is
+// apply-ready: an S3 public access block needs only the bucket's name, and it overrides
+// every public ACL and policy grant at once. A role has no artifact (see its hint). The
+// fix carries no Cut - there is no edge to simulate removing.
+func closePublicAccess(n ontology.Node) (Suggestion, bool) {
+	if n.Label != ontology.LabelBucket || !n.Bool(ontology.PropPublicAccess) {
+		return Suggestion{}, false
+	}
+	name := sanitize(n.Name)
+	content := fmt.Sprintf(`# PerspectiveGraph auto-remediation - %q is readable by anyone. Block every
+# public ACL and bucket-policy grant on it; a grant that must stay public belongs on a
+# bucket that holds nothing sensitive.
+resource "aws_s3_bucket_public_access_block" "perspective_block_public_%s" {
+  bucket                  = %q
+  block_public_acls       = true
+  ignore_public_acls      = true
+  block_public_policy     = true
+  restrict_public_buckets = true
+}
+`, n.Name, name, n.Name)
+	return Suggestion{
+		Title:     "Block public access to " + n.Name,
+		Kind:      "terraform",
+		Filename:  "block-public-" + name + ".tf",
+		Content:   content,
+		Rationale: "The sensitive bucket is open to anyone, so no edge stands in the way; blocking public access closes it.",
+	}, true
 }
 
 func networkPolicy(c ontology.Node) Suggestion {

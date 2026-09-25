@@ -146,6 +146,12 @@ const (
 	// leak (phishing, keys in code). Distinct from internet_exposed so the two origins
 	// stay separable; only seeded when the operator opts in (SEED_IAM_USERS).
 	PropCredentialExposed = "credential_exposed" // #nosec G101 -- ontology property label, not a credential (name matches gosec's "cred" heuristic)
+	// PropPublicAccess (bool) marks a node anyone may use without credentials: a bucket
+	// whose ACL or policy grants public read, a role whose trust policy admits any
+	// principal. Stronger than internet_exposed, which says only that the node can be
+	// reached: an internet-facing database still wants a password, a public bucket does
+	// not. A crown jewel carrying it is compromised as it stands - see Node.HeldByAttacker.
+	PropPublicAccess = "public_access"
 	// PropCrownJewel (bool) marks a node as a valid traversal *target*.
 	PropCrownJewel = "crown_jewel"
 	// PropCrownJewelBasis (string) records WHY a node is a crown jewel - "tagged"
@@ -247,10 +253,10 @@ const (
 	PropWeightBasis = "weight_basis"
 
 	// PropEvidenceCount (int) is the number of independent observations behind an
-	// edge's probability (e.g. corroborating KEV/runtime sightings). When present it
-	// sets the Beta posterior's concentration directly (evidence-count-derived
-	// epistemic uncertainty) instead of the basis-confidence heuristic. Absent/0 ⇒
-	// the heuristic κ. A collector that tracks corroboration count should stamp it.
+	// edge's probability (e.g. corroborating KEV/runtime sightings). Each one adds to
+	// the concentration the weight basis gives the Beta posterior (κ = κ(basis) +
+	// count), so evidence only ever tightens it. Absent/0 ⇒ the basis alone. A
+	// collector that tracks corroboration count should stamp it.
 	PropEvidenceCount = "evidence_count"
 
 	// PropWeightCause (string) identifies the SHARED cause driving an edge's

@@ -11,7 +11,8 @@ package analyzer
 // What-if then asks the inverse: given a set of edges we intend to cut (fix),
 // what do the surviving paths and the quantified risk look like? It re-runs the
 // analyzer and the Monte Carlo simulation on the pruned graph, using common
-// random numbers so the before/after risk delta reflects the cut, not noise.
+// random numbers so the before/after risk delta reflects the cut, not noise (see
+// montecarlo.go).
 
 import (
 	"context"
@@ -36,8 +37,10 @@ func newWGraph(snap graph.Snapshot) *wgraph {
 	g := &wgraph{adj: map[string]map[string]outEdge{}, nodes: snap.NodeByID()}
 	for _, e := range snap.Edges {
 		p := clampProb(e.ExploitProbability)
+		method, conf := resolutionOf(e.Properties)
 		basis, basisConf, evid := weightBasisOf(e, g.nodes[e.From], g.nodes[e.To])
-		oe := outEdge{to: e.To, typ: e.Type, weight: -math.Log(p), prob: p, basis: basis, basisConf: basisConf, evid: evid}
+		oe := outEdge{to: e.To, typ: e.Type, weight: -math.Log(p), prob: p, resMethod: method, resConf: conf,
+			basis: basis, basisConf: basisConf, evid: evid, cause: weightCauseOf(e)}
 		m := g.adj[e.From]
 		if m == nil {
 			m = map[string]outEdge{}
@@ -190,34 +193,24 @@ func (g *wgraph) pathCost(seq []string) (float64, bool) {
 	return cost, true
 }
 
-// toAttackPath materializes a node sequence into a scored AttackPath.
+// toAttackPath materializes a node sequence into a scored AttackPath - through
+// assembleAttackPath, like every other path. It used to score the route itself, and an
+// alternative route came back without its interval, its mixture, its upper bound or the
+// provenance of its joins: the same route read differently depending on which list
+// showed it.
 func (g *wgraph) toAttackPath(seq []string) AttackPath {
 	pathNodes := make([]ontology.Node, 0, len(seq))
 	var steps []Step
-	score := 1.0
-	runtime := false
 	for i, id := range seq {
-		n := g.nodes[id]
-		pathNodes = append(pathNodes, n)
-		if n.Bool(ontology.PropRuntimeAlert) {
-			runtime = true
-		}
+		pathNodes = append(pathNodes, g.nodes[id])
 		if i+1 < len(seq) {
 			e := g.adj[id][seq[i+1]]
-			steps = append(steps, Step{EdgeType: e.typ, From: id, To: seq[i+1], Probability: e.prob, WeightBasis: e.basis, WeightConfidence: e.basisConf, EvidenceCount: e.evid})
-			score *= e.prob
+			steps = append(steps, Step{EdgeType: e.typ, From: id, To: seq[i+1], Probability: e.prob,
+				ResolutionMethod: e.resMethod, ResolutionConfidence: e.resConf, WeightBasis: e.basis,
+				WeightConfidence: e.basisConf, EvidenceCount: e.evid, WeightCause: e.cause})
 		}
 	}
-	conf, label := pathConfidence(steps)
-	return AttackPath{
-		ID:               pathID(seq),
-		Score:            score,
-		Nodes:            pathNodes,
-		Steps:            steps,
-		RuntimeConfirmed: runtime,
-		Confidence:       conf,
-		ConfidenceLabel:  label,
-	}
+	return assembleAttackPath(pathNodes, steps)
 }
 
 // KShortestPaths returns up to k highest-probability loopless paths from src to
@@ -239,17 +232,20 @@ func KShortestPaths(ctx context.Context, snap graph.Snapshot, src, dst string, k
 	return out, nil
 }
 
-// KShortestToTarget enumerates the top-k routes to dst from every internet seed
-// (or from `from` when non-empty), merged and ranked best-first.
+// KShortestToTarget enumerates the top-k routes to dst from every seed - the same seeds
+// the path list and the risk simulation start from (ontology.Node.IsSeed) - or from
+// `from` when non-empty, merged and ranked best-first.
 func KShortestToTarget(ctx context.Context, snap graph.Snapshot, from, dst string, k int) ([]AttackPath, error) {
 	var seeds []string
 	if from != "" {
 		seeds = []string{from}
 	} else {
+		listed := map[string]bool{}
 		for _, n := range snap.Nodes {
-			if n.Bool(ontology.PropInternetExposed) {
+			if !listed[n.ID] && n.IsSeed() {
 				seeds = append(seeds, n.ID)
 			}
+			listed[n.ID] = true
 		}
 	}
 	var all []AttackPath
@@ -257,7 +253,7 @@ func KShortestToTarget(ctx context.Context, snap graph.Snapshot, from, dst strin
 		if s == dst {
 			continue
 		}
-		// One Yen run per internet seed: the loop multiplies k by the number of seeds,
+		// One Yen run per seed: the loop multiplies k by the number of seeds,
 		// so the check belongs here rather than only at the top.
 		found, err := KShortestPaths(ctx, snap, s, dst, k)
 		if err != nil {
@@ -291,16 +287,29 @@ type WhatIfResult struct {
 	AfterRisk    RiskSimulation `json:"after_risk"`
 }
 
-// RiskReduction is the drop in P(any crown jewel compromised) the cuts achieve.
+// RiskReduction is the drop in P(any crown jewel compromised) the cuts achieve. Both
+// runs share their trials, and a cut only takes edges away, so it is never negative.
+//
+// It saturates: while any one jewel is compromised in every trial - one open to anyone -
+// P(any) stays at 1 whatever else is fixed, and this reads 0 for a cut that closed every
+// route to another jewel. ExpectedReduction does not.
 func (r WhatIfResult) RiskReduction() float64 {
 	return r.BeforeRisk.AnyCompromiseProbability - r.AfterRisk.AnyCompromiseProbability
 }
 
+// ExpectedReduction is the drop in the expected number of crown jewels compromised: the
+// per-jewel reductions added up. It moves for every jewel a cut protects, so it is the
+// measure a fix is proven on.
+func (r WhatIfResult) ExpectedReduction() float64 {
+	return r.BeforeRisk.ExpectedCompromised - r.AfterRisk.ExpectedCompromised
+}
+
 // WhatIf recomputes critical paths and quantified risk with the given edges
-// removed. Both risk runs use the same `seed` for reproducibility; note this is
-// NOT a true common-random-numbers variance reduction (the two graphs have
-// different edge sets, so the same RNG draws map to different edges) - so make
-// the delta meaningful by running enough iterations, not by relying on CRN.
+// removed. Both risk runs use the same `seed`, and so the same trials: every edge that
+// survives the cut meets the same fate in each trial as before it (common random
+// numbers, see montecarlo.go). The difference between the two runs is therefore the
+// cut's own effect - never negative, and exactly zero for an edge no route to a jewel
+// crosses - rather than the difference between two independent samples.
 // It runs TWO full simulations - before and after - so it costs twice what a plain
 // risk simulation does, and an abandoned request must stop both.
 func WhatIf(ctx context.Context, snap graph.Snapshot, cuts []EdgeCut, iterations int, seed uint64) (WhatIfResult, error) {

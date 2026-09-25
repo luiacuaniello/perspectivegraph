@@ -3,7 +3,7 @@ import { fetchDashboard, fetchGraph, fetchHistory, fetchStatus, type Dashboard, 
 import { BottomBar, TopBar, type View } from "./components/Navigation";
 import ExportMenu from "./components/ExportMenu";
 import AttackPathList from "./components/AttackPathList";
-import { orderForDisplay } from "./components/routeChannels";
+import { orderForDisplay, routeLabel } from "./components/routeChannels";
 import TodayView from "./components/TodayView";
 import TrustView from "./components/TrustView";
 import AttackPathDetail from "./components/AttackPathDetail";
@@ -424,7 +424,7 @@ export default function App() {
                     <div className="flex h-full min-h-0 flex-col gap-2">
                       <div className="flex items-center justify-between">
                         <span className="truncate text-[12px] text-muted">
-                          {selected.nodes[0]?.name} → {selected.nodes[selected.nodes.length - 1]?.name} in context
+                          {routeLabel(selected)} in context
                           {pathNeighbourhood.nodes.length > 0 && (
                             <span className="text-slate-500">
                               {" "}· {pathNeighbourhood.nodes.length} of {graphData?.nodes.length ?? 0} assets, one hop out

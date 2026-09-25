@@ -754,9 +754,11 @@ const (
 	maxPathsReturned       = 5000
 )
 
-// CriticalPaths finds internet-exposed → crown-jewel routes IN THE DATABASE via
-// a Cypher variable-length match over the native node properties, bounded to
-// maxHops. It returns up to maxPathsReturned such paths; the analyzer scores them
+// CriticalPaths finds seed → crown-jewel routes IN THE DATABASE via a Cypher
+// variable-length match over the native node properties, bounded to maxHops. A seed is
+// what ontology.Node.IsSeed says it is - internet-exposed, open to anyone, or an identity
+// whose credentials are assumed leaked - and the WHERE clause below must keep saying the
+// same, or the database finder and the in-process one start from different places. It returns up to maxPathsReturned such paths; the analyzer scores them
 // and keeps the best per (source, target).
 //
 // NOTE: this enumerates paths (not a weighted shortest path, which AGE lacks), so
@@ -771,7 +773,8 @@ func (s *Store) CriticalPaths(ctx context.Context, maxHops int) ([]graph.RawPath
 	}
 	inner := fmt.Sprintf(
 		`MATCH p=(a)-[*1..%d]->(b) `+
-			`WHERE a.internet_exposed = true AND b.crown_jewel = true AND id(a) <> id(b) `+
+			`WHERE (a.internet_exposed = true OR a.credential_exposed = true OR a.public_access = true) `+
+			`AND b.crown_jewel = true AND id(a) <> id(b) `+
 			`RETURN nodes(p), relationships(p) LIMIT %d`, maxHops, maxPathsReturned)
 	q, err := s.cypherSQL(inner, `ns agtype, rs agtype`)
 	if err != nil {

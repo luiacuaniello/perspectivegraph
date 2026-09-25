@@ -86,3 +86,22 @@ func (n Node) Bool(key string) bool {
 	v, ok := n.Properties[key].(bool)
 	return ok && v
 }
+
+// IsSeed reports whether an attack may start at n: it is reachable from the internet,
+// open to anyone, or - under the opt-in credential-origin lens - an identity whose
+// credentials are assumed leaked. Every engine that picks where attacks begin asks this
+// one question, so the path list, the risk simulation and the alternative routes cannot
+// disagree about it again: the credential-origin seeds were once honoured by the path
+// search alone.
+func (n Node) IsSeed() bool {
+	return n.Bool(PropInternetExposed) || n.Bool(PropCredentialExposed) || n.Bool(PropPublicAccess)
+}
+
+// HeldByAttacker reports whether an attacker holds n without crossing a single edge:
+// anyone may use it (a public-read bucket, a role any principal may assume), or its
+// credentials are assumed leaked. Reachable is not held - an internet-facing database
+// still wants a password - so a crown jewel that is merely reachable counts as
+// compromised only when an edge reaches it, and one that is held counts at once.
+func (n Node) HeldByAttacker() bool {
+	return n.Bool(PropPublicAccess) || n.Bool(PropCredentialExposed)
+}

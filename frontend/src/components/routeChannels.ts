@@ -88,3 +88,12 @@ export function verdictSource(path: AttackPath): string | undefined {
 export function orderForDisplay(paths: AttackPath[]): AttackPath[] {
   return [...paths].sort((a, b) => Number(routeStatus(a) === "refuted") - Number(routeStatus(b) === "refuted"));
 }
+
+// routeLabel names a route in one line: "entry → target", or, for a sensitive asset
+// open to anyone - a direct-access path, the asset alone - the asset and why, since
+// "customer-exports → customer-exports" reads as a route from itself.
+export function routeLabel(path: AttackPath): string {
+  const to = path.nodes[path.nodes.length - 1]?.name ?? "?";
+  if (path.directAccess) return `${to} (open to anyone)`;
+  return `${path.nodes[0]?.name ?? "?"} → ${to}`;
+}

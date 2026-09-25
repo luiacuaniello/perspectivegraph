@@ -25,6 +25,10 @@ import (
 //	0.35 exploitability (Score)      0.10 KEV weakness on the route
 //	0.15 trust in the score (Confidence)  0.13 target sensitivity
 //	0.22 runtime-confirmed (active)  0.05 entry blast radius
+//
+// A direct-access path - a crown jewel open to anyone - takes the runtime weight: like
+// a live alert it is not a prediction but a present fact, the data is readable now. The
+// two do not add up; one path is either, and the total is capped at 1 regardless.
 func Prioritize(paths []AttackPath) {
 	entryBlast := make(map[string]int, len(paths))
 	for i := range paths {
@@ -45,9 +49,13 @@ func (p *AttackPath) setPriority(blast int) {
 	score := 0.35*p.Score + 0.15*p.Confidence
 	var factors []string
 
-	if p.RuntimeConfirmed {
+	switch {
+	case p.RuntimeConfirmed:
 		score += 0.22
 		factors = append(factors, "runtime-confirmed (active)")
+	case p.DirectAccess:
+		score += 0.22
+		factors = append(factors, "open to anyone (no exploit needed)")
 	}
 	if p.kevOnPath() {
 		score += 0.10

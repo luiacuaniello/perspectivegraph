@@ -113,6 +113,31 @@ func TestSimulateRiskSensitivityBand(t *testing.T) {
 	}
 }
 
+// The band measures the inputs, not the sampler. An edge backed by a million
+// observations is known to within a twentieth of a point, and its band must say so; it
+// used to be about ±4 points wide, the binomial noise of the 400 trials behind each
+// posterior sample, and the dashboard read that as "soft inputs".
+func TestTheBandOfAnInputKnownForSureIsNarrow(t *testing.T) {
+	snap := graph.Snapshot{
+		Nodes: []ontology.Node{
+			{ID: "lb", Label: ontology.LabelLoadBalancer, Properties: map[string]any{ontology.PropInternetExposed: true}},
+			{ID: "db", Label: ontology.LabelDatabase, Properties: map[string]any{ontology.PropCrownJewel: true}},
+		},
+		Edges: []ontology.Edge{{Type: ontology.EdgeConnectsTo, From: "lb", To: "db", ExploitProbability: 0.5,
+			Properties: map[string]any{ontology.PropWeightBasis: "kev", ontology.PropEvidenceCount: 1000000}}},
+	}
+	for seed := uint64(1); seed <= 20; seed++ {
+		sim := mustSimulate(t, snap, 2000, seed)
+		if w := sim.SensitivityHigh - sim.SensitivityLow; w > 0.012 {
+			t.Fatalf("seed %d: band [%.3f, %.3f] is %.1f points wide for an input known to ±0.05",
+				seed, sim.SensitivityLow, sim.SensitivityHigh, w*100)
+		}
+		if sim.SensitivityLow > sim.AnyCompromiseProbability || sim.AnyCompromiseProbability > sim.SensitivityHigh {
+			t.Fatalf("seed %d: band [%.3f, %.3f] does not bracket %.3f", seed, sim.SensitivityLow, sim.SensitivityHigh, sim.AnyCompromiseProbability)
+		}
+	}
+}
+
 func TestMixtureCompromiseByProfile(t *testing.T) {
 	SetAttackerProfilePriors("") // built-in defaults (commodity/criminal/apt)
 	sim := mustSimulate(t, twoRouteSnap(), 20000, 1)
@@ -127,10 +152,16 @@ func TestMixtureCompromiseByProfile(t *testing.T) {
 	if !(apt > crim && crim > comm) {
 		t.Errorf("capability ordering broken: apt=%.3f criminal=%.3f commodity=%.3f", apt, crim, comm)
 	}
-	// The criminal (skill 0) has p(e|criminal)=p exactly, so its reachability reproduces
-	// the independent headline - the mixture is anchored on the baseline.
-	if math.Abs(crim-sim.AnyCompromiseProbability) > 0.03 {
-		t.Errorf("criminal R=%.3f should ≈ AnyCompromiseProbability %.3f", crim, sim.AnyCompromiseProbability)
+	// The profiles are anchored on each edge's own probability, not on one of them: over
+	// a single edge they average back to the independent headline exactly, so the mixture
+	// changes the correlation and nothing else. (It used to anchor on the "criminal", and
+	// the weak-attacker-heavy priors pulled every figure below the inputs.)
+	one := graph.Snapshot{Nodes: twoRouteSnap().Nodes[:2], Edges: twoRouteSnap().Edges[:1]}
+	one.Nodes[1].Properties = map[string]any{ontology.PropCrownJewel: true}
+	single := mustSimulate(t, one, 20000, 1)
+	if math.Abs(single.MixtureCompromiseProbability-single.AnyCompromiseProbability) > 0.01 {
+		t.Errorf("one edge: mixture %.3f, independent %.3f - the profiles must average back to the edge's probability",
+			single.MixtureCompromiseProbability, single.AnyCompromiseProbability)
 	}
 	want := 0.0
 	for _, pc := range sim.ProfileCompromise {

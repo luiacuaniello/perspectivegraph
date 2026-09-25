@@ -61,8 +61,9 @@ backend:
   analyzerIncremental: false
   # Attacker-profile mixture: the path score is also marginalized over a latent
   # attacker capability (commodity/criminal/apt) - Σ P(c)·∏ p(e|c) - for a per-profile
-  # breakdown. Retune the threat-model priors (names match the built-ins; renormalized).
-  # Empty keeps the defaults (commodity:0.5,criminal:0.35,apt:0.15).
+  # breakdown, anchored so each hop keeps its own probability on average (the priors set
+  # the spread between profiles, not the level). Retune the threat-model priors (names
+  # match the built-ins; renormalized). Empty keeps the defaults (commodity:0.5,criminal:0.35,apt:0.15).
   attackerProfilePriors: ""
   # EPSS -> conditional-traversal map: p(traverse|positioned) = EPSS^gamma. EPSS is a
   # marginal 30-day rate, not the conditional a positioned attacker needs; gamma < 1

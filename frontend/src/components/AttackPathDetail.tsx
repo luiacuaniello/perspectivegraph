@@ -643,12 +643,24 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
           <div className="min-w-0">
             <div className="text-[12px] font-semibold text-muted">Attack path</div>
             <h2 className="mt-1 flex flex-wrap items-baseline gap-x-2 text-lg font-semibold text-slate-900">
-              <span>{entry?.name}</span>
-              <span className="text-muted">→</span>
-              <span>{target?.name}</span>
+              {path.directAccess ? (
+                <span>{target?.name}</span>
+              ) : (
+                <>
+                  <span>{entry?.name}</span>
+                  <span className="text-muted">→</span>
+                  <span>{target?.name}</span>
+                </>
+              )}
             </h2>
             <div className="mt-1 text-xs text-muted">
-              {path.steps.length} hops
+              {path.directAccess ? (
+                <span title="The sensitive asset is open to anyone - a bucket anyone may read, a role any principal may assume - so no step stands in the way. Closing it is the fix.">
+                  direct access · open to anyone, no step to exploit
+                </span>
+              ) : (
+                <>{path.steps.length} hops</>
+              )}
               {crossedAccounts.length > 1 && (
                 <>
                   {" · "}
@@ -707,7 +719,7 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
               >
                 {(path.score * 100).toFixed(0)}%
               </div>
-              <div className="mt-1 text-[12px] text-muted">every hop succeeds</div>
+              <div className="mt-1 text-[12px] text-muted">{path.directAccess ? "nothing to exploit" : "every hop succeeds"}</div>
             </div>
           </div>
         </div>
@@ -861,8 +873,15 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
               <span>
                 {whatIf.result.riskReduction > 0.0005 ? (
                   <span className="text-emerald-700">↓ {(whatIf.result.riskReduction * 100).toFixed(1)} pts removed</span>
+                ) : (whatIf.result.expectedReduction ?? 0) > 0.0005 ? (
+                  <span
+                    className="text-emerald-700"
+                    title="Account compromise does not move because another sensitive asset stays compromised either way; this cut still protects the ones it closes."
+                  >
+                    ↓ {whatIf.result.expectedReduction!.toFixed(2)} sensitive assets compromised on average
+                  </span>
                 ) : (
-                  <span className="text-amber-700">no global drop - other paths still reach a sensitive asset</span>
+                  <span className="text-amber-700">no drop - other paths still reach the same sensitive assets</span>
                 )}
               </span>
               <span className="text-slate-500">·</span>

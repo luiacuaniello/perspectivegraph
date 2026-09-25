@@ -108,6 +108,9 @@ export interface RemediationEffect {
   pathsAfter: number;
   pathsEliminated: number;
   riskReductionPct: number;
+  // Drop in the expected number of crown jewels compromised. Unlike riskReductionPct it
+  // does not saturate while another jewel is open to anyone.
+  expectedReduction?: number | null;
   verified: boolean;
 }
 
@@ -243,6 +246,9 @@ export interface AttackPath {
   id: string;
   score: number;
   runtimeConfirmed: boolean;
+  // A crown jewel open to anyone (public-read bucket, role any principal may assume):
+  // its path is the jewel alone, no steps, score 1.
+  directAccess?: boolean | null;
   // How much to trust `score` given how its edge weights were derived, and the
   // qualitative band (high|medium|low) - honesty about probability provenance.
   confidence?: number | null;
@@ -420,6 +426,7 @@ export interface EdgeCut {
 export interface WhatIfResult {
   removedEdges: number;
   riskReduction: number;
+  expectedReduction?: number | null;
   beforeRisk: { anyCompromiseProbability: number };
   afterRisk: { anyCompromiseProbability: number };
   after: { id: string }[];
@@ -466,6 +473,7 @@ const dashboardQuery = (app?: string) => {
       id
       score
       runtimeConfirmed
+      directAccess
       confidence
       confidenceLabel
       scoreUpperBound
@@ -537,7 +545,7 @@ export const verifyFix = (title: string, app?: string) => {
   {
     remediationPlan(${args}) {
       title
-      verification { removedEdges pathsBefore pathsAfter pathsEliminated riskReductionPct verified }
+      verification { removedEdges pathsBefore pathsAfter pathsEliminated riskReductionPct expectedReduction verified }
     }
   }
 `).then((d) => d.remediationPlan[0]?.verification ?? null);
@@ -716,7 +724,7 @@ export const runWhatIf = (cuts: EdgeCut[]) =>
   gql<{ whatIf: WhatIfResult }>(
     `query WhatIf($cuts: [EdgeCutInput!]!) {
        whatIf(cuts: $cuts) {
-         removedEdges riskReduction
+         removedEdges riskReduction expectedReduction
          beforeRisk { anyCompromiseProbability }
          afterRisk { anyCompromiseProbability }
          after { id }

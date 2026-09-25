@@ -720,7 +720,7 @@
 						"body": {
 							"mode": "graphql",
 							"graphql": {
-								"query": "query Dashboard {\n  posture { criticalPaths runtimeConfirmed policyViolations nodes edges }\n  attackPaths {\n    id\n    score\n    runtimeConfirmed\n    nodes { id label name internetExposed crownJewel crownJewelBasis classification secretsScrubbed runtimeAlert severity cvss }\n    steps { edgeType from to probability attack { id name tactic } }\n    remediations { title kind filename rationale content }\n  }\n  invariantViolations { invariantId description severity nodes { id label name } }\n  graph {\n    nodes { id label name internetExposed crownJewel runtimeAlert }\n    edges { type from to probability attack { id tactic } }\n  }\n}",
+								"query": "query Dashboard {\n  posture { criticalPaths runtimeConfirmed policyViolations nodes edges }\n  attackPaths {\n    id\n    score\n    runtimeConfirmed\n    directAccess\n    nodes { id label name internetExposed crownJewel crownJewelBasis classification secretsScrubbed runtimeAlert severity cvss }\n    steps { edgeType from to probability attack { id name tactic } }\n    remediations { title kind filename rationale content }\n  }\n  invariantViolations { invariantId description severity nodes { id label name } }\n  graph {\n    nodes { id label name internetExposed crownJewel runtimeAlert }\n    edges { type from to probability attack { id tactic } }\n  }\n}",
 								"variables": ""
 							}
 						},
@@ -938,11 +938,11 @@
 						"body": {
 							"mode": "graphql",
 							"graphql": {
-								"query": "query ($title: String) { remediationPlan(title: $title) { title coveragePct verification { verified pathsEliminated riskReductionPct removedEdges } } }",
+								"query": "query ($title: String) { remediationPlan(title: $title) { title coveragePct verification { verified pathsEliminated riskReductionPct expectedReduction removedEdges } } }",
 								"variables": "{\"title\": \"{{fixTitle}}\"}"
 							}
 						},
-						"description": "Simulate removing one fix's edge over the current graph and report what it provably eliminates. title: picks the fix (the previous request stores the top one in fixTitle), so only that fix's what-if runs - asking for verification across the whole plan runs one per fix, and a request past 20 of these analyses gets errors for the rest."
+						"description": "Simulate removing one fix's edge over the current graph and report what it provably eliminates - on the same trials before and after, so verified means it removes a path or lowers expectedReduction (the expected number of sensitive assets compromised). title: picks the fix (the previous request stores the top one in fixTitle), so only that fix's what-if runs - asking for verification across the whole plan runs one per fix, and a request past 20 of these analyses gets errors for the rest."
 					}
 				},
 				{
@@ -1086,7 +1086,7 @@
 						"body": {
 							"mode": "graphql",
 							"graphql": {
-								"query": "{ whatIf(cuts: [{from: \"public-deployer\", to: \"account-admin (effective)\", type: \"CAN_ESCALATE_TO\"}], iterations: 5000) { removedEdges riskReduction beforeRisk { anyCompromiseProbability } afterRisk { anyCompromiseProbability crownJewels { name compromiseProbability } } after { score nodes { name } } } }",
+								"query": "{ whatIf(cuts: [{from: \"public-deployer\", to: \"account-admin (effective)\", type: \"CAN_ESCALATE_TO\"}], iterations: 5000) { removedEdges riskReduction expectedReduction beforeRisk { anyCompromiseProbability } afterRisk { anyCompromiseProbability crownJewels { name compromiseProbability } } after { score nodes { name } } } }",
 								"variables": ""
 							}
 						},
