@@ -7,7 +7,9 @@ import (
 	"cmp"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"database/sql"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -1204,15 +1206,13 @@ func healthCheck() error {
 	// unhealthy the moment in-app TLS was turned on.
 	scheme := "http"
 	client := &http.Client{Timeout: 3 * time.Second}
-	if os.Getenv("TLS_CERT_FILE") != "" && os.Getenv("TLS_KEY_FILE") != "" {
+	if certFile := os.Getenv("TLS_CERT_FILE"); certFile != "" && os.Getenv("TLS_KEY_FILE") != "" {
+		conf, err := selfProbeTLS(certFile)
+		if err != nil {
+			return err
+		}
 		scheme = "https"
-		client.Transport = &http.Transport{TLSClientConfig: &tls.Config{
-			MinVersion: tls.VersionTLS12,
-			// The process probing its own listener on loopback. The certificate is issued
-			// for the service's public name, never for 127.0.0.1, so verifying it here
-			// would only ever fail; nothing leaves the host.
-			InsecureSkipVerify: true, // #nosec G402 -- loopback self-probe of this process's own listener
-		}}
+		client.Transport = &http.Transport{TLSClientConfig: conf}
 	}
 	url := scheme + "://" + net.JoinHostPort(host, port) + "/healthz"
 
@@ -1225,6 +1225,39 @@ func healthCheck() error {
 		return fmt.Errorf("status %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// selfProbeTLS verifies the listener the probe reaches against the process's own
+// certificate: that certificate is the only root trusted, and the name checked is one it
+// was issued for. The probe dials 127.0.0.1, which a certificate for the service's public
+// name never covers, so a stock verification would always fail - and skipping
+// verification instead would accept any server on that port. This accepts exactly one:
+// the one holding this certificate's key.
+func selfProbeTLS(certFile string) (*tls.Config, error) {
+	raw, err := os.ReadFile(certFile) // #nosec G304 G703 -- TLS_CERT_FILE, set by whoever runs the process; the certificate this same process serves
+	if err != nil {
+		return nil, fmt.Errorf("read TLS_CERT_FILE: %w", err)
+	}
+	block, _ := pem.Decode(raw)
+	if block == nil || block.Type != "CERTIFICATE" {
+		return nil, errors.New("TLS_CERT_FILE holds no PEM certificate")
+	}
+	leaf, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse TLS_CERT_FILE: %w", err)
+	}
+	var name string
+	switch {
+	case len(leaf.DNSNames) > 0:
+		name = leaf.DNSNames[0]
+	case len(leaf.IPAddresses) > 0:
+		name = leaf.IPAddresses[0].String()
+	default:
+		return nil, errors.New("TLS_CERT_FILE's certificate names no DNS name or IP address to verify it against")
+	}
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM(raw) // the leaf, and any chain the file carries
+	return &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool, ServerName: name}, nil
 }
 
 // setupLogging installs the process logger.

@@ -2,10 +2,18 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
+	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -62,8 +70,10 @@ func TestServeHTTPShutdownIsNotAFailure(t *testing.T) {
 }
 
 // With in-app TLS on, the container's health probe must speak HTTPS to its own listener.
-// It spoke plain HTTP, so turning TLS on marked a working backend unhealthy.
-func TestHealthCheckSpeaksTLSWhenTheAPIDoes(t *testing.T) {
+// It spoke plain HTTP, so turning TLS on marked a working backend unhealthy. And it must
+// verify what answers: the process's own certificate is the only root it trusts, so
+// another server on that port - with a certificate for the same name - is refused.
+func TestHealthCheckSpeaksTLSAndVerifiesItsOwnCertificate(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/healthz" {
 			_, _ = w.Write([]byte("ok"))
@@ -72,12 +82,35 @@ func TestHealthCheckSpeaksTLSWhenTheAPIDoes(t *testing.T) {
 		http.NotFound(w, r)
 	}))
 	defer srv.Close()
-	t.Setenv("API_ADDR", strings.TrimPrefix(srv.URL, "https://"))
-	t.Setenv("TLS_CERT_FILE", "/etc/pg/tls.crt")
-	t.Setenv("TLS_KEY_FILE", "/etc/pg/tls.key")
-	if err := healthCheck(); err != nil {
-		t.Fatalf("health probe against an HTTPS API: %v", err)
+	dir := t.TempDir()
+	writePEM := func(name string, der []byte) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
 	}
+	t.Setenv("API_ADDR", strings.TrimPrefix(srv.URL, "https://"))
+	t.Setenv("TLS_KEY_FILE", filepath.Join(dir, "unused.key"))
+
+	t.Setenv("TLS_CERT_FILE", writePEM("own.crt", srv.Certificate().Raw))
+	if err := healthCheck(); err != nil {
+		t.Fatalf("probe against its own certificate: %v", err)
+	}
+
+	// A stranger's certificate for the same names: whoever answers must hold OUR key.
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(7), DNSNames: srv.Certificate().DNSNames,
+		IPAddresses: srv.Certificate().IPAddresses, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour)}
+	other, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TLS_CERT_FILE", writePEM("other.crt", other))
+	if err := healthCheck(); err == nil {
+		t.Error("the probe trusted a server that does not hold the configured certificate")
+	}
+
 	t.Setenv("TLS_CERT_FILE", "")
 	if err := healthCheck(); err == nil {
 		t.Error("a plain-HTTP probe of an HTTPS listener reported healthy")

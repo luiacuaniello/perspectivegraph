@@ -89,7 +89,9 @@ ingest by reason.
 ### Smaller changes, no action
 
 - `perspectivegraph healthz` - the container healthcheck - speaks HTTPS when the API
-  serves TLS itself; it used to mark such a backend unhealthy.
+  serves TLS itself; it used to mark such a backend unhealthy. It verifies the listener
+  against the process's own `TLS_CERT_FILE` and a name that certificate lists, so the
+  certificate must carry a DNS name or IP address (any certificate a browser accepts does).
 - The file-backed governance stores force their writes to disk. On macOS, where a sync is
   slow, importing many verdicts into the file store takes a few seconds longer.
 - OIDC tokens signed ES256/ES384/ES512 are accepted, each only with a key of its curve.
