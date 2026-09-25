@@ -17,6 +17,89 @@ digest, take the backup, stage it.
 
 ---
 
+## 1.20.0
+
+### Ingest requests can be signed v2, and v1 can be turned off
+
+**Affects you if** anything signs ingest requests itself - a script built on the MANUAL
+recipe, a webhook, a CI step other than the gate.
+
+The v1 signature (`X-PerspectiveGraph-Signature: sha256=…`) covers the body alone. The
+repository and commit a report counts against travel in the query, so a captured request
+could be replayed at any time, or its `?sha=` changed to put its findings - or its lack of
+findings - on another commit. v2 (`X-PerspectiveGraph-Signature-V2` with
+`X-PerspectiveGraph-Timestamp`) covers the time, method, path, parameters and body, and
+each signature is accepted once within five minutes. The `gate` subcommand, the GitHub
+Action and the Postman collection now send both.
+
+**Action: none to keep working** - v1 stays accepted (`INGEST_HMAC_ACCEPT_V1=true`). To
+close the hole: move your senders to v2 (MANUAL, "Authentication"), watch
+`perspectivegraph_ingest_signatures_total{version="v1"}` stay at 0, then set
+`INGEST_HMAC_ACCEPT_V1=false` (Helm: `ingest.hmacAcceptV1: false`). A proxy in front of
+ingest must pass the path through unchanged: the path is signed.
+
+### Large events are split, and the gate waits for the whole report
+
+**Affects you if** you ingest large cluster or account dumps, or run the merge gate.
+
+An event over one bus message (1 MiB on a default NATS) used to be refused at ingest with
+a 502, so a large estate never reached the graph. It is now split into chunks. The ingest
+response carries a `batch` id, and GraphQL `ingestBatch(id)` says when every chunk has
+been applied; the gate waits for that and takes its verdict from a pass after it, because
+a pass between two chunks would have seen part of the report.
+
+**Action: none.** A gate older than 1.20 still works against this engine, as before -
+without the wait.
+
+### An edge waiting for its endpoint is parked, not redelivered
+
+**Affects you if** your feeds send edges to assets another feed describes.
+
+Such an edge used to send its whole event back for redelivery, eight times in about four
+minutes, and then to the dead-letter stream. It is now parked and lands in the write
+that brings its endpoint, from any feed or replica, for up to seven days.
+
+**Action: none.** Expect fewer dead-lettered events. `perspectivegraph_graph_pending_edges`
+counts what is parked, and the shipped `PerspectiveGraphPendingEdgesGrowing` alert fires
+when it keeps rising - a feed naming assets nothing else describes.
+
+### Reading a tenant no longer creates it; tenants share one connection pool
+
+**Affects you if** you run several tenants, or sign users in with OIDC tenant claims.
+
+A read under a tenant nobody had written used to create its graph, a pool of eight
+database connections and an analyzer loop - so the number of tenants, not the operator,
+set how many connections a replica needed. A never-written tenant now reads as an empty
+graph, and all tenants' graphs share one pool of eight connections per replica.
+
+**Action: none.** Size `max_connections` for eight graph connections per replica,
+whatever the tenant count (plus the governance pool and the leader's connection).
+
+### The auth-denial alert watches a new counter
+
+**Affects you if** you loaded `deploy/observability/prometheus-alerts.yaml`.
+
+`PerspectiveGraphAuthDenialSpike` matched `code=~"401|403"` on a counter that records only
+status classes (`4xx`), so it could never fire. It now reads
+`perspectivegraph_auth_denied_total`, which counts refused credentials on the API and on
+ingest by reason.
+
+**Action:** reload the alert rules.
+
+### Smaller changes, no action
+
+- `perspectivegraph healthz` - the container healthcheck - speaks HTTPS when the API
+  serves TLS itself; it used to mark such a backend unhealthy.
+- The file-backed governance stores force their writes to disk. On macOS, where a sync is
+  slow, importing many verdicts into the file store takes a few seconds longer.
+- OIDC tokens signed ES256/ES384/ES512 are accepted, each only with a key of its curve.
+- A node listed twice in a graph - duplicate vertices written by concurrent replicas
+  before 1.19 - counts once in the risk simulation. It used to count twice: a compromise
+  probability of 2 and an interval of NaN.
+- A node written without a name no longer fails reading the whole graph on Apache AGE.
+
+---
+
 ## 1.19.0
 
 ### The event stream keeps what is still to be processed, and nothing else

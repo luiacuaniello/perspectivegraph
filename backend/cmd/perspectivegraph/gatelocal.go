@@ -183,7 +183,7 @@ func localVerdict(ctx context.Context, o localOpts) (gateVerdict, error) {
 		return gateVerdict{}, err
 	}
 
-	if err := applyEvents(ctx, norm, append(reports, est.events...)); err != nil {
+	if err := applyEvents(ctx, norm, store, append(reports, est.events...)); err != nil {
 		return gateVerdict{}, err
 	}
 
@@ -339,53 +339,35 @@ func (o localOpts) parseReports() ([]ontology.Event, error) {
 	return out, nil
 }
 
-// danglingEdge reports whether the store refused an edge because it has not seen an
-// endpoint yet - a forward reference, not a broken graph.
-func danglingEdge(err error) bool {
-	return errors.Is(err, graph.ErrEndpointsMissing)
-}
-
 // applyEvents feeds every event through the normalizer, independently of the order they
 // arrive in.
 //
-// Order matters to the store, which refuses an edge whose endpoints it has not seen, and
-// forward references are normal here rather than exceptional: a scanner report introduces
-// the image, the cloud connector describes the roles, and an operator's supplement links
-// the two - so whichever runs first points at something that does not exist yet. Making
-// that the caller's problem would mean publishing an ordering rule and letting anyone who
-// gets it wrong watch the run die on an edge.
+// Forward references are normal here rather than exceptional: a scanner report
+// introduces the image, the cloud connector describes the roles, and an operator's
+// supplement links the two - so whichever runs first points at something that does not
+// exist yet. The store parks such an edge and lands it when its endpoint arrives
+// (graph.EdgeParker), so the order does not matter and one pass is enough.
 //
-// So events that only await an endpoint are retried, and the pass repeats while it keeps
-// making progress. What survives that is a genuine dangling reference: something in the
+// What is still parked afterwards is a genuine dangling reference: something in the
 // estate points at an asset nothing described, and no ordering would have saved it. That
 // is an error rather than a dropped edge, because the edge that gets dropped is exactly
 // the one that made the commit reachable - and losing it reports a clean build.
-func applyEvents(ctx context.Context, norm *normalization.Normalizer, events []ontology.Event) error {
-	pending := events
-	for {
-		var deferred []ontology.Event
-		for _, ev := range pending {
-			err := norm.Handle(ctx, ev)
-			switch {
-			case err == nil:
-			case danglingEdge(err):
-				deferred = append(deferred, ev)
-			default:
-				return fmt.Errorf("apply event: %w", err)
-			}
+func applyEvents(ctx context.Context, norm *normalization.Normalizer, store graph.EdgeParker, events []ontology.Event) error {
+	for _, ev := range events {
+		if err := norm.Handle(ctx, ev); err != nil {
+			return fmt.Errorf("apply event: %w", err)
 		}
-		if len(deferred) == 0 {
-			return nil
-		}
-		// No progress this pass means the missing endpoints are never coming.
-		if len(deferred) == len(pending) {
-			if err := norm.Handle(ctx, deferred[0]); err != nil {
-				return fmt.Errorf(
-					"the estate refers to an asset that nothing else described, so the graph cannot be "+
-						"completed (pass the missing scan with -report/-reports, or drop the reference): %w", err)
-			}
-			return nil
-		}
-		pending = deferred
 	}
+	waiting, n, err := store.PendingEdges(ctx, 1)
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		e := waiting[0]
+		return fmt.Errorf(
+			"the estate refers to an asset that nothing else described, so the graph cannot be "+
+				"completed (pass the missing scan with -report/-reports, or drop the reference): "+
+				"%d edge(s) wait for an endpoint, e.g. %s %s->%s: %w", n, e.Type, e.From, e.To, graph.ErrEndpointsMissing)
+	}
+	return nil
 }

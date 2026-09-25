@@ -157,7 +157,7 @@ jobs:
       # before this step existed they had never run anywhere but a developer's laptop.
       - name: Run broker delivery integration tests
         working-directory: ./backend
-        run: go test -run 'TestPublishedEventReachesTheHandler|TestFailedHandlerSeesTheEventAgain|TestMalformedMessageIsTerminatedNotRedelivered|TestAckedEventLeavesTheStream|TestEventPublishedBeforeConsumeIsKept|TestStreamFromAnEarlierReleaseIsUpgradedInPlace|TestSlowHandlerIsNotRedelivered|TestConsumeReturnsWhenTheConsumerIsDeleted|TestOnClosedFiresOnlyForAnUnplannedClose|TestHandledEventsAreCounted|TestConnectKeepsTheOperatorsStreamSettings' -v -timeout 240s ./internal/broker/...
+        run: go test -run 'TestPublishedEventReachesTheHandler|TestFailedHandlerSeesTheEventAgain|TestMalformedMessageIsTerminatedNotRedelivered|TestAckedEventLeavesTheStream|TestEventPublishedBeforeConsumeIsKept|TestStreamFromAnEarlierReleaseIsUpgradedInPlace|TestSlowHandlerIsNotRedelivered|TestConsumeReturnsWhenTheConsumerIsDeleted|TestOnClosedFiresOnlyForAnUnplannedClose|TestHandledEventsAreCounted|TestConnectKeepsTheOperatorsStreamSettings|TestAnEventLargerThanAMessageArrivesWholeAndItsBatchCompletes' -v -timeout 240s ./internal/broker/...
 
       # The governance stores, against a real database. Their failure modes are all
       # concurrency ones - two replicas forking the audit hash chain, a re-seal moving a

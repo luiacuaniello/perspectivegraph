@@ -376,6 +376,11 @@ func (s *Service) runTenant(ctx context.Context, tenant string) {
 	}
 	metrics.AnalyzerGraphNodes.WithLabelValues(tenant).Set(float64(len(snap.Nodes)))
 	metrics.AnalyzerGraphEdges.WithLabelValues(tenant).Set(float64(len(snap.Edges)))
+	if parker, ok := graph.AsEdgeParker(store); ok {
+		if _, waiting, err := parker.PendingEdges(ctx, 0); err == nil {
+			metrics.GraphPendingEdges.WithLabelValues(tenant).Set(float64(waiting))
+		}
+	}
 	// Critical paths via the in-process Dijkstra (default) or, when opted in, the
 	// DB-side Cypher finder. The snapshot is needed regardless for the policy
 	// invariants and the Monte Carlo risk model below.

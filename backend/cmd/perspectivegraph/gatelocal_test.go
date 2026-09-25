@@ -519,7 +519,7 @@ func TestEventsApplyRegardlessOfOrder(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := applyEvents(ctx, normalization.New(mgr), events); err != nil {
+			if err := applyEvents(ctx, normalization.New(mgr), store, events); err != nil {
 				t.Fatalf("applying in %s order failed: %v", name, err)
 			}
 			snap, err := store.Snapshot(ctx)
@@ -539,12 +539,13 @@ func TestEventsApplyRegardlessOfOrder(t *testing.T) {
 // dropped is exactly the one that made the commit reachable, and losing it reports clean.
 func TestATrulyDanglingReferenceStillFails(t *testing.T) {
 	ctx := context.Background()
-	mgr, err := graph.NewManager(ctx, func(context.Context, string) (graph.Store, error) { return memory.New(), nil })
+	store := memory.New()
+	mgr, err := graph.NewManager(ctx, func(context.Context, string) (graph.Store, error) { return store, nil })
 	if err != nil {
 		t.Fatal(err)
 	}
 	// The estate alone: its edges point at an image no report ever supplies.
-	if err := applyEvents(ctx, normalization.New(mgr), estateEvents()); err == nil {
+	if err := applyEvents(ctx, normalization.New(mgr), store, estateEvents()); err == nil {
 		t.Fatal("accepted an edge whose endpoint nothing described, silently losing the route")
 	}
 }

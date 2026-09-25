@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -57,5 +58,28 @@ func TestServeHTTPShutdownIsNotAFailure(t *testing.T) {
 		if !errors.Is(err, http.ErrServerClosed) {
 			t.Errorf("a graceful shutdown was reported as a failure: %v", err)
 		}
+	}
+}
+
+// With in-app TLS on, the container's health probe must speak HTTPS to its own listener.
+// It spoke plain HTTP, so turning TLS on marked a working backend unhealthy.
+func TestHealthCheckSpeaksTLSWhenTheAPIDoes(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			_, _ = w.Write([]byte("ok"))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	t.Setenv("API_ADDR", strings.TrimPrefix(srv.URL, "https://"))
+	t.Setenv("TLS_CERT_FILE", "/etc/pg/tls.crt")
+	t.Setenv("TLS_KEY_FILE", "/etc/pg/tls.key")
+	if err := healthCheck(); err != nil {
+		t.Fatalf("health probe against an HTTPS API: %v", err)
+	}
+	t.Setenv("TLS_CERT_FILE", "")
+	if err := healthCheck(); err == nil {
+		t.Error("a plain-HTTP probe of an HTTPS listener reported healthy")
 	}
 }

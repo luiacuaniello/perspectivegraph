@@ -643,7 +643,7 @@ func run(parent context.Context, cfg config.Config) error {
 		// every client on the proxy's address.
 		slog.Info("no trusted proxies configured: per-IP controls key on the peer address and X-Forwarded-For is ignored (set TRUSTED_PROXY_CIDRS when behind a proxy)")
 	}
-	hmac := auth.NewHMACVerifier(hmacSecrets(cfg), 32<<20, ips)
+	hmac := auth.NewHMACVerifier(hmacSecrets(cfg), 32<<20, ips).WithAcceptV1(cfg.IngestHMACAcceptV1)
 	if hmac.Enabled() {
 		slog.Info("ingest auth: per-tenant HMAC signature required")
 	} else {
@@ -857,7 +857,7 @@ func run(parent context.Context, cfg config.Config) error {
 		provider, model := ai.Provider(aiCfg)
 		slog.Info("AI-native layer enabled", "provider", provider, "model", model)
 	}
-	apiHandler, err := buildAPI(manager, analyzerSvc, indexer, authn, auditRec, apiLimiter, suppressStore, historyStore, ticketStore, validationStore, cfg.CORSAllowedOrigins, exportSigner, exfilWatcher, authGuard, authInfoFromConfig(cfg, authn.Enabled()), prOpener, aiClient, aiLimiter, coverageStore, degradedReason(backend, cfg.Env), cfg.MetricsAddr != "", ips, cfg.GraphQLIntrospection)
+	apiHandler, err := buildAPI(manager, analyzerSvc, indexer, authn, auditRec, apiLimiter, suppressStore, historyStore, ticketStore, validationStore, cfg.CORSAllowedOrigins, exportSigner, exfilWatcher, authGuard, authInfoFromConfig(cfg, authn.Enabled()), prOpener, aiClient, aiLimiter, bus, coverageStore, degradedReason(backend, cfg.Env), cfg.MetricsAddr != "", ips, cfg.GraphQLIntrospection)
 	if err != nil {
 		return err
 	}
@@ -1149,8 +1149,8 @@ func authInfoFromConfig(cfg config.Config, authEnabled bool) api.AuthInfo {
 	return info
 }
 
-func buildAPI(manager *graph.Manager, svc *analyzer.Service, idx search.Indexer, authn auth.Authenticator, rec audit.Recorder, limiter *ratelimit.Limiter, suppressStore suppress.Suppressions, historyStore history.Temporal, ticketStore ticket.Tickets, validationStore validation.Verdicts, corsOrigins []string, exportSigner *exportsign.Signer, exfilWatcher, authGuard *secwatch.Watcher, authInfo api.AuthInfo, prOpener action.PROpener, aiClient ai.Client, aiLimiter *ratelimit.Limiter, coverageStore *coverage.Store, degraded string, metricsElsewhere bool, ips *clientip.Resolver, introspection string) (http.Handler, error) {
-	return api.New(manager, svc, idx).WithAuth(authn, rec).WithRateLimit(limiter).WithSuppress(suppressStore).WithHistory(historyStore).WithTickets(ticketStore).WithValidation(validationStore).WithCORSOrigins(corsOrigins).WithExportSigner(exportSigner).WithAbuseWatchers(exfilWatcher, authGuard).WithClientIP(ips).WithIntrospection(introspection).WithAuthInfo(authInfo).WithRemediationPR(prOpener).WithAI(aiClient).WithAIRateLimit(aiLimiter).WithCoverage(coverageStore).WithDegraded(degraded).WithMetricsElsewhere(metricsElsewhere).Handler()
+func buildAPI(manager *graph.Manager, svc *analyzer.Service, idx search.Indexer, authn auth.Authenticator, rec audit.Recorder, limiter *ratelimit.Limiter, suppressStore suppress.Suppressions, historyStore history.Temporal, ticketStore ticket.Tickets, validationStore validation.Verdicts, corsOrigins []string, exportSigner *exportsign.Signer, exfilWatcher, authGuard *secwatch.Watcher, authInfo api.AuthInfo, prOpener action.PROpener, aiClient ai.Client, aiLimiter *ratelimit.Limiter, batches api.BatchTracker, coverageStore *coverage.Store, degraded string, metricsElsewhere bool, ips *clientip.Resolver, introspection string) (http.Handler, error) {
+	return api.New(manager, svc, idx).WithAuth(authn, rec).WithRateLimit(limiter).WithSuppress(suppressStore).WithHistory(historyStore).WithTickets(ticketStore).WithValidation(validationStore).WithCORSOrigins(corsOrigins).WithExportSigner(exportSigner).WithAbuseWatchers(exfilWatcher, authGuard).WithClientIP(ips).WithIntrospection(introspection).WithAuthInfo(authInfo).WithRemediationPR(prOpener).WithAI(aiClient).WithAIRateLimit(aiLimiter).WithIngestBatches(batches).WithCoverage(coverageStore).WithDegraded(degraded).WithMetricsElsewhere(metricsElsewhere).Handler()
 }
 
 // serveHTTP runs srv until ctx ends. A listener that fails - a port already taken, a
@@ -1199,9 +1199,23 @@ func healthCheck() error {
 	if host == "" || host == "0.0.0.0" || host == "::" {
 		host = "127.0.0.1"
 	}
-	url := "http://" + net.JoinHostPort(host, port) + "/healthz"
-
+	// The API serves HTTPS itself when a certificate is configured, and a plain-HTTP probe
+	// against it failed - so the container's HEALTHCHECK marked a working backend
+	// unhealthy the moment in-app TLS was turned on.
+	scheme := "http"
 	client := &http.Client{Timeout: 3 * time.Second}
+	if os.Getenv("TLS_CERT_FILE") != "" && os.Getenv("TLS_KEY_FILE") != "" {
+		scheme = "https"
+		client.Transport = &http.Transport{TLSClientConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			// The process probing its own listener on loopback. The certificate is issued
+			// for the service's public name, never for 127.0.0.1, so verifying it here
+			// would only ever fail; nothing leaves the host.
+			InsecureSkipVerify: true, // #nosec G402 -- loopback self-probe of this process's own listener
+		}}
+	}
+	url := scheme + "://" + net.JoinHostPort(host, port) + "/healthz"
+
 	resp, err := client.Get(url) // #nosec G704 -- url is the operator-configured local healthz address (self-check), not user input
 	if err != nil {
 		return err

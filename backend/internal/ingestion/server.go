@@ -25,6 +25,18 @@ type Publisher interface {
 	Publish(ctx context.Context, ev ontology.Event) error
 }
 
+// BatchPublisher is a Publisher that can send one request's events as a tracked batch,
+// so the caller can later ask whether all of it has reached the graph (see
+// broker.PublishBatch). The id is empty when the batch cannot be tracked.
+type BatchPublisher interface {
+	PublishBatch(ctx context.Context, events []ontology.Event) (id string, messages int, err error)
+}
+
+// tooLarge is implemented by a Publisher's error for an event holding one element too
+// large to send on its own (broker.ErrTooLarge). It is answered 413 rather than 502: the
+// request cannot succeed by being retried.
+type tooLarge interface{ TooLarge() bool }
+
 // Server receives scanner output over HTTP and publishes normalized events.
 type Server struct {
 	pub        Publisher
@@ -184,16 +196,39 @@ func (s *Server) publishAll(w http.ResponseWriter, ctx context.Context, events [
 		}
 	}
 	var nodes, edges int
-	for _, ev := range events {
-		ev.Tenant = tenant // route to the authenticated tenant's graph
-		if err := s.pub.Publish(ctx, ev); err != nil {
-			if errors.Is(err, context.Canceled) {
-				return
-			}
-			slog.Error("publish failed", "err", err)
-			http.Error(w, "publish failed", http.StatusBadGateway)
+	for i := range events {
+		events[i].Tenant = tenant // route to the authenticated tenant's graph
+	}
+	fail := func(err error) {
+		if errors.Is(err, context.Canceled) {
 			return
 		}
+		var tl tooLarge
+		if errors.As(err, &tl) && tl.TooLarge() {
+			http.Error(w, err.Error(), http.StatusRequestEntityTooLarge)
+			return
+		}
+		slog.Error("publish failed", "err", err)
+		http.Error(w, "publish failed", http.StatusBadGateway)
+	}
+	batch, messages := "", 0
+	if bp, ok := s.pub.(BatchPublisher); ok {
+		id, n, err := bp.PublishBatch(ctx, events)
+		if err != nil {
+			fail(err)
+			return
+		}
+		batch, messages = id, n
+	} else {
+		for _, ev := range events {
+			if err := s.pub.Publish(ctx, ev); err != nil {
+				fail(err)
+				return
+			}
+		}
+		messages = len(events)
+	}
+	for _, ev := range events {
 		metrics.IngestEvents.WithLabelValues(ev.Source).Inc()
 		nodes += len(ev.Nodes)
 		edges += len(ev.Edges)
@@ -207,9 +242,16 @@ func (s *Server) publishAll(w http.ResponseWriter, ctx context.Context, events [
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	resp := map[string]any{
 		"accepted_events": len(events),
 		"nodes":           nodes,
 		"edges":           edges,
-	})
+		"messages":        messages,
+	}
+	// The batch id lets a caller wait until every message of this request has reached
+	// the graph - the merge gate does, before it trusts a verdict (GraphQL ingestBatch).
+	if batch != "" {
+		resp["batch"] = batch
+	}
+	_ = json.NewEncoder(w).Encode(resp)
 }

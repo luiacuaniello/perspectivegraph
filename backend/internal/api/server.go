@@ -535,9 +535,10 @@ type snapshotLoader struct {
 
 func (l *snapshotLoader) load(ctx context.Context) (graph.Snapshot, error) {
 	l.once.Do(func() {
-		store, err := l.manager.For(ctx, tenantOf(ctx))
-		if err != nil {
-			l.err = err
+		// Lookup, not For: reading a tenant that has never been written must not
+		// create it. It simply has an empty graph.
+		store, ok := l.manager.Lookup(tenantOf(ctx))
+		if !ok {
 			return
 		}
 		l.snap, l.err = store.Snapshot(ctx)
@@ -559,9 +560,9 @@ func (a *API) rawSnapshot(ctx context.Context) (graph.Snapshot, error) {
 	if l, ok := ctx.Value(snapCtxKey{}).(*snapshotLoader); ok {
 		return l.load(ctx)
 	}
-	store, err := a.manager.For(ctx, tenantOf(ctx))
-	if err != nil {
-		return graph.Snapshot{}, err
+	store, ok := a.manager.Lookup(tenantOf(ctx))
+	if !ok {
+		return graph.Snapshot{}, nil // never written: an empty graph, not a new tenant
 	}
 	return store.Snapshot(ctx)
 }

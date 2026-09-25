@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/auth"
+	"github.com/luiacuaniello/perspectivegraph/internal/metrics"
 	"github.com/luiacuaniello/perspectivegraph/internal/suppress"
 )
 
@@ -29,7 +30,11 @@ func (a *API) adminWritable(r *http.Request) bool {
 	if !a.authEnabled() {
 		return true
 	}
-	return auth.PrincipalFromContext(r.Context()).Role >= auth.RoleAdmin
+	if auth.PrincipalFromContext(r.Context()).Role >= auth.RoleAdmin {
+		return true
+	}
+	metrics.AuthDenied.WithLabelValues("api", "write_forbidden").Inc()
+	return false
 }
 
 // listSuppressions handles GET /suppressions - the triage board for the tenant

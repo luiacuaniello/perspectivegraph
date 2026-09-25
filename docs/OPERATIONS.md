@@ -278,6 +278,11 @@ Pin to a signed, digest-referenced image and verify it before rollout (see
 - `GET /metrics` - Prometheus metrics: `perspectivegraph_connector_*`,
   `perspectivegraph_analyzer_*`, ingest and auth counters, and
   `perspectivegraph_broker_connected` (0 while the bus is reconnecting).
+  `perspectivegraph_auth_denied_total{surface,reason}` counts refused credentials where
+  they are refused (API and ingest); `perspectivegraph_ingest_signatures_total{version}`
+  shows whether anything still signs v1; `perspectivegraph_graph_pending_edges` counts
+  edges waiting for an endpoint. The pending count is refreshed by each replica's own
+  analyzer pass, so on a replica that wrote nothing it can lag by a few passes.
 - Suggested SLOs to alert on: ingest error rate, analyzer pass duration vs
   `ANALYZER_INTERVAL`, connector `last_error`, and `auth.deny` spikes (possible
   credential stuffing) from the audit log.
@@ -549,7 +554,9 @@ capability to gain.
 
 - [ ] API auth enabled (`API_TOKENS`/OIDC) and verified from an unauthenticated client.
 - [ ] `GET /auth/me` with each issued token answers the role you meant to grant.
-- [ ] Ingest HMAC (`INGEST_HMAC_SECRETS`) + `INGEST_RATE_RPS` set.
+- [ ] Ingest HMAC (`INGEST_HMAC_SECRETS`) + `INGEST_RATE_RPS` set, and - once
+      `perspectivegraph_ingest_signatures_total{version="v1"}` stays at 0 -
+      `INGEST_HMAC_ACCEPT_V1=false`, so a captured ingest request cannot be replayed.
 - [ ] TLS everywhere (`TLS_*`, `POSTGRES_SSLMODE=verify-full`, `NATS_TLS_*`).
 - [ ] External Postgres+AGE chosen with §3 open (managed on Azure, self-managed on AWS/GCP),
       its role non-superuser, and the demo image out of the deployment.

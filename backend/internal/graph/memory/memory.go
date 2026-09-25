@@ -6,6 +6,7 @@ package memory
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -23,19 +24,39 @@ type Store struct {
 	mu    sync.RWMutex
 	nodes map[string]ontology.Node
 	edges map[edgeKey]ontology.Edge
+
+	// Edges parked by UpsertBatch until their missing endpoint arrives (see
+	// graph.EdgeParker), and an index from each endpoint id to the edges naming it.
+	pending      map[edgeKey]parked
+	pendingByID  map[string]map[edgeKey]struct{}
+	pendingSwept time.Time
+	now          func() time.Time
+}
+
+type parked struct {
+	edge ontology.Edge
+	at   time.Time
 }
 
 // New returns an empty in-memory store.
 func New() *Store {
 	return &Store{
-		nodes: make(map[string]ontology.Node),
-		edges: make(map[edgeKey]ontology.Edge),
+		nodes:       make(map[string]ontology.Node),
+		edges:       make(map[edgeKey]ontology.Edge),
+		pending:     make(map[edgeKey]parked),
+		pendingByID: make(map[string]map[edgeKey]struct{}),
+		now:         time.Now,
 	}
 }
 
 func (s *Store) UpsertNode(_ context.Context, n ontology.Node) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.upsertNodeLocked(n)
+	return nil
+}
+
+func (s *Store) upsertNodeLocked(n ontology.Node) {
 	if existing, ok := s.nodes[n.ID]; ok {
 		// Merge properties so observations from different collectors accumulate.
 		n.Properties = graph.MergeProps(existing.Properties, n.Properties)
@@ -44,7 +65,114 @@ func (s *Store) UpsertNode(_ context.Context, n ontology.Node) error {
 		}
 	}
 	s.nodes[n.ID] = n
+}
+
+// UpsertBatch writes nodes, then every edge that can land, and parks the rest until
+// their endpoint arrives (graph.EdgeParker). Edges already parked for one of these nodes
+// are tried again first, so this event's own copy of an edge, being newer, wins.
+func (s *Store) UpsertBatch(_ context.Context, nodes []ontology.Node, edges []ontology.Edge) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	s.sweepPendingLocked(now)
+	for _, n := range nodes {
+		s.upsertNodeLocked(n)
+	}
+	for _, p := range s.takePendingLocked(nodes) {
+		if !s.landLocked(p.edge) {
+			s.parkLocked(p.edge, p.at) // still waiting for its other end: keep its age
+		}
+	}
+	for _, e := range edges {
+		if !s.landLocked(e) {
+			s.parkLocked(e, now)
+		}
+	}
 	return nil
+}
+
+// PendingEdges implements graph.EdgeParker.
+func (s *Store) PendingEdges(_ context.Context, limit int) ([]ontology.Edge, int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	all := make([]parked, 0, len(s.pending))
+	for _, p := range s.pending {
+		all = append(all, p)
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if !all[i].at.Equal(all[j].at) {
+			return all[i].at.Before(all[j].at)
+		}
+		a, b := all[i].edge, all[j].edge
+		return a.From+"\x00"+a.To+"\x00"+string(a.Type) < b.From+"\x00"+b.To+"\x00"+string(b.Type)
+	})
+	if limit >= 0 && len(all) > limit {
+		all = all[:limit]
+	}
+	out := make([]ontology.Edge, len(all))
+	for i, p := range all {
+		out[i] = p.edge
+	}
+	return out, len(s.pending), nil
+}
+
+func (s *Store) landLocked(e ontology.Edge) bool {
+	_, fromOK := s.nodes[e.From]
+	_, toOK := s.nodes[e.To]
+	if !fromOK || !toOK {
+		return false
+	}
+	s.edges[edgeKey{e.Type, e.From, e.To}] = e
+	return true
+}
+
+func (s *Store) parkLocked(e ontology.Edge, at time.Time) {
+	k := edgeKey{e.Type, e.From, e.To}
+	s.pending[k] = parked{edge: e, at: at}
+	for _, id := range []string{e.From, e.To} {
+		if s.pendingByID[id] == nil {
+			s.pendingByID[id] = map[edgeKey]struct{}{}
+		}
+		s.pendingByID[id][k] = struct{}{}
+	}
+}
+
+func (s *Store) unparkLocked(k edgeKey) {
+	delete(s.pending, k)
+	for _, id := range []string{k.from, k.to} {
+		delete(s.pendingByID[id], k)
+		if len(s.pendingByID[id]) == 0 {
+			delete(s.pendingByID, id)
+		}
+	}
+}
+
+// takePendingLocked removes and returns the parked edges naming any of these nodes.
+func (s *Store) takePendingLocked(nodes []ontology.Node) []parked {
+	var out []parked
+	for _, n := range nodes {
+		for k := range s.pendingByID[n.ID] {
+			if p, ok := s.pending[k]; ok {
+				out = append(out, p)
+				s.unparkLocked(k)
+			}
+		}
+	}
+	return out
+}
+
+// sweepPendingLocked drops edges parked longer than graph.PendingEdgeTTL. It walks every
+// parked edge, so it runs at most once a minute rather than on every write.
+func (s *Store) sweepPendingLocked(now time.Time) {
+	if now.Sub(s.pendingSwept) < time.Minute {
+		return
+	}
+	s.pendingSwept = now
+	for k, p := range s.pending {
+		if now.Sub(p.at) > graph.PendingEdgeTTL {
+			s.unparkLocked(k)
+		}
+	}
 }
 
 // UpsertEdge rejects edges whose endpoints are not in the graph yet - same

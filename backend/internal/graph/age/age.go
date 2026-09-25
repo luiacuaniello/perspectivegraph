@@ -40,10 +40,62 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
 )
 
-// maxOpenConns sizes the per-store connection pool. AGE session state (LOAD +
-// search_path) is re-established at the start of every transaction (see withAGE),
-// so any pooled connection is safe to use - there is no need to pin to one.
+// maxOpenConns sizes the connection pool. AGE session state (LOAD + search_path) is
+// re-established at the start of every transaction (see withAGE), so any pooled
+// connection is safe to use - there is no need to pin to one.
 const maxOpenConns = 8
+
+// pools shares one connection pool per DSN between the stores of every tenant.
+//
+// Each tenant's store used to open a pool of its own, so a replica's claim on the
+// database grew by eight connections per tenant - and a tenant is created by the first
+// write naming it, so the number of tenants, not the operator, set how many connections
+// the deployment needed. Ten tenants on three replicas were past PostgreSQL's default
+// max_connections of 100. A graph is only a name inside one database, so they share.
+var pools = struct {
+	sync.Mutex
+	byDSN map[string]*sharedPool
+}{byDSN: map[string]*sharedPool{}}
+
+type sharedPool struct {
+	db   *sql.DB
+	refs int
+}
+
+func acquirePool(dsn string) (*sql.DB, error) {
+	pools.Lock()
+	defer pools.Unlock()
+	if p := pools.byDSN[dsn]; p != nil {
+		p.refs++
+		return p.db, nil
+	}
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open postgres: %w", err)
+	}
+	db.SetMaxOpenConns(maxOpenConns)
+	db.SetMaxIdleConns(maxOpenConns)
+	db.SetConnMaxIdleTime(5 * time.Minute)
+	db.SetConnMaxLifetime(30 * time.Minute)
+	pools.byDSN[dsn] = &sharedPool{db: db, refs: 1}
+	return db, nil
+}
+
+// releasePool drops one store's claim on its pool, closing the pool with the last one.
+func releasePool(dsn string) error {
+	pools.Lock()
+	defer pools.Unlock()
+	p := pools.byDSN[dsn]
+	if p == nil {
+		return nil
+	}
+	p.refs--
+	if p.refs > 0 {
+		return nil
+	}
+	delete(pools.byDSN, dsn)
+	return p.db.Close()
+}
 
 // graphNameRe is the strict identifier pattern a graph name must match before it
 // is interpolated into SQL. Tenant-derived names already pass through
@@ -51,8 +103,10 @@ const maxOpenConns = 8
 var graphNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 type Store struct {
-	db    *sql.DB
-	graph string
+	db        *sql.DB
+	dsn       string
+	graph     string
+	closeOnce sync.Once
 
 	// loadOnce resolves, at most once per store, how this server wants the AGE
 	// library loaded; skipLoad and loadErr are its result and are read only after
@@ -64,21 +118,21 @@ type Store struct {
 	// indexed memoizes which label tables already have an id index this process,
 	// so the (idempotent) CREATE INDEX runs at most once per label.
 	indexed sync.Map
+
+	// pendingReady records that the parked-edge table exists; see preparePending.
+	pendingMu    sync.Mutex
+	pendingReady bool
 }
 
 func newStore(dsn, graphName string) (*Store, error) {
 	if !graphNameRe.MatchString(graphName) {
 		return nil, fmt.Errorf("invalid graph name %q", graphName)
 	}
-	db, err := sql.Open("postgres", dsn)
+	db, err := acquirePool(dsn)
 	if err != nil {
-		return nil, fmt.Errorf("open postgres: %w", err)
+		return nil, err
 	}
-	db.SetMaxOpenConns(maxOpenConns)
-	db.SetMaxIdleConns(maxOpenConns)
-	db.SetConnMaxIdleTime(5 * time.Minute)
-	db.SetConnMaxLifetime(30 * time.Minute)
-	return &Store{db: db, graph: graphName}, nil
+	return &Store{db: db, dsn: dsn, graph: graphName}, nil
 }
 
 // Open connects to Postgres and verifies the AGE extension + target graph are
@@ -89,7 +143,7 @@ func Open(ctx context.Context, dsn, graphName string) (*Store, error) {
 		return nil, err
 	}
 	if err := s.Ping(ctx); err != nil {
-		s.db.Close()
+		_ = s.Close()
 		return nil, err
 	}
 	return s, nil
@@ -103,7 +157,7 @@ func OpenOrCreate(ctx context.Context, dsn, graphName string) (*Store, error) {
 		return nil, err
 	}
 	if err := s.ensureGraph(ctx); err != nil {
-		s.db.Close()
+		_ = s.Close()
 		return nil, err
 	}
 	return s, nil
@@ -140,16 +194,14 @@ func (s *Store) Ping(ctx context.Context) error {
 
 // UpsertNode creates or updates one vertex. It is a batch of one: see UpsertBatch.
 func (s *Store) UpsertNode(ctx context.Context, n ontology.Node) error {
-	return s.UpsertBatch(ctx, []ontology.Node{n}, nil)
+	return s.upsertBatch(ctx, []ontology.Node{n}, nil, false)
 }
 
-// UpsertEdge creates or updates one directed relationship. It is a batch of one: see
-// UpsertBatch. When either endpoint is not in the graph yet it returns an error
-// wrapping graph.ErrEndpointsMissing instead of silently doing nothing: the
-// normalization consumer Naks the event, and the broker redelivers it so the edge
-// lands once its nodes arrive.
+// UpsertEdge creates or updates one directed relationship. It is a batch of one that
+// does not park: when either endpoint is not in the graph yet it returns an error
+// wrapping graph.ErrEndpointsMissing instead of silently doing nothing.
 func (s *Store) UpsertEdge(ctx context.Context, e ontology.Edge) error {
-	return s.UpsertBatch(ctx, nil, []ontology.Edge{e})
+	return s.upsertBatch(ctx, nil, []ontology.Edge{e}, false)
 }
 
 // UpsertBatch writes nodes, then edges, in ONE transaction that holds this graph's
@@ -169,9 +221,15 @@ func (s *Store) UpsertEdge(ctx context.Context, e ontology.Edge) error {
 // backend replicas share one consumer and write concurrently, so an HA deployment met
 // both. Nothing reads under this lock; only writers and the pruner wait on it.
 //
-// An edge whose endpoint is missing is skipped, the rest commits, and the error returned
-// afterwards wraps graph.ErrEndpointsMissing so the event is redelivered for it.
+// An edge whose endpoint is missing is parked (graph.EdgeParker) in the same transaction,
+// and edges parked earlier for the nodes this batch writes are landed in it too - under
+// the same lock, so a replica parking an edge and another writing its endpoint cannot
+// miss each other.
 func (s *Store) UpsertBatch(ctx context.Context, nodes []ontology.Node, edges []ontology.Edge) error {
+	return s.upsertBatch(ctx, nodes, edges, true)
+}
+
+func (s *Store) upsertBatch(ctx context.Context, nodes []ontology.Node, edges []ontology.Edge, park bool) error {
 	// Every statement is built before the transaction opens, so a value the store
 	// refuses fails the event before anything is written.
 	nodeQs := make([]nodeStmts, 0, len(nodes))
@@ -194,6 +252,11 @@ func (s *Store) UpsertBatch(ctx context.Context, nodes []ontology.Node, edges []
 	}
 
 	s.prepareLabels(ctx, labels)
+	if park {
+		if err := s.preparePending(ctx); err != nil {
+			return err
+		}
+	}
 
 	var waiting []ontology.Edge
 	err := s.withAGE(ctx, func(tx *sql.Tx) error {
@@ -224,6 +287,13 @@ func (s *Store) UpsertBatch(ctx context.Context, nodes []ontology.Node, edges []
 				}
 			}
 		}
+		if park {
+			// Edges parked for any node written above get their try first, so this
+			// batch's own copy of the same edge, being newer, is the one that stays.
+			if err := s.landParked(ctx, tx, nodes); err != nil {
+				return err
+			}
+		}
 		for i, q := range edgeQs {
 			landed, err := execReturnsRow(ctx, tx, q)
 			if err != nil {
@@ -232,6 +302,14 @@ func (s *Store) UpsertBatch(ctx context.Context, nodes []ontology.Node, edges []
 			if !landed {
 				waiting = append(waiting, edges[i])
 			}
+		}
+		if park {
+			for _, e := range waiting {
+				if err := s.parkEdge(ctx, tx, e, nil); err != nil {
+					return err
+				}
+			}
+			waiting = nil
 		}
 		return nil
 	})
@@ -323,6 +401,191 @@ func execReturnsRow(ctx context.Context, tx *sql.Tx, q string) (bool, error) {
 // can never collide with one of them. The value spells "PGWR".
 const graphWriteLockClass = 0x50475752
 
+// pendingTable is where parked edges wait, inside the graph's own schema: drop_graph
+// takes it with the graph, and creating it needs no privilege on `public`, which
+// PostgreSQL 15 stopped granting to every role.
+const pendingTable = "_pg_pending_edges"
+
+func (s *Store) pendingRef() string {
+	return pq.QuoteIdentifier(s.graph) + "." + pq.QuoteIdentifier(pendingTable)
+}
+
+// preparePending creates the parked-edge table once per process, under the graph's write
+// lock so replicas starting together do not race to create it.
+func (s *Store) preparePending(ctx context.Context) error {
+	s.pendingMu.Lock()
+	defer s.pendingMu.Unlock()
+	if s.pendingReady {
+		return nil
+	}
+	t, prefix := s.pendingRef(), sanitizeIdent(s.graph+"_pending")
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS ` + t + ` (
+			edge_type text NOT NULL,
+			from_id   text NOT NULL,
+			to_id     text NOT NULL,
+			p         double precision NOT NULL,
+			props     jsonb NOT NULL DEFAULT '{}',
+			parked_at timestamptz NOT NULL DEFAULT now(),
+			PRIMARY KEY (edge_type, from_id, to_id))`,
+		`CREATE INDEX IF NOT EXISTS ` + pq.QuoteIdentifier(prefix+"_from") + ` ON ` + t + ` (from_id)`,
+		`CREATE INDEX IF NOT EXISTS ` + pq.QuoteIdentifier(prefix+"_to") + ` ON ` + t + ` (to_id)`,
+		`CREATE INDEX IF NOT EXISTS ` + pq.QuoteIdentifier(prefix+"_at") + ` ON ` + t + ` (parked_at)`,
+	}
+	err := s.withAGE(ctx, func(tx *sql.Tx) error {
+		if err := s.lockForWrite(ctx, tx); err != nil {
+			return err
+		}
+		for _, q := range stmts {
+			if _, err := tx.ExecContext(ctx, q); err != nil {
+				return fmt.Errorf("parked-edge table: %w", err)
+			}
+		}
+		return nil
+	})
+	if err == nil {
+		s.pendingReady = true
+	}
+	return err
+}
+
+// landParked retries the parked edges naming any of these nodes, and drops edges parked
+// longer than graph.PendingEdgeTTL. An edge that still cannot land is parked again with
+// its original time, so an unrelated node arriving does not keep it alive.
+func (s *Store) landParked(ctx context.Context, tx *sql.Tx, nodes []ontology.Node) error {
+	t := s.pendingRef()
+	// #nosec G202 -- t is two quoted identifiers built from a validated graph name
+	if _, err := tx.ExecContext(ctx, `DELETE FROM `+t+` WHERE parked_at < now() - make_interval(secs => $1)`,
+		graph.PendingEdgeTTL.Seconds()); err != nil {
+		return fmt.Errorf("expire parked edges: %w", err)
+	}
+	if len(nodes) == 0 {
+		return nil
+	}
+	ids := make([]string, len(nodes))
+	for i, n := range nodes {
+		ids[i] = n.ID
+	}
+	// #nosec G202 -- t is two quoted identifiers built from a validated graph name
+	rows, err := tx.QueryContext(ctx, `DELETE FROM `+t+` WHERE from_id = ANY($1) OR to_id = ANY($1)
+		RETURNING edge_type, from_id, to_id, p, props, parked_at`, pq.Array(ids))
+	if err != nil {
+		return fmt.Errorf("take parked edges: %w", err)
+	}
+	type taken struct {
+		edge ontology.Edge
+		at   time.Time
+	}
+	var retry []taken
+	for rows.Next() {
+		var e ontology.Edge
+		var typ, props string
+		var at time.Time
+		if err := rows.Scan(&typ, &e.From, &e.To, &e.ExploitProbability, &props, &at); err != nil {
+			rows.Close()
+			return err
+		}
+		e.Type = ontology.EdgeType(typ)
+		e.Properties = decodeParkedProps(props)
+		retry = append(retry, taken{e, at})
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, r := range retry {
+		q, err := s.edgeSQL(r.edge)
+		if err != nil {
+			continue // only valid edges are ever parked; nothing to retry otherwise
+		}
+		landed, err := execReturnsRow(ctx, tx, q)
+		if err != nil {
+			return err
+		}
+		if !landed {
+			at := r.at
+			if err := s.parkEdge(ctx, tx, r.edge, &at); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// parkEdge stores an edge to wait for its endpoint. A nil at means now: the edge was
+// just observed, so a copy already waiting takes its newer properties and restarts its
+// wait.
+func (s *Store) parkEdge(ctx context.Context, tx *sql.Tx, e ontology.Edge, at *time.Time) error {
+	props, err := json.Marshal(e.Properties)
+	if err != nil {
+		return err
+	}
+	if e.Properties == nil {
+		props = []byte("{}")
+	}
+	// #nosec G202 -- the table reference is two quoted identifiers built from a validated graph name
+	_, err = tx.ExecContext(ctx, `INSERT INTO `+s.pendingRef()+` (edge_type, from_id, to_id, p, props, parked_at)
+		VALUES ($1, $2, $3, $4, $5, COALESCE($6, now()))
+		ON CONFLICT (edge_type, from_id, to_id) DO UPDATE
+		SET p = EXCLUDED.p, props = EXCLUDED.props, parked_at = EXCLUDED.parked_at`,
+		string(e.Type), e.From, e.To, e.ExploitProbability, string(props), at)
+	if err != nil {
+		return fmt.Errorf("park edge %s %s->%s: %w", e.Type, e.From, e.To, err)
+	}
+	return nil
+}
+
+// decodeParkedProps reads a parked edge's properties back with numbers kept as written:
+// a unix last_seen decoded as float64 would render as 1.7e+09 in Cypher.
+func decodeParkedProps(raw string) map[string]any {
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.UseNumber()
+	var m map[string]any
+	if err := dec.Decode(&m); err != nil || len(m) == 0 {
+		return nil
+	}
+	return m
+}
+
+// PendingEdges implements graph.EdgeParker.
+func (s *Store) PendingEdges(ctx context.Context, limit int) ([]ontology.Edge, int, error) {
+	var exists sql.NullString
+	if err := s.db.QueryRowContext(ctx, `SELECT to_regclass($1)::text`, s.pendingRef()).Scan(&exists); err != nil {
+		return nil, 0, err
+	}
+	if !exists.Valid {
+		return nil, 0, nil // nothing was ever parked in this graph
+	}
+	t := s.pendingRef()
+	var total int
+	// #nosec G202 -- t is two quoted identifiers built from a validated graph name
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM `+t).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	if limit < 0 {
+		limit = total
+	}
+	// #nosec G202 -- t is two quoted identifiers built from a validated graph name
+	rows, err := s.db.QueryContext(ctx, `SELECT edge_type, from_id, to_id, p, props FROM `+t+`
+		ORDER BY parked_at, from_id, to_id, edge_type LIMIT $1`, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var out []ontology.Edge
+	for rows.Next() {
+		var e ontology.Edge
+		var typ, props string
+		if err := rows.Scan(&typ, &e.From, &e.To, &e.ExploitProbability, &props); err != nil {
+			return nil, 0, err
+		}
+		e.Type = ontology.EdgeType(typ)
+		e.Properties = decodeParkedProps(props)
+		out = append(out, e)
+	}
+	return out, total, rows.Err()
+}
+
 // lockForWrite takes this graph's write lock for the rest of the transaction.
 func (s *Store) lockForWrite(ctx context.Context, tx *sql.Tx) error {
 	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1, hashtext($2))`,
@@ -350,7 +613,12 @@ func (s *Store) Snapshot(ctx context.Context) (graph.Snapshot, error) {
 			return fmt.Errorf("query nodes: %w", err)
 		}
 		for rows.Next() {
-			var id, label, name, props string
+			var id, label, props string
+			// name is NULL on a vertex written without one - a feed may send such a node
+			// through /ingest/events - and scanning that into a string failed the WHOLE
+			// snapshot: one nameless node took the dashboard and the analyzer down for the
+			// tenant. An absent name reads as "".
+			var name sql.NullString
 			if err := rows.Scan(&id, &label, &name, &props); err != nil {
 				rows.Close()
 				return err
@@ -358,7 +626,7 @@ func (s *Store) Snapshot(ctx context.Context) (graph.Snapshot, error) {
 			snap.Nodes = append(snap.Nodes, ontology.Node{
 				ID:         agString(id),
 				Label:      ontology.Label(agString(label)),
-				Name:       agString(name),
+				Name:       agString(name.String),
 				Properties: nativeProps(props),
 			})
 		}
@@ -414,7 +682,12 @@ func (s *Store) SnapshotSince(ctx context.Context, since int64) (graph.Delta, er
 			return fmt.Errorf("query nodes: %w", err)
 		}
 		for rows.Next() {
-			var id, label, name, props string
+			var id, label, props string
+			// name is NULL on a vertex written without one - a feed may send such a node
+			// through /ingest/events - and scanning that into a string failed the WHOLE
+			// snapshot: one nameless node took the dashboard and the analyzer down for the
+			// tenant. An absent name reads as "".
+			var name sql.NullString
 			if err := rows.Scan(&id, &label, &name, &props); err != nil {
 				rows.Close()
 				return err
@@ -422,7 +695,7 @@ func (s *Store) SnapshotSince(ctx context.Context, since int64) (graph.Delta, er
 			d.Nodes = append(d.Nodes, ontology.Node{
 				ID:         agString(id),
 				Label:      ontology.Label(agString(label)),
-				Name:       agString(name),
+				Name:       agString(name.String),
 				Properties: nativeProps(props),
 			})
 		}
@@ -452,7 +725,12 @@ func (s *Store) SnapshotSince(ctx context.Context, since int64) (graph.Delta, er
 	return d, err
 }
 
-func (s *Store) Close() error { return s.db.Close() }
+// Close releases this store's claim on the shared pool; the pool closes with the last.
+func (s *Store) Close() error {
+	var err error
+	s.closeOnce.Do(func() { err = releasePool(s.dsn) })
+	return err
+}
 
 // ── DB-side path finding (the reason AGE exists) ────────────────────
 

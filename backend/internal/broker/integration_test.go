@@ -527,3 +527,53 @@ func TestConnectKeepsTheOperatorsStreamSettings(t *testing.T) {
 		t.Errorf("the backend's own settings did not apply: retention %s, max age %v", cfg.Retention, cfg.MaxAge)
 	}
 }
+
+// An event larger than the server's message limit used to be refused at the door - a
+// large cluster or account never reached the graph. It is split, every chunk is
+// delivered, and the batch reports complete only once the last one has been applied.
+func TestAnEventLargerThanAMessageArrivesWholeAndItsBatchCompletes(t *testing.T) {
+	b := dial(t, "large")
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	ev := bigEvent(12_000, 12_000) // ~3 MB of JSON, three times the default max_payload
+	id, messages, err := b.PublishBatch(ctx, []ontology.Event{ev})
+	if err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	if id == "" || messages < 3 {
+		t.Fatalf("batch %q in %d message(s); want a tracked batch of several", id, messages)
+	}
+	if st, err := b.BatchStatus(ctx, id); err != nil || st.Complete() || st.Messages != messages || st.Tenant != "acme" {
+		t.Fatalf("before any consumer ran: %+v (err %v); want %d messages, none applied", st, err, messages)
+	}
+
+	var gotNodes, gotEdges atomic.Int64
+	go func() {
+		_ = b.Consume(ctx, func(_ context.Context, ev ontology.Event) error {
+			gotNodes.Add(int64(len(ev.Nodes)))
+			gotEdges.Add(int64(len(ev.Edges)))
+			return nil
+		})
+	}()
+	deadline := time.Now().Add(45 * time.Second)
+	for {
+		st, err := b.BatchStatus(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.Complete() {
+			if st.AppliedAt.IsZero() {
+				t.Error("a complete batch has no applied time")
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("batch never completed: %+v", st)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if gotNodes.Load() != 12_000 || gotEdges.Load() != 12_000 {
+		t.Errorf("handler saw %d nodes and %d edges, want 12000 and 12000", gotNodes.Load(), gotEdges.Load())
+	}
+}

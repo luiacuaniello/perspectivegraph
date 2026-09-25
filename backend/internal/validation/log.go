@@ -32,6 +32,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+
+	"github.com/luiacuaniello/perspectivegraph/internal/atomicfile"
 )
 
 // logMagicV2 is the plaintext first line that identifies the append-only format. It is
@@ -125,6 +127,12 @@ func appendLines(path string, data []byte) error {
 		return err
 	}
 	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	// A verdict appended but not on disk is a verdict lost to a crash, while the caller
+	// was told it was recorded.
+	if err := f.Sync(); err != nil {
 		f.Close()
 		return err
 	}
@@ -230,6 +238,9 @@ func (s *Store) compact() error {
 		os.Remove(tmp)
 		return err
 	}
+	if err := atomicfile.SyncDir(filepath.Dir(s.path)); err != nil {
+		return err
+	}
 
 	s.logEvents = len(records) + len(s.pending)
 	s.legacy = false
@@ -268,6 +279,11 @@ func (s *Store) writeSnapshot(records []Record) (string, error) {
 		buf.Write(line)
 	}
 	if _, err := tf.Write(buf.Bytes()); err != nil {
+		tf.Close()
+		os.Remove(tmp)
+		return "", err
+	}
+	if err := tf.Sync(); err != nil {
 		tf.Close()
 		os.Remove(tmp)
 		return "", err

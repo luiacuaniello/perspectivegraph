@@ -86,7 +86,7 @@ func runGate(args []string) error {
 	ingest := fs.String("ingest", envOr("INGEST_URL", "http://localhost:8081"), "ingest base URL")
 	api := fs.String("api", envOr("API_URL", "http://localhost:8080"), "API base URL")
 	token := fs.String("token", os.Getenv("API_TOKEN"), "bearer token, if API auth is on")
-	secret := fs.String("hmac-secret", os.Getenv("INGEST_HMAC_SECRET"), "shared secret signing the ingest body, if the webhook requires it")
+	secret := fs.String("hmac-secret", os.Getenv("INGEST_HMAC_SECRET"), "shared secret signing the ingest request, if the webhook requires it (sent as HMAC v2, which covers the time, path and commit parameters, and as v1 for engines older than 1.20)")
 	timeout := fs.Duration("timeout", 5*time.Minute, "how long to wait for a verdict before reporting UNKNOWN")
 	poll := fs.Duration("poll", 5*time.Second, "interval between verdict checks")
 	maxCritical := fs.Int("max-critical", 0, "fail when the commit is on more than this many critical paths")
@@ -152,10 +152,29 @@ func runGate(args []string) error {
 			*repo = *slug
 		}
 		floor = time.Now().UTC()
-		if err := postGateReport(client, *ingest, *source, *slug, *sha, *repo, *pr, *token, *secret, body); err != nil {
+		batch, err := postGateReport(client, *ingest, *source, *slug, *sha, *repo, *pr, *token, *secret, body)
+		if err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "gate: ingested %s report for %s@%s\n", *source, *slug, shortSHA(*sha))
+		// A large report reaches the graph as several messages, and a pass that ran
+		// between them analysed part of it - possibly the part that is clean. So the
+		// floor moves to when the LAST message was applied. An engine too old to return a
+		// batch keeps the floor at our own post, as before.
+		if batch != "" {
+			applied, done, err := waitForBatch(client, *api, *token, batch, deadlineFrom(*timeout), *poll)
+			if err != nil {
+				return err
+			}
+			if !done {
+				fmt.Fprintf(os.Stderr, "gate: the report never fully reached the graph (batch %s)\n", batch)
+				reportAndExit(gateVerdict{}, *slug, *sha, *maxCritical, *allowUnknown, *asJSON)
+				return nil
+			}
+			if applied.After(floor) {
+				floor = applied
+			}
+		}
 	}
 
 	v, err := waitForVerdict(client, *api, *token, *slug, *sha, floor, *timeout, *poll)
@@ -216,7 +235,9 @@ func readGateReport(path string, stdin []byte) ([]byte, error) {
 // postGateReport sends the report to /ingest/{source} with the pull request's identity in
 // the query string, which is what stamps repo_slug and commit_sha onto the asset node and
 // so makes the commit findable later.
-func postGateReport(client *http.Client, base, source, slug, sha, repo string, pr int, token, secret string, body []byte) error {
+// postGateReport sends a report to ingest and returns the batch id the engine gave it -
+// empty from an engine too old to track batches.
+func postGateReport(client *http.Client, base, source, slug, sha, repo string, pr int, token, secret string, body []byte) (string, error) {
 	q := url.Values{"slug": {slug}, "sha": {sha}}
 	if repo != "" {
 		q.Set("repo", repo)
@@ -228,26 +249,82 @@ func postGateReport(client *http.Client, base, source, slug, sha, repo string, p
 
 	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	if secret != "" {
+		// Both signatures: v2 covers the timestamp, the path and the commit parameters, and
+		// an engine that knows it checks only that one; v1 keeps an engine older than v2
+		// accepting the report.
+		ts := time.Now().Unix()
 		req.Header.Set(auth.SignatureHeader, auth.Sign(secret, body))
+		req.Header.Set(auth.TimestampHeader, strconv.FormatInt(ts, 10))
+		req.Header.Set(auth.SignatureV2Header, auth.SignV2(secret, ts, http.MethodPost, "/ingest/"+url.PathEscape(source), q, body))
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("POST /ingest/%s: %w", source, err)
+		return "", fmt.Errorf("POST /ingest/%s: %w", source, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("POST /ingest/%s returned %d: %s", source, resp.StatusCode, strings.TrimSpace(string(rb)))
+		return "", fmt.Errorf("POST /ingest/%s returned %d: %s", source, resp.StatusCode, strings.TrimSpace(string(rb)))
 	}
-	return nil
+	var accepted struct {
+		Batch string `json:"batch"`
+	}
+	_ = json.Unmarshal(rb, &accepted) // an older engine's response has no batch
+	return accepted.Batch, nil
+}
+
+func deadlineFrom(timeout time.Duration) time.Time { return time.Now().Add(timeout) }
+
+const batchQuery = `query($id:String!){ingestBatch(id:$id){complete appliedAt}}`
+
+// waitForBatch polls until every message of an ingest batch has been applied, returning
+// when the last one was. done is false when the deadline passed first - or when the
+// engine will not say, which the caller treats the same way: it cannot claim the verdict
+// covers the whole report.
+func waitForBatch(client *http.Client, base, token, id string, deadline time.Time, poll time.Duration) (applied time.Time, done bool, err error) {
+	body, err := json.Marshal(map[string]any{"query": batchQuery, "variables": map[string]string{"id": id}})
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	for {
+		st, rb, err := apiRequest(client, http.MethodPost, strings.TrimSuffix(base, "/")+"/graphql", token, body)
+		if err != nil {
+			return time.Time{}, false, fmt.Errorf("POST /graphql: %w", err)
+		}
+		if st >= 300 {
+			return time.Time{}, false, fmt.Errorf("POST /graphql returned %d: %s", st, strings.TrimSpace(string(rb)))
+		}
+		var out struct {
+			Data struct {
+				IngestBatch *struct {
+					Complete  bool   `json:"complete"`
+					AppliedAt string `json:"appliedAt"`
+				} `json:"ingestBatch"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(rb, &out); err != nil {
+			return time.Time{}, false, fmt.Errorf("decode batch: %w", err)
+		}
+		if b := out.Data.IngestBatch; b != nil && b.Complete {
+			at, err := time.Parse(time.RFC3339Nano, b.AppliedAt)
+			if err != nil {
+				return time.Time{}, false, nil
+			}
+			return at, true, nil
+		}
+		if !time.Now().Add(poll).Before(deadline) {
+			return time.Time{}, false, nil
+		}
+		time.Sleep(poll)
+	}
 }
 
 const gateQuery = `query($slug:String!,$sha:String!){prVerdict(slug:$slug,sha:$sha){analysed criticalPaths analysedAt paths{id score priority nodes{name label}}}}`

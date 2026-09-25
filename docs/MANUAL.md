@@ -1630,9 +1630,16 @@ Every door is open by default for zero-config local dev - and the backend
 
 - **Ingest webhooks (write path)** - HMAC-SHA256 of the request body, keyed by a
   **per-tenant** secret that never travels on the wire (GitHub/Stripe model).
-  Senders add `X-PerspectiveGraph-Signature: sha256=<hex>` and `X-Tenant: <id>`.
+  Senders add `X-PerspectiveGraph-Signature-V2: v2=<hex>` with
+  `X-PerspectiveGraph-Timestamp: <unix seconds>`, and `X-Tenant: <id>`. The v2 signature
+  covers the time, the method, the path, the parameters and the body, and each one is
+  accepted once within ±5 minutes - so a captured request cannot be replayed, or
+  re-attributed to another commit by rewriting `?sha=`. The older
+  `X-PerspectiveGraph-Signature: sha256=<hex>` covers the body alone; it stays accepted
+  until `INGEST_HMAC_ACCEPT_V1=false`.
 - **GraphQL API (read path)** - a bearer credential: a static token mapped to a
-  role+tenant, or an **OIDC/JWT** (RS256, verified against the JWKS; `role` and
+  role+tenant, or an **OIDC/JWT** (RS256/384/512 or ES256/384/512, verified against the
+  JWKS - each algorithm only with a key of its own kind and curve; `role` and
   `tenant` claims). RBAC roles are `viewer` / `operator` / `admin`; GraphiQL is
   disabled when auth is on, and the dashboard is built with `VITE_API_TOKEN`.
 - **Multi-tenancy** - each tenant's assets live in their **own isolated graph**
@@ -1697,7 +1704,7 @@ OIDC_AUDIENCE=perspectivegraph \
 ```
 
 Issuer and audience are mandatory when JWKS is set - the backend refuses to start
-without them, because a verifier that skips `iss`/`aud` accepts any RS256 token the
+without them, because a verifier that skips `iss`/`aud` accepts any token the
 IdP ever minted, including ones meant for a different relying party.
 
 **Then decide who gets which role, because signing in does not.** A token proves who
@@ -1866,6 +1873,15 @@ Beyond the container surface, the backend itself is built defensively:
 - **Fail-loud persistence.** `GRAPH_STRICT=true` refuses to start if Apache AGE is
   unreachable instead of silently falling back to the non-persistent in-memory
   store. Events that exhaust redelivery go to a **dead-letter stream**, not the void.
+- **Large estates arrive whole.** An event over the bus's message limit (1 MiB on a
+  default NATS) is split into chunks, nodes first; a large cluster or account used to be
+  refused at ingest with a 502. The ingest response names the request's batch, and
+  `ingestBatch(id)` says when all of it has reached the graph - the merge gate waits for
+  that before it trusts a verdict.
+- **Edges wait for their nodes.** An edge whose endpoint has not arrived - from another
+  feed, or another chunk - is parked, and lands in the write that brings the endpoint.
+  It used to be redelivered with its whole event for four minutes and then dropped.
+  A parked edge waits up to 7 days; `perspectivegraph_graph_pending_edges` counts them.
 - **A bounded bus.** A handled event leaves the stream as soon as it is acknowledged;
   `NATS_MAX_AGE` (default `168h`) caps how long an unhandled one waits, and how long a
   dead-lettered one is kept. A dropped connection is retried for as long as it takes,
@@ -2203,16 +2219,31 @@ curl -s $API_URL/healthz      # → ok
 If the backend runs with auth enabled (it should, outside a laptop), every
 request must be signed/authorized - otherwise you get `401`.
 
-- **Ingest** (`INGEST_HMAC_SECRET` set): sign the request **body** with HMAC-SHA256
-  and send `X-PerspectiveGraph-Signature: sha256=<hex>`. A reusable helper:
+- **Ingest** (`INGEST_HMAC_SECRET` set): sign the request with HMAC-SHA256 (v2) and
+  send the signature with the time you signed it. The signed text is five lines -
+  `v2`, the unix time, the method, the path, the query, then the hex SHA-256 of the body -
+  with the query's parameters **sorted by name** and URL-encoded as sent. A reusable
+  helper:
 
   ```bash
   export INGEST_HMAC_SECRET=...   # the shared secret
-  pgsign() {  # usage: pgsign <file>  → prints the signature header value
-    printf 'sha256=%s' "$(openssl dgst -sha256 -hmac "$INGEST_HMAC_SECRET" -hex < "$1" | sed 's/^.*= //')"
+  pgsign2() {  # usage: pgsign2 <path> <sorted-query> <file>  → sets PG_TS and PG_SIG
+    PG_TS=$(date +%s)
+    local sum; sum=$(openssl dgst -sha256 -hex < "$3" | sed 's/^.*= //')
+    PG_SIG=v2=$(printf 'v2\n%s\nPOST\n%s\n%s\n%s' "$PG_TS" "$1" "$2" "$sum" |
+      openssl dgst -sha256 -hmac "$INGEST_HMAC_SECRET" -hex | sed 's/^.*= //')
   }
-  # then on every ingest POST add:  -H "X-PerspectiveGraph-Signature: $(pgsign report.json)"
+  q='pr=42&sha=deadbeef&slug=acme%2Fpayments-api'   # parameters sorted by name
+  pgsign2 /ingest/trivy "$q" report.json
+  curl -sS -X POST "http://localhost:8081/ingest/trivy?$q" -H 'Content-Type: application/json' \
+    -H "X-PerspectiveGraph-Timestamp: $PG_TS" -H "X-PerspectiveGraph-Signature-V2: $PG_SIG" \
+    --data-binary @report.json
   ```
+
+  Each signature is accepted once, within five minutes of its timestamp - sign every
+  request afresh. The v1 form (`X-PerspectiveGraph-Signature: sha256=` + the HMAC of the
+  body alone) is still accepted unless `INGEST_HMAC_ACCEPT_V1=false`; the `gate`
+  subcommand, the GitHub Action and the Postman collection send both.
 
 - **API** (`API_TOKENS` set): send `Authorization: Bearer <viewer-token>` on
   every GraphQL request. The in-browser playground is disabled when auth is on.

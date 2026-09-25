@@ -45,8 +45,11 @@ groups:
           description: A scanner feed may be malformed; inspect perspectivegraph_normalize_events_total{result!="ok"}.
 
       - alert: PerspectiveGraphAuthDenialSpike
-        # A burst of 401/403 can be credential stuffing against the API/ingest.
-        expr: sum(rate(perspectivegraph_http_requests_total{code=~"401|403"}[5m])) > 1
+        # A burst of refused credentials can be credential stuffing against the API or
+        # ingest. Counted where the refusal is decided: the HTTP counter records only
+        # status classes (4xx), so the 401|403 match this used to have never fired. A
+        # missing credential (a dashboard before sign-in) is not guessing, and is left out.
+        expr: sum(rate(perspectivegraph_auth_denied_total{reason=~"invalid_credential|bad_signature|replayed|unknown_tenant|locked"}[5m])) > 1
         for: 10m
         labels:
           severity: warning
@@ -73,6 +76,18 @@ groups:
         annotations:
           summary: Backend {{ $labels.instance }} has had no event-bus connection for 5m
           description: perspectivegraph_broker_connected is 0; check NATS and the network path to it. Scans and connector passes are being refused meanwhile.
+
+      - alert: PerspectiveGraphPendingEdgesGrowing
+        # Edges wait (up to 7 days) for an endpoint no feed has sent. A count that keeps
+        # rising means a feed names assets nothing else describes - those edges never
+        # become routes, so part of the environment stays invisible.
+        expr: deriv(perspectivegraph_graph_pending_edges[6h]) > 0 and perspectivegraph_graph_pending_edges > 100
+        for: 6h
+        labels:
+          severity: warning
+        annotations:
+          summary: Edges keep waiting for assets nothing describes (tenant {{ $labels.tenant }})
+          description: perspectivegraph_graph_pending_edges has grown for 6h. Find the feed that names the missing assets, or add the scan that describes them.
 
       - alert: PerspectiveGraphDeadLettering
         # Poison events dropped after the redelivery cap point at a persistent bad feed.

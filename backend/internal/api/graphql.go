@@ -20,6 +20,7 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/attck"
 	"github.com/luiacuaniello/perspectivegraph/internal/audit"
 	"github.com/luiacuaniello/perspectivegraph/internal/auth"
+	"github.com/luiacuaniello/perspectivegraph/internal/broker"
 	"github.com/luiacuaniello/perspectivegraph/internal/clientip"
 	"github.com/luiacuaniello/perspectivegraph/internal/coverage"
 	"github.com/luiacuaniello/perspectivegraph/internal/detection"
@@ -75,6 +76,7 @@ type API struct {
 	ai               ai.Client          // AI-native layer (nil/Nop → disabled)
 	aiLimiter        *ratelimit.Limiter // per-client cap on /ai/* (nil → none)
 	heavySlots       chan struct{}      // process-wide cap on heavy analyses; see compute.go
+	batches          BatchTracker       // ingest batch progress, for the merge gate (nil → none)
 }
 
 func New(manager *graph.Manager, svc *analyzer.Service, idx search.Indexer) *API {
@@ -134,6 +136,19 @@ func (a *API) WithSuppress(s suppress.Suppressions) *API {
 // the API for chaining; a nil store simply reports no coverage.
 func (a *API) WithCoverage(c *coverage.Store) *API {
 	a.coverage = c
+	return a
+}
+
+// BatchTracker reports how much of an ingest batch has reached the graph
+// (broker.PublishBatch). The merge gate asks through ingestBatch before trusting a
+// verdict, because a pass can run between the messages of one large report.
+type BatchTracker interface {
+	BatchStatus(ctx context.Context, id string) (broker.BatchStatus, error)
+}
+
+// WithIngestBatches attaches the batch tracker; nil leaves ingestBatch answering null.
+func (a *API) WithIngestBatches(t BatchTracker) *API {
+	a.batches = t
 	return a
 }
 
@@ -983,6 +998,44 @@ func (a *API) Schema() (graphql.Schema, error) {
 					return applications(snap), nil
 				},
 			},
+			"ingestBatch": &graphql.Field{
+				Type: graphql.NewObject(graphql.ObjectConfig{
+					Name:        "IngestBatch",
+					Description: "How much of one ingest request has reached the graph. A large report is split into several messages, and an analyzer pass can run between them; appliedAt is set once the last one landed, so a verdict analysed after it saw the whole report.",
+					Fields: graphql.Fields{
+						"id":        &graphql.Field{Type: graphql.String},
+						"messages":  &graphql.Field{Type: graphql.Int, Description: "Messages the request was sent as."},
+						"applied":   &graphql.Field{Type: graphql.Int, Description: "Messages applied to the graph so far."},
+						"complete":  &graphql.Field{Type: graphql.Boolean},
+						"appliedAt": &graphql.Field{Type: graphql.String, Description: "When the last message was applied (RFC 3339), once complete."},
+					},
+				}),
+				Description: "Progress of an ingest batch, by the id the ingest response returned. Null for an unknown or expired id, or one sent by another tenant.",
+				Args: graphql.FieldConfigArgument{
+					"id": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)},
+				},
+				Resolve: func(p graphql.ResolveParams) (any, error) {
+					if a.batches == nil {
+						return nil, nil
+					}
+					st, err := a.batches.BatchStatus(p.Context, p.Args["id"].(string))
+					if err != nil {
+						return nil, err
+					}
+					// A batch belongs to the tenant that sent it. Another tenant gets the
+					// same null as an unknown id, so it learns nothing about it.
+					if st.Messages == 0 || graph.NormalizeTenant(st.Tenant) != graph.NormalizeTenant(tenantOf(p.Context)) {
+						return nil, nil
+					}
+					out := map[string]any{
+						"id": st.ID, "messages": st.Messages, "applied": st.Applied, "complete": st.Complete(),
+					}
+					if st.Complete() {
+						out["appliedAt"] = st.AppliedAt.UTC().Format(time.RFC3339Nano)
+					}
+					return out, nil
+				},
+			},
 			"ingestCoverage": &graphql.Field{
 				Type:        graphql.NewList(ingestSourceType),
 				Description: "What this engine has actually been fed, per collector, most recent first. Read it beside an empty board: 'no attack path' means none in what was ingested, and this says what that was - and which sources have gone quiet.",
@@ -1399,12 +1452,14 @@ func (a *API) verifyCut(ctx context.Context, cut remediation.CutEdge) (any, erro
 		return nil, err
 	}
 	// The uncut graph's simulation is the same for every fix, and it is half of each
-	// proof's cost, so the request runs it once. The key is the one riskSimulation uses
-	// for the same arguments, so either can reuse the other's result. It is a call of its
-	// own rather than nested in the proof below, which would hold one slot while waiting
-	// for another.
-	base, err := a.heavy(ctx, fmt.Sprintf("risk|%d|%d", verifyIterations, 1), func(ctx context.Context) (any, error) {
-		return analyzer.SimulateRisk(ctx, snap, verifyIterations, 1)
+	// proof's cost, so the request runs it once. It is a call of its own rather than
+	// nested in the proof below, which would hold one slot while waiting for another.
+	//
+	// Point estimates only, here and in the proof: the proof reads nothing else, and the
+	// credible band and attacker mixture were ~96% of each simulation's trials.
+	point := analyzer.RiskOptions{PointOnly: true}
+	base, err := a.heavy(ctx, fmt.Sprintf("riskpoint|%d|%d", verifyIterations, 1), func(ctx context.Context) (any, error) {
+		return analyzer.SimulateRiskWith(ctx, snap, verifyIterations, 1, point)
 	})
 	if err != nil {
 		return nil, err
@@ -1412,9 +1467,9 @@ func (a *API) verifyCut(ctx context.Context, cut remediation.CutEdge) (any, erro
 	// Several fixes, and several paths, often cut the same edge: through heavy, the
 	// request proves each distinct cut once.
 	v, err := a.heavy(ctx, "verify|"+cut.Type+"|"+cut.From+"|"+cut.To, func(ctx context.Context) (any, error) {
-		return analyzer.WhatIfFrom(ctx, snap, base.(analyzer.RiskSimulation),
+		return analyzer.WhatIfFromWith(ctx, snap, base.(analyzer.RiskSimulation),
 			[]analyzer.EdgeCut{{From: cut.From, To: cut.To, Type: ontology.EdgeType(cut.Type)}},
-			verifyIterations, 1)
+			verifyIterations, 1, point)
 	})
 	if err != nil {
 		return nil, err

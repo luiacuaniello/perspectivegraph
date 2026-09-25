@@ -178,6 +178,14 @@ type History {
   trend: [PosturePoint]
 }
 
+type IngestBatch {
+  applied: Int
+  appliedAt: String
+  complete: Boolean
+  id: String
+  messages: Int
+}
+
 type IngestSource {
   edges: Int
   events: Int
@@ -265,6 +273,7 @@ type Query {
   calibrationTrend(points: Int): [CalibrationTrendPoint]
   graph(app: String, limit: Int, offset: Int): GraphView
   history(points: Int): History
+  ingestBatch(id: String!): IngestBatch
   ingestCoverage: [IngestSource]
   invariantViolations: [PolicyViolation]
   kShortestPaths(from: String, k: Int, target: String!): [AttackPath]

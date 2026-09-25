@@ -11,6 +11,7 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/ai"
 	"github.com/luiacuaniello/perspectivegraph/internal/analyzer"
 	"github.com/luiacuaniello/perspectivegraph/internal/auth"
+	"github.com/luiacuaniello/perspectivegraph/internal/metrics"
 	"github.com/luiacuaniello/perspectivegraph/internal/ratelimit"
 	remediationpkg "github.com/luiacuaniello/perspectivegraph/internal/remediation"
 )
@@ -76,6 +77,7 @@ func (a *API) aiGate(next http.Handler) http.Handler {
 	limited := a.aiLimiter.Middleware(next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if a.anonymousCaller(r.Context()) {
+			metrics.AuthDenied.WithLabelValues("api", "anonymous_ai").Inc()
 			writeJSONError(w, http.StatusForbidden,
 				"AI answers need a signed-in user: each one is a paid call to the model provider")
 			return

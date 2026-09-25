@@ -317,8 +317,15 @@ func WhatIf(ctx context.Context, snap graph.Snapshot, cuts []EdgeCut, iterations
 // is half the work: the simulation is nearly all of a what-if's cost (9 s of 18 on a
 // 4,000-node graph, against 78 ms for the path searches).
 func WhatIfFrom(ctx context.Context, snap graph.Snapshot, before RiskSimulation, cuts []EdgeCut, iterations int, seed uint64) (WhatIfResult, error) {
+	return WhatIfFromWith(ctx, snap, before, cuts, iterations, seed, RiskOptions{})
+}
+
+// WhatIfFromWith is WhatIfFrom with a choice of what the cut simulation computes. A
+// fix's verification reads only the point estimates, so it passes PointOnly - for before
+// as well - and skips the credible band and the mixture, most of each simulation's cost.
+func WhatIfFromWith(ctx context.Context, snap graph.Snapshot, before RiskSimulation, cuts []EdgeCut, iterations int, seed uint64, opt RiskOptions) (WhatIfResult, error) {
 	reduced := cutEdges(snap, cuts)
-	after, err := SimulateRisk(ctx, reduced, iterations, seed)
+	after, err := SimulateRiskWith(ctx, reduced, iterations, seed, opt)
 	if err != nil {
 		return WhatIfResult{}, err
 	}

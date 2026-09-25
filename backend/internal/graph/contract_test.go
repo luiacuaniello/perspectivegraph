@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -91,6 +92,31 @@ func TestAGEStoreContract(t *testing.T) {
 	runStoreContract(t, store)
 	assertPathfinderEquivalence(t, store)
 	assertConcurrentWritersDoNotDuplicate(t, store)
+
+	// A parked edge older than the TTL is dropped by the next write, not landed later.
+	ctx2 := context.Background()
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(graph.ApplyEvent(ctx2, store, ontology.Event{ObservedAt: time.Now(),
+		Nodes: []ontology.Node{{ID: "ttl-src", Label: ontology.LabelContainer}},
+		Edges: []ontology.Edge{{Type: ontology.EdgeConnectsTo, From: "ttl-src", To: "ttl-ghost", ExploitProbability: 0.5}}}))
+	if _, err := conn.ExecContext(ctx2, fmt.Sprintf(
+		`UPDATE %q._pg_pending_edges SET parked_at = now() - interval '8 days' WHERE to_id = 'ttl-ghost'`, testGraph)); err != nil {
+		t.Fatalf("age the parked edge: %v", err)
+	}
+	must(graph.ApplyEvent(ctx2, store, ontology.Event{ObservedAt: time.Now(),
+		Nodes: []ontology.Node{{ID: "ttl-ghost", Label: ontology.LabelContainer}}}))
+	snap, err := store.Snapshot(ctx2)
+	must(err)
+	for _, e := range snap.Edges {
+		if e.To == "ttl-ghost" {
+			t.Error("an edge parked past the TTL landed when its endpoint finally came")
+		}
+	}
 }
 
 // Several backend replicas share one consumer, so two events that mention the same
@@ -349,9 +375,7 @@ func runStoreContract(t *testing.T, s graph.Store) {
 			{Type: ontology.EdgeExposes, From: "evt-lb", To: "evt-web", ExploitProbability: 0.9},
 		},
 	}
-	if err := graph.ApplyEvent(ctx, s, evt); !errors.Is(err, graph.ErrEndpointsMissing) {
-		t.Errorf("ApplyEvent with a waiting edge: err = %v; want one wrapping ErrEndpointsMissing", err)
-	}
+	must(graph.ApplyEvent(ctx, s, evt), "event with a waiting edge")
 	snap, err = s.Snapshot(ctx)
 	must(err, "snapshot after event")
 	webs := 0
@@ -374,6 +398,83 @@ func runStoreContract(t *testing.T, s graph.Store) {
 	}
 	if !landed {
 		t.Error("an edge whose endpoints both exist was held back by an earlier edge waiting for its own")
+	}
+
+	// ── Parked edges ─────────────────────────────────────────────────────
+	// The waiting edge is not lost and not an error: it is parked, and it lands in the
+	// write that brings its endpoint - from any event, feed or replica. It used to be
+	// redelivered with the whole event eight times over four minutes and then dropped.
+	parker, ok := graph.AsEdgeParker(s)
+	if !ok {
+		t.Fatal("store does not park edges waiting for an endpoint")
+	}
+	waiting, n, err := parker.PendingEdges(ctx, 10)
+	must(err, "pending edges")
+	if n != 1 || len(waiting) != 1 || waiting[0].To != "evt-not-here-yet" {
+		t.Fatalf("parked = %v (%d), want the one edge to evt-not-here-yet", waiting, n)
+	}
+	if waiting[0].ExploitProbability < 0.89 || waiting[0].ExploitProbability > 0.91 {
+		t.Errorf("parked edge lost its probability: %v", waiting[0].ExploitProbability)
+	}
+	must(graph.ApplyEvent(ctx, s, ontology.Event{Source: "aws", ObservedAt: time.Now(),
+		Nodes: []ontology.Node{{ID: "evt-not-here-yet", Label: ontology.LabelContainer, Name: "late"}}}),
+		"the missing endpoint arrives in another event")
+	snap, err = s.Snapshot(ctx)
+	must(err, "snapshot after the endpoint arrived")
+	arrived := false
+	for _, e := range snap.Edges {
+		if e.From == "evt-lb" && e.To == "evt-not-here-yet" {
+			arrived = true
+			if _, ok := graph.LastSeen(e.Properties); !ok {
+				t.Error("a parked edge landed without its last_seen stamp")
+			}
+		}
+	}
+	if !arrived {
+		t.Error("the parked edge did not land when its endpoint arrived")
+	}
+	if _, n, err := parker.PendingEdges(ctx, 10); err != nil || n != 0 {
+		t.Errorf("after landing, %d edge(s) still parked (err %v)", n, err)
+	}
+
+	// Parking and arriving race: one writer sends the edge, another its missing endpoint,
+	// at the same time. Whatever the interleaving, the edge must end in the graph and not
+	// in the parking lot - which is what taking both under one lock guarantees.
+	for i := 0; i < 20; i++ {
+		src, dst := fmt.Sprintf("race-src-%d", i), fmt.Sprintf("race-dst-%d", i)
+		done := make(chan error, 2)
+		go func() {
+			done <- graph.ApplyEvent(ctx, s, ontology.Event{ObservedAt: time.Now(),
+				Nodes: []ontology.Node{{ID: src, Label: ontology.LabelContainer}},
+				Edges: []ontology.Edge{{Type: ontology.EdgeConnectsTo, From: src, To: dst, ExploitProbability: 0.5}}})
+		}()
+		go func() {
+			done <- graph.ApplyEvent(ctx, s, ontology.Event{ObservedAt: time.Now(),
+				Nodes: []ontology.Node{{ID: dst, Label: ontology.LabelContainer}}})
+		}()
+		must(<-done, "race writer")
+		must(<-done, "race writer")
+	}
+	snap, err = s.Snapshot(ctx)
+	must(err, "snapshot after the race")
+	raced := 0
+	for _, e := range snap.Edges {
+		if strings.HasPrefix(e.From, "race-src-") {
+			raced++
+		}
+	}
+	if _, n, _ := parker.PendingEdges(ctx, 10); raced != 20 || n != 0 {
+		t.Errorf("after 20 park/arrive races: %d edges landed and %d still parked, want 20 and 0", raced, n)
+	}
+
+	// A node written without a name is a legal node - a custom feed can send one through
+	// /ingest/events - and must not break reading the graph. On Apache AGE it failed the
+	// whole snapshot, which took the dashboard and the analyzer down for the tenant.
+	must(s.UpsertNode(ctx, ontology.Node{ID: "Container:nameless", Label: ontology.LabelContainer}), "nameless node")
+	snap, err = s.Snapshot(ctx)
+	must(err, "snapshot with a nameless node")
+	if n, ok := snap.NodeByID()["Container:nameless"]; !ok || n.Name != "" {
+		t.Errorf("nameless node read back as %+v (present %v)", n, ok)
 	}
 
 	// ── Staleness pruning ───────────────────────────────────────────────
@@ -500,10 +601,13 @@ func TestVersionedStoreCountsAPartlyLandedBatch(t *testing.T) {
 	}
 }
 
-// A store with no batch writer still gets the whole contract through ApplyEvent: the
-// memory store takes the element-by-element path, and each write counts.
+// plainStore hides every optional capability, leaving the bare Store interface.
+type plainStore struct{ graph.Store }
+
+// A store with no batch writer still gets the whole contract through ApplyEvent: it
+// takes the element-by-element path, and each write counts.
 func TestVersionedStoreWithoutABatchWriterCountsEachWrite(t *testing.T) {
-	v := graph.NewVersionedStore(memory.New())
+	v := graph.NewVersionedStore(plainStore{memory.New()})
 	err := graph.ApplyEvent(context.Background(), v, ontology.Event{
 		Nodes: []ontology.Node{{ID: "a", Label: ontology.LabelContainer}, {ID: "b", Label: ontology.LabelImage}},
 		Edges: []ontology.Edge{{Type: ontology.EdgeHosts, From: "a", To: "b", ExploitProbability: 0.5}},

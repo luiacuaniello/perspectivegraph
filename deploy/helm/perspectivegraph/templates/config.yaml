@@ -83,6 +83,7 @@ data:
   ALERT_WEBHOOK_FORMAT: {{ .Values.alert.webhookFormat | default "" | quote }}
   PG_ENV: {{ .Values.backend.env | quote }}
   API_RATE_RPS: {{ .Values.auth.apiRateRps | quote }}
+  INGEST_HMAC_ACCEPT_V1: {{ .Values.ingest.hmacAcceptV1 | quote }}
   INGEST_RATE_RPS: {{ .Values.auth.ingestRateRps | quote }}
   GRAPH_TTL: {{ .Values.graph.ttl | quote }}
   OIDC_ISSUER: {{ .Values.auth.oidc.issuer | quote }}

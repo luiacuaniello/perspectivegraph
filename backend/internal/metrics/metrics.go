@@ -104,6 +104,14 @@ var (
 		Help: "Snapshot acquisitions by mode (full|delta).",
 	}, []string{"mode"})
 
+	// GraphPendingEdges is how many edges wait for an endpoint no event has brought yet.
+	// A few that come and go are feeds arriving out of order; a number that only grows
+	// is a feed naming assets nothing else describes, which never become routes.
+	GraphPendingEdges = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "perspectivegraph_graph_pending_edges",
+		Help: "Edges parked until their missing endpoint arrives (dropped after 7 days), by tenant.",
+	}, []string{"tenant"})
+
 	GraphPrunedNodes = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "perspectivegraph_graph_pruned_nodes_total",
 		Help: "Stale nodes removed by the TTL pruner (assets that left the source feeds).",
@@ -118,6 +126,23 @@ var (
 		Name: "perspectivegraph_audit_pruned_records_total",
 		Help: "Audit records removed by retention (AUDIT_RETENTION), oldest first.",
 	})
+
+	// AuthDenied counts refused credentials where the refusal is decided, by surface
+	// (api|ingest) and a short reason. The HTTP counter below records only status
+	// classes, so an alert on 401/403 there could never match; and ingest requests were
+	// not counted at all.
+	AuthDenied = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "perspectivegraph_auth_denied_total",
+		Help: "Requests refused for their credential, by surface (api|ingest) and reason.",
+	}, []string{"surface", "reason"})
+
+	// IngestSignatures counts accepted ingest signatures by version. v1 covers the body
+	// only; when it stays at zero, every sender signs v2 and INGEST_HMAC_ACCEPT_V1 can be
+	// turned off.
+	IngestSignatures = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "perspectivegraph_ingest_signatures_total",
+		Help: "Accepted ingest HMAC signatures, by version (v1|v2).",
+	}, []string{"version"})
 
 	HTTPRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "perspectivegraph_http_requests_total",
@@ -154,8 +179,8 @@ func init() {
 		AnalyzerPasses, AnalyzerPassSeconds, AnalyzerCriticalPaths,
 		AnalyzerGraphNodes, AnalyzerGraphEdges, AnalyzerPathfindSeconds,
 		AnalyzerSnapshotSeconds, AnalyzerSnapshots,
-		GraphPrunedNodes, GraphPrunedEdges, AuditPrunedRecords,
-		HTTPRequests, APIHeavyRefused,
+		GraphPrunedNodes, GraphPrunedEdges, GraphPendingEdges, AuditPrunedRecords,
+		HTTPRequests, APIHeavyRefused, AuthDenied, IngestSignatures,
 		ConnectorRuns, ConnectorEvents,
 	)
 	// Both results exist from the first scrape, so a panel or a ratio reads 0 rather than

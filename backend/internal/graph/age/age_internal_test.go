@@ -116,3 +116,36 @@ func TestSanitizeIdent(t *testing.T) {
 		t.Errorf("sanitizeIdent left unsafe chars: %q", got)
 	}
 }
+
+// Every tenant's store shares one pool per database, so the connections a replica holds
+// no longer grow with the number of tenants. The pool closes with the last store using
+// it, and closing a store twice does not take the pool from under another.
+func TestTenantsShareOnePoolPerDatabase(t *testing.T) {
+	const dsn = "host=127.0.0.1 port=1 user=x dbname=x sslmode=disable connect_timeout=1"
+	a, err := newStore(dsn, "tenant_a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := newStore(dsn, "tenant_b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.db != b.db {
+		t.Fatal("two tenants' stores opened two pools")
+	}
+	_ = a.Close()
+	_ = a.Close() // twice: must not release b's claim
+	pools.Lock()
+	p := pools.byDSN[dsn]
+	pools.Unlock()
+	if p == nil || p.refs != 1 {
+		t.Fatalf("after closing one of two stores (twice), pool = %+v; want it open with one reference", p)
+	}
+	_ = b.Close()
+	pools.Lock()
+	_, open := pools.byDSN[dsn]
+	pools.Unlock()
+	if open {
+		t.Error("the pool outlived its last store")
+	}
+}

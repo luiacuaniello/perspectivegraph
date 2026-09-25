@@ -128,7 +128,7 @@ func TestGatePostsPRContextAndSignsTheBody(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	err := postGateReport(srv.Client(), srv.URL, "trivy", "acme/payments", "abc123", "acme/payments", 42, "", secret, body)
+	_, err := postGateReport(srv.Client(), srv.URL, "trivy", "acme/payments", "abc123", "acme/payments", 42, "", secret, body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestGateSendsNoSignatureWithoutASecret(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if err := postGateReport(srv.Client(), srv.URL, "trivy", "s", "c", "", 0, "", "", []byte("{}")); err != nil {
+	if _, err := postGateReport(srv.Client(), srv.URL, "trivy", "s", "c", "", 0, "", "", []byte("{}")); err != nil {
 		t.Fatal(err)
 	}
 	if present {
@@ -177,7 +177,7 @@ func TestGateFailsWhenIngestIsRejected(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	err := postGateReport(srv.Client(), srv.URL, "trivy", "s", "c", "", 0, "", "x", []byte("{}"))
+	_, err := postGateReport(srv.Client(), srv.URL, "trivy", "s", "c", "", 0, "", "x", []byte("{}"))
 	if err == nil {
 		t.Fatal("a rejected ingest was reported as success")
 	}

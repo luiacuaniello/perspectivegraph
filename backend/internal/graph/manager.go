@@ -60,6 +60,20 @@ func (m *Manager) For(ctx context.Context, tenant string) (*VersionedStore, erro
 	return vs, nil
 }
 
+// Lookup returns a tenant's store if it already exists, and never creates one.
+//
+// Reads go through here. A tenant used to be created by the first reference of any
+// kind, so an SSO user whose token named a tenant nobody had configured created a graph
+// and a store just by opening the dashboard - and with it the analyzer loop that tenant
+// would get. Writes are bounded by configuration (the ingest secrets name the tenants
+// that may write); reads now do not add to that.
+func (m *Manager) Lookup(tenant string) (*VersionedStore, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	s := m.stores[NormalizeTenant(tenant)]
+	return s, s != nil
+}
+
 // Tenants lists the instantiated tenants, sorted.
 func (m *Manager) Tenants() []string {
 	m.mu.RLock()

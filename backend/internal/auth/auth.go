@@ -24,6 +24,7 @@ import (
 
 	"github.com/luiacuaniello/perspectivegraph/internal/audit"
 	"github.com/luiacuaniello/perspectivegraph/internal/clientip"
+	"github.com/luiacuaniello/perspectivegraph/internal/metrics"
 	"github.com/luiacuaniello/perspectivegraph/internal/secwatch"
 )
 
@@ -310,12 +311,21 @@ func RequireRole(authn Authenticator, min Role, rec audit.Recorder, guard *secwa
 		}
 		ip := ips.Of(r)
 		if guard.Tripped(ip) {
+			metrics.AuthDenied.WithLabelValues("api", "locked").Inc()
 			rec.Record(r.Context(), "auth.locked", "unknown", "", "", map[string]any{"path": r.URL.Path, "remote": ip})
 			tooManyRequests(w)
 			return
 		}
 		p, ok := authn.Authenticate(r)
 		if !ok || p.Role < min {
+			switch {
+			case ok:
+				metrics.AuthDenied.WithLabelValues("api", "insufficient_role").Inc()
+			case bearer(r) != "":
+				metrics.AuthDenied.WithLabelValues("api", "invalid_credential").Inc()
+			default:
+				metrics.AuthDenied.WithLabelValues("api", "missing_credential").Inc()
+			}
 			rec.Record(r.Context(), "auth.deny", "unknown", "", "", map[string]any{"path": r.URL.Path, "remote": ip})
 			// Only a *rejected credential* counts toward the brute-force lockout -
 			// i.e. a bearer token was presented and authentication failed (!ok). An

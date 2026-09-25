@@ -111,10 +111,31 @@ var ErrEndpointsMissing = errors.New("edge endpoint(s) not in the graph yet")
 // BatchWriter is an OPTIONAL Store capability: write an event's nodes, then its edges,
 // as one unit. A store with a per-write cost - a transaction, a round trip - pays it
 // once per event instead of once per element. An edge whose endpoint is missing is
-// skipped, everything else is written, and the call then returns an error wrapping
-// ErrEndpointsMissing.
+// skipped and everything else is written; a store that is also an EdgeParker parks
+// that edge and returns nil, any other returns an error wrapping ErrEndpointsMissing.
 type BatchWriter interface {
 	UpsertBatch(ctx context.Context, nodes []ontology.Node, edges []ontology.Edge) error
+}
+
+// PendingEdgeTTL is how long a parked edge waits for its missing endpoint before it is
+// dropped. A week: past that, the node it names is not late, it is not coming, and the
+// feed that sent the edge will send it again if it is still true.
+const PendingEdgeTTL = 7 * 24 * time.Hour
+
+// EdgeParker is an OPTIONAL Store capability: a batch write parks an edge whose endpoint
+// is not in the graph yet, instead of refusing it, and writes it in the same write that
+// brings the endpoint - whichever event, feed or replica that comes from.
+//
+// It replaces redelivery for this case. The broker used to hand the whole event back up
+// to eight times over four minutes, rewriting everything else in it each time, and then
+// dead-lettered it - so an edge whose node arrived five minutes later, from another feed
+// or in another chunk of the same one, was lost. A parked edge waits PendingEdgeTTL, and
+// costs nothing while it does.
+//
+// PendingEdges returns up to limit of the edges still waiting, oldest first, and how many
+// there are in all.
+type EdgeParker interface {
+	PendingEdges(ctx context.Context, limit int) ([]ontology.Edge, int, error)
 }
 
 // Store is the persistence contract for the graph core. Writes are idempotent
@@ -237,6 +258,21 @@ func AsDeltaStore(s Store) (DeltaStore, bool) {
 	for {
 		if ds, ok := s.(DeltaStore); ok {
 			return ds, true
+		}
+		vs, ok := s.(*VersionedStore)
+		if !ok {
+			return nil, false
+		}
+		s = vs.Store
+	}
+}
+
+// AsEdgeParker reports whether s (unwrapping a VersionedStore) parks edges waiting for
+// an endpoint, returning the EdgeParker if so.
+func AsEdgeParker(s Store) (EdgeParker, bool) {
+	for {
+		if p, ok := s.(EdgeParker); ok {
+			return p, true
 		}
 		vs, ok := s.(*VersionedStore)
 		if !ok {

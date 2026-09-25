@@ -64,8 +64,9 @@ genload: posted 4000 nodes + 14000 edges in 8 events (1731 KiB) -> 202 Accepted
   ------------------------------------------------
 ```
 
-(The resident graph is smaller than what `genload` posts because dangling edges - whose
-endpoints have not arrived yet - are rejected and redelivered, and duplicate nodes merge.)
+(The resident graph is smaller than what `genload` posts because duplicate nodes merge,
+and edges whose endpoints never arrive stay parked rather than landing - see
+`perspectivegraph_graph_pending_edges`.)
 
 ## Writing an event
 
@@ -96,6 +97,31 @@ Three things made the old column grow faster than the event:
 At 36 seconds the 5,000-node event also outlasted the 30 seconds JetStream then waited
 before handing it to another replica, which started writing the same nodes while the
 first was still at it.
+
+An event larger than one bus message - 1 MiB on a default NATS, about 6,000 nodes of a
+typical cluster dump - is split into chunks, nodes first, and each chunk is written as
+above. Chunks can land on different replicas in any order: an edge that arrives before
+its endpoint is parked and lands in the write that brings it. Measured with two
+replicas and a 1.5 MB report through the merge gate: two messages, 6,000 edges parked
+and landed, 6,002 vertices, no duplicates, and the gate's verdict taken after the last
+chunk.
+
+## Simulating risk
+
+Every analyzer pass runs a Monte Carlo simulation over the whole graph, and every fix's
+verification runs two. On the genload graph above (4,000 nodes, 14,000 edges):
+
+| simulation | 1.19 | now |
+|---|---|---|
+| 800 iterations, complete | 9.6 s | 2.8 s |
+| 800 iterations, point estimate only (a fix's verification) | 9.6 s | 0.08 s |
+| analyzer pass (2,000 iterations) | 10.4 s | 3.0 s |
+
+A simulation "of 800 iterations" ran about 28,800 trials: the 800 asked for, 25,600 for
+the credible band (64 × 400) and 2,400 for the attacker-profile mixture. A verification
+reads only the point estimate, so it now skips the other two. The trials themselves
+moved from string-keyed maps to integer indices, drawing the same random numbers in the
+same order - every result is identical to the old code's, and a test holds them to it.
 
 ## How the cost grows
 

@@ -38,6 +38,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/luiacuaniello/perspectivegraph/internal/atomicfile"
 	"github.com/luiacuaniello/perspectivegraph/internal/threatintel"
 	"github.com/luiacuaniello/perspectivegraph/internal/validation"
 )
@@ -149,11 +150,10 @@ func (s *Store) flush() error {
 	if err != nil {
 		return err
 	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, s.path)
+	// A unique temp file, synced, then renamed and the directory synced (atomicfile). The
+	// fixed "<path>.tmp" this used let two writers interleave in one temp file, and
+	// nothing was forced to disk.
+	return atomicfile.Write(s.path, b, 0o600)
 }
 
 // Sink is the part of the validation store this package needs: somewhere to file a

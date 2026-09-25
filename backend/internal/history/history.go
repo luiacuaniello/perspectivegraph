@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/luiacuaniello/perspectivegraph/internal/atomicfile"
 	"github.com/luiacuaniello/perspectivegraph/internal/graph"
 	"os"
 	"path/filepath"
@@ -554,21 +555,8 @@ func (s *Store) persist() error {
 	// Unique temp name (not a shared "<path>.tmp") so two concurrent writers can't
 	// corrupt each other's partial write; the rename is atomic and the last
 	// consistent snapshot wins.
-	tf, err := os.CreateTemp(filepath.Dir(s.path), filepath.Base(s.path)+".*.tmp")
-	if err != nil {
-		return err
-	}
-	tmp := tf.Name()
-	if _, err := tf.Write(b); err != nil {
-		tf.Close()
-		os.Remove(tmp)
-		return err
-	}
-	if err := tf.Close(); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return os.Rename(tmp, s.path)
+	// Synced before and after the rename (atomicfile): atomic is not durable.
+	return atomicfile.Write(s.path, b, 0o600)
 }
 
 // sortedPaths returns the records in a stable, backend-independent order: by id, which

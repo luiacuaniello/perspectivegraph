@@ -2,8 +2,12 @@ package auth
 
 import (
 	"context"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rsa"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -89,7 +93,10 @@ func (j *JWTAuthenticator) Authenticate(r *http.Request) (Principal, bool) {
 	}
 
 	claims := jwt.MapClaims{}
-	opts := []jwt.ParserOption{jwt.WithValidMethods([]string{"RS256", "RS384", "RS512"})}
+	// Asymmetric algorithms only: RSA, and ECDSA for identity providers that sign with
+	// EC keys (ES256 is a common default). Never HS* - the JWKS is public - and never
+	// "none". keyfunc also checks each algorithm against its key's type and curve.
+	opts := []jwt.ParserOption{jwt.WithValidMethods([]string{"RS256", "RS384", "RS512", "ES256", "ES384", "ES512"})}
 	if j.cfg.Issuer != "" {
 		opts = append(opts, jwt.WithIssuer(j.cfg.Issuer))
 	}
@@ -178,14 +185,14 @@ type jwksCache struct {
 	refreshMu sync.Mutex // serializes refreshes so a stale cache triggers one fetch, not a herd
 
 	mu      sync.RWMutex
-	keys    map[string]*rsa.PublicKey // kid -> key
+	keys    map[string]crypto.PublicKey // kid -> *rsa.PublicKey or *ecdsa.PublicKey
 	fetched time.Time
 }
 
 func newJWKSCache(url string) *jwksCache {
 	// A hanging IdP must not stall the auth path: bound the JWKS fetch explicitly
 	// (http.DefaultClient has no timeout).
-	return &jwksCache{url: url, client: &http.Client{Timeout: 15 * time.Second}, keys: map[string]*rsa.PublicKey{}}
+	return &jwksCache{url: url, client: &http.Client{Timeout: 15 * time.Second}, keys: map[string]crypto.PublicKey{}}
 }
 
 const jwksTTL = time.Hour
@@ -202,17 +209,40 @@ const jwksMinRefetch = time.Minute
 func (c *jwksCache) keyfunc(ctx context.Context) jwt.Keyfunc {
 	return func(token *jwt.Token) (any, error) {
 		kid, _ := token.Header["kid"].(string)
-		if key := c.get(kid); key != nil {
-			return key, nil
+		key := c.get(kid)
+		if key == nil {
+			if err := c.refreshOnce(ctx); err != nil {
+				return nil, err
+			}
+			key = c.get(kid)
 		}
-		if err := c.refreshOnce(ctx); err != nil {
+		if key == nil {
+			return nil, fmt.Errorf("jwks: no key for kid %q", kid)
+		}
+		if err := keyFitsAlg(key, token.Method.Alg()); err != nil {
 			return nil, err
 		}
-		if key := c.get(kid); key != nil {
-			return key, nil
-		}
-		return nil, fmt.Errorf("jwks: no key for kid %q", kid)
+		return key, nil
 	}
+}
+
+// keyFitsAlg refuses a token whose algorithm does not match the key it names: RS* needs
+// an RSA key, and ES256/384/512 an EC key on P-256/384/521. The JWT library refuses the
+// same mismatches inside each signing method (measured); this keeps the rule where the
+// key is chosen, so it does not rest on every method's implementation getting it right.
+func keyFitsAlg(key crypto.PublicKey, alg string) error {
+	switch k := key.(type) {
+	case *rsa.PublicKey:
+		if strings.HasPrefix(alg, "RS") {
+			return nil
+		}
+	case *ecdsa.PublicKey:
+		want := map[string]string{"ES256": "P-256", "ES384": "P-384", "ES512": "P-521"}[alg]
+		if want != "" && k.Curve.Params().Name == want {
+			return nil
+		}
+	}
+	return fmt.Errorf("jwks: key does not fit algorithm %q", alg)
 }
 
 // refreshOnce serializes concurrent refreshes: the first waiter fetches, the rest
@@ -233,7 +263,7 @@ func (c *jwksCache) refreshOnce(ctx context.Context) error {
 	return c.refresh(ctx)
 }
 
-func (c *jwksCache) get(kid string) *rsa.PublicKey {
+func (c *jwksCache) get(kid string) crypto.PublicKey {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if time.Since(c.fetched) > jwksTTL {
@@ -249,13 +279,22 @@ func (c *jwksCache) refresh(ctx context.Context) error {
 			Kty string `json:"kty"`
 			N   string `json:"n"`
 			E   string `json:"e"`
+			Crv string `json:"crv"`
+			X   string `json:"x"`
+			Y   string `json:"y"`
 		} `json:"keys"`
 	}
 	if err := httpx.Do(ctx, c.client, http.MethodGet, c.url, nil, "", nil, &doc); err != nil {
 		return fmt.Errorf("jwks fetch: %w", err)
 	}
-	keys := map[string]*rsa.PublicKey{}
+	keys := map[string]crypto.PublicKey{}
 	for _, k := range doc.Keys {
+		if k.Kty == "EC" {
+			if key, err := ecKey(k.Crv, k.X, k.Y); err == nil {
+				keys[k.Kid] = key
+			}
+			continue
+		}
 		if k.Kty != "RSA" {
 			continue
 		}
@@ -276,4 +315,37 @@ func (c *jwksCache) refresh(ctx context.Context) error {
 	c.keys, c.fetched = keys, time.Now()
 	c.mu.Unlock()
 	return nil
+}
+
+// ecKey builds an EC public key from a JWK's curve and coordinates. The point is
+// validated - a point off the curve is refused - by decoding it as an uncompressed point.
+func ecKey(crv, x, y string) (*ecdsa.PublicKey, error) {
+	var curve elliptic.Curve
+	switch crv {
+	case "P-256":
+		curve = elliptic.P256()
+	case "P-384":
+		curve = elliptic.P384()
+	case "P-521":
+		curve = elliptic.P521()
+	default:
+		return nil, fmt.Errorf("unsupported curve %q", crv)
+	}
+	xb, err := base64.RawURLEncoding.DecodeString(x)
+	if err != nil {
+		return nil, err
+	}
+	yb, err := base64.RawURLEncoding.DecodeString(y)
+	if err != nil {
+		return nil, err
+	}
+	size := (curve.Params().BitSize + 7) / 8
+	if len(xb) > size || len(yb) > size {
+		return nil, errors.New("EC coordinate longer than the curve")
+	}
+	point := make([]byte, 1+2*size)
+	point[0] = 4 // uncompressed
+	copy(point[1+size-len(xb):1+size], xb)
+	copy(point[1+2*size-len(yb):], yb)
+	return ecdsa.ParseUncompressedPublicKey(curve, point)
 }

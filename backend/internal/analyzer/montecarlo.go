@@ -94,59 +94,197 @@ type ProfileCompromise struct {
 	Probability float64 `json:"probability"`
 }
 
-type probEdge struct {
-	to    string
-	p     float64
-	conf  float64 // weight-basis confidence, drives the Beta posterior for the credible band
-	basis string  // weight provenance (kev/epss/runtime/cvss/severity/heuristic), for p(e|c)
-	evid  int     // independent observations behind p (0 = unknown ⇒ heuristic κ)
-	cause string  // shared cause (CVE/credential id); edges sharing it are comonotonically coupled
+// mcGraph is a snapshot compiled for Monte Carlo trials: nodes and weight causes as
+// dense indices, adjacency as lists of edge indices, and each edge's attributes in
+// slices indexed by edge. A trial then touches slices and never hashes a string.
+//
+// The trials used to walk the snapshot as it came - adjacency in a map keyed by node id,
+// a visited set in another map cleared before every trial, a map of per-cause draws - and
+// on a 4,000-node graph one trial cost a third of a millisecond, most of it hashing. A
+// simulation runs tens of thousands of them. The walk below is the same one, in the same
+// order, drawing the same random numbers in the same sequence, so every result is
+// identical bit for bit; montecarlo_equivalence_test.go holds it to the old code.
+type mcGraph struct {
+	nodes map[string]ontology.Node
+	ids   []string
+	index map[string]int32
+
+	seeds  []int32
+	jewels []int32 // in node order, each once
+
+	adj   [][]int32 // per source node, its edges in snapshot order
+	to    []int32
+	cause []int32 // -1: no shared cause
+	p     []float64
+	conf  []float64
+	basis []string
+	evid  []int
+
+	nCauses int
+	// bandOrder is the order the credible band draws edge probabilities in: sources
+	// sorted by id, each source's edges in snapshot order.
+	bandOrder []int32
 }
 
-// reachTrial runs one reachability trial from seeds over adj: a DFS that marks every
-// node reachable through an edge present() admits. visited is cleared and reused.
-func reachTrial(seeds []string, adj map[string][]probEdge, visited map[string]bool, present func(probEdge) bool) {
-	clear(visited)
-	stack := make([]string, 0, len(seeds))
-	for _, s := range seeds {
-		if !visited[s] {
-			visited[s] = true
+func compileGraph(snap graph.Snapshot) *mcGraph {
+	g := &mcGraph{nodes: snap.NodeByID(), index: make(map[string]int32, len(snap.Nodes))}
+	id := func(s string) int32 {
+		if i, ok := g.index[s]; ok {
+			return i
+		}
+		i := int32(len(g.ids)) // #nosec G115 -- node count is far below 2^31
+		g.index[s] = i
+		g.ids = append(g.ids, s)
+		g.adj = append(g.adj, nil)
+		return i
+	}
+	for _, n := range snap.Nodes {
+		id(n.ID)
+	}
+	causes := map[string]int32{}
+	for _, e := range snap.Edges {
+		from, to := id(e.From), id(e.To)
+		// Weight provenance (kev/runtime/epss/cvss/severity/heuristic): the confidence
+		// sets how much the credible band lets this edge move; the basis drives p(e|c)
+		// for the per-profile mixture - both shared with the per-path scoring.
+		basis, conf, evid := weightBasisOf(e, g.nodes[e.From], g.nodes[e.To])
+		c := int32(-1)
+		if name, _ := e.Properties[ontology.PropWeightCause].(string); name != "" {
+			ci, ok := causes[name]
+			if !ok {
+				ci = int32(len(causes)) // #nosec G115 -- cause count is far below 2^31
+				causes[name] = ci
+			}
+			c = ci
+		}
+		eid := int32(len(g.to)) // #nosec G115 -- edge count is far below 2^31
+		g.to = append(g.to, to)
+		g.cause = append(g.cause, c)
+		g.p = append(g.p, clampProb(e.ExploitProbability))
+		g.conf = append(g.conf, conf)
+		g.basis = append(g.basis, basis)
+		g.evid = append(g.evid, evid)
+		g.adj[from] = append(g.adj[from], eid)
+	}
+	g.nCauses = len(causes)
+	// Each node is a seed or a jewel once, however many times the snapshot lists it. A
+	// node listed twice - which a graph written by concurrent replicas before 1.19 can
+	// hold - was counted twice as a jewel: a compromise probability of 2, and a Wilson
+	// interval of NaN that the API could not encode.
+	counted := make(map[int32]bool, len(snap.Nodes))
+	for _, n := range snap.Nodes {
+		i := g.index[n.ID]
+		if counted[i] {
+			continue
+		}
+		counted[i] = true
+		if g.nodes[n.ID].Bool(ontology.PropInternetExposed) {
+			g.seeds = append(g.seeds, i)
+		}
+		if g.nodes[n.ID].Bool(ontology.PropCrownJewel) {
+			g.jewels = append(g.jewels, i)
+		}
+	}
+	var sources []int32
+	for i, es := range g.adj {
+		if len(es) > 0 {
+			sources = append(sources, int32(i)) // #nosec G115 -- node count is far below 2^31
+		}
+	}
+	sort.Slice(sources, func(a, b int) bool { return g.ids[sources[a]] < g.ids[sources[b]] })
+	for _, src := range sources {
+		g.bandOrder = append(g.bandOrder, g.adj[src]...)
+	}
+	return g
+}
+
+// trials runs reachability trials over a compiled graph. visited and the per-cause draws
+// are stamped with a generation instead of cleared, so starting a trial costs nothing.
+type trials struct {
+	g        *mcGraph
+	rng      *rand.Rand
+	gen      uint32
+	visited  []uint32
+	causeGen []uint32
+	causeU   []float64
+	stack    []int32
+}
+
+func newTrials(g *mcGraph, rng *rand.Rand) *trials {
+	return &trials{g: g, rng: rng, visited: make([]uint32, len(g.ids)),
+		causeGen: make([]uint32, g.nCauses), causeU: make([]float64, g.nCauses)}
+}
+
+// run is one trial: a DFS from the seeds that crosses an edge when present admits it at
+// probability prob[edge]. Edges sharing a weight cause are coupled comonotonically - one
+// uniform per cause per trial - so a cause's failure knocks out all its edges together:
+// the Fréchet coupling where P(all edges of a cause succeed) = min p rather than ∏p. This
+// is the common-cause correlation independent sampling misses: several paths that all
+// rest on the same CVE are not independent redundancy. Causeless edges draw
+// independently.
+func (t *trials) run(prob []float64) {
+	t.gen++
+	if t.gen == 0 { // wrapped after 2^32 trials: the stamps are ambiguous, start over
+		clear(t.visited)
+		clear(t.causeGen)
+		t.gen = 1
+	}
+	stack := t.stack[:0]
+	for _, s := range t.g.seeds {
+		if t.visited[s] != t.gen {
+			t.visited[s] = t.gen
 			stack = append(stack, s)
 		}
 	}
 	for len(stack) > 0 {
 		cur := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		for _, e := range adj[cur] {
-			if visited[e.to] {
+		for _, e := range t.g.adj[cur] {
+			to := t.g.to[e]
+			if t.visited[to] == t.gen {
 				continue
 			}
-			if present(e) {
-				visited[e.to] = true
-				stack = append(stack, e.to)
+			if t.present(e, prob[e]) {
+				t.visited[to] = t.gen
+				stack = append(stack, to)
 			}
 		}
 	}
+	t.stack = stack
 }
 
-// comonotonicPresent returns a per-trial edge-presence test that couples edges sharing
-// a weight cause: one uniform per cause (memoized in causeU, which the caller clears
-// each trial), so a cause's failure knocks out ALL its edges together - the Fréchet
-// coupling where P(all edges of a cause succeed) = min p rather than ∏p (P3). This is
-// the common-cause correlation independent sampling misses: several paths that all rest
-// on the same CVE are not independent redundancy. Causeless edges draw independently.
-func comonotonicPresent(rng *rand.Rand, causeU map[string]float64) func(probEdge) bool {
-	return func(e probEdge) bool {
-		if e.cause == "" {
-			return rng.Float64() <= e.p
-		}
-		u, ok := causeU[e.cause]
-		if !ok {
-			u = rng.Float64()
-			causeU[e.cause] = u
-		}
-		return u <= e.p
+func (t *trials) present(e int32, p float64) bool {
+	c := t.g.cause[e]
+	if c < 0 {
+		return t.rng.Float64() <= p
 	}
+	if t.causeGen[c] != t.gen {
+		t.causeU[c] = t.rng.Float64()
+		t.causeGen[c] = t.gen
+	}
+	return t.causeU[c] <= p
+}
+
+func (t *trials) reached(node int32) bool { return t.visited[node] == t.gen }
+
+// anyJewel reports whether the last trial reached any crown jewel.
+func (t *trials) anyJewel() bool {
+	for _, j := range t.g.jewels {
+		if t.reached(j) {
+			return true
+		}
+	}
+	return false
+}
+
+// RiskOptions selects what a simulation computes beyond its point estimate. The zero
+// value computes everything.
+type RiskOptions struct {
+	// PointOnly skips the credible band and the attacker-profile mixture. Those are most
+	// of a simulation's cost - 25,600 band trials and three mixture runs, against 800
+	// headline trials in a fix's verification - and the verification reads only the
+	// point estimate.
+	PointOnly bool
 }
 
 // SimulateRisk runs `iterations` Monte Carlo trials over the snapshot. seed makes
@@ -164,47 +302,25 @@ func comonotonicPresent(rng *rand.Rand, causeU map[string]float64) func(probEdge
 // That is what made aliasing this field an amplifier - see the query guard in the api
 // package, which charges for it accordingly.
 func SimulateRisk(ctx context.Context, snap graph.Snapshot, iterations int, seed uint64) (RiskSimulation, error) {
+	return SimulateRiskWith(ctx, snap, iterations, seed, RiskOptions{})
+}
+
+// SimulateRiskWith is SimulateRisk with a choice of what to compute (RiskOptions). The
+// point estimate and the per-jewel figures are the same either way.
+func SimulateRiskWith(ctx context.Context, snap graph.Snapshot, iterations int, seed uint64, opt RiskOptions) (RiskSimulation, error) {
 	if iterations <= 0 {
 		iterations = DefaultRiskIterations
 	}
-	nodes := snap.NodeByID()
-
-	adj := make(map[string][]probEdge, len(snap.Edges))
-	for _, e := range snap.Edges {
-		p := clampProb(e.ExploitProbability)
-		// Weight provenance (kev/runtime/epss/cvss/severity/heuristic): the confidence
-		// sets how much the credible band lets this edge move; the basis drives p(e|c)
-		// for the per-profile mixture - both shared with the per-path scoring.
-		basis, conf, evid := weightBasisOf(e, nodes[e.From], nodes[e.To])
-		cause, _ := e.Properties[ontology.PropWeightCause].(string)
-		adj[e.From] = append(adj[e.From], probEdge{to: e.To, p: p, conf: conf, basis: basis, evid: evid, cause: cause})
-	}
-
-	var seeds, jewels []string
-	for _, n := range snap.Nodes {
-		if n.Bool(ontology.PropInternetExposed) {
-			seeds = append(seeds, n.ID)
-		}
-		if n.Bool(ontology.PropCrownJewel) {
-			jewels = append(jewels, n.ID)
-		}
-	}
-
+	g := compileGraph(snap)
 	sim := RiskSimulation{Iterations: iterations}
-	if len(seeds) == 0 || len(jewels) == 0 {
+	if len(g.seeds) == 0 || len(g.jewels) == 0 {
 		return sim, nil // nothing to reach, or nothing to reach from
 	}
 
 	rng := rand.New(rand.NewPCG(seed, 0x9e3779b97f4a7c15)) // #nosec G404 -- deterministic PRNG for reproducible Monte Carlo, not security-sensitive
-	hits := make(map[string]int, len(jewels))
+	t := newTrials(g, rng)
+	hits := make([]int, len(g.ids))
 	anyHits, totalCompromised := 0, 0
-	visited := make(map[string]bool, len(nodes))
-	// Reachability over the realized graph, with edges sharing a cause coupled
-	// comonotonically (one draw per cause per trial) so common-cause weaknesses fail
-	// together instead of as independent redundancy.
-	causeU := make(map[string]float64)
-	present := comonotonicPresent(rng, causeU)
-
 	for it := 0; it < iterations; it++ {
 		// Checked on a stride rather than every trial: a context check is cheap but not
 		// free, and a trial is cheaper still, so testing each one would show up in the
@@ -214,12 +330,10 @@ func SimulateRisk(ctx context.Context, snap graph.Snapshot, iterations int, seed
 				return RiskSimulation{}, err
 			}
 		}
-		clear(causeU)
-		reachTrial(seeds, adj, visited, present)
-
+		t.run(g.p)
 		compromised, anyThis := 0, false
-		for _, j := range jewels {
-			if visited[j] {
+		for _, j := range g.jewels {
+			if t.reached(j) {
 				hits[j]++
 				compromised++
 				anyThis = true
@@ -235,26 +349,29 @@ func SimulateRisk(ctx context.Context, snap graph.Snapshot, iterations int, seed
 	sim.AnyCompromiseProbability = float64(anyHits) / n
 	sim.AnyCILow, sim.AnyCIHigh = wilson(anyHits, iterations)
 	sim.ExpectedCompromised = float64(totalCompromised) / n
-	// Input-uncertainty credible band: resample each edge probability from its Beta
-	// posterior and re-run reachability, so the UI can show how much the headline
-	// rests on soft inputs - tight where the evidence is strong, wide where it's a
-	// guess. Kept in the SensitivityLow/High fields to preserve the API.
-	var err error
-	sim.SensitivityLow, sim.SensitivityHigh, err = anyCompromiseCredibleBand(ctx, seeds, jewels, adj, seed, sim.AnyCompromiseProbability)
-	if err != nil {
-		return RiskSimulation{}, err
+	if !opt.PointOnly {
+		// Input-uncertainty credible band: resample each edge probability from its Beta
+		// posterior and re-run reachability, so the UI can show how much the headline
+		// rests on soft inputs - tight where the evidence is strong, wide where it's a
+		// guess. Kept in the SensitivityLow/High fields to preserve the API.
+		var err error
+		sim.SensitivityLow, sim.SensitivityHigh, err = anyCompromiseCredibleBand(ctx, g, seed, sim.AnyCompromiseProbability)
+		if err != nil {
+			return RiskSimulation{}, err
+		}
+		// Correlation-aware headline: marginalize the reachability over the attacker-
+		// profile mixture, so it's consistent with the per-path mixture score (see the
+		// field docs).
+		sim.MixtureCompromiseProbability, sim.ProfileCompromise, err = mixtureCompromise(ctx, g, iterations, seed)
+		if err != nil {
+			return RiskSimulation{}, err
+		}
 	}
-	// Correlation-aware headline: marginalize the reachability over the attacker-profile
-	// mixture, so it's consistent with the per-path mixture score (see the field docs).
-	sim.MixtureCompromiseProbability, sim.ProfileCompromise, err = mixtureCompromise(ctx, seeds, jewels, adj, iterations, seed)
-	if err != nil {
-		return RiskSimulation{}, err
-	}
-	for _, j := range jewels {
-		node := nodes[j]
+	for _, j := range g.jewels {
+		node := g.nodes[g.ids[j]]
 		lo, hi := wilson(hits[j], iterations)
 		sim.CrownJewels = append(sim.CrownJewels, CrownJewelRisk{
-			ID: j, Name: node.Name, Label: string(node.Label),
+			ID: g.ids[j], Name: node.Name, Label: string(node.Label),
 			CompromiseProbability: float64(hits[j]) / n, CILow: lo, CIHigh: hi,
 		})
 	}
@@ -275,52 +392,32 @@ func SimulateRisk(ctx context.Context, snap graph.Snapshot, iterations int, seed
 // evidence justifies. Deterministic from `seed`. `nominal` is the point estimate,
 // used only to guarantee the band brackets it (the reachability function is
 // nonlinear, so the resampled mean can drift slightly off the point estimate).
-func anyCompromiseCredibleBand(ctx context.Context, seeds, jewels []string, adj map[string][]probEdge, seed uint64, nominal float64) (lo, hi float64, err error) {
-	if len(seeds) == 0 || len(jewels) == 0 {
+//
+// The draws are handed to edges in a fixed order (mcGraph.bandOrder). Ranging over a map
+// here once gave every run its own order, and the band came out different on every call
+// with the same seed, although `seed` is documented as the way to reproduce it.
+func anyCompromiseCredibleBand(ctx context.Context, g *mcGraph, seed uint64, nominal float64) (lo, hi float64, err error) {
+	if len(g.seeds) == 0 || len(g.jewels) == 0 {
 		return 0, 0, nil
 	}
 	outerRng := rand.New(rand.NewPCG(seed, 0xa5a5a5a5a5a5a5a5))            // #nosec G404 -- deterministic PRNG for reproducible Monte Carlo, not security-sensitive
 	innerRng := rand.New(rand.NewPCG(seed^0x5bd1e995, 0x9e3779b97f4a7c15)) // #nosec G404 -- deterministic PRNG for reproducible Monte Carlo, not security-sensitive
-	visited := map[string]bool{}
-	// Sampled copy of the adjacency, refilled each outer draw (same shape, so no
-	// per-iteration allocation).
-	sampled := make(map[string][]probEdge, len(adj))
-	for k, es := range adj {
-		sampled[k] = make([]probEdge, len(es))
-	}
-	// The draws below are handed to edges in the order the sources are visited, so that
-	// order has to be fixed: ranging over the map itself gave every run its own order,
-	// and the band came out different on every call with the same seed - measured, twenty
-	// repeats out of twenty - although `seed` is documented as the way to reproduce it.
-	sources := make([]string, 0, len(adj))
-	for k := range adj {
-		sources = append(sources, k)
-	}
-	sort.Strings(sources)
-
-	causeU := make(map[string]float64)
-	present := comonotonicPresent(innerRng, causeU)
+	t := newTrials(g, innerRng)
+	sampled := make([]float64, len(g.p))
 	rates := make([]float64, bandOuter)
 	for o := 0; o < bandOuter; o++ {
 		if e := ctx.Err(); e != nil {
 			return 0, 0, e
 		}
-		for _, k := range sources {
-			es, dst := adj[k], sampled[k]
-			for i, e := range es {
-				a, b := betaParams(e.p, e.conf, e.evid)
-				dst[i] = probEdge{to: e.to, p: sampleBeta(outerRng, a, b), cause: e.cause}
-			}
+		for _, e := range g.bandOrder {
+			a, b := betaParams(g.p[e], g.conf[e], g.evid[e])
+			sampled[e] = sampleBeta(outerRng, a, b)
 		}
 		anyHits := 0
 		for it := 0; it < bandInner; it++ {
-			clear(causeU)
-			reachTrial(seeds, sampled, visited, present)
-			for _, j := range jewels {
-				if visited[j] {
-					anyHits++
-					break
-				}
+			t.run(sampled)
+			if t.anyJewel() {
+				anyHits++
 			}
 		}
 		rates[o] = float64(anyHits) / float64(bandInner)
@@ -352,38 +449,30 @@ func anyCompromiseCredibleBand(ctx context.Context, seeds, jewels []string, adj 
 // conditioning on the shared c introduces the graph-wide positive correlation the
 // independent headline drops - the same latent-capability mechanism as the per-path
 // mixture, so the two are consistent. Deterministic from `seed`.
-func mixtureCompromise(ctx context.Context, seeds, jewels []string, adj map[string][]probEdge, iterations int, seed uint64) (float64, []ProfileCompromise, error) {
+func mixtureCompromise(ctx context.Context, g *mcGraph, iterations int, seed uint64) (float64, []ProfileCompromise, error) {
 	profs := currentProfiles()
-	if iterations <= 0 || len(seeds) == 0 || len(jewels) == 0 || len(profs) == 0 {
+	if iterations <= 0 || len(g.seeds) == 0 || len(g.jewels) == 0 || len(profs) == 0 {
 		return 0, nil, nil
 	}
-	// A reusable copy of the adjacency with per-profile conditioned probabilities.
-	cond := make(map[string][]probEdge, len(adj))
-	for k, es := range adj {
-		cond[k] = make([]probEdge, len(es))
-	}
-	visited := make(map[string]bool)
-	causeU := make(map[string]float64)
+	cond := make([]float64, len(g.p))
 	out := make([]ProfileCompromise, 0, len(profs))
 	mixture := 0.0
 	for pi, c := range profs {
-		for k, es := range adj {
-			dst := cond[k]
-			for i, e := range es {
-				dst[i] = probEdge{to: e.to, p: conditionalProb(e.p, e.basis, c.Skill), cause: e.cause}
-			}
+		for e := range cond {
+			cond[e] = conditionalProb(g.p[e], g.basis[e], c.Skill)
 		}
 		rng := rand.New(rand.NewPCG(seed^(uint64(pi)+1)*0x9e3779b97f4a7c15, 0xdeadbeefcafef00d)) // #nosec G404 -- deterministic PRNG for reproducible Monte Carlo, not security-sensitive
-		present := comonotonicPresent(rng, causeU)
+		t := newTrials(g, rng)
 		anyHits := 0
 		for it := 0; it < iterations; it++ {
-			clear(causeU)
-			reachTrial(seeds, cond, visited, present)
-			for _, j := range jewels {
-				if visited[j] {
-					anyHits++
-					break
+			if it&(cancelCheckStride-1) == 0 {
+				if err := ctx.Err(); err != nil {
+					return 0, nil, err
 				}
+			}
+			t.run(cond)
+			if t.anyJewel() {
+				anyHits++
 			}
 		}
 		rc := float64(anyHits) / float64(iterations)

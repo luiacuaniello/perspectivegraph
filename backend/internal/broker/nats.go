@@ -89,6 +89,19 @@ type Broker struct {
 	dlq           string // dead-letter subject, scoped to this stream
 	maxAge        time.Duration
 	closing       atomic.Bool
+	// kv records which messages of an ingest batch were applied (batch.go). Behind an
+	// atomic pointer because a reconnect may create it while consumers read it.
+	kv atomic.Pointer[kvHolder]
+}
+
+type kvHolder struct{ jetstream.KeyValue }
+
+// batches returns the batch bucket, or nil when it could not be created.
+func (b *Broker) batches() jetstream.KeyValue {
+	if h := b.kv.Load(); h != nil {
+		return h.KeyValue
+	}
+	return nil
 }
 
 // Connect dials NATS and ensures the durable stream and its consumer exist. The
@@ -216,6 +229,20 @@ func (b *Broker) ensure(ctx context.Context) error {
 	if _, err := b.js.CreateOrUpdateConsumer(ctx, b.stream, consumerConfig(b.streamSubject)); err != nil {
 		return fmt.Errorf("create consumer %q: %w", durableName, err)
 	}
+	// The batch bucket is bookkeeping for the merge gate, not delivery: without it events
+	// still flow, and a gate waiting on a batch reports UNKNOWN. So its failure is logged,
+	// never fatal.
+	kv, err := b.js.CreateOrUpdateKeyValue(ctx, jetstream.KeyValueConfig{
+		Bucket:  "PG_BATCHES_" + sanitizeToken(b.stream),
+		TTL:     batchTTL,
+		History: 1,
+		Storage: jetstream.FileStorage,
+	})
+	if err != nil {
+		slog.Warn("ingest batches will not be tracked; the gate cannot wait for a whole report", "err", err)
+		return nil
+	}
+	b.kv.Store(&kvHolder{kv})
 	return nil
 }
 
@@ -297,16 +324,19 @@ func consumerConfig(filter string) jetstream.ConsumerConfig {
 	}
 }
 
-// Publish serializes an event and pushes it onto the bus. The subject is
-// suffixed with the event source so consumers can filter by collector.
+// Publish serializes an event and pushes it onto the bus, split into chunks when it
+// exceeds the server's message limit (batch.go). The subject is suffixed with the event
+// source so consumers can filter by collector.
 func (b *Broker) Publish(ctx context.Context, ev ontology.Event) error {
-	data, err := json.Marshal(ev)
+	bodies, err := splitEvent(ev, b.messageLimit())
 	if err != nil {
-		return fmt.Errorf("marshal event: %w", err)
+		return err
 	}
 	subject := b.subjectFor(ev.Source)
-	if _, err := b.js.Publish(ctx, subject, data); err != nil {
-		return fmt.Errorf("publish %q: %w", subject, err)
+	for _, data := range bodies {
+		if _, err := b.js.Publish(ctx, subject, data); err != nil {
+			return fmt.Errorf("publish %q: %w", subject, err)
+		}
 	}
 	return nil
 }
@@ -356,6 +386,7 @@ func (b *Broker) Consume(ctx context.Context, handler func(context.Context, onto
 			return
 		}
 		metrics.NormalizeEvents.WithLabelValues("ok").Inc()
+		b.markApplied(ctx, msg.Headers())
 		_ = msg.Ack()
 	},
 		jetstream.PullMaxMessages(pullBuffer),

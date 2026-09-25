@@ -146,7 +146,10 @@ type Config struct {
 	// Auth (optional; open with a warning when unset)
 	IngestHMACSecret  string // HMAC secret for the default tenant
 	IngestHMACSecrets string // per-tenant secrets: "tenant:secret,tenant2:secret2"
-	APITokens         string // bearer tokens → role[:tenant]: "tok:viewer,tok2:admin:globex"
+	// IngestHMACAcceptV1 keeps accepting v1 signatures, which cover the body only
+	// (INGEST_HMAC_ACCEPT_V1, default true). Turn it off once every sender signs v2.
+	IngestHMACAcceptV1 bool
+	APITokens          string // bearer tokens → role[:tenant]: "tok:viewer,tok2:admin:globex"
 
 	// OIDC/JWT (optional API auth alongside static tokens)
 	OIDCJWKSURL  string
@@ -405,9 +408,10 @@ func Load() Config {
 		// kevholdout - config imports no feature package.
 		KEVHoldoutWindow: getdur("KEV_HOLDOUT_WINDOW", 30*24*time.Hour),
 
-		IngestHMACSecret:  sec.get("INGEST_HMAC_SECRET", ""),
-		IngestHMACSecrets: sec.get("INGEST_HMAC_SECRETS", ""),
-		APITokens:         sec.get("API_TOKENS", ""),
+		IngestHMACSecret:   sec.get("INGEST_HMAC_SECRET", ""),
+		IngestHMACSecrets:  sec.get("INGEST_HMAC_SECRETS", ""),
+		IngestHMACAcceptV1: getbool("INGEST_HMAC_ACCEPT_V1", true),
+		APITokens:          sec.get("API_TOKENS", ""),
 
 		OIDCJWKSURL:   getenv("OIDC_JWKS_URL", ""),
 		OIDCIssuer:    getenv("OIDC_ISSUER", ""),
