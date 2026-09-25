@@ -17,6 +17,100 @@ digest, take the backup, stage it.
 
 ---
 
+## 1.21.0
+
+Every probability the engine prints is recomputed under corrected rules, so the dashboard's
+numbers move once on upgrade. Nothing needs configuring; what follows is what moves and
+why, so a step in a trend line is not mistaken for a change in the estate.
+
+### A fix is "verified" only when it protects something
+
+**Affects you if** you read the `verified` badge on remediations, `verification` over
+GraphQL, or `whatIf` results.
+
+A fix's verification compared two simulations of 800 trials that drew their random numbers
+independently, and called the fix verified when they differed by 0.05 points - against a
+noise of about ±2.5. A fix cutting an edge that leads nowhere was verified about half the
+time, and a what-if could show the risk *rising* after a cut. Both simulations now run the
+same trials, so the difference is the cut's own effect: never negative, and exactly zero
+when the cut protects nothing.
+
+Verification also reads a new measure, `expectedReduction` - the drop in the expected
+number of sensitive assets compromised - on `verification` and on `whatIf`. The old
+`riskReductionPct` / `riskReduction` (P(any asset compromised)) stays, but it saturates:
+while one asset is compromised in every trial it reads 0 for every other fix.
+
+**Action: none.** Expect some fixes to turn from `verified` to `unverified`: those were
+verified by noise. Every simulated figure also shifts once, within its sampling error,
+because the random draws are new.
+
+### An exposed sensitive asset is compromised only when it is open
+
+**Affects you if** a crown jewel of yours is itself internet-exposed - a public-subnet
+database, a VM with a public IP, a public bucket, a role anyone can assume.
+
+Such an asset counted as compromised in every trial, which pinned the headline risk at
+100% and zeroed every other fix's risk reduction - while the path list showed nothing for
+it. Now:
+
+- **Reachable** (`internet_exposed`: a database behind a password, a VM): not compromised
+  by exposure alone; it counts when an edge reaches it. It is reported by a new CRITICAL
+  invariant, `no-internet-exposed-sensitive-asset`, on the Violations view.
+- **Open to anyone** (new property `public_access`: a bucket whose ACL lets anyone *read*,
+  a role whose trust admits `"*"` without a condition): compromised as it stands, and now
+  listed as a **direct-access path** - the asset alone, no steps, score 1, priority P1 -
+  with a generated S3 public access block as its fix (a role gets a hint: its right trust
+  policy names principals only you know). GraphQL: `AttackPath.directAccess`.
+
+The Cloud Custodian collector now also treats an S3 grant to `AuthenticatedUsers` (any AWS
+account in the world) as public, and a write-only public grant as exposed but not open. An
+IAM trust admitting `"*"` under a `Condition` (e.g. `aws:PrincipalOrgID`) stays exposed but
+not open.
+
+**Action: none.** Expect the headline risk to drop if one exposed asset was pinning it at
+100%, a new CRITICAL violation for each merely reachable one, and a P1 path for each open
+one. Re-ingest Custodian and IAM output for the new property to appear.
+
+### Credential-origin seeds count everywhere
+
+**Affects you if** you run with `SEED_IAM_USERS=true`.
+
+Only the path list started attacks from an identity whose credentials are assumed leaked;
+the risk simulation, the alternative routes (`kShortestPaths`) and the database path finder
+(`ANALYZER_DB_PATHS=true`) started from the internet alone, so that lens raised the path
+count and left the risk figure untouched. They now agree. **Action: none;** with the lens
+on, expect the risk figure to rise to include those routes.
+
+### The attacker-profile figures are anchored on each hop's probability
+
+**Affects you if** you read `mixtureScore`, `posteriorMean`, `scoreCiLow`/`scoreCiHigh`,
+`profileScores`, `mixtureCompromiseProbability` or `profileCompromise`.
+
+The mixture treated a hop's probability as the "criminal" profile's, so with the default
+weak-attacker-heavy priors every figure was dragged below its inputs: a single hop at 0.9
+read 0.78, and a two-hop CloudGoat route fell from 81% to 64% under a lens described as
+adding correlation. The profiles are now anchored so that, averaged, they give back each
+hop's own probability: one hop reads exactly its probability, and a path reads between its
+independent score and its weakest hop. `ATTACKER_PROFILE_PRIORS` now changes the spread
+between profiles, not the level. **Action: none;** expect these figures to rise toward
+`score`. `score`, `priority` and the calibration grades are unaffected.
+
+### Narrower credible bands, and two properties that finally add up
+
+**Affects you if** you read `sensitivityLow`/`sensitivityHigh`, or your feeds set
+`evidence_count` or `weight_cause` on edges.
+
+- The risk figure's credible band carried about ±4 points of sampling noise whatever the
+  inputs; it now measures the inputs alone, so bands narrow where the evidence is strong.
+- `evidence_count` replaced the evidence a hop's basis carries instead of adding to it: a
+  KEV hop with one sighting came out *less* certain than a guess. It now adds.
+- Hops sharing a `weight_cause` count once, at the weakest, in the path score - as the
+  risk simulation always sampled them - and set `correlatedHops`.
+- Alternative routes (`kShortestPaths`) now carry the interval, mixture, upper bound and
+  join provenance a critical path does.
+
+**Action: none.**
+
 ## 1.20.0
 
 ### Ingest requests can be signed v2, and v1 can be turned off

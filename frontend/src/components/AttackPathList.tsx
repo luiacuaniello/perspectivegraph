@@ -95,7 +95,13 @@ export default function AttackPathList({
                   <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-slate-500">
                     <StatusPill status={routeStatus(p)} />
                     <span className="break-words">
-                      from <NodeName name={entry?.name} /> · {p.steps.length} {p.steps.length === 1 ? "hop" : "hops"}
+                      {p.directAccess ? (
+                        <>open to anyone · direct access</>
+                      ) : (
+                        <>
+                          from <NodeName name={entry?.name} /> · {p.steps.length} {p.steps.length === 1 ? "hop" : "hops"}
+                        </>
+                      )}
                     </span>
                   </span>
                 </span>

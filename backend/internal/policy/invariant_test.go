@@ -65,3 +65,27 @@ func TestNoViolationsWhenSegmented(t *testing.T) {
 		t.Fatalf("expected 0 violations, got %d: %+v", len(v), v)
 	}
 }
+
+// A sensitive asset that is itself internet-exposed has no path to report - there is no
+// edge to cross - so the path invariant never fired on it. Merely reachable, it is not
+// counted as compromised either; this is where it is reported. Any label: the data-store
+// invariant covers buckets and databases only.
+func TestAnInternetExposedSensitiveAssetIsReported(t *testing.T) {
+	snap := graph.Snapshot{Nodes: []ontology.Node{
+		{ID: "vm", Label: ontology.LabelVirtualMachine, Name: "ledger-host",
+			Properties: map[string]any{ontology.PropInternetExposed: true, ontology.PropCrownJewel: true}},
+		{ID: "db", Label: ontology.LabelDatabase, Name: "internal",
+			Properties: map[string]any{ontology.PropCrownJewel: true}},
+		{ID: "lb", Label: ontology.LabelLoadBalancer, Name: "edge",
+			Properties: map[string]any{ontology.PropInternetExposed: true}},
+	}}
+	var hits []string
+	for _, v := range NewEngine(Builtins()...).Evaluate(snap) {
+		if v.InvariantID == "no-internet-exposed-sensitive-asset" {
+			hits = append(hits, v.Nodes[0].ID)
+		}
+	}
+	if len(hits) != 1 || hits[0] != "vm" {
+		t.Errorf("violations on %v, want exactly the exposed sensitive VM", hits)
+	}
+}

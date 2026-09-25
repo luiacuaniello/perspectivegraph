@@ -31,12 +31,12 @@ func TestBetaParamsMeanIsPoint(t *testing.T) {
 	}
 }
 
-// An evidence count sets the Beta concentration directly (κ = count + prior),
-// overriding the basis-confidence heuristic - the proper Bayesian width (P2 / #4).
-func TestBetaParamsEvidenceCountSetsConcentration(t *testing.T) {
+// An evidence count adds to the concentration the basis gives the prior (κ = κ(basis) +
+// count): the conjugate update, so observations only ever tighten the posterior.
+func TestBetaParamsEvidenceCountAddsToTheBasis(t *testing.T) {
 	a, b := betaParams(0.5, 0.35, 200) // heuristic-grade basis, but 200 observations
-	if k := a + b; math.Abs(k-(200+kappaPrior)) > 1e-9 {
-		t.Errorf("κ = %.2f, want count+prior %.2f", k, 200+kappaPrior)
+	if k, want := a+b, concentration(0.35)+200; math.Abs(k-want) > 1e-9 {
+		t.Errorf("κ = %.2f, want basis κ + count = %.2f", k, want)
 	}
 	if mean := a / (a + b); math.Abs(mean-0.5) > 1e-9 {
 		t.Errorf("mean %.4f != point 0.5", mean)
@@ -100,5 +100,29 @@ func TestUnifiedPosteriorEmptyPath(t *testing.T) {
 	mean, lo, hi := unifiedScorePosterior("p", nil, currentProfiles(), 0.42)
 	if mean != 0.42 || lo != 0.42 || hi != 0.42 {
 		t.Errorf("empty path should collapse to the point, got mean=%.4f [%.4f, %.4f]", mean, lo, hi)
+	}
+}
+
+// More evidence never means less certainty. A KEV hop with one corroborating sighting
+// used to get the widest posterior of all - κ = 1 + 2 replaced the KEV basis's 69 -
+// wider than a heuristic guess with no count at all.
+func TestAnEvidenceCountNeverWidensThePosterior(t *testing.T) {
+	sd := func(a, b float64) float64 { return math.Sqrt(a * b / ((a + b) * (a + b) * (a + b + 1))) }
+	for _, basis := range []string{"kev", "runtime", "epss", "cvss", "severity", "heuristic"} {
+		for _, p := range []float64{0.1, 0.5, 0.95} {
+			prev := math.Inf(1)
+			for _, n := range []int{0, 1, 2, 10, 1000} {
+				w := sd(betaParams(p, basisConfidence(basis), n))
+				if w > prev+1e-15 {
+					t.Errorf("%s p=%v: %d observations widen the posterior to %.4f (was %.4f)", basis, p, n, w, prev)
+				}
+				prev = w
+			}
+		}
+	}
+	kev1 := sd(betaParams(0.95, basisConfidence("kev"), 1))
+	guess := sd(betaParams(0.95, basisConfidence("heuristic"), 0))
+	if kev1 >= guess {
+		t.Errorf("a KEV hop with one sighting (sd %.3f) is less certain than a heuristic guess (sd %.3f)", kev1, guess)
 	}
 }

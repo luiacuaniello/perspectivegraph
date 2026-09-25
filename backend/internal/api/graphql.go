@@ -318,12 +318,13 @@ func (a *API) Schema() (graphql.Schema, error) {
 		Name:        "RemediationEffect",
 		Description: "Closed-loop verification of a remediation: the result of simulating its removal (what-if) over the current graph - proof the fix cuts the path, not just a generated scaffold.",
 		Fields: graphql.Fields{
-			"removedEdges":     &graphql.Field{Type: graphql.Int, Description: "Graph edges the fix actually severs."},
-			"pathsBefore":      &graphql.Field{Type: graphql.Int},
-			"pathsAfter":       &graphql.Field{Type: graphql.Int},
-			"pathsEliminated":  &graphql.Field{Type: graphql.Int, Description: "Critical paths removed by applying this fix."},
-			"riskReductionPct": &graphql.Field{Type: graphql.Float, Description: "Drop in P(any crown jewel compromised), in percentage points."},
-			"verified":         &graphql.Field{Type: graphql.Boolean, Description: "True when simulating the fix removes the edge and measurably reduces paths/risk."},
+			"removedEdges":      &graphql.Field{Type: graphql.Int, Description: "Graph edges the fix actually severs."},
+			"pathsBefore":       &graphql.Field{Type: graphql.Int},
+			"pathsAfter":        &graphql.Field{Type: graphql.Int},
+			"pathsEliminated":   &graphql.Field{Type: graphql.Int, Description: "Critical paths removed by applying this fix."},
+			"riskReductionPct":  &graphql.Field{Type: graphql.Float, Description: "Drop in P(any crown jewel compromised), in percentage points. Saturates: while one jewel is open to anyone it reads 0 for every other fix - see expectedReduction."},
+			"expectedReduction": &graphql.Field{Type: graphql.Float, Description: "Drop in the expected number of crown jewels compromised - the per-jewel reductions added up. Measured on the same trials before and after, so it is never negative and is exactly 0 for a cut that protects nothing."},
+			"verified":          &graphql.Field{Type: graphql.Boolean, Description: "True when simulating the fix removes the edge and it eliminates a path or reduces the expected number of compromised crown jewels."},
 		},
 	})
 
@@ -437,6 +438,7 @@ func (a *API) Schema() (graphql.Schema, error) {
 			"id":               &graphql.Field{Type: graphql.String, Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.ID })},
 			"score":            &graphql.Field{Type: graphql.Float, Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.Score })},
 			"runtimeConfirmed": &graphql.Field{Type: graphql.Boolean, Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.RuntimeConfirmed })},
+			"directAccess":     &graphql.Field{Type: graphql.Boolean, Description: "True for a crown jewel the attacker holds without crossing an edge - a bucket anyone may read, a role any principal may assume. Its path is the jewel alone: no steps, score 1. Reachable is not held: an internet-facing database that still wants a password has no such path.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.DirectAccess })},
 			"confidence":       &graphql.Field{Type: graphql.Float, Description: "How much to trust this path's score given how its edge weights were derived (mean hop weight-confidence, [0,1]).", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.Confidence })},
 			"confidenceLabel":  &graphql.Field{Type: graphql.String, Description: "Qualitative band for the score's trustworthiness: high|medium|low - an honest answer to \"why this %?\" instead of false precision.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.ConfidenceLabel })},
 			"scoreUpperBound":  &graphql.Field{Type: graphql.Float, Description: "The path score if its hops share a common cause rather than being independent: the weakest hop's probability (the comonotonic upper bound). The headline score multiplies hops as if independent - a lower bound under positive correlation - so the true exploitability lies in [score, scoreUpperBound]. A wide gap means the independence assumption matters.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.ScoreUpperBound })},
@@ -665,14 +667,15 @@ func (a *API) Schema() (graphql.Schema, error) {
 
 	whatIfResultType := graphql.NewObject(graphql.ObjectConfig{
 		Name:        "WhatIfResult",
-		Description: "Before/after of cutting a set of edges: surviving paths and quantified risk, with common random numbers so the delta reflects the cut, not Monte Carlo noise.",
+		Description: "Before/after of cutting a set of edges: surviving paths and quantified risk. Both simulations run the same trials (common random numbers), so the delta is the cut's own effect, not Monte Carlo noise: never negative, and exactly 0 for an edge no route crosses.",
 		Fields: graphql.Fields{
-			"removedEdges":  &graphql.Field{Type: graphql.Int, Resolve: field[analyzer.WhatIfResult](func(r analyzer.WhatIfResult) any { return r.RemovedEdges })},
-			"before":        &graphql.Field{Type: graphql.NewList(pathType), Resolve: field[analyzer.WhatIfResult](func(r analyzer.WhatIfResult) any { return r.Before })},
-			"after":         &graphql.Field{Type: graphql.NewList(pathType), Resolve: field[analyzer.WhatIfResult](func(r analyzer.WhatIfResult) any { return r.After })},
-			"beforeRisk":    &graphql.Field{Type: riskSimulationType, Resolve: field[analyzer.WhatIfResult](func(r analyzer.WhatIfResult) any { return r.BeforeRisk })},
-			"afterRisk":     &graphql.Field{Type: riskSimulationType, Resolve: field[analyzer.WhatIfResult](func(r analyzer.WhatIfResult) any { return r.AfterRisk })},
-			"riskReduction": &graphql.Field{Type: graphql.Float, Description: "Drop in P(any crown jewel compromised) the cuts achieve.", Resolve: field[analyzer.WhatIfResult](func(r analyzer.WhatIfResult) any { return r.RiskReduction() })},
+			"removedEdges":      &graphql.Field{Type: graphql.Int, Resolve: field[analyzer.WhatIfResult](func(r analyzer.WhatIfResult) any { return r.RemovedEdges })},
+			"before":            &graphql.Field{Type: graphql.NewList(pathType), Resolve: field[analyzer.WhatIfResult](func(r analyzer.WhatIfResult) any { return r.Before })},
+			"after":             &graphql.Field{Type: graphql.NewList(pathType), Resolve: field[analyzer.WhatIfResult](func(r analyzer.WhatIfResult) any { return r.After })},
+			"beforeRisk":        &graphql.Field{Type: riskSimulationType, Resolve: field[analyzer.WhatIfResult](func(r analyzer.WhatIfResult) any { return r.BeforeRisk })},
+			"afterRisk":         &graphql.Field{Type: riskSimulationType, Resolve: field[analyzer.WhatIfResult](func(r analyzer.WhatIfResult) any { return r.AfterRisk })},
+			"riskReduction":     &graphql.Field{Type: graphql.Float, Description: "Drop in P(any crown jewel compromised) the cuts achieve. Saturates while one jewel is compromised in every trial (open to anyone) - see expectedReduction.", Resolve: field[analyzer.WhatIfResult](func(r analyzer.WhatIfResult) any { return r.RiskReduction() })},
+			"expectedReduction": &graphql.Field{Type: graphql.Float, Description: "Drop in the expected number of crown jewels compromised: moves for every jewel the cuts protect.", Resolve: field[analyzer.WhatIfResult](func(r analyzer.WhatIfResult) any { return r.ExpectedReduction() })},
 		},
 	})
 
@@ -1476,14 +1479,19 @@ func (a *API) verifyCut(ctx context.Context, cut remediation.CutEdge) (any, erro
 	}
 	res := v.(analyzer.WhatIfResult)
 	eliminated := len(res.Before) - len(res.After)
-	rr := res.RiskReduction()
+	// Both simulations ran the same trials, so any drop is the cut's doing: a threshold
+	// would only hide a real, small effect. It used to be 0.0005 against two independent
+	// samples whose difference was noise of ±2.5 points - which verified, half the time, a
+	// cut that did nothing.
+	expected := res.ExpectedReduction()
 	return map[string]any{
-		"removedEdges":     res.RemovedEdges,
-		"pathsBefore":      len(res.Before),
-		"pathsAfter":       len(res.After),
-		"pathsEliminated":  eliminated,
-		"riskReductionPct": rr * 100,
-		"verified":         res.RemovedEdges > 0 && (eliminated > 0 || rr > 0.0005),
+		"removedEdges":      res.RemovedEdges,
+		"pathsBefore":       len(res.Before),
+		"pathsAfter":        len(res.After),
+		"pathsEliminated":   eliminated,
+		"riskReductionPct":  res.RiskReduction() * 100,
+		"expectedReduction": expected,
+		"verified":          res.RemovedEdges > 0 && (eliminated > 0 || expected > 0),
 	}, nil
 }
 

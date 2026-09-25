@@ -180,3 +180,39 @@ func isRFC1123Label(s string) bool {
 	}
 	return true
 }
+
+// A crown jewel open to anyone has no edge to cut: the fix is to close it. For a bucket
+// that is an S3 public access block, apply-ready from the bucket's name alone. It
+// carries no cut edge, so nothing claims to verify it by removing one.
+func TestADirectAccessBucketGetsAPublicAccessBlock(t *testing.T) {
+	bucket := ontology.Node{ID: "Bucket:exports", Label: ontology.LabelBucket, Name: "exports",
+		Properties: map[string]any{ontology.PropPublicAccess: true, ontology.PropCrownJewel: true}}
+	p := analyzer.AttackPath{ID: "ap-exports", Score: 1, Nodes: []ontology.Node{bucket}, DirectAccess: true}
+	got := Generate(p)
+	if len(got) != 1 {
+		t.Fatalf("%d suggestions, want the public access block", len(got))
+	}
+	s := got[0]
+	if s.Kind != "terraform" || !strings.Contains(s.Content, `aws_s3_bucket_public_access_block`) ||
+		!strings.Contains(s.Content, `bucket                  = "exports"`) || !strings.Contains(s.Content, "restrict_public_buckets = true") {
+		t.Errorf("unexpected artifact:\n%s", s.Content)
+	}
+	if s.Cut != (CutEdge{}) {
+		t.Errorf("a fix with no edge to cut claims one: %+v", s.Cut)
+	}
+	if plan := Plan([]analyzer.AttackPath{p}); len(plan) != 1 || plan[0].CoveragePct != 1 {
+		t.Errorf("the plan should cover the direct-access path with that fix: %+v", plan)
+	}
+}
+
+// A role open to anyone gets a hint - its right trust policy names principals only its
+// owner knows - and a role that is not open gets none.
+func TestOnlyAnOpenRoleGetsTheTrustHint(t *testing.T) {
+	open := ontology.Node{ID: "IAM_Role:open", Label: ontology.LabelIAMRole, Name: "open",
+		Properties: map[string]any{ontology.PropPublicAccess: true}}
+	closed := ontology.Node{ID: "IAM_Role:closed", Label: ontology.LabelIAMRole, Name: "closed"}
+	hints := Hints(analyzer.AttackPath{Nodes: []ontology.Node{open, closed}})
+	if len(hints) != 1 || !strings.Contains(hints[0], "**open** can be assumed by anyone") {
+		t.Errorf("hints = %q, want one for the open role only", hints)
+	}
+}

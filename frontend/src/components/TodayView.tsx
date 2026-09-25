@@ -388,7 +388,7 @@ function PathRow({ path, onOpen }: { path: AttackPath; onOpen: () => void }) {
           <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-muted">
             <StatusPill status={routeStatus(path)} />
             <span className="break-words">
-              from <NodeName name={from} />
+              {path.directAccess ? <>open to anyone · direct access</> : <>from <NodeName name={from} /></>}
             </span>
           </span>
         </span>

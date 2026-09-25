@@ -237,6 +237,30 @@ func assertPathfinderEquivalence(t *testing.T, store graph.Store) {
 	if got := score(bounded)["pf-lb→pf-j"]; got < 0.18-1e-9 || got > 0.18+1e-9 {
 		t.Errorf("with maxHops=2 the DB finder should be capped at the 2-hop route (0.18), got %.4f", got)
 	}
+
+	// The two finders start from the same seeds - a leaked identity under the
+	// credential-origin lens as well as the internet - and both list a jewel open to
+	// anyone as its direct-access path. The Cypher query used to match internet-exposed
+	// sources only.
+	must(store.UpsertNode(ctx, ontology.Node{ID: "pf-user", Label: ontology.LabelUser, Name: "pf-user",
+		Properties: map[string]any{ontology.PropCredentialExposed: true}}))
+	must(store.UpsertNode(ctx, ontology.Node{ID: "pf-open", Label: ontology.LabelDatabase, Name: "pf-open",
+		Properties: map[string]any{ontology.PropInternetExposed: true, ontology.PropPublicAccess: true, ontology.PropCrownJewel: true}}))
+	must(store.UpsertEdge(ctx, ontology.Edge{Type: ontology.EdgeAssumes, From: "pf-user", To: "pf-j", ExploitProbability: 0.7}))
+	snap, err = store.Snapshot(ctx)
+	must(err)
+	db, go_ = score(analyzer.CriticalPathsVia(ctx, store, snap, 12, true)), score(analyzer.FindCriticalPaths(snap))
+	for _, k := range []string{"pf-user→pf-j", "pf-open→pf-open"} {
+		if _, ok := go_[k]; !ok {
+			t.Errorf("Dijkstra is missing %s", k)
+		}
+		if _, ok := db[k]; !ok {
+			t.Errorf("DB pathfinder is missing %s, which Dijkstra finds", k)
+		}
+	}
+	if len(db) != len(go_) {
+		t.Errorf("path count differs: DB %d vs Dijkstra %d", len(db), len(go_))
+	}
 }
 
 // ApplyEvent must stamp every node and edge with the event's observation time so

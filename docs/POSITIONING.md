@@ -137,9 +137,10 @@ quantity behind it is named - which is the next section.
 A probability with no trial behind it is not a frequency, so the quantity has to be
 stated. Each hop carries `p(e)`, an exploit probability whose provenance is recorded
 (`kev | epss | runtime | cvss | severity | heuristic`). An attacker profile `c` shifts it
-by capability, scaled by how much that hop depends on skill at all:
+by capability, scaled by how much that hop depends on skill at all, around an anchor δ(e)
+chosen so that the profiles, averaged, give back `p(e)` itself (Σ_c P(c)·p(e|c) = p(e)):
 
-    p(e|c) = sigmoid( logit p(e) + skill(c)·sensitivity(basis(e)) )
+    p(e|c) = sigmoid( logit p(e) + δ(e) + skill(c)·sensitivity(basis(e)) )
     S_c(P) = ∏ p(e|c)
     S(P)   = Σ_c P(c)·S_c(P)
 

@@ -48,6 +48,24 @@ describe("AttackPathList", () => {
     expect(container.querySelector(".truncate")).toBeNull();
   });
 
+  it("reads a direct-access path as open, not as a zero-hop route from itself", () => {
+    // A crown jewel open to anyone is its own path: one node, no steps. Rendered like any
+    // other it read "from exports-bucket · 0 hops".
+    const open: AttackPath = {
+      ...route,
+      id: "ap-exports",
+      score: 1,
+      runtimeConfirmed: false,
+      directAccess: true,
+      nodes: [{ id: "b", label: "Bucket", name: "exports-bucket", properties: {} }],
+      steps: [],
+    };
+    render(<AttackPathList paths={[open]} selectedId={null} onSelect={() => {}} />);
+    const row = screen.getByRole("button", { name: /exports-bucket/ });
+    expect(row).toHaveTextContent("open to anyone · direct access");
+    expect(row).not.toHaveTextContent("0 hops");
+  });
+
   it("offers row actions on an ordinary instance", () => {
     render(<AttackPathList paths={[route]} selectedId={null} onSelect={() => {}} />);
     expect(screen.getByRole("button", { name: "Triage" })).toBeInTheDocument();

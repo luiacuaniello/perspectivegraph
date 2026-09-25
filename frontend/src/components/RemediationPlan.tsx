@@ -37,18 +37,20 @@ function FixRow({ fix, rank, cumulative }: { fix: Fix; rank: number; cumulative:
               (fix.verification.verified ? (
                 <span
                   className="inline-flex items-center gap-1 rounded-sm bg-emerald-500/15 px-1.5 py-0.5 text-[12px] font-medium text-emerald-700"
-                  title="Independently simulated (what-if): removing this edge actually removes the paths and drops the risk."
+                  title="Simulated (what-if) on the same trials before and after: removing this edge removes paths or lowers how many sensitive assets end up compromised."
                 >
                   <CheckIcon className="h-3 w-3" /> verified · removes {fix.verification.pathsEliminated} path
                   {fix.verification.pathsEliminated === 1 ? "" : "s"}
                   {fix.verification.riskReductionPct >= 0.05
                     ? ` · −${fix.verification.riskReductionPct.toFixed(1)}%`
-                    : ""}
+                    : (fix.verification.expectedReduction ?? 0) >= 0.005
+                      ? ` · −${fix.verification.expectedReduction!.toFixed(2)} sensitive assets`
+                      : ""}
                 </span>
               ) : (
                 <span
                   className="inline-flex items-center gap-1 rounded-sm bg-amber-500/15 px-1.5 py-0.5 text-[12px] font-medium text-amber-700"
-                  title="Simulating this fix did not measurably reduce paths/risk - review before applying."
+                  title="Simulating this fix removed no path and protected no sensitive asset - review before applying."
                 >
                   <AlertTriangleIcon className="h-3 w-3" /> unverified
                 </span>

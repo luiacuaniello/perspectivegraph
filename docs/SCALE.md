@@ -117,11 +117,15 @@ verification runs two. On the genload graph above (4,000 nodes, 14,000 edges):
 | 800 iterations, point estimate only (a fix's verification) | 9.6 s | 0.08 s |
 | analyzer pass (2,000 iterations) | 10.4 s | 3.0 s |
 
-A simulation "of 800 iterations" ran about 28,800 trials: the 800 asked for, 25,600 for
-the credible band (64 × 400) and 2,400 for the attacker-profile mixture. A verification
-reads only the point estimate, so it now skips the other two. The trials themselves
-moved from string-keyed maps to integer indices, drawing the same random numbers in the
-same order - every result is identical to the old code's, and a test holds them to it.
+A simulation "of 800 iterations" runs about 29,200 trials: the 800 asked for, 26,000 for
+the credible band (64 × 400, plus a 400-trial control run at the point probabilities) and
+2,400 for the attacker-profile mixture. A verification reads only the point estimate, so
+it skips the other two. The trials run on integer indices, and every random draw is a
+hash of the seed, the trial and the edge - common random numbers, so a what-if's two runs
+share every surviving edge's fate. That costs nothing: on a 4,000-node graph a complete
+800-iteration run takes 1.3 s and a verification's point estimate 37 ms, slightly faster
+than the sequential stream it replaced (1.4 s and 42 ms). A test holds the simulation to
+the exact probabilities, enumerated world by world, on graphs small enough to enumerate.
 
 ## How the cost grows
 

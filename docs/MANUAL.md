@@ -35,7 +35,7 @@ S(P) = ∏  p(vᵢ, vᵢ₊₁)
 ```
 
 Taking `-ln` turns this into an additive cost `w = -ln p`, so the **highest-probability path is the
-shortest path** - found with Dijkstra from every internet-exposed seed, then surfaced as
+shortest path** - found with Dijkstra from every seed, then surfaced as
 **Critical Attack Path** events.
 
 **Seed origin (two threat models).** By default the only seeds are *Internet-Exposed* nodes, so a path
@@ -44,6 +44,18 @@ is the crisp "reachable from the internet -> sensitive asset" story. A second, o
 leak - which surfaces "if this credential leaks, what does it reach" (leaked key -> IAM privesc ->
 admin) as scored paths. The two origins stay separable: credential-origin seeds are marked
 `credential_exposed`, and the default stays internet-origin so the headline is not diluted.
+Every engine starts from the same seeds - the path list, the risk simulation, the alternative
+routes and the database path finder - so turning the lens on moves the risk figure too.
+
+**An exposed sensitive asset: reachable is not compromised.** A crown jewel that is itself a
+seed is compromised only when something stands open: a database or a VM reachable from the
+internet still wants a password or an exploit, so it counts when an edge reaches it, and it is
+reported on its own by the `no-internet-exposed-sensitive-asset` invariant (CRITICAL). One that
+is **open to anyone** - `public_access`: a bucket whose ACL lets anyone read, a role whose trust
+admits `"*"` without a condition - is compromised as it stands. It is listed as a
+**direct-access path** (`directAccess: true`): the asset alone, no steps, score 1, priority P1,
+with an S3 public access block as the generated fix. Counting every exposed asset as
+compromised used to pin the risk figure at 100% and hide every other fix's effect.
 
 That product is only the *starting point*: it assumes the hops are independent and treats a heuristic
 guess like measured evidence. The engine is honest about all three gaps, and the layers are what make
@@ -54,9 +66,10 @@ it a risk tool rather than a number generator (see [Honest probabilities](#hones
 - **One coherent posterior** (`posteriorMean` + `[scoreCiLow, scoreCiHigh]`) - a single Monte Carlo
   composes the two uncertainties that used to be separate, non-nesting numbers: **epistemic** (each `p`
   is a **Beta posterior** whose width reflects its evidence - KEV/runtime tight, heuristic wide; a real
-  `evidence_count` sets it directly when known) and **attacker capability** (the score is marginalized
-  over a latent attacker, `S(P) = Σ_c P(c)·∏ p(e|c)` over commodity/criminal/APT, reintroducing the
-  correlation the bare product drops). `posteriorMean` is the coherent point estimate the credible
+  `evidence_count` adds its observations to it when known) and **attacker capability** (the score is
+  marginalized over a latent attacker, `S(P) = Σ_c P(c)·∏ p(e|c)` over commodity/criminal/APT,
+  anchored so the profiles average back to each hop's own probability - which leaves the correlation
+  the bare product drops as the only thing it adds, so `score ≤ mixtureScore ≤ scoreUpperBound`). `posteriorMean` is the coherent point estimate the credible
   interval brackets (it even corrects the Jensen gap the plug-in `mixtureScore` ignores); `profileScores`
   keep the per-profile breakdown. The **headline risk** (`riskSimulation`) is marginalized the same way
   (`Σ_c P(c)·R_c`, `mixtureCompromiseProbability` + `profileCompromise`), so the environment number and
@@ -158,27 +171,35 @@ The product assumes the hops are **independent**. When they share a common cause
 gating several steps) they are positively correlated, and the product is then a *lower* bound for
 "all hops succeed"; the comonotonic (Fréchet) upper bound is the weakest single hop, `min p`. So
 rather than dressing up `S(P)` as exact, each path also exposes a `scoreUpperBound` (= `min p`) and
-a `correlatedHops` flag (set when ≥2 hops rest on the same weight basis) - the true exploitability
-lies in `[score, scoreUpperBound]`, and a wide band says the independence assumption is doing the
-work. The headline score is unchanged.
+a `correlatedHops` flag (set when ≥2 hops rest on the same weight basis, or declare the same
+`weight_cause`) - the true exploitability lies in `[score, scoreUpperBound]`, and a wide band says
+the independence assumption is doing the work. Hops that declare the same `weight_cause` - one CVE,
+one leaked credential - are not independent at all: they stand or fall together, so the score counts
+that cause once, at its weakest hop, exactly as the risk simulation samples it.
 
 A second, orthogonal uncertainty is *epistemic*: how well is each `p` known at all? Each edge is
 modelled as a **Beta(α,β) posterior** with mean `p` and concentration κ scaled by the weight basis's
-confidence - many pseudo-observations for kev/runtime, few for a heuristic guess
+confidence - many pseudo-observations for kev/runtime, few for a heuristic guess - plus one for each
+observation an edge's `evidence_count` reports (κ = κ(basis) + n: evidence only ever tightens it)
 ([`uncertainty.go`](../backend/internal/analyzer/uncertainty.go), Marsaglia-Tsang gamma→beta, zero
 deps). Propagating those posteriors through the product gives a 90% credible interval per path
 (`scoreCiLow`/`scoreCiHigh`), and re-driving the Monte Carlo from them (an outer epistemic loop
 around the inner reachability trials) replaces the old flat ±30% sensitivity band with one the
-evidence justifies. Point estimates are untouched; only their *trust* is now quantified.
+evidence justifies. The inner trials are the same for every draw, so the band's width is what the
+inputs cause, not the sampling noise of 400 trials (which alone used to make it ±4 points). Point estimates are untouched; only their *trust* is now quantified.
 
 The independence assumption itself is addressed at the root by an **attacker-profile mixture**
 ([`profiles.go`](../backend/internal/analyzer/profiles.go)). Hops are correlated through a latent
 variable - the attacker's capability - so the score is marginalized over a small set of profiles c
 (commodity/criminal/apt), each with a prior `P(c)` and a skill that shifts every hop's success
 log-odds, scaled by the hop's skill-sensitivity (≈0 for a public KEV exploit, ≈1 for a heuristic
-guess): `p(e|c) = σ(logit p + skill(c)·sens(basis))`, `S(P) = Σ P(c)·∏ p(e|c)`. Conditioning makes
-independence honest *within* a profile; marginalizing reintroduces the correlation the bare product
-drops. The per-profile breakdown (`profileScores`, `mixtureScore`) is the *"72% vs an APT, 18% vs
+guess): `p(e|c) = σ(logit p + δ(e) + skill(c)·sens(basis))`, `S(P) = Σ P(c)·∏ p(e|c)`. δ(e) anchors
+the profiles to the hop's own probability - it is the shift at which `Σ_c P(c)·p(e|c) = p(e)` - because
+EPSS, a KEV floor or a severity mapping describe the attackers out there taken together, not one median
+attacker. Conditioning makes independence honest *within* a profile; marginalizing reintroduces the
+correlation the bare product drops, and nothing else: one hop reads exactly `p`, and a path reads
+between its independent score and its weakest hop. (Without δ the weak-attacker-heavy priors dragged
+every figure below its inputs - one hop at 0.9 read 0.78.) The per-profile breakdown (`profileScores`, `mixtureScore`) is the *"72% vs an APT, 18% vs
 commodity"* read a SOC triages on. Priors are operator-tunable via `ATTACKER_PROFILE_PRIORS`; the
 naive `Score` stays as the independent baseline.
 
@@ -240,7 +261,9 @@ The per-path product answers "how exploitable is *this* route". Three analyses g
 - **K-shortest paths (Yen's algorithm).** The top-K highest-probability loopless routes to a
   sensitive asset, so cutting the single best edge doesn't hide the near-best alternates.
 - **Monte Carlo risk quantification.** Each trial realizes every edge independently (present
-  with probability `p`), then checks sensitive-asset reachability. The fraction of trials where a
+  with probability `p`; edges declaring the same `weight_cause` together), then checks
+  sensitive-asset reachability. Every draw is a function of the trial and the edge itself, not of
+  its position, so two graphs that share an edge share its fate in every trial. The fraction of trials where a
   sensitive asset is reachable is an unbiased estimate of its **compromise probability** - accounting for
   path multiplicity and shared edges that `∏p` can't - reported with a 95% Wilson confidence
   interval (sampling error) **and** a Beta-resampled credible band (input uncertainty; see above).
@@ -250,9 +273,11 @@ The per-path product answers "how exploitable is *this* route". Three analyses g
   model rather than assuming independent edges - the independent number stays as the baseline, plus a
   per-profile `profileCompromise` breakdown.
 - **What-if simulation.** Remove a set of edges (a proposed remediation) and recompute paths +
-  risk, using *common random numbers* so the before/after delta reflects the cut, not sampling
-  noise. Pairs with the choke-point optimizer: "if we fix these N edges, residual risk drops from
-  X to Y".
+  risk on the *same trials* (common random numbers), so the before/after delta is the cut's own
+  effect: never negative, and exactly 0 for a cut no route crosses. `riskReduction` is the drop in
+  P(any sensitive asset compromised); `expectedReduction` the drop in the expected number
+  compromised, which keeps moving when one asset open to anyone pins the first at 100%. Pairs with
+  the choke-point optimizer: "if we fix these N edges, residual risk drops from X to Y".
 
 Exposed as the GraphQL `kShortestPaths`, `riskSimulation` and `whatIf` queries.
 
@@ -855,10 +880,11 @@ the daily workflow:
   `runtime_confirmed`, …) in the NDJSON shape Splunk/Elastic/Sentinel ingest, so
   your SIEM can prioritize alerts about hosts that sit on a reachable path.
 - **Verified remediation** - every generated fix records the exact edge it cuts,
-  so the API *proves* it works: applying it is simulated (what-if) and the plan
-  shows **"✓ verified · removes N paths · −X%"** instead of trusting the
-  generator. A scaffold that doesn't actually reduce risk is flagged
-  **"⚠ unverified"**.
+  so the API *proves* it works: applying it is simulated (what-if, on the same
+  trials before and after) and the plan shows **"✓ verified · removes N paths ·
+  −X%"** instead of trusting the generator. Verified means the cut removes a path
+  or lowers the expected number of sensitive assets compromised; a scaffold that
+  protects nothing is flagged **"⚠ unverified"**.
 - **Owned tickets** - raise a tracked, **owned** remediation ticket for a path
   (one open ticket per path, with status), recorded locally and optionally
   dispatched to an external tracker (`TICKET_WEBHOOK_URL` → Jira/GitHub/SOAR;
@@ -1034,7 +1060,9 @@ the score is also marginalized over a small set of **attacker profiles** (commod
 hop's odds by how much it actually depends on skill (a public KEV exploit barely, a
 heuristic topology guess a lot): `S(P) = Σ P(c)·∏ p(e|c)`. *Within* a profile the
 independence is honest; *marginalizing* reintroduces the positive correlation the bare
-product drops. The payoff is the per-profile breakdown a SOC triages on -
+product drops. The profiles are anchored so that, averaged, they give back each hop's own
+probability: the mixture changes the correlation and nothing else, and reads between the
+naive score and the weakest hop. The payoff is the per-profile breakdown a SOC triages on -
 *"72% vs an APT, 18% vs commodity"* - surfaced on each path. Retune the priors to
 your own threat model with `ATTACKER_PROFILE_PRIORS` (the naive score is kept as the
 independent baseline; the mixture is the sharper lens on top).
@@ -1047,7 +1075,8 @@ gets a composite **triage priority** (0–100, banded **P1 / P2 / P3**) that ble
 the signals an analyst actually weighs:
 
 - exploitability (`score`) and how much to trust it (`confidence`),
-- **runtime-confirmed** (a live Falco alert - it's not theoretical, it's happening),
+- **runtime-confirmed** (a live Falco alert - it's not theoretical, it's happening), or
+  **open to anyone** (a direct-access path: the asset is readable now, weighted like a live alert),
 - a **KEV** weakness anywhere on the route (known-exploited in the wild),
 - **target sensitivity** (a classified-PII sensitive asset outranks a name-heuristic guess),
 - **blast radius** (an internet entry that opens many paths is higher leverage).
@@ -1475,9 +1504,10 @@ harder questions, and PerspectiveGraph answers them:
   number that fall. Unlike `∏p`, it accounts for the many routes that share edges
   - in the demo, *P(account compromise) ≈ 1.0, ~5 sensitive assets expected to fall*.
   The headline is honest about its own uncertainty: alongside the sampling CI it
-  reports a **sensitivity band** (the answer when the heuristic per-edge
-  probabilities are scaled ±30%), shown as *“modeled X–Y%”* - a tight band means
-  trust the number, a wide one means treat it qualitatively.
+  reports a **credible band** (the answer when each edge's probability is redrawn
+  from its Beta posterior - wide for guesses, tight for evidence), shown as
+  *“modeled X–Y%”* - a tight band means trust the number, a wide one means treat it
+  qualitatively.
 - **K-shortest paths** (`kShortestPaths`) - Yen's algorithm lists the top-K routes
   to a sensitive asset, so you see the near-best alternates a single edge-cut would
   leave standing.
@@ -2546,7 +2576,12 @@ The analyzer looks for routes from an **`internet_exposed`** node (seed) to a
 dashboard.** They are derived for you, but only if your data carries the signal:
 
 - **`internet_exposed`** ← Custodian: ALB `Scheme: internet-facing`, EC2
-  `PublicIpAddress`, S3 ACL granting `AllUsers`, RDS `PubliclyAccessible: true`.
+  `PublicIpAddress`, S3 ACL granting `AllUsers` or `AuthenticatedUsers` (any AWS
+  account), RDS `PubliclyAccessible: true`; IAM: a role whose trust admits `"*"`.
+- **`public_access`** (open, not just reachable) ← an S3 grant that lets everyone
+  READ, or a trust admitting `"*"` with no `Condition`. A sensitive asset carrying it
+  is compromised as it stands and gets a direct-access path; one merely
+  `internet_exposed` counts only when an edge reaches it.
 - **`crown_jewel`** ← **tag your sensitive stores** with one of
   `classification` / `data-classification` / `data` / `sensitivity` =
   `pii | sensitive | confidential | restricted | secret`, or literally
@@ -2659,15 +2694,15 @@ curl -s -X POST "$API_URL/graphql" -H 'Content-Type: application/json' -d '{
 
 # What-if: cut an edge (from/to accept id or name) and see the residual risk.
 curl -s -X POST "$API_URL/graphql" -H 'Content-Type: application/json' -d '{
-  "query": "{ whatIf(cuts: [{from: \"public-deployer\", to: \"account-admin (effective)\", type: \"CAN_ESCALATE_TO\"}]) { removedEdges riskReduction afterRisk { anyCompromiseProbability } } }"
+  "query": "{ whatIf(cuts: [{from: \"public-deployer\", to: \"account-admin (effective)\", type: \"CAN_ESCALATE_TO\"}]) { removedEdges riskReduction expectedReduction afterRisk { anyCompromiseProbability } } }"
 }' | jq
 
 # OSCAL: the posture as a NIST 800-53 assessment-results document for GRC tooling.
 curl -s "$API_URL/export/oscal" | jq '.["assessment-results"].results[0].findings[].title'
 ```
 
-`riskSimulation` is reproducible per `seed`; what-if shares the seed across
-before/after so the delta is the cut's effect, not Monte Carlo noise.
+`riskSimulation` is reproducible per `seed`; what-if runs the same trials
+before and after, so the delta is the cut's effect, not Monte Carlo noise.
 
 Each path also reports the **provenance** of its score so it isn't false
 precision: `confidence` + `confidenceLabel` (high/medium/low) summarize how its
@@ -2682,8 +2717,8 @@ The bare product `∏p` is only the baseline; each path also exposes **three hon
 uncertainty views**: the correlation band `[score, scoreUpperBound]` (the
 independence assumption), a 90% Bayesian credible interval `[scoreCiLow, scoreCiHigh]`
 (how well we know the inputs), and an **attacker-profile mixture** `profileScores`
-(`Σ P(c)·∏ p(e|c)` over commodity/criminal/apt, retunable via
-`ATTACKER_PROFILE_PRIORS`). The headline `riskSimulation` carries a Wilson CI plus a
+(`Σ P(c)·∏ p(e|c)` over commodity/criminal/apt, anchored on each hop's own
+probability, retunable via `ATTACKER_PROFILE_PRIORS`). The headline `riskSimulation` carries a Wilson CI plus a
 Beta-resampled credible band. Point estimates are unchanged; what's added is how much
 to trust them.
 
@@ -2691,8 +2726,8 @@ to trust them.
 
 A remediation you can't trust is a scaffold. Each generated fix records the edge
 it cuts, so the API *verifies* it by simulating the removal - the plan shows
-`verification { verified pathsEliminated riskReductionPct }`, i.e. "this provably
-removes N paths and drops risk by X%", not just "here's a YAML". Each proof is a
+`verification { verified pathsEliminated riskReductionPct expectedReduction }`, i.e.
+"this provably removes N paths and drops risk by X%", not just "here's a YAML". Each proof is a
 full what-if over the graph, so ask for them one fix at a time -
 `remediationPlan(title: "…") { verification { … } }` - rather than across the whole
 plan: one request may run at most 20 such analyses (what-ifs, verifications, custom

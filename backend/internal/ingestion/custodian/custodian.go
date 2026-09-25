@@ -211,8 +211,14 @@ func (b *builder) bucket(r map[string]any) {
 	}
 	tg := tags(r)
 	props := map[string]any{}
-	if publicACL(r) {
+	if granted, readable := publicGrant(r); granted {
 		props[ontology.PropInternetExposed] = true
+		// A public READ grant hands the data to anyone: the bucket is not a door into the
+		// estate but already open, and a crown jewel that is open is compromised as it
+		// stands. A write-only grant is exposure, not disclosure.
+		if readable {
+			props[ontology.PropPublicAccess] = true
+		}
 	}
 	if app := tg["app"]; app != "" {
 		props["app"] = app
@@ -300,18 +306,26 @@ func hasAdminPolicy(r map[string]any) bool {
 	return false
 }
 
-// publicACL reports whether the bucket ACL grants to AllUsers (the classic
-// public-bucket signal: Acl.Grants[].Grantee.URI ends in /AllUsers).
-func publicACL(r map[string]any) bool {
+// publicGrant reports whether the bucket ACL grants anything to everyone - the classic
+// public-bucket signal, Acl.Grants[].Grantee.URI ending in /AllUsers, or in
+// /AuthenticatedUsers, which is any AWS account in the world rather than the owner's -
+// and whether one of those grants lets them read the objects (READ or FULL_CONTROL).
+func publicGrant(r map[string]any) (granted, readable bool) {
 	acl, _ := r["Acl"].(map[string]any)
 	for _, raw := range slice(acl["Grants"]) {
 		g, _ := raw.(map[string]any)
 		grantee, _ := g["Grantee"].(map[string]any)
-		if strings.HasSuffix(str(grantee["URI"]), "/AllUsers") {
-			return true
+		uri := str(grantee["URI"])
+		if !strings.HasSuffix(uri, "/AllUsers") && !strings.HasSuffix(uri, "/AuthenticatedUsers") {
+			continue
+		}
+		granted = true
+		switch strings.ToUpper(str(g["Permission"])) {
+		case "READ", "FULL_CONTROL":
+			readable = true
 		}
 	}
-	return false
+	return granted, readable
 }
 
 // instanceProfile accepts either a string role name or {"Arn": ".../role"}.

@@ -148,6 +148,10 @@ type statement struct {
 	Action    stringOrSlice  `json:"Action"`
 	Resource  stringOrSlice  `json:"Resource"`
 	Principal trustPrincipal `json:"Principal"`
+	// Condition is kept only to know whether there is one: its keys are not evaluated
+	// (see the package note), but a trust statement admitting "*" under a condition -
+	// aws:PrincipalOrgID, sts:ExternalId - is not open to anyone.
+	Condition map[string]any `json:"Condition,omitempty"`
 }
 
 // stringOrSlice decodes a JSON field that IAM expresses as either a single
@@ -317,10 +321,14 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 			tags[t.Key] = t.Value
 		}
 		ingestion.MarkCrownJewelFromTags(props, tags)
-		// A role anyone can assume is, in effect, internet-reachable.
-		if trustsEveryone(ro.AssumeRolePolicyDocument) {
+		// A role anyone can assume is, in effect, internet-reachable. Without a condition
+		// on that trust it is more than reachable: anyone holds it.
+		if everyone, unconditionally := trustsEveryone(ro.AssumeRolePolicyDocument); everyone {
 			props[ontology.PropInternetExposed] = true
 			props["public_trust"] = true
+			if unconditionally {
+				props[ontology.PropPublicAccess] = true
+			}
 		}
 
 		var docs []policyDoc
@@ -448,13 +456,16 @@ func resourceIsBroad(rs stringOrSlice) bool {
 }
 
 // trustsEveryone reports whether any Allow statement lets "*" assume the role.
-func trustsEveryone(doc policyDoc) bool {
+func trustsEveryone(doc policyDoc) (everyone, unconditionally bool) {
 	for _, st := range doc.Statement {
 		if strings.EqualFold(st.Effect, "Allow") && st.Principal.All {
-			return true
+			everyone = true
+			if len(st.Condition) == 0 {
+				unconditionally = true
+			}
 		}
 	}
-	return false
+	return everyone, unconditionally
 }
 
 // ── builder + helpers ───────────────────────────────────────────────

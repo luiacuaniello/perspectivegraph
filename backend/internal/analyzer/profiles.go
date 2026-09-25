@@ -11,9 +11,22 @@ package analyzer
 // on skill (a public KEV exploit barely; a heuristic topology guess a lot). Within a
 // profile, conditional independence is reasonable, so the product is honest there:
 //
-//	p(e|c) = sigmoid( logit(p(e)) + skill(c)·sensitivity(basis(e)) )
+//	p(e|c) = sigmoid( logit(p(e)) + δ(e) + skill(c)·sensitivity(basis(e)) )
 //	S_c(P) = ∏ p(e|c)
 //	S(P)   = Σ_c P(c)·S_c(P)         (the marginal, correlation-aware score)
+//
+// δ(e) anchors the profiles to the edge's own probability: it is the one shift for
+// which Σ_c P(c)·p(e|c) = p(e). The probabilities the collectors assign - EPSS, a KEV
+// floor, a severity mapping - describe the attackers out there taken together, not one
+// median attacker, so averaged over the profiles an edge must come back to exactly
+// that. Without δ the model read p(e) as the "criminal" profile's probability, and the
+// weak-attacker-heavy priors dragged every hop down: a single hop at 0.9, with no other
+// hop to correlate with, came out at 0.78, and CloudGoat's two-hop SSRF route fell
+// from 81% to 64% under a lens described as adding correlation - which can only raise
+// a chain. Anchored, the mixture changes nothing but the correlation: one hop reads
+// exactly p, and a path reads between the independent product and its weakest hop,
+// Score ≤ S(P) ≤ ScoreUpperBound, because hops that rise and fall together with the
+// attacker are positively associated and no joint law beats the Fréchet ceiling.
 //
 // Marginalizing over c reintroduces the positive correlation the bare product drops
 // (the hops co-vary through the shared c), and the per-profile breakdown - "72% vs an
@@ -134,43 +147,124 @@ func skillSensitivity(basis string) float64 {
 	}
 }
 
-func logit(p float64) float64 {
-	if p < 1e-6 {
-		p = 1e-6
-	}
-	if p > 1-1e-6 {
-		p = 1 - 1e-6
-	}
-	return math.Log(p / (1 - p))
+// probClamp keeps a probability off 0 and 1, where its log-odds - and so a shift in
+// them - would be infinite.
+const probClamp = 1e-6
+
+// profileProbs fills out[c] with p(e|c) for every profile c: the edge's success
+// probability for that attacker, anchored so the profiles average back to p (see the
+// top of this file). The single source of truth shared by the per-path mixture score,
+// the path posterior and the per-profile Monte Carlo, so the three stay consistent.
+func profileProbs(p float64, basis string, profs []AttackerProfile, out []float64) {
+	newAnchor(skillSensitivity(basis), profs).probs(p, 0, out)
 }
 
-func sigmoid(x float64) float64 { return 1 / (1 + math.Exp(-x)) }
+// anchor solves for the shift δ that makes the profiles average back to an edge's
+// probability, for one skill sensitivity k.
+//
+// It works in y = e^-δ rather than δ. With r = (1-p)/p = e^-logit(p) and w_c = e^-(s_c·k),
+// profile c's probability σ(logit p + δ + s_c·k) is 1/(1 + r·y·w_c): rational in y, so
+// the search needs no exponential at all - the w_c are computed once per k. The equation
+//
+//	f(x) = Σ_c P(c) / (1 + x·w_c) - p = 0,   x = r·y
+//
+// has f decreasing and convex in x, with its root between x = r·min(1/w_c), where every
+// profile is at least p, and x = r·max(1/w_c), where every one is at most p. Newton's
+// method from a good start converges in two or three steps; a step that would leave the
+// bracket bisects instead.
+type anchor struct {
+	prior []float64 // P(c), normalised
+	w     []float64 // e^-(s_c·k)
+	yLo   float64   // the bracket on y: min and max of 1/w_c
+	yHi   float64
+}
 
-// conditionalProb is p(e|c): the edge's success probability for an attacker whose
-// skill shifts the base probability's log-odds by how much the hop depends on skill.
-// The single source of truth shared by the per-path mixture score and the per-profile
-// Monte Carlo, so the two stay consistent. At skill 0 it is exactly p (σ and logit are
-// inverses), so the baseline "criminal" reproduces the raw model.
-func conditionalProb(p float64, basis string, skill float64) float64 {
-	return sigmoid(logit(p) + skill*skillSensitivity(basis))
+func newAnchor(k float64, profs []AttackerProfile) anchor {
+	a := anchor{prior: make([]float64, len(profs)), w: make([]float64, len(profs)), yLo: math.Inf(1), yHi: math.Inf(-1)}
+	total := 0.0
+	for _, c := range profs {
+		total += c.Prior
+	}
+	for i, c := range profs {
+		if total > 0 {
+			a.prior[i] = c.Prior / total
+		}
+		a.w[i] = math.Exp(-c.Skill * k)
+		inv := 1 / a.w[i]
+		a.yLo, a.yHi = math.Min(a.yLo, inv), math.Max(a.yHi, inv)
+	}
+	return a
+}
+
+// probs fills out[c] with the anchored probabilities for an edge of probability p, and
+// returns the solution's y. y0 is where the search starts - the y of a nearby
+// probability, which is how the path posterior pays two iterations per draw rather than
+// five; 0 starts from the middle of the bracket.
+func (a anchor) probs(p, y0 float64, out []float64) float64 {
+	if len(a.w) == 0 {
+		return 1
+	}
+	// An edge at 0 or 1 is kept just inside, so it still has a root.
+	p = math.Min(math.Max(p, probClamp), 1-probClamp)
+	r := (1 - p) / p
+	lo, hi := r*a.yLo, r*a.yHi
+	x := r * y0
+	if !(x > lo && x < hi) {
+		x = math.Sqrt(lo * hi) // the geometric middle: y's bracket spans orders of magnitude
+	}
+	if hi-lo <= 1e-15*hi {
+		x = lo // one skill for everyone: nothing to solve
+	}
+	for i := 0; ; i++ {
+		f, df := -p, 0.0
+		for c, w := range a.w {
+			q := 1 / (1 + x*w)
+			out[c] = q
+			f += a.prior[c] * q
+			df -= a.prior[c] * w * q * q
+		}
+		if math.Abs(f) < 1e-13 || hi-lo <= 1e-15*hi || i == 60 {
+			return x / r
+		}
+		if f > 0 {
+			lo = x // f decreases in x: the root is to the right
+		} else {
+			hi = x
+		}
+		next := x - f/df
+		if df >= 0 || !(next > lo && next < hi) {
+			next = (lo + hi) / 2
+		}
+		if next == x {
+			return x / r
+		}
+		x = next
+	}
 }
 
 // attackerMixture computes the marginal mixture score Σ P(c)·∏ p(e|c) for a path
 // and the per-profile breakdown. Deterministic (closed form), so it never disturbs
-// the byte-identical parallel-pathfinding guarantee. An empty path yields (0, nil).
+// the byte-identical parallel-pathfinding guarantee. A path with no hops - a crown
+// jewel the attacker already holds - is certain against every profile: the empty
+// product is 1.
 func attackerMixture(steps []Step) (mixture float64, perProfile []ProfileScore) {
-	if len(steps) == 0 {
-		return 0, nil
-	}
 	profs := currentProfiles()
-	perProfile = make([]ProfileScore, 0, len(profs))
-	for _, c := range profs {
-		s := 1.0
-		for _, st := range steps {
-			s *= conditionalProb(st.Probability, st.WeightBasis, c.Skill)
+	hop := make([][]float64, len(profs)) // hop[c][i]: hop i's probability against profile c
+	for c := range hop {
+		hop[c] = make([]float64, len(steps))
+	}
+	probs := make([]float64, len(profs))
+	for i, st := range steps {
+		profileProbs(st.Probability, st.WeightBasis, profs, probs)
+		for c := range hop {
+			hop[c][i] = probs[c]
 		}
-		perProfile = append(perProfile, ProfileScore{Profile: c.Name, Prior: c.Prior, Score: s})
-		mixture += c.Prior * s
+	}
+	perProfile = make([]ProfileScore, 0, len(profs))
+	for c, pr := range profs {
+		score := chainProbability(steps, hop[c])
+		perProfile = append(perProfile, ProfileScore{Profile: pr.Name, Prior: pr.Prior, Score: score})
+		mixture += pr.Prior * score
 	}
 	return mixture, perProfile
 }

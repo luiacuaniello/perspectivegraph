@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { createSuppression, createTicket, type AttackPath, type SuppressionReason } from "../api/client";
+import { routeLabel } from "./routeChannels";
 
 // Acting from the row - the other half of the console idea.
 //
@@ -37,7 +38,7 @@ export default function RouteActions({ path, onChanged }: { path: AttackPath; on
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const route = `${path.nodes[0]?.name ?? "?"} → ${path.nodes[path.nodes.length - 1]?.name ?? "?"}`;
+  const route = routeLabel(path);
   const close = () => {
     setMode("idle");
     setErr(null);

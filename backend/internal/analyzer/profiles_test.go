@@ -95,10 +95,18 @@ func TestSetAttackerProfilePriorsEmptyAndZeroKeepDefaults(t *testing.T) {
 	}
 }
 
-func TestAttackerMixtureEmptyPath(t *testing.T) {
+// A path with no hops is a crown jewel the attacker already holds (a direct-access
+// path): certain against every profile, like its Score of 1. It used to read 0 here, so
+// the "blended" figure beside a 100% path would have said nobody could walk it.
+func TestAttackerMixtureEmptyPathIsCertain(t *testing.T) {
 	mix, profs := attackerMixture(nil)
-	if mix != 0 || profs != nil {
-		t.Errorf("empty path should yield (0, nil), got (%.3f, %v)", mix, profs)
+	if math.Abs(mix-1) > 1e-12 || len(profs) != len(currentProfiles()) {
+		t.Fatalf("empty path: mixture %.3f, %d profiles; want 1 against each of %d", mix, len(profs), len(currentProfiles()))
+	}
+	for _, p := range profs {
+		if p.Score != 1 {
+			t.Errorf("profile %s scores %.3f on an empty path, want 1", p.Profile, p.Score)
+		}
 	}
 }
 
@@ -109,4 +117,66 @@ func profByNameP(ps []AttackerProfile, name string) AttackerProfile {
 		}
 	}
 	return AttackerProfile{}
+}
+
+// The profiles average back to the edge's own probability, whatever the probability,
+// the basis or the priors - including the operator's own ATTACKER_PROFILE_PRIORS.
+func TestProfilesAverageBackToTheEdgeProbability(t *testing.T) {
+	t.Cleanup(func() { SetAttackerProfilePriors("") })
+	for _, spec := range []string{"", "commodity:0.1,criminal:0.2,apt:0.7", "apt:1", "commodity:1"} {
+		SetAttackerProfilePriors(spec)
+		profs := currentProfiles()
+		probs := make([]float64, len(profs))
+		for _, basis := range []string{"kev", "runtime", "epss", "cvss", "severity", "heuristic", ""} {
+			for _, p := range []float64{0.01, 0.05, 0.2, 0.5, 0.8, 0.95, 0.999, 1} {
+				profileProbs(p, basis, profs, probs)
+				avg := 0.0
+				for c, pr := range profs {
+					avg += pr.Prior * probs[c]
+				}
+				want := math.Min(math.Max(p, probClamp), 1-probClamp) // p, kept off 0 and 1
+				if math.Abs(avg-want) > 1e-9 {
+					t.Errorf("priors %q basis %q p=%v: profiles average %.12f, want %.12f", spec, basis, p, avg, want)
+				}
+			}
+		}
+	}
+}
+
+// Anchored, the mixture changes the correlation and nothing else: one hop reads exactly
+// its probability, and a chain reads between the independent product and its weakest
+// hop. Before, the default priors pulled a lone 0.9 hop to 0.78 and CloudGoat's two-hop
+// SSRF route from 81% to 64%, under a lens that can only raise a chain.
+func TestTheMixtureSitsBetweenTheProductAndTheWeakestHop(t *testing.T) {
+	t.Cleanup(func() { SetAttackerProfilePriors("") })
+	bases := []string{"kev", "runtime", "epss", "cvss", "severity", "heuristic"}
+	for _, spec := range []string{"", "commodity:0.1,criminal:0.2,apt:0.7"} {
+		SetAttackerProfilePriors(spec)
+		for _, basis := range bases {
+			for _, p := range []float64{0.1, 0.5, 0.9, 0.99} {
+				if mix, _ := attackerMixture(stepsWith(1, p, basis)); math.Abs(mix-p) > 1e-9 {
+					t.Errorf("priors %q: one %s hop at %v reads %.6f", spec, basis, p, mix)
+				}
+			}
+		}
+		// Mixed chains: every combination of two and three hops over a spread of values.
+		ps := []float64{0.2, 0.6, 0.95}
+		for _, b1 := range bases {
+			for _, b2 := range bases {
+				for _, p1 := range ps {
+					for _, p2 := range ps {
+						for _, p3 := range ps {
+							steps := []Step{{Probability: p1, WeightBasis: b1}, {Probability: p2, WeightBasis: b2}, {Probability: p3, WeightBasis: b1}}
+							mix, _ := attackerMixture(steps)
+							product, weakest := p1*p2*p3, math.Min(p1, math.Min(p2, p3))
+							if mix < product-1e-12 || mix > weakest+1e-12 {
+								t.Errorf("priors %q, %s/%s hops %v %v %v: mixture %.6f outside [product %.6f, weakest %.6f]",
+									spec, b1, b2, p1, p2, p3, mix, product, weakest)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
 }

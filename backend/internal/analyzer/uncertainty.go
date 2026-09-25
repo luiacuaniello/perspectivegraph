@@ -48,15 +48,14 @@ func concentration(basisConf float64) float64 {
 	return concMin + (concMax-concMin)*math.Pow(c, concGamma)
 }
 
-// kappaPrior is the Beta pseudo-count added to a real evidence count, so a single
-// corroborating observation still yields a proper (not overconfident) posterior.
-const kappaPrior = 2.0
-
 // betaParams turns a point probability p, its basis confidence, and (optionally) the
 // number of independent observations behind it into the (α,β) of a Beta posterior
-// with mean p. When evidenceCount > 0 the concentration is evidence-count-derived
-// (κ = count + prior) - the proper Bayesian width; otherwise it falls back to the
-// basis-confidence heuristic. p is nudged off {0,1} so α,β stay strictly positive.
+// with mean p. The basis sets the prior's concentration - how many observations its
+// kind of evidence is worth - and each observation adds one: κ = κ(basis) + count, the
+// conjugate update. The count used to REPLACE the basis instead, so a KEV hop reported
+// with one corroborating sighting got κ = 3, the widest posterior there is - wider than
+// a heuristic guess reported with no count at all: more evidence, less certainty. p is
+// nudged off {0,1} so α,β stay strictly positive.
 func betaParams(p, basisConf float64, evidenceCount int) (alpha, beta float64) {
 	if p < betaEps {
 		p = betaEps
@@ -66,7 +65,7 @@ func betaParams(p, basisConf float64, evidenceCount int) (alpha, beta float64) {
 	}
 	k := concentration(basisConf)
 	if evidenceCount > 0 {
-		k = float64(evidenceCount) + kappaPrior
+		k += float64(evidenceCount)
 	}
 	return p * k, (1 - p) * k
 }
@@ -132,20 +131,33 @@ func unifiedScorePosterior(id string, steps []Step, profiles []AttackerProfile, 
 		a, b := betaParams(st.Probability, st.WeightConfidence, st.EvidenceCount)
 		ab[i] = [2]float64{a, b}
 	}
-	sampled := make([]float64, len(steps))
 	draws := make([]float64, scoreSamples)
+	probs := make([]float64, len(profiles))
+	hop := make([][]float64, len(profiles)) // hop[c][i]: this draw's hop i against profile c
+	for c := range hop {
+		hop[c] = make([]float64, len(steps))
+	}
+	// Each hop's anchor, solved once at its point probability: the draws scatter around
+	// it, so that solution is where the search for each draw's starts (see anchor).
+	anchors := make([]anchor, len(steps))
+	start := make([]float64, len(steps))
+	for i, st := range steps {
+		anchors[i] = newAnchor(skillSensitivity(st.WeightBasis), profiles)
+		start[i] = anchors[i].probs(st.Probability, 0, probs)
+	}
 	var sum float64
 	for d := range draws {
 		for i := range steps {
-			sampled[i] = sampleBeta(rng, ab[i][0], ab[i][1]) // epistemic draw, shared across profiles
+			// One epistemic draw per hop, shared across profiles: the same uncertain world
+			// faces every attacker, and the profiles are anchored to that draw.
+			anchors[i].probs(sampleBeta(rng, ab[i][0], ab[i][1]), start[i], probs)
+			for c := range hop {
+				hop[c][i] = probs[c]
+			}
 		}
 		var mix float64
-		for _, c := range profiles {
-			prod := 1.0
-			for i, st := range steps {
-				prod *= conditionalProb(sampled[i], st.WeightBasis, c.Skill)
-			}
-			mix += c.Prior * prod
+		for c, pr := range profiles {
+			mix += pr.Prior * chainProbability(steps, hop[c])
 		}
 		draws[d] = mix
 		sum += mix
