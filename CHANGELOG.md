@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.21.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.20.0...v1.21.0) (2026-09-25)
+
+
+### Features
+
+* prove fixes on common random numbers, and score exposure, seeds and attacker profiles consistently ([#255](https://github.com/luiacuaniello/perspectivegraph/issues/255)) ([a635260](https://github.com/luiacuaniello/perspectivegraph/commit/a635260f33455af633b0968053733fa9cd92bd6f))
+
 ## [1.20.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.19.0...v1.20.0) (2026-09-25)
 
 
