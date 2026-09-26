@@ -571,7 +571,12 @@ capability to gain.
 - [ ] Backup scheduled and a restore rehearsed (section 4).
 - [ ] `/metrics` scraped; alerts on the SLOs above.
 - [ ] Images verified (cosign signature + SBOM + provenance) before rollout.
-- [ ] Engine behind a gateway/WAF; network policy between components.
+- [ ] Engine behind a gateway/WAF; network policy between components (`networkPolicy.enabled`,
+      and `networkPolicy.backendFrom` naming the ingress controller's namespace).
+- [ ] NATS authenticates its clients: the chart's does on its own; an external one needs
+      `NATS_USER`/`NATS_PASSWORD`. Rendering with `helm template` (Argo CD, Flux), pin
+      `postgres.auth.password` and `nats.auth.password` (or bring the Secrets), since a
+      render without the cluster cannot keep a generated one.
 
 See the [threat model operator assumptions](THREAT-MODEL.md#operator-assumptions-what-you-must-do-for-production)
 for the rationale behind each item.

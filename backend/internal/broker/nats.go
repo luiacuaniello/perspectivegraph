@@ -124,6 +124,10 @@ type TLSConfig struct {
 // connection that closes for good is only logged.
 type Options struct {
 	TLS TLSConfig
+	// User and Password authenticate to a NATS that requires it - the chart's bundled
+	// server does. Without them any workload that can reach the bus publishes events
+	// straight onto it, past the ingest webhook's signature check. Empty User sends none.
+	User, Password string
 	// MaxAge bounds how long an event may wait in the stream, and how long a
 	// dead-lettered one is kept, before JetStream discards it. <=0 means DefaultMaxAge.
 	MaxAge time.Duration
@@ -140,6 +144,15 @@ func Connect(ctx context.Context, url, stream, subject string, o Options) (*Brok
 	}
 	b.streamSubject, b.base = normalizeSubject(subject)
 
+	nc, err := nats.Connect(url, b.connectOptions(o)...)
+	if err != nil {
+		return nil, fmt.Errorf("nats connect: %w", err)
+	}
+	return b.finishConnect(ctx, nc, stream)
+}
+
+// connectOptions are the client options Connect dials with.
+func (b *Broker) connectOptions(o Options) []nats.Option {
 	opts := []nats.Option{
 		nats.Name("perspectivegraph"),
 		// Reconnect for as long as it takes. The client default gives up after 60
@@ -183,16 +196,21 @@ func Connect(ctx context.Context, url, stream, subject string, o Options) (*Brok
 			}
 		}),
 	}
+	if o.User != "" {
+		opts = append(opts, nats.UserInfo(o.User, o.Password))
+	}
 	if o.TLS.CAFile != "" {
 		opts = append(opts, nats.RootCAs(o.TLS.CAFile))
 	}
 	if o.TLS.CertFile != "" && o.TLS.KeyFile != "" {
 		opts = append(opts, nats.ClientCert(o.TLS.CertFile, o.TLS.KeyFile))
 	}
-	nc, err := nats.Connect(url, opts...)
-	if err != nil {
-		return nil, fmt.Errorf("nats connect: %w", err)
-	}
+	return opts
+}
+
+// finishConnect makes a dialled connection the broker's: the stream, its consumer and the
+// batch bucket.
+func (b *Broker) finishConnect(ctx context.Context, nc *nats.Conn, stream string) (*Broker, error) {
 	b.nc = nc
 	metrics.BrokerConnected.Set(1)
 	fail := func(err error) (*Broker, error) {
@@ -200,9 +218,11 @@ func Connect(ctx context.Context, url, stream, subject string, o Options) (*Brok
 		nc.Close()
 		return nil, err
 	}
-	if b.js, err = jetstream.New(nc); err != nil {
+	js, err := jetstream.New(nc)
+	if err != nil {
 		return fail(fmt.Errorf("jetstream init: %w", err))
 	}
+	b.js = js
 	if err := b.ensure(ctx); err != nil {
 		return fail(err)
 	}

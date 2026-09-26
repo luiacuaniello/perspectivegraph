@@ -158,6 +158,14 @@ spec:
                 secretKeyRef:
                   name: {{ include "perspectivegraph.secretName" . }}
                   key: EXPORT_SIGNING_KEY
+            {{- if include "perspectivegraph.natsAuth" . }}
+            # NATS authentication: the same Secret the bundled server reads its password from.
+            - name: NATS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "perspectivegraph.natsAuthSecret" . }}
+                  key: NATS_PASSWORD
+            {{- end }}
             {{- if .Values.backend.tls.enabled }}
             # In-pod TLS: the cert/key are mounted from backend.tls.secretName below.
             - name: TLS_CERT_FILE

@@ -75,7 +75,10 @@ spec:
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "perspectivegraph.fullname" . }}-secrets
+                  # The same Secret the backend reads - the operator's when
+                  # secrets.existingSecret is set. It used to name the chart's own here,
+                  # which does not exist then, so Postgres never started.
+                  name: {{ include "perspectivegraph.secretName" . }}
                   key: POSTGRES_PASSWORD
           # TCP rather than the readiness check: readiness answers "can it serve
           # requests", liveness only "is the process still there". Conflating them

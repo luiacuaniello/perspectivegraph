@@ -112,6 +112,17 @@ persistence:
 graph:
   ttl: "168h" # 7 days
 
+# Only the backend may reach the bundled NATS (and a bundled Postgres). Name the ingress
+# controller's namespace in backendFrom to close the backend to the rest of the cluster
+# too - it authenticates its callers either way. The bundled NATS requires a password
+# the chart generates; rendering with `helm template` (Argo CD, Flux), bring your own
+# instead: nats.auth.existingSecret, a Secret with key NATS_PASSWORD.
+networkPolicy:
+  enabled: true
+  backendFrom: []
+  #  - namespaceSelector:
+  #      matchLabels: { kubernetes.io/metadata.name: ingress-nginx }
+
 # Serve HTTPS at the ingress (recommended). cert-manager issues + fills the cert.
 ingress:
   enabled: true

@@ -108,5 +108,18 @@ version=$(kubectl --context "kind-$CLUSTER" exec "${RELEASE}-perspectivegraph-po
 [ -n "$version" ] || die "the age extension is not installed in the bundled database"
 ok "apache age $version loaded"
 
+# The bus must refuse a client without credentials: events on it are trusted, and the
+# ingest webhook's signature check runs before them, not after. The backend reaching it at
+# all (--wait above) proves the password works; this proves it is required.
+ok "checking that NATS refuses an unauthenticated client"
+probe_image=$(helm show values "$CHART" | awk '/^  waitImage:/ {print $2; exit}')
+reply=$(kubectl --context "kind-$CLUSTER" run natsprobe --rm -i --restart=Never --quiet \
+  --image="$probe_image" --command -- sh -c \
+  "printf 'CONNECT {\"verbose\":true}\r\nPING\r\n' | nc -w 5 ${RELEASE}-perspectivegraph-nats 4222" 2>&1 || true)
+case "$reply" in
+  *"Authorization Violation"*) ok "nats refused it" ;;
+  *) die "nats did not refuse an unauthenticated client:\n$reply" ;;
+esac
+
 count=$(kubectl --context "kind-$CLUSTER" get pods --no-headers | wc -l | tr -d ' ')
 ok "PASS - $count pod(s) running on ${NODE_IMAGE%%@*}"

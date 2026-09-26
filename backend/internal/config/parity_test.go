@@ -165,6 +165,7 @@ func TestEverySecretAcceptsAFileVariant(t *testing.T) {
 		"POSTGRES_PASSWORD", "API_TOKENS", "INGEST_HMAC_SECRET", "INGEST_HMAC_SECRETS",
 		"STORE_ENCRYPTION_KEY", "EXPORT_SIGNING_KEY", "GITHUB_TOKEN", "GITLAB_TOKEN",
 		"ANTHROPIC_API_KEY", "HF_TOKEN", "TICKET_WEBHOOK_URL", "ALERT_WEBHOOK_URL",
+		"NATS_PASSWORD",
 	}
 	src := mustRead(t, "config.go")
 	for _, k := range secrets {

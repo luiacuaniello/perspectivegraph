@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 )
 
@@ -150,5 +151,25 @@ func TestConsumerAckWaitOutlastsTheKeepAlive(t *testing.T) {
 	}
 	if c.MaxDeliver != maxDeliver || c.AckPolicy != jetstream.AckExplicitPolicy {
 		t.Errorf("consumer lost its redelivery policy: %+v", c)
+	}
+}
+
+// The credentials reach the client: a NATS that requires them - the chart's does - refuses
+// a backend that dials without, and the refusal reads like a network fault.
+func TestConnectPresentsTheCredentials(t *testing.T) {
+	apply := func(o Options) nats.Options {
+		opts := nats.GetDefaultOptions()
+		for _, fn := range (&Broker{}).connectOptions(o) {
+			if err := fn(&opts); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return opts
+	}
+	if got := apply(Options{User: "perspectivegraph", Password: "s3cret"}); got.User != "perspectivegraph" || got.Password != "s3cret" {
+		t.Fatalf("user %q password %q: the credentials were not passed to the client", got.User, got.Password)
+	}
+	if got := apply(Options{}); got.User != "" || got.Password != "" {
+		t.Fatalf("no user configured, yet the client sends %q/%q", got.User, got.Password)
 	}
 }

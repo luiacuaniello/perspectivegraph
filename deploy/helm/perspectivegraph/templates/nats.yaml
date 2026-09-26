@@ -1,12 +1,44 @@
 {{- if .Values.nats.enabled }}
+{{- $auth := include "perspectivegraph.natsAuth" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "perspectivegraph.natsHost" . }}-config
+  labels:
+    {{- include "perspectivegraph.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+data:
+  # The password is not here: nats-server reads $NATS_PASSWORD from its environment,
+  # which comes from a Secret.
+  nats.conf: |
+    port: 4222
+    http_port: 8222
+    jetstream {
+      store_dir: "/data"
+    }
+    {{- if $auth }}
+    # Every client authenticates. Without this, any workload that can reach port 4222
+    # publishes events straight onto the bus - past the ingest webhook's signature
+    # check - or deletes the stream.
+    authorization {
+      user: {{ .Values.nats.auth.user | quote }}
+      password: $NATS_PASSWORD
+    }
+    {{- end }}
+---
+# A StatefulSet, so the stream has a volume that outlives the pod. It was a Deployment on
+# an emptyDir: a NATS restart - a node drain, an upgrade - lost every event still queued,
+# the dead letters, and the record of which ingest batches had landed, so a merge gate
+# waiting on one could only answer UNKNOWN.
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: {{ include "perspectivegraph.natsHost" . }}
   labels:
     {{- include "perspectivegraph.labels" . | nindent 4 }}
     app.kubernetes.io/component: nats
 spec:
+  serviceName: {{ include "perspectivegraph.natsHost" . }}
   replicas: 1
   selector:
     matchLabels:
@@ -17,6 +49,11 @@ spec:
       labels:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: nats
+      annotations:
+        # A new configuration rolls the server. Not the password: a hash of it here would
+        # be readable by anyone allowed to read pods, who is not always allowed to read
+        # Secrets. After changing nats.auth.password, restart NATS and the backend.
+        checksum/config: {{ printf "%s|%s" .Values.nats.auth.user (toString .Values.nats.auth.enabled) | sha256sum }}
     spec:
       # The `restricted` Pod Security Standard, minus readOnlyRootFilesystem - which it
       # does not require, and which this container DOES need (JetStream writes its store).
@@ -43,20 +80,29 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
-          # -sd names the JetStream store explicitly instead of letting nats-server
-          # default to /tmp/nats/jetstream. On the scratch image there is no /tmp and no
-          # shell to create one, and a non-root uid cannot mkdir at the filesystem root:
-          # the server starts, then dies with "could not create storage directory - mkdir
-          # /tmp: permission denied". The emptyDir below is that directory. Storage is
-          # ephemeral either way - it was the container's writable layer before - so this
-          # changes where the stream lives, not how long it survives.
-          args: ["-js", "-sd", "/data", "-m", "8222"]
+          # The configuration names the JetStream store explicitly (/data) instead of
+          # letting nats-server default to /tmp/nats/jetstream: on the scratch image there
+          # is no /tmp and no shell to create one, and a non-root uid cannot mkdir at the
+          # filesystem root - the server starts, then dies with "could not create storage
+          # directory - mkdir /tmp: permission denied". /data is the volume below.
+          args: ["-c", "/etc/nats/nats.conf"]
+          {{- if $auth }}
+          env:
+            - name: NATS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "perspectivegraph.natsAuthSecret" . }}
+                  key: NATS_PASSWORD
+          {{- end }}
           ports:
             - containerPort: 4222
             - containerPort: 8222
           volumeMounts:
             - name: store
               mountPath: /data
+            - name: config
+              mountPath: /etc/nats
+              readOnly: true
           # TCP rather than the readiness check: readiness answers "can it serve
           # requests", liveness only "is the process still there". Conflating them
           # restarts a component that is merely busy or waiting on a dependency.
@@ -73,8 +119,26 @@ spec:
             initialDelaySeconds: 3
             periodSeconds: 5
       volumes:
+        - name: config
+          configMap:
+            name: {{ include "perspectivegraph.natsHost" . }}-config
+        {{- if not .Values.nats.persistence.enabled }}
         - name: store
           emptyDir: {}
+        {{- end }}
+  {{- if .Values.nats.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: store
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with .Values.nats.persistence.storageClass }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.nats.persistence.size }}
+  {{- end }}
 ---
 apiVersion: v1
 kind: Service
@@ -90,4 +154,19 @@ spec:
   ports:
     - port: 4222
       targetPort: 4222
+{{- end }}
+{{- if and (include "perspectivegraph.natsAuth" .) (not .Values.nats.auth.existingSecret) }}
+---
+# NATS_PASSWORD for the bundled server and the backend. Generated once and kept across
+# upgrades unless nats.auth.password sets it (see perspectivegraph.stableSecret).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "perspectivegraph.natsAuthSecret" . }}
+  labels:
+    {{- include "perspectivegraph.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+type: Opaque
+stringData:
+  NATS_PASSWORD: {{ include "perspectivegraph.stableSecret" (list . (include "perspectivegraph.natsAuthSecret" .) "NATS_PASSWORD" .Values.nats.auth.password) | quote }}
 {{- end }}
