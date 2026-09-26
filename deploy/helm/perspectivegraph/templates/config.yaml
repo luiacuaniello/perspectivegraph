@@ -87,6 +87,7 @@ data:
   INGEST_HMAC_ACCEPT_V1: {{ .Values.ingest.hmacAcceptV1 | quote }}
   INGEST_RATE_RPS: {{ .Values.auth.ingestRateRps | quote }}
   GRAPH_TTL: {{ .Values.graph.ttl | quote }}
+  GRAPH_SWEEP: {{ .Values.graph.sweep | quote }}
   OIDC_ISSUER: {{ .Values.auth.oidc.issuer | quote }}
   OIDC_AUDIENCE: {{ .Values.auth.oidc.audience | quote }}
   OIDC_JWKS_URL: {{ .Values.auth.oidc.jwksUrl | quote }}

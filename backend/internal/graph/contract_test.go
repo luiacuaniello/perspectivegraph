@@ -26,6 +26,7 @@ import (
 
 func TestMemoryStoreContract(t *testing.T) {
 	runStoreContract(t, memory.New())
+	assertSweepContract(t, memory.New())
 }
 
 func TestAGEStoreContract(t *testing.T) {
@@ -89,9 +90,11 @@ func TestAGEStoreContract(t *testing.T) {
 	}
 	defer store.Close()
 
+	assertElementsBeforeProvenanceAreNeverSwept(t, store)
 	runStoreContract(t, store)
 	assertPathfinderEquivalence(t, store)
 	assertConcurrentWritersDoNotDuplicate(t, store)
+	assertSweepContract(t, store)
 
 	// A parked edge older than the TTL is dropped by the next write, not landed later.
 	ctx2 := context.Background()

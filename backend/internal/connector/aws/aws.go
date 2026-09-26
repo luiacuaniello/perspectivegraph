@@ -101,7 +101,36 @@ func (c *Connector) Collect(ctx context.Context) ([]ontology.Event, error) {
 			errs = append(errs, fmt.Errorf("parse %s: %w", b.feed, err))
 			continue
 		}
+		if scope := c.snapshotScope(b.feed, account); scope != "" {
+			for i := range evs {
+				evs[i].Snapshot = &ontology.Snapshot{Scope: scope}
+			}
+		}
 		out = append(out, evs...)
 	}
 	return out, errors.Join(errs...)
+}
+
+// snapshotScope is what a feed pulled in full describes completely, so that an asset it
+// no longer lists - an instance terminated, a role deleted, a security group rule
+// revoked - can be retracted: IAM is one account, the network feed one account in one
+// region. Only a feed that was fetched and parsed without error gets here, and only when
+// it is known which account it read: two accounts that cannot be told apart would
+// retract each other's assets, so an unknown account (fixtures, a failed STS call) pulls
+// as a partial observation.
+func (c *Connector) snapshotScope(feed Feed, account string) string {
+	if account == "" {
+		return ""
+	}
+	switch feed {
+	case FeedIAM:
+		return "aws:" + account
+	case FeedNetwork:
+		r, ok := c.t.(interface{ Region() string })
+		if !ok || r.Region() == "" {
+			return ""
+		}
+		return "aws:" + account + "/" + r.Region()
+	}
+	return ""
 }

@@ -92,6 +92,7 @@ Create the Secret first: the production file lists the keys it expects.
 | `repoAllowlist` | empty | The repositories the engine may write to: PR comments, merge-gate statuses and fix PRs. Empty means none. |
 | `prAttribution` | `diff` | Which routes the commit status and PR comments count against a commit: `diff`, those it opened or made likelier (the merge gate's rule); `commit`, every route through it (before 1.22). |
 | `ingress.enabled` | `false` | Publishes the dashboard, the API and the ingest endpoint. The chart won't render it without authentication, unless you set `ingress.allowUnauthenticated: true`. |
+| `ingress.maxBodySize` | `32m` | The largest scanner report the ingress passes to `/ingest` and `/gate`: the backend's own limit. Rendered as the body-size annotation of ingress-nginx and F5 NGINX, whose 1 MiB default refuses real reports; an annotation you set wins. |
 | `service.type` | `ClusterIP` | `LoadBalancer` or `NodePort` expose the backend outside the cluster, with the same authentication check as the ingress. |
 | `ai.apiKey` | empty | Turns on the AI assistant through Anthropic's API (`ai.hf` takes an OpenAI-compatible endpoint instead). Once it's on, details of your attack paths are sent to that provider. |
 

@@ -122,6 +122,14 @@ var (
 		Help: "Stale edges removed by the TTL pruner.",
 	})
 
+	GraphSwept = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "perspectivegraph_graph_swept_total",
+		Help: "Graph elements a complete snapshot retracted, by kind: node and edge removed, parked (an edge another source still asserts, set to wait for a node that was removed).",
+	}, []string{"kind"})
+	GraphSweeps = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "perspectivegraph_graph_sweeps_total",
+		Help: "Complete snapshots applied, by source and result (ok, error).",
+	}, []string{"source", "result"})
 	AuditPrunedRecords = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "perspectivegraph_audit_pruned_records_total",
 		Help: "Audit records removed by retention (AUDIT_RETENTION), oldest first.",
@@ -179,7 +187,7 @@ func init() {
 		AnalyzerPasses, AnalyzerPassSeconds, AnalyzerCriticalPaths,
 		AnalyzerGraphNodes, AnalyzerGraphEdges, AnalyzerPathfindSeconds,
 		AnalyzerSnapshotSeconds, AnalyzerSnapshots,
-		GraphPrunedNodes, GraphPrunedEdges, GraphPendingEdges, AuditPrunedRecords,
+		GraphPrunedNodes, GraphPrunedEdges, GraphPendingEdges, GraphSwept, GraphSweeps, AuditPrunedRecords,
 		HTTPRequests, APIHeavyRefused, AuthDenied, IngestSignatures,
 		ConnectorRuns, ConnectorEvents,
 	)

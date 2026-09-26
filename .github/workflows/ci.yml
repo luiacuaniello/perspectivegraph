@@ -207,6 +207,36 @@ jobs:
               | python3 scripts/chart-check.py
           done
 
+      # The ingress passes scanner reports to /ingest and /gate, and the nginx-based
+      # controllers refuse a body over 1 MiB unless told otherwise - a 413 the engine never
+      # sees. The chart sets their annotations; an operator's own must still win, and an
+      # empty maxBodySize must leave the controller alone. (That the value matches the
+      # backend's limit is internal/config's TestProxiesPassEveryReportTheBackendAccepts.)
+      - name: Ingress passes a scanner report
+        run: |
+          set -euo pipefail
+          render() {
+            helm template pg deploy/helm/perspectivegraph \
+              --set ingress.enabled=true --set ingress.allowUnauthenticated=true "$@"
+          }
+          check() {
+            python3 -c '
+          import sys, yaml
+          want = dict(a.split("=", 1) for a in sys.argv[1:] if "=" in a)
+          gone = [a[1:] for a in sys.argv[1:] if a.startswith("!")]
+          ing = next(d for d in yaml.safe_load_all(sys.stdin) if d and d.get("kind") == "Ingress")
+          got = ing["metadata"].get("annotations") or {}
+          bad = [f"{k}={got.get(k)!r}, want {v!r}" for k, v in want.items() if got.get(k) != v]
+          bad += [f"{k} set to {got[k]!r}, want it absent" for k in gone if k in got]
+          sys.exit("; ".join(bad)) if bad else print("ok:", got)
+          ' "$@"
+          }
+          render | check nginx.ingress.kubernetes.io/proxy-body-size=32m nginx.org/client-max-body-size=32m
+          render --set-string 'ingress.annotations.nginx\.ingress\.kubernetes\.io/proxy-body-size=64m' \
+            | check nginx.ingress.kubernetes.io/proxy-body-size=64m nginx.org/client-max-body-size=32m
+          render --set ingress.maxBodySize= \
+            | check '!nginx.ingress.kubernetes.io/proxy-body-size' '!nginx.org/client-max-body-size'
+
       # The CSP pins a hash of the one inline script in index.html, and two nginx configs
       # serve the same SPA - the image's and the chart's. Either drifting shows up as a
       # blank or unstyled dashboard in production and nowhere in the build, so check it

@@ -892,6 +892,14 @@ func run(parent context.Context, cfg config.Config) error {
 
 	var wg sync.WaitGroup
 
+	// Complete snapshots: once all of an ingest that described a scope in full has landed,
+	// what its source no longer lists is retracted.
+	if cfg.GraphSweep {
+		bus.WithSweeper(normalizer.Sweep)
+	} else {
+		slog.Info("complete snapshots are not applied (GRAPH_SWEEP=false): assets leave the graph by GRAPH_TTL only")
+	}
+
 	// Normalization consumer: bus -> identity resolution -> graph.
 	wg.Add(1)
 	go func() {

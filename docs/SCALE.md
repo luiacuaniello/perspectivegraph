@@ -16,7 +16,9 @@ its cost:
   pass latency. Raise it on a multi-core host with a large seed set.
 - **`ANALYZER_INCREMENTAL`** - keep the graph resident and patch it with each pass's delta
   instead of re-reading the whole thing. On a large Apache AGE graph the re-read dominates,
-  so this is the fetch-cost win; it trades memory for fetch time. Off by default.
+  so this is the fetch-cost win; it trades memory for fetch time. Off by default. A delta
+  carries no deletions, so after anything is removed - a prune, a complete snapshot's sweep,
+  on any replica - the next pass re-reads the whole graph.
 
 Secondary: `ANALYZER_MAX_HOPS` bounds path length (longer = more enumeration),
 `ANALYZER_INTERVAL` sets how often a pass runs, and the store choice (in-memory vs AGE)

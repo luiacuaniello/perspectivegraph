@@ -52,6 +52,95 @@ type Event struct {
 	Tenant string `json:"tenant,omitempty"`
 	Nodes  []Node `json:"nodes"`
 	Edges  []Edge `json:"edges"`
+	// Snapshot, when set, declares this event part of a COMPLETE description of one
+	// scope for its source: whatever the source asserted in that scope before and no
+	// longer lists is retracted once the whole ingest has reached the graph. Nil is a
+	// partial observation - it adds and updates, and never takes anything away.
+	Snapshot *Snapshot `json:"snapshot,omitempty"`
+}
+
+// Snapshot is a source's declaration that it has described Scope in full.
+//
+// The scope says how far "in full" reaches: one scanned image ("image:<ref>"), one
+// repository, one AWS account and region. It is chosen by whoever can vouch for the
+// completeness - a collector that knows it read a whole image, a connector that read a
+// whole account, an operator posting a whole cluster - and by nobody else: a scope
+// wider than what was actually read makes the engine forget assets that still exist.
+//
+// Taken is when the engine received the snapshot. It orders two snapshots of the same
+// scope, so an older one landing late never undoes a newer one; it is set by the
+// engine, not by the sender.
+type Snapshot struct {
+	Scope string    `json:"scope"`
+	Taken time.Time `json:"taken"`
+}
+
+// Scope prefixes a collector uses for the scopes it can vouch for. The engine normalizes
+// an image scope's reference as it normalizes the image's id.
+const (
+	ImageScopePrefix      = "image:"
+	RepositoryScopePrefix = "repository:"
+)
+
+// MaxScopeLen bounds a snapshot scope: it is an identifier, not a payload.
+const MaxScopeLen = 256
+
+// ValidScope reports whether s can name a snapshot scope: non-empty, bounded, and
+// printable ASCII - it lands in logs, metrics and SQL parameters.
+func ValidScope(s string) bool {
+	if s == "" || len(s) > MaxScopeLen {
+		return false
+	}
+	for _, r := range s {
+		if r < 0x21 || r > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
+// CompleteSnapshot is the event's snapshot declaration if it stands, nil if the event is
+// a partial observation: no declaration, a scope that is not one, or a pull request's
+// event - which describes a change that may never be merged, and must never retract what
+// runs. The normalizer records origins by it and the broker schedules sweeps by it, so the
+// two cannot disagree about what an event may retract.
+func (ev Event) CompleteSnapshot() *Snapshot {
+	if ev.Snapshot == nil || !ValidScope(ev.Snapshot.Scope) || ev.CarriesPRContext() {
+		return nil
+	}
+	return ev.Snapshot
+}
+
+// CarriesPRContext reports whether any node of the event is stamped with a pull
+// request: a commit or a pull-request number. Such an event describes a change that
+// may never be merged, not what runs, so it must never retract anything. A repository
+// slug alone is not PR context - build provenance names the repository an image was
+// built from.
+func (ev Event) CarriesPRContext() bool {
+	for _, n := range ev.Nodes {
+		if sha, _ := n.Properties[PropCommitSHA].(string); sha != "" {
+			return true
+		}
+		switch v := n.Properties[PropPRNumber].(type) {
+		case int:
+			if v > 0 {
+				return true
+			}
+		case int64:
+			if v > 0 {
+				return true
+			}
+		case float64:
+			if v > 0 {
+				return true
+			}
+		case string:
+			if v != "" && v != "0" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // NewID builds a deterministic node ID from a label and one or more natural-key

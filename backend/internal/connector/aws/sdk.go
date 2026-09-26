@@ -56,6 +56,8 @@ type sdkTransport struct {
 	ec2 ec2API
 	iam iamAPI
 	sts stsAPI
+	// region is the one region the EC2 client reads; IAM is global.
+	region string
 
 	// account memoises GetCallerIdentity. It cannot change for a given transport -
 	// the credentials are fixed at construction - so asking once per process is
@@ -88,13 +90,17 @@ func newSDK(ctx context.Context, cfg Config) (transport, error) {
 		awsCfg.Credentials = aws.NewCredentialsCache(provider)
 	}
 	return &sdkTransport{
-		ec2: ec2.NewFromConfig(awsCfg),
-		iam: iam.NewFromConfig(awsCfg),
-		sts: sts.NewFromConfig(awsCfg),
+		ec2:    ec2.NewFromConfig(awsCfg),
+		iam:    iam.NewFromConfig(awsCfg),
+		sts:    sts.NewFromConfig(awsCfg),
+		region: awsCfg.Region,
 	}, nil
 }
 
 func (*sdkTransport) Mode() string { return "sdk" }
+
+// Region is the region the network feed describes.
+func (t *sdkTransport) Region() string { return t.region }
 
 // Account asks AWS which account these credentials belong to, rather than making the
 // operator type an id that has to agree with the role they configured. Getting that

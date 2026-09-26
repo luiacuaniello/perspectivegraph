@@ -17,6 +17,49 @@ digest, take the backup, stage it.
 
 ---
 
+## 1.23.0
+
+### The graph forgets what its sources stop reporting
+
+**Affects you if** you ingest Trivy or Semgrep reports, run the AWS connector, or rely on
+something staying in the graph after its source stopped listing it.
+
+Until now the only way out of the graph was `GRAPH_TTL`, off by default, so a CVE fixed in an
+image, an instance terminated or a role deleted stayed - with the attack paths through it -
+until someone pruned. The engine now records who asserted each node and edge. When a source
+that describes a scope *in full* sends that scope again, whatever it said before and no longer
+says is withdrawn, once the whole ingest has landed. An element leaves the graph when no source
+asserts it any more.
+
+What changes:
+
+- **Trivy** scans of an image by reference, **Semgrep** reports with `?repo=`, and the **AWS
+  connector** (per account; the network per account and region) are complete snapshots
+  without any change on your side. A fixed CVE disappears at the next scan.
+- **Everything else is unchanged** unless you say so with `?snapshot=<scope>` on the ingest
+  webhook - `?snapshot=cluster:prod` on a dump of the whole cluster. Name only what you
+  really send in full: what the scope omits is removed.
+- **A Trivy scan filtered by severity or fixability** is complete for its filter only. If
+  one pipeline sends the same image filtered and another unfiltered, they now undo each
+  other's findings: send the filtered one with `?snapshot=none`.
+- **A pull request's scan never removes anything**, and `?snapshot=` together with
+  `slug`/`sha`/`pr` is refused with `400`.
+- **Elements already in the graph** when you upgrade are never removed this way - nothing
+  recorded who sent them - only by `GRAPH_TTL`. To clean up leftovers from before, enable
+  `GRAPH_TTL` for a cycle, or re-create the graph and let the feeds rebuild it.
+- The Postgres graph gains a provenance table beside the parked edges
+  (`<graph>._pg_provenance`, plus `_pg_removals`). It is created and filled on first
+  write, under the graph's write lock, and needs no migration step. Every write now also
+  records its origin, one row per element per source.
+- With `ANALYZER_INCREMENTAL=true`, the analyzer re-reads the whole graph after any removal,
+  on every replica.
+- The Helm ingress now raises the nginx-based controllers' 1 MiB request-body limit to the
+  32 MiB the backend accepts, for `/ingest` and `/gate` (`ingress.maxBodySize`). A body-size
+  annotation you set yourself wins.
+
+**Action to keep the old behaviour:** `GRAPH_SWEEP=false` (Helm `graph.sweep: false`): nothing
+is removed except by `GRAPH_TTL`.
+
 ## 1.22.0
 
 ### The merge gate counts what the change adds, and writes nothing

@@ -136,3 +136,42 @@ func statusOf(s *Scheduler, src string) Status {
 	}
 	return Status{}
 }
+
+// batchPub publishes a whole collection as one tracked batch, as the broker does.
+type batchPub struct {
+	capturePub
+	batches int
+}
+
+func (p *batchPub) PublishBatch(_ context.Context, events []ontology.Event) (string, int, error) {
+	p.batches++
+	p.published = append(p.published, events...)
+	return "0123456789abcdef0123456789abcdef", len(events), nil
+}
+
+// A collection is published as one batch, so the complete snapshots in it are applied
+// once all of it has landed - stamped with the time the connector took them. Published
+// untracked, the declaration is dropped: nothing could say when the whole had arrived.
+func TestACollectionIsOneBatchAndItsSnapshotsAreTakenNow(t *testing.T) {
+	snap := ev("a")
+	snap.Snapshot = &ontology.Snapshot{Scope: "aws:111111111111/eu-west-1"}
+	before := time.Now().UTC()
+
+	pub := &batchPub{}
+	NewScheduler(pub, 0, &fakeConn{src: "aws", events: []ontology.Event{snap, ev("b")}}).collectAll(context.Background())
+	if pub.batches != 1 || len(pub.published) != 2 {
+		t.Fatalf("%d batch(es), %d event(s): want the collection as one batch", pub.batches, len(pub.published))
+	}
+	if sn := pub.published[0].Snapshot; sn == nil || sn.Taken.Before(before) {
+		t.Fatalf("snapshot %+v: want it taken at collection time", sn)
+	}
+	if pub.published[1].Snapshot != nil {
+		t.Error("a partial event came out declared complete")
+	}
+
+	plain := &capturePub{}
+	NewScheduler(plain, 0, &fakeConn{src: "aws", events: []ontology.Event{snap}}).collectAll(context.Background())
+	if plain.published[0].Snapshot != nil {
+		t.Error("an untracked publish kept a snapshot declaration nothing can apply")
+	}
+}

@@ -97,3 +97,33 @@ func TestDefaultRepository(t *testing.T) {
 		t.Errorf("default repo id = %s, want %s", events[0].Nodes[0].ID, want)
 	}
 }
+
+// A report retracts the findings it no longer lists only when it describes a named
+// repository in full: every unnamed report shares one default name, a file semgrep
+// could not analyse has findings missing, and a pull request's scan describes a change.
+func TestWhenASemgrepScanIsComplete(t *testing.T) {
+	for _, tc := range []struct {
+		name, report string
+		opts         ingestion.Options
+		want         string
+	}{
+		{"a named repository", `{"results":[],"errors":[]}`, ingestion.Options{Repository: "acme/api"}, "repository:acme/api"},
+		{"an unnamed one", `{"results":[]}`, ingestion.Options{}, ""},
+		{"a file it could not analyse", `{"results":[],"errors":[{"type":"ParseError"}]}`, ingestion.Options{Repository: "acme/api"}, ""},
+		{"a pull request's scan", `{"results":[]}`, ingestion.Options{Repository: "acme/api", RepoSlug: "acme/api", PRNumber: 7}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			evs, err := New().Parse(strings.NewReader(tc.report), tc.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := ""
+			if sn := evs[0].Snapshot; sn != nil {
+				got = sn.Scope
+			}
+			if got != tc.want {
+				t.Fatalf("scope %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

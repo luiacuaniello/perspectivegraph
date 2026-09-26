@@ -284,6 +284,10 @@ Pin to a signed, digest-referenced image and verify it before rollout (see
   shows whether anything still signs v1; `perspectivegraph_graph_pending_edges` counts
   edges waiting for an endpoint. The pending count is refreshed by each replica's own
   analyzer pass, so on a replica that wrote nothing it can lag by a few passes.
+  `perspectivegraph_graph_sweeps_total{source,result}` counts complete snapshots applied
+  and `perspectivegraph_graph_swept_total{kind}` what they removed (`node`, `edge`) or set
+  waiting (`parked`); a jump in removals for one source is the thing to look at when an
+  asset disappears unexpectedly - the log line names the scope.
 - Suggested SLOs to alert on: ingest error rate, analyzer pass duration vs
   `ANALYZER_INTERVAL`, connector `last_error`, and `auth.deny` spikes (possible
   credential stuffing) from the audit log.

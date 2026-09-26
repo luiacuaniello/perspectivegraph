@@ -2,6 +2,7 @@ package aws
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -114,5 +115,42 @@ func TestSplitARNs(t *testing.T) {
 	}
 	if len(splitARNs("")) != 0 {
 		t.Error("an empty list must stay empty - it means the ambient account, not one blank role")
+	}
+}
+
+type regionalStub struct {
+	stubTransport
+	region string
+}
+
+func (r regionalStub) Region() string { return r.region }
+
+// A feed the connector read in full is a complete snapshot of what it covers - the
+// network feed one account in one region - so an instance terminated since the last pull
+// can be retracted. Only when the account is known: two accounts nobody can tell apart
+// would retract each other's assets. And a feed that failed declares nothing.
+func TestAFeedReadInFullIsASnapshotOfItsAccount(t *testing.T) {
+	scopeOf := func(tr transport) string {
+		t.Helper()
+		evs, _ := New(tr).Collect(context.Background())
+		if len(evs) == 0 {
+			return "no events"
+		}
+		if evs[0].Snapshot == nil {
+			return ""
+		}
+		return evs[0].Snapshot.Scope
+	}
+	if got := scopeOf(regionalStub{stubTransport{account: "111111111111", network: oneInstance}, "eu-west-1"}); got != "aws:111111111111/eu-west-1" {
+		t.Errorf("known account and region: scope %q", got)
+	}
+	if got := scopeOf(regionalStub{stubTransport{network: oneInstance}, "eu-west-1"}); got != "" {
+		t.Errorf("unknown account: scope %q, want a partial pull", got)
+	}
+	if got := scopeOf(stubTransport{account: "111111111111", network: oneInstance}); got != "" {
+		t.Errorf("unknown region: scope %q, want a partial pull", got)
+	}
+	if got := scopeOf(regionalStub{stubTransport{account: "111111111111", err: errors.New("throttled")}, "eu-west-1"}); got != "no events" {
+		t.Errorf("failed feed: %q, want nothing collected and nothing declared", got)
 	}
 }

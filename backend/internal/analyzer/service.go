@@ -83,6 +83,7 @@ type tenantState struct {
 	cacheValid      bool  // a full snapshot has seeded the cache
 	snapWatermark   int64 // unix seconds; next delta fetches last_seen >= this
 	passesSinceFull int   // forces a periodic full re-read (drift safety net)
+	removalEpoch    int64 // the store's removal epoch the cache was built at
 }
 
 // edgeID keys an edge in the incremental cache by its identity (type + endpoints),
@@ -517,6 +518,23 @@ func (s *Service) acquireSnapshot(ctx context.Context, tenant string, store grap
 	ds, canDelta := graph.AsDeltaStore(store)
 	full := !s.incremental || !canDelta || !st.cacheValid || pruned || st.passesSinceFull >= fullSnapshotEvery
 
+	// A delta carries no deletions. Whatever left the graph since the cache was built - a
+	// prune, a complete snapshot's sweep, on this replica or another - is seen through the
+	// removal epoch, and costs a full read. Read before the snapshot, so a removal during
+	// the read moves it again and the next pass rebuilds too.
+	epoch, epochKnown := int64(0), false
+	if s.incremental {
+		if re, ok := graph.AsRemovalEpocher(store); ok {
+			e, err := re.RemovalEpoch(ctx)
+			if err != nil {
+				full = true
+			} else {
+				epoch, epochKnown = e, true
+				full = full || e != st.removalEpoch
+			}
+		}
+	}
+
 	if !full {
 		d, err := ds.SnapshotSince(ctx, st.snapWatermark)
 		if err != nil {
@@ -556,6 +574,9 @@ func (s *Service) acquireSnapshot(ctx context.Context, tenant string, store grap
 		st.cacheValid = true
 		st.snapWatermark = watermark
 		st.passesSinceFull = 0
+		if epochKnown {
+			st.removalEpoch = epoch
+		}
 	}
 	metrics.AnalyzerSnapshots.WithLabelValues("full").Inc()
 	metrics.AnalyzerSnapshotSeconds.Observe(time.Since(start).Seconds())

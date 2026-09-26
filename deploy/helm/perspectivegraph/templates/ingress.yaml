@@ -20,7 +20,22 @@ metadata:
   labels:
     {{- include "perspectivegraph.labels" . | nindent 4 }}
   annotations:
-    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+    {{- /*
+      /ingest and /gate take scanner reports, which the backend accepts up to 32 MiB. The
+      nginx-based controllers refuse a body over 1 MiB by default, with a 413 the engine never
+      sees - so a real report was lost at the ingress. ingress.maxBodySize raises it for
+      both of them (ingress-nginx and F5 NGINX); other controllers ignore these keys. An
+      annotation the operator set wins.
+    */}}
+    {{- $annotations := deepCopy (.Values.ingress.annotations | default dict) }}
+    {{- with .Values.ingress.maxBodySize }}
+    {{- range $key := list "nginx.ingress.kubernetes.io/proxy-body-size" "nginx.org/client-max-body-size" }}
+    {{- if not (hasKey $annotations $key) }}
+    {{- $_ := set $annotations $key (toString $.Values.ingress.maxBodySize) }}
+    {{- end }}
+    {{- end }}
+    {{- end }}
+    {{- toYaml $annotations | nindent 4 }}
 spec:
   {{- with .Values.ingress.className }}
   ingressClassName: {{ . }}
@@ -55,8 +70,7 @@ spec:
                 port:
                   number: {{ .Values.service.apiPort }}
           # The merge gate's comparison (POST /gate/impact) - an API route, authenticated
-          # like /graphql. Its body is a scanner report: an ingress controller with a 1 MiB
-          # body limit (ingress-nginx's default) needs it raised, as /ingest does.
+          # like /graphql. Its body is a scanner report, like /ingest's: see maxBodySize.
           - path: /gate
             pathType: Prefix
             backend:

@@ -416,6 +416,11 @@ containerSecurityContext:
 # paths. Empty ⇒ disabled. Example: "168h" (7 days).
 graph:
   ttl: ""
+  # Complete snapshots (GRAPH_SWEEP): a source that describes a scope in full - an
+  # image scan, an AWS account pull, an ingest sent with ?snapshot= - retracts what it
+  # no longer lists, and an element nobody asserts any more leaves the graph. false
+  # keeps everything until ttl, as before 1.23.
+  sweep: true
 
 ingress:
   enabled: false
@@ -426,6 +431,13 @@ ingress:
   allowUnauthenticated: false
   className: ""
   annotations: {}
+  # The largest request body the ingress passes on. /ingest and /gate take scanner reports,
+  # which the backend accepts up to 32 MiB; the nginx-based controllers refuse anything
+  # over 1 MiB by default, so a real report would get a 413 before reaching the engine.
+  # Rendered as the body-size annotation of ingress-nginx and of F5 NGINX; other
+  # controllers ignore it (set theirs in annotations). An annotation you set yourself
+  # wins. Empty leaves the controller's default.
+  maxBodySize: 32m
   host: perspectivegraph.local
   # TLS termination at the ingress (recommended way to serve HTTPS). Set
   # tls.enabled and a secretName holding the cert - typically issued automatically
