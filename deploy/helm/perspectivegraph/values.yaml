@@ -197,6 +197,10 @@ opensearch:
 # "owner/*". REQUIRED for any real write - the destination otherwise comes from
 # an ingested node property, so an empty list refuses every write.
 repoAllowlist: []
+# Which critical paths the commit status and PR/MR comments count against a commit:
+# diff = the routes the change opened or made likelier (the merge gate's rule);
+# commit = every route through an asset stamped with it (before 1.22).
+prAttribution: diff
 
 github:
   token: ""

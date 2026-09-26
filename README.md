@@ -129,15 +129,18 @@ scan, and answers in-process with the same engine:
     report: trivy.json
 ```
 
-The check goes red when *this commit* puts a sensitive asset within reach, not when it adds a
-critical CVE: a critical on a host nothing routes to does not fail the build, and a medium on a
-container that now reaches the production database does. It also has a third outcome, because a
-pipeline whose scan never arrived must not get the same green tick as one that is clean:
+The check goes red when *this change* opens a route to a sensitive asset - or makes one
+likelier - not when it adds a critical CVE: a critical on a host nothing routes to does not fail
+the build, and a medium on a container that now reaches the production database does. Routes that
+were there before the change do not count, even when they run through what it touches: the scan
+is applied to a copy of the estate and compared with it, and nothing is written. It also has a
+third outcome, because a pipeline whose scan never arrived must not get the same green tick as
+one that is clean:
 
 | Verdict | Exit | Meaning |
 | --- | --- | --- |
-| `clean` | 0 | The engine analysed this commit and found no path through it |
-| `blocked` | 1 | Critical attack paths run through it - the check names them |
+| `clean` | 0 | The engine analysed this change: it opens or worsens no critical path |
+| `blocked` | 1 | It opens or worsens critical attack paths - the check names them |
 | `unknown` | 2 | **Nobody analysed it.** The scan, the ingest or the SHA is wrong |
 
 Outside GitHub Actions it is one command, and it installs as a Trivy plugin too:

@@ -140,21 +140,21 @@ func TestPostStatusSurfacesAnAPIFailure(t *testing.T) {
 
 type countingSink struct{ n int }
 
-func (c *countingSink) OnCriticalPaths(context.Context, []analyzer.AttackPath) { c.n++ }
+func (c *countingSink) OnCriticalPaths(context.Context, string, []analyzer.AttackPath) { c.n++ }
 
 // MultiSink is how one analysis pass reaches the PR comment, the merge gate and the
 // alert webhook at once. Stopping after the first would let one channel's problem
 // silently take out the others.
 func TestMultiSinkFansOutToEverySink(t *testing.T) {
 	a, b, c := &countingSink{}, &countingSink{}, &countingSink{}
-	MultiSink{a, b, c}.OnCriticalPaths(context.Background(), nil)
+	MultiSink{a, b, c}.OnCriticalPaths(context.Background(), "default", nil)
 	if a.n != 1 || b.n != 1 || c.n != 1 {
 		t.Fatalf("fan-out reached %d/%d/%d, want 1 each", a.n, b.n, c.n)
 	}
 }
 
 func TestEmptyMultiSinkIsSafe(t *testing.T) {
-	MultiSink{}.OnCriticalPaths(context.Background(), nil) // must not panic
+	MultiSink{}.OnCriticalPaths(context.Background(), "default", nil) // must not panic
 }
 
 func TestConsoleSinkRendersAPathWithoutPanicking(t *testing.T) {
@@ -167,6 +167,6 @@ func TestConsoleSinkRendersAPathWithoutPanicking(t *testing.T) {
 		Steps: []analyzer.Step{{From: "lb", To: "role", EdgeType: ontology.EdgeExposes, Probability: 0.9}},
 		Score: 0.55,
 	}
-	ConsoleSink{}.OnCriticalPaths(context.Background(), []analyzer.AttackPath{p})
-	ConsoleSink{}.OnCriticalPaths(context.Background(), nil)
+	ConsoleSink{}.OnCriticalPaths(context.Background(), "default", []analyzer.AttackPath{p})
+	ConsoleSink{}.OnCriticalPaths(context.Background(), "default", nil)
 }

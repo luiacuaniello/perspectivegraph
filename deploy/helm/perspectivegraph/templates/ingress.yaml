@@ -54,6 +54,16 @@ spec:
                 name: {{ include "perspectivegraph.backendHost" . }}
                 port:
                   number: {{ .Values.service.apiPort }}
+          # The merge gate's comparison (POST /gate/impact) - an API route, authenticated
+          # like /graphql. Its body is a scanner report: an ingress controller with a 1 MiB
+          # body limit (ingress-nginx's default) needs it raised, as /ingest does.
+          - path: /gate
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "perspectivegraph.backendHost" . }}
+                port:
+                  number: {{ .Values.service.apiPort }}
           {{- if .Values.frontend.enabled }}
           # Dashboard (catch-all).
           - path: /

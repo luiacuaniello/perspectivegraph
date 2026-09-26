@@ -10,9 +10,27 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
 )
 
-type recordingSink struct{ calls int }
+type recordingSink struct {
+	calls   int
+	tenants []string
+	paths   []int
+}
 
-func (r *recordingSink) OnCriticalPaths(context.Context, []AttackPath) { r.calls++ }
+func (r *recordingSink) OnCriticalPaths(_ context.Context, tenant string, paths []AttackPath) {
+	r.calls++
+	r.tenants = append(r.tenants, tenant)
+	r.paths = append(r.paths, len(paths))
+}
+
+type recordingObserver struct {
+	passes int
+	nodes  []int
+}
+
+func (r *recordingObserver) ObservePass(_ string, snap graph.Snapshot, _ []AttackPath) {
+	r.passes++
+	r.nodes = append(r.nodes, len(snap.Nodes))
+}
 
 type fakeLeader struct{ leader bool }
 
@@ -66,6 +84,68 @@ func TestSideEffectsGatedByLeadership(t *testing.T) {
 	svc2.runTenant(ctx, graph.DefaultTenant)
 	if lead.calls != 1 {
 		t.Errorf("leader should post once, sink fired %d times", lead.calls)
+	}
+}
+
+// The observer keeps state built from the sequence of passes - what each commit found
+// when it arrived - so it must see every pass on every replica: a follower that became
+// leader with an empty observer would judge every commit as if it had just arrived.
+func TestObserverSeesEveryPassOnEveryReplica(t *testing.T) {
+	ctx := context.Background()
+	mgr, err := graph.NewManager(ctx, func(context.Context, string) (graph.Store, error) { return memory.New(), nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := mgr.For(ctx, graph.DefaultTenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedOnePath(t, store)
+
+	obs, sink := &recordingObserver{}, &recordingSink{}
+	NewService(mgr, time.Minute, sink).WithLeader(fakeLeader{leader: false}).WithPassObserver(obs).
+		runTenant(ctx, graph.DefaultTenant)
+	if obs.passes != 1 || obs.nodes[0] != 2 {
+		t.Errorf("a follower's observer saw %d pass(es) %v, want 1 pass of the 2-node graph", obs.passes, obs.nodes)
+	}
+	if sink.calls != 0 {
+		t.Errorf("a follower's sink fired %d times", sink.calls)
+	}
+}
+
+// A status that went red on a route has to hear that the route is gone. The sink used to
+// be skipped on a pass with no paths, so when the last route closed, the check stayed red.
+// And it has to know whose pass it is: its state is per tenant, and a pass of one tenant
+// must not clear another's.
+func TestSinkHearsTheTenantAndAPassWithNoPaths(t *testing.T) {
+	ctx := context.Background()
+	mgr, err := graph.NewManager(ctx, func(context.Context, string) (graph.Store, error) { return memory.New(), nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := mgr.For(ctx, "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedOnePath(t, store)
+
+	sink := &recordingSink{}
+	svc := NewService(mgr, time.Minute, sink)
+	svc.runTenant(ctx, "acme")
+	// The role stops being a sensitive asset, so the route stops being a critical path.
+	if err := store.UpsertNode(ctx, ontology.Node{ID: "role", Label: ontology.LabelIAMRole, Name: "admin",
+		Properties: map[string]any{ontology.PropCrownJewel: false}}); err != nil {
+		t.Fatal(err)
+	}
+	svc.runTenant(ctx, "acme")
+
+	if sink.calls != 2 || sink.paths[0] != 1 || sink.paths[1] != 0 {
+		t.Fatalf("sink heard %d pass(es) with %v path(s), want 2 passes: 1 path, then none", sink.calls, sink.paths)
+	}
+	for _, tn := range sink.tenants {
+		if tn != "acme" {
+			t.Errorf("sink heard tenant %q, want acme", tn)
+		}
 	}
 }
 

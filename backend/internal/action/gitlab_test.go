@@ -62,7 +62,7 @@ func TestGitLabCommenterCreateAndUpdate(t *testing.T) {
 
 	c := NewGitLabCommenter(GitLabConfig{Token: "glpat-x", BaseURL: srv.URL, Allow: mustAllow(t, "acme/*")})
 
-	c.OnCriticalPaths(ctx, []analyzer.AttackPath{samplePath(0.58)})
+	c.OnCriticalPaths(ctx, "default", []analyzer.AttackPath{samplePath(0.58)})
 	if mock.posts != 1 || len(mock.notes) != 1 {
 		t.Fatalf("expected 1 note created, posts=%d notes=%d", mock.posts, len(mock.notes))
 	}
@@ -72,7 +72,7 @@ func TestGitLabCommenterCreateAndUpdate(t *testing.T) {
 
 	// Cold-cache commenter with changed body must update via marker, not repost.
 	c2 := NewGitLabCommenter(GitLabConfig{Token: "glpat-x", BaseURL: srv.URL, Allow: mustAllow(t, "acme/*")})
-	c2.OnCriticalPaths(ctx, []analyzer.AttackPath{samplePath(0.42)})
+	c2.OnCriticalPaths(ctx, "default", []analyzer.AttackPath{samplePath(0.42)})
 	if mock.posts != 1 || mock.puts != 1 {
 		t.Errorf("expected update not repost: posts=%d puts=%d", mock.posts, mock.puts)
 	}

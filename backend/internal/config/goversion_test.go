@@ -66,7 +66,7 @@ func TestGoVersionIsConsistentEverywhereItIsNamed(t *testing.T) {
 		{[]string{".github", "workflows", "codeql.yml"}, `go-version: "(\d+\.\d+\.\d+)"`, 1},
 		{[]string{".github", "workflows", "fuzz.yml"}, `go-version: "(\d+\.\d+\.\d+)"`, 1},
 		{[]string{".github", "workflows", "publish-images.yml"}, `go-version: "(\d+\.\d+\.\d+)"`, 1},
-		{[]string{".github", "workflows", "action-smoke.yml"}, `go-version: "(\d+\.\d+\.\d+)"`, 2},
+		{[]string{".github", "workflows", "action-smoke.yml"}, `go-version: "(\d+\.\d+\.\d+)"`, 3},
 	} {
 		name := filepath.Join(tc.path...)
 		found := regexp.MustCompile(tc.re).FindAllStringSubmatch(read(tc.path...), -1)

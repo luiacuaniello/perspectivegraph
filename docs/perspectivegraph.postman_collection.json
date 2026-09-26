@@ -86,7 +86,7 @@
 					"    pm.request.headers.upsert({ key: 'X-PerspectiveGraph-Signature-V2', value: 'v2=' + CryptoJS.HmacSHA256(toSign, secret).toString(CryptoJS.enc.Hex) });",
 					"  }",
 					"}",
-					"if (url.includes('/graphql') || url.includes('/export/') || url.includes('/suppressions') || url.includes('/tickets') || url.includes('/validations') || url.includes('/ai/') || url.includes('/remediation/') || url.includes('/auth/me')) {",
+					"if (url.includes('/graphql') || url.includes('/export/') || url.includes('/suppressions') || url.includes('/tickets') || url.includes('/validations') || url.includes('/ai/') || url.includes('/remediation/') || url.includes('/auth/me') || url.includes('/gate/')) {",
 					"  const token = pm.variables.get('apiToken');",
 					"  if (token) {",
 					"    pm.request.headers.upsert({ key: 'Authorization', value: 'Bearer ' + token });",
@@ -784,6 +784,57 @@
 							}
 						},
 						"description": "What the engine says about ONE commit, for a CI merge gate. This is the query behind `perspectivegraph gate` and the GitHub Action.\n\nIt reports THREE states, not two, and the third is why it exists:\n\n- `analysed: true`, `criticalPaths: 0` - clean. The engine looked and found nothing.\n- `analysed: true`, `criticalPaths: N` - blocked. N critical paths run through this commit, listed in `paths`.\n- `analysed: false` - UNKNOWN. Nothing carrying this commit ever reached the graph. This is NOT clean: a pipeline whose scanner output never arrived would otherwise get the same green light as one that is genuinely safe, which is the silent false negative this product exists to make visible.\n\n`analysedAt` dates the pass that produced `criticalPaths`. A gate must ignore a verdict older than its own ingest - the commit can already be in the graph while the paths still describe the estate as it was before it arrived, and that reads as zero paths.\n\nThe commit gets into the graph via the `slug` and `sha` query parameters on the ingest webhooks (see 'Ingest - scanner webhooks'). Without them nothing is stamped and every verdict here is UNKNOWN."
+					},
+					"response": []
+				},
+				{
+					"name": "Merge gate - what this change adds (POST /gate/impact)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"SchemaVersion\": 2,\n  \"ArtifactName\": \"payments-api:1.4.2\",\n  \"ArtifactType\": \"container_image\",\n  \"Results\": [\n    {\n      \"Target\": \"payments-api:1.4.2 (debian 11.6)\",\n      \"Class\": \"lang-pkgs\",\n      \"Type\": \"jar\",\n      \"Vulnerabilities\": [\n        {\n          \"VulnerabilityID\": \"CVE-2021-44228\",\n          \"PkgName\": \"log4j-core\",\n          \"InstalledVersion\": \"2.14.1\",\n          \"FixedVersion\": \"2.15.0\",\n          \"Severity\": \"CRITICAL\",\n          \"Title\": \"Log4Shell: remote code execution via JNDI lookup\",\n          \"CVSS\": { \"nvd\": { \"V3Score\": 10.0 }, \"redhat\": { \"V3Score\": 9.8 } }\n        },\n        {\n          \"VulnerabilityID\": \"CVE-2022-22965\",\n          \"PkgName\": \"spring-beans\",\n          \"InstalledVersion\": \"5.3.16\",\n          \"FixedVersion\": \"5.3.18\",\n          \"Severity\": \"HIGH\",\n          \"Title\": \"Spring4Shell: RCE via data binding\",\n          \"CVSS\": { \"nvd\": { \"V3Score\": 9.8 } }\n        }\n      ]\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{apiUrl}}/gate/impact?source=trivy&slug={{slug}}&sha={{sha}}&pr={{pr}}",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"gate",
+								"impact"
+							],
+							"query": [
+								{
+									"key": "source",
+									"value": "trivy"
+								},
+								{
+									"key": "slug",
+									"value": "{{slug}}"
+								},
+								{
+									"key": "sha",
+									"value": "{{sha}}"
+								},
+								{
+									"key": "pr",
+									"value": "{{pr}}"
+								}
+							]
+						},
+						"description": "The merge gate's default question since 1.22: what does THIS change add to the estate's attack paths? This is the call behind `perspectivegraph gate` and the GitHub Action.\n\nThe body is the scanner report, the query the same parameters the ingest webhook takes. The engine parses it with the same collector, applies it through the same normalizer to an in-memory COPY of the graph, and compares the critical paths: a route between an entry and a sensitive asset that did not exist before is `introduced`, one that became likelier is `worsened` (with `previousScore`). Those are `paths` and `criticalPaths`. Routes that were there before and merely run through what the change touches are counted in `preexisting` and do not block. NOTHING is written - send the report to the ingest webhook as well if the live graph should record it.\n\n`analysed: false` is UNKNOWN, as with prVerdict: nothing in the report carried this commit. `reachable: false` means none of the change's assets can be reached from an attack seed - fine for a service not deployed, otherwise usually a scan naming the image differently from the workload. `recorded: true` means the engine already held this commit, so routes through it count per commit (`change: recorded`).\n\nNeeds the bearer token (set apiToken); refused to anonymous callers on a public instance. Run the Trivy ingest request first to see a rescan of the same image come back clean with `preexisting` > 0."
 					},
 					"response": []
 				},

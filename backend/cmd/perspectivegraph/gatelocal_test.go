@@ -237,6 +237,9 @@ func TestLocalModeAgreesWithTheAnalyzerService(t *testing.T) {
 	ctx := context.Background()
 	o := baseOpts(t)
 	o.reports = []reportSpec{trivySampleSpec(t)}
+	// The per-commit rule, which is what the server's prVerdict answers: the parity this
+	// test holds is between the two ways of computing THAT rule.
+	o.attribution = "commit"
 
 	local, err := localVerdict(ctx, o)
 	if err != nil {
@@ -251,7 +254,7 @@ func TestLocalModeAgreesWithTheAnalyzerService(t *testing.T) {
 	}
 	norm := normalization.New(mgr)
 	events := estateEvents()
-	reportEvents, err := o.parseReports()
+	reportEvents, err := o.parseReports(o.reports, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -553,7 +556,7 @@ func TestATrulyDanglingReferenceStillFails(t *testing.T) {
 func parseTrivyForTest(t *testing.T) []ontology.Event {
 	t.Helper()
 	o := localOpts{slug: localSlug, sha: localSHA, repository: localSlug, reports: []reportSpec{trivySampleSpec(t)}}
-	events, err := o.parseReports()
+	events, err := o.parseReports(o.reports, true)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/luiacuaniello/perspectivegraph/internal/impact"
 )
 
 // GitLabConfig configures the GitLab merge-request commenter.
@@ -18,6 +20,8 @@ type GitLabConfig struct {
 	DryRun  bool
 	// Allow is the repository allowlist - see GitHubConfig.Allow. Nil denies everything.
 	Allow *RepoAllow
+	// Attribution - see GitHubConfig.Attribution. Nil counts every route through the commit.
+	Attribution *impact.Ledger
 }
 
 // NewGitLabCommenter returns a Commenter that posts to GitLab merge requests.
@@ -31,7 +35,7 @@ func NewGitLabCommenter(cfg GitLabConfig) *Commenter {
 		slog.Warn("gitlab commenter: no token set, running in dry-run (comments logged, not posted)")
 		cfg.DryRun = true
 	}
-	return newCommenter(&gitlabPoster{cfg: cfg, http: &http.Client{Timeout: 10 * time.Second}}, cfg.Allow)
+	return newCommenter(&gitlabPoster{cfg: cfg, http: &http.Client{Timeout: 10 * time.Second}}, cfg.Allow).withJudge(cfg.Attribution)
 }
 
 type gitlabPoster struct {

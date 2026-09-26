@@ -86,7 +86,7 @@ func TestGitHubCommenterCreateDedupUpdate(t *testing.T) {
 	path := samplePath(0.58)
 
 	// 1. First pass → one comment created.
-	c.OnCriticalPaths(ctx, []analyzer.AttackPath{path})
+	c.OnCriticalPaths(ctx, "default", []analyzer.AttackPath{path})
 	if mock.posts != 1 {
 		t.Fatalf("expected 1 POST, got %d", mock.posts)
 	}
@@ -101,7 +101,7 @@ func TestGitHubCommenterCreateDedupUpdate(t *testing.T) {
 	}
 
 	// 2. Same path again → in-memory dedup skips the API entirely.
-	c.OnCriticalPaths(ctx, []analyzer.AttackPath{path})
+	c.OnCriticalPaths(ctx, "default", []analyzer.AttackPath{path})
 	if mock.posts != 1 || mock.gets != 1 {
 		t.Errorf("identical pass should hit no API: posts=%d gets=%d", mock.posts, mock.gets)
 	}
@@ -109,7 +109,7 @@ func TestGitHubCommenterCreateDedupUpdate(t *testing.T) {
 	// 3. A fresh commenter (cold cache) with a changed body must UPDATE the
 	//    existing comment (found by marker), not create a new one.
 	c2 := NewGitHubCommenter(GitHubConfig{Token: "test-token", BaseURL: srv.URL, Allow: mustAllow(t, "acme/*")})
-	c2.OnCriticalPaths(ctx, []analyzer.AttackPath{samplePath(0.42)})
+	c2.OnCriticalPaths(ctx, "default", []analyzer.AttackPath{samplePath(0.42)})
 	if mock.posts != 1 {
 		t.Errorf("expected no new POST, got posts=%d", mock.posts)
 	}
@@ -133,15 +133,15 @@ func TestGitHubCommenterSkipsWhenNoPRContext(t *testing.T) {
 	path := samplePath(0.58)
 	path.Nodes[1].Properties = nil // strip PR context from the image node
 
-	c.OnCriticalPaths(context.Background(), []analyzer.AttackPath{path})
+	c.OnCriticalPaths(context.Background(), "default", []analyzer.AttackPath{path})
 	if mock.posts != 0 || mock.gets != 0 {
 		t.Errorf("no PR context should mean no API calls: posts=%d gets=%d", mock.posts, mock.gets)
 	}
 }
 
-func TestPRTarget(t *testing.T) {
-	slug, num, ok := prTarget(samplePath(0.5))
-	if !ok || slug != "acme/payments-api" || num != 42 {
-		t.Fatalf("prTarget = (%q,%d,%v), want (acme/payments-api,42,true)", slug, num, ok)
+func TestPRsOn(t *testing.T) {
+	prs := prsOn(samplePath(0.5))
+	if len(prs) != 1 || prs[0].slug != "acme/payments-api" || prs[0].number != 42 {
+		t.Fatalf("prsOn = %+v, want one: acme/payments-api#42", prs)
 	}
 }

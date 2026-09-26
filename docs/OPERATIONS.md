@@ -279,7 +279,8 @@ Pin to a signed, digest-referenced image and verify it before rollout (see
   `perspectivegraph_analyzer_*`, ingest and auth counters, and
   `perspectivegraph_broker_connected` (0 while the bus is reconnecting).
   `perspectivegraph_auth_denied_total{surface,reason}` counts refused credentials where
-  they are refused (API and ingest); `perspectivegraph_ingest_signatures_total{version}`
+  they are refused (API and ingest; `anonymous_ai` and `anonymous_gate` are visitors turned
+  away from the paid and the heavy endpoints); `perspectivegraph_ingest_signatures_total{version}`
   shows whether anything still signs v1; `perspectivegraph_graph_pending_edges` counts
   edges waiting for an endpoint. The pending count is refreshed by each replica's own
   analyzer pass, so on a replica that wrote nothing it can lag by a few passes.
@@ -616,6 +617,9 @@ open-instance banner. The backend tells the two apart; the page does not guess.
 - **It does not answer AI questions for visitors.** `/ai/*` needs a signed-in caller, so
   anonymous visitors get none even if a key is configured - but keep keys off a published
   instance anyway.
+- **It does not run the merge gate for visitors.** `POST /gate/impact` analyses a report
+  the caller sends, so it needs a signed-in caller too; a CI gate pointed at a published
+  instance passes a token.
 
 **Per visitor, not per proxy.** A published instance is always reached through a proxy:
 in the compose recipe every visitor comes through the dashboard's nginx. Keyed on that

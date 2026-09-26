@@ -33,14 +33,27 @@ const (
 	gateExitError   = 3
 )
 
-// gateVerdict mirrors the prVerdict GraphQL type. It is the contract between the two
-// ways of reaching a verdict - polling a running engine, or computing it here in local
-// mode - so that everything downstream cannot tell them apart.
+// gateVerdict mirrors the prVerdict GraphQL type and the POST /gate/impact answer. It is
+// the contract between the ways of reaching a verdict - asking a running engine, per
+// commit or by comparison, or computing it here in local mode - so that everything
+// downstream cannot tell them apart.
 type gateVerdict struct {
+	// Attribution is how routes were attributed to the change: "diff" (the routes it
+	// opens or worsens, the default) or "commit" (every route through an asset stamped
+	// with the commit, the rule before 1.22).
+	Attribution   string     `json:"attribution"`
 	Analysed      bool       `json:"analysed"`
 	CriticalPaths int        `json:"criticalPaths"`
 	AnalysedAt    string     `json:"analysedAt"`
 	Paths         []gatePath `json:"paths"`
+
+	// Diff attribution only. Preexisting counts routes through the change's assets that
+	// were there before it; Recorded, that the engine already held the commit, so routes
+	// through it counted per commit; Reachable, that some asset of the change can be
+	// reached from an attack seed at all.
+	Preexisting int  `json:"preexisting,omitempty"`
+	Recorded    bool `json:"recorded,omitempty"`
+	Reachable   bool `json:"reachable,omitempty"`
 
 	// Incomplete is set (to the reason) when the estate was read only in part, which
 	// local mode can detect and the server cannot. A path found on partial data is
@@ -54,6 +67,11 @@ type gatePath struct {
 	Score    float64    `json:"score"`
 	Priority float64    `json:"priority"`
 	Nodes    []gateNode `json:"nodes"`
+	// Diff attribution: why the route counts (introduced, worsened, recorded), the score
+	// a worsened route had before, and whether its assets are hidden from this token.
+	Change        string  `json:"change,omitempty"`
+	PreviousScore float64 `json:"previousScore,omitempty"`
+	Redacted      bool    `json:"redacted,omitempty"`
 }
 
 type gateNode struct {
@@ -61,9 +79,16 @@ type gateNode struct {
 	Label string `json:"label"`
 }
 
-// runGate is the merge gate: push one scanner report into the engine stamped with the
-// pull request's identity, wait for the engine to place it in the estate graph, and fail
-// the build when the change puts a sensitive asset within reach.
+// runGate is the merge gate: fail the build when the change puts a sensitive asset
+// within reach.
+//
+// By default it asks what the change ADDS: the report is applied to a copy of the estate
+// and the routes it opens or worsens are what count (-attribution diff; POST
+// /gate/impact on a server, the same comparison in local mode). The rule before 1.22 -
+// every route through an asset stamped with the commit - is -attribution commit: it
+// ingests the report and waits for the engine's record of the commit, and it blocked a
+// change for routes that were there before it (a rescanned image, a re-rendered
+// deployment).
 //
 // It deliberately blocks on ATTACK PATHS, not on vulnerability counts. A critical CVE on
 // a host nothing can route to does not fail the build; a medium one on a container that
@@ -92,6 +117,10 @@ func runGate(args []string) error {
 	maxCritical := fs.Int("max-critical", 0, "fail when the commit is on more than this many critical paths")
 	allowUnknown := fs.Bool("allow-unknown", false, "pass the build when the commit was never analysed. This turns a broken ingest into a green check - reasonable while rolling the gate out, a liability afterwards.")
 	asJSON := fs.Bool("json", false, "print the verdict as JSON instead of prose")
+	attribution := fs.String("attribution", "diff", "which routes count against the change: \"diff\" - the ones it opens or worsens, compared with the estate as it stands, and nothing is written - or \"commit\" - every route through an asset stamped with the commit, the rule before 1.22")
+	persist := fs.Bool("persist", false, "diff attribution, server mode: also send the report to the ingest webhook, so the live graph records the change (the engine's own PR comments need it). The verdict is computed first, on the estate without it")
+	var baseReports reportFlag
+	fs.Var(&baseReports, "base-reports", "local mode, diff attribution: repeatable source=path scan of what runs now (the base branch), applied to the estate before the comparison - without it a scanned image is compared with an estate that knows none of its findings")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -101,6 +130,19 @@ func runGate(args []string) error {
 	}
 	if *slug == "" || *sha == "" {
 		return errors.New("-slug and -sha are required (GITHUB_REPOSITORY and GITHUB_SHA supply them on GitHub Actions)")
+	}
+	switch *attribution {
+	case "diff", "commit":
+	default:
+		return fmt.Errorf("-attribution %q: want diff or commit", *attribution)
+	}
+	if len(baseReports) > 0 && !*local {
+		return errors.New("-base-reports is for local mode: a server compares with the estate it already holds")
+	}
+	for _, b := range baseReports {
+		if b.path == "-" {
+			return errors.New("-base-reports cannot read stdin: it carries this change's report")
+		}
 	}
 
 	// Local mode short-circuits every remote concern - no ingest, no polling, no
@@ -120,11 +162,15 @@ func runGate(args []string) error {
 		if *repo == "" {
 			*repo = *slug
 		}
+		base, err := baseReports.resolveSources(*source)
+		if err != nil {
+			return err
+		}
 		v, err := localVerdict(context.Background(), localOpts{
 			slug: *slug, sha: *sha, pr: *pr, repository: *repo,
-			reports: specs, estate: *estate,
+			reports: specs, baseReports: base, estate: *estate,
 			awsRegion: *awsRegion, awsRole: *awsRole,
-			stdin: stdin,
+			stdin: stdin, attribution: *attribution,
 		})
 		if err != nil {
 			return err
@@ -132,7 +178,77 @@ func runGate(args []string) error {
 		reportAndExit(v, *slug, *sha, *maxCritical, *allowUnknown, *asJSON)
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	if *repo == "" {
+		*repo = *slug
+	}
+	var body []byte
+	if *report != "" {
+		b, err := readGateReport(*report, stdin)
+		if err != nil {
+			return err
+		}
+		body = b
+	}
+	v, err := serverVerdict(serverOpts{
+		client: &http.Client{Timeout: 30 * time.Second},
+		api:    *api, ingest: *ingest, token: *token, secret: *secret,
+		source: *source, slug: *slug, sha: *sha, repo: *repo, pr: *pr,
+		report: body, attribution: *attribution, persist: *persist,
+		timeout: *timeout, poll: *poll,
+	}, os.Stderr)
+	if err != nil {
+		return err
+	}
+	reportAndExit(v, *slug, *sha, *maxCritical, *allowUnknown, *asJSON)
+	return nil
+}
+
+// serverOpts is what asking a running engine for a verdict takes.
+type serverOpts struct {
+	client                     *http.Client
+	api, ingest, token, secret string
+	source, slug, sha, repo    string
+	pr                         int
+	report                     []byte // nil: poll only, something else ingested
+	attribution                string
+	persist                    bool
+	timeout, poll              time.Duration
+}
+
+// serverVerdict asks a running engine what it makes of the change: by comparison when
+// there is a report and the engine can compare, otherwise from its record of the commit.
+// Notes on how it got there go to log.
+func serverVerdict(o serverOpts, log io.Writer) (gateVerdict, error) {
+	attr := o.attribution
+	if attr == "diff" && o.report == nil {
+		// Poll-only: something else ingested the commit, and there is no report here to
+		// compare. The engine's record of the commit is all there is to go on.
+		fmt.Fprintln(log, "gate: no -report to compare with the estate, so this is the engine's record of the commit (-attribution commit)")
+		attr = "commit"
+	}
+	if attr == "diff" {
+		v, err := postImpact(o.client, o.api, o.source, o.slug, o.sha, o.repo, o.pr, o.token, o.report)
+		switch {
+		case errors.Is(err, errNoImpact):
+			// An engine older than 1.22 has no comparison to offer. Falling back keeps the
+			// pipeline working through an upgrade of the action ahead of the engine, and the
+			// verdict says which rule produced it.
+			fmt.Fprintln(log, "gate: this engine predates POST /gate/impact, so the verdict is its record of the commit (-attribution commit); upgrade it to compare")
+		case err != nil:
+			return gateVerdict{}, err
+		default:
+			if o.persist {
+				if _, err := postGateReport(o.client, o.ingest, o.source, o.slug, o.sha, o.repo, o.pr, o.token, o.secret, o.report); err != nil {
+					// The verdict stands - it was computed without the report in the graph -
+					// but whoever asked for the write must hear that it did not happen.
+					fmt.Fprintf(log, "gate: the verdict stands, but -persist failed: %v\n", err)
+				} else {
+					fmt.Fprintf(log, "gate: recorded the %s report for %s@%s in the live graph\n", o.source, o.slug, shortSHA(o.sha))
+				}
+			}
+			return v, nil
+		}
+	}
 
 	// The freshness floor. `analysed` is answered from the graph and `criticalPaths`
 	// from the last analyzer pass, so a commit can be present while the paths still
@@ -143,33 +259,25 @@ func runGate(args []string) error {
 	// for up to ten ticks, so in poll-only mode a floor would time out on a verdict that
 	// was already correct, and turn a clean build red.
 	var floor time.Time
-	if *report != "" {
-		body, err := readGateReport(*report, stdin)
-		if err != nil {
-			return err
-		}
-		if *repo == "" {
-			*repo = *slug
-		}
+	if o.report != nil {
 		floor = time.Now().UTC()
-		batch, err := postGateReport(client, *ingest, *source, *slug, *sha, *repo, *pr, *token, *secret, body)
+		batch, err := postGateReport(o.client, o.ingest, o.source, o.slug, o.sha, o.repo, o.pr, o.token, o.secret, o.report)
 		if err != nil {
-			return err
+			return gateVerdict{}, err
 		}
-		fmt.Fprintf(os.Stderr, "gate: ingested %s report for %s@%s\n", *source, *slug, shortSHA(*sha))
+		fmt.Fprintf(log, "gate: ingested %s report for %s@%s\n", o.source, o.slug, shortSHA(o.sha))
 		// A large report reaches the graph as several messages, and a pass that ran
 		// between them analysed part of it - possibly the part that is clean. So the
 		// floor moves to when the LAST message was applied. An engine too old to return a
 		// batch keeps the floor at our own post, as before.
 		if batch != "" {
-			applied, done, err := waitForBatch(client, *api, *token, batch, deadlineFrom(*timeout), *poll)
+			applied, done, err := waitForBatch(o.client, o.api, o.token, batch, deadlineFrom(o.timeout), o.poll)
 			if err != nil {
-				return err
+				return gateVerdict{}, err
 			}
 			if !done {
-				fmt.Fprintf(os.Stderr, "gate: the report never fully reached the graph (batch %s)\n", batch)
-				reportAndExit(gateVerdict{}, *slug, *sha, *maxCritical, *allowUnknown, *asJSON)
-				return nil
+				fmt.Fprintf(log, "gate: the report never fully reached the graph (batch %s)\n", batch)
+				return gateVerdict{Attribution: "commit"}, nil
 			}
 			if applied.After(floor) {
 				floor = applied
@@ -177,13 +285,64 @@ func runGate(args []string) error {
 		}
 	}
 
-	v, err := waitForVerdict(client, *api, *token, *slug, *sha, floor, *timeout, *poll)
+	v, err := waitForVerdict(o.client, o.api, o.token, o.slug, o.sha, floor, o.timeout, o.poll)
 	if err != nil {
-		return err
+		return gateVerdict{}, err
 	}
+	v.Attribution = "commit"
+	return v, nil
+}
 
-	reportAndExit(v, *slug, *sha, *maxCritical, *allowUnknown, *asJSON)
-	return nil
+// errNoImpact is an engine without POST /gate/impact - one older than 1.22.
+var errNoImpact = errors.New("the engine has no /gate/impact")
+
+// postImpact asks the engine what the change adds to the estate's attack paths: the
+// report goes to POST /gate/impact with the same parameters the ingest webhook takes, and
+// the answer is the verdict. The API authenticates it with the bearer token; nothing is
+// written, so it needs no ingest signature.
+func postImpact(client *http.Client, base, source, slug, sha, repo string, pr int, token string, body []byte) (gateVerdict, error) {
+	q := url.Values{"source": {source}, "slug": {slug}, "sha": {sha}}
+	if repo != "" {
+		q.Set("repo", repo)
+	}
+	if pr > 0 {
+		q.Set("pr", strconv.Itoa(pr))
+	}
+	endpoint := strings.TrimSuffix(base, "/") + "/gate/impact?" + q.Encode()
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return gateVerdict{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return gateVerdict{}, fmt.Errorf("POST /gate/impact: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	rb, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	// 404 or 405 without a JSON error of ours: the route does not exist, the engine is
+	// older. A JSON 404 is ours - an unknown collector, the gate disabled - and an error.
+	if (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed) && !isJSONError(rb) {
+		return gateVerdict{}, errNoImpact
+	}
+	if resp.StatusCode >= 300 {
+		return gateVerdict{}, fmt.Errorf("POST /gate/impact returned %d: %s", resp.StatusCode, strings.TrimSpace(string(rb)))
+	}
+	var v gateVerdict
+	if err := json.Unmarshal(rb, &v); err != nil {
+		return gateVerdict{}, fmt.Errorf("decode the gate's answer: %w", err)
+	}
+	return v, nil
+}
+
+func isJSONError(b []byte) bool {
+	var e struct {
+		Error string `json:"error"`
+	}
+	return json.Unmarshal(b, &e) == nil && e.Error != ""
 }
 
 // reportAndExit renders a verdict and turns it into this process's exit code. Both modes
@@ -417,20 +576,64 @@ func printGateVerdict(w io.Writer, v gateVerdict, slug, sha string, maxCritical 
 		fmt.Fprintf(w, "UNKNOWN  %s@%s\n", slug, shortSHA(sha))
 		fmt.Fprintf(w, "  The estate was read only in part, so \"no attack path\" cannot be trusted:\n  %s\n", v.Incomplete)
 		fmt.Fprintln(w, "  This is NOT a clean result. Fix the estate access and run it again.")
+	case v.CriticalPaths > maxCritical && v.Attribution == "diff" && !v.Recorded:
+		fmt.Fprintf(w, "BLOCKED  %s@%s: this change opens or worsens %d critical attack path(s)\n", slug, shortSHA(sha), v.CriticalPaths)
+		printPaths(w, v.Paths)
+	case v.CriticalPaths > maxCritical && v.Attribution == "diff":
+		fmt.Fprintf(w, "BLOCKED  %s@%s: %d critical attack path(s) count against this change\n", slug, shortSHA(sha), v.CriticalPaths)
+		printPaths(w, v.Paths)
 	case v.CriticalPaths > maxCritical:
 		fmt.Fprintf(w, "BLOCKED  %s@%s: %d critical attack path(s) run through this commit\n", slug, shortSHA(sha), v.CriticalPaths)
-		for i, p := range v.Paths {
-			if i == 5 {
-				fmt.Fprintf(w, "  ... and %d more\n", len(v.Paths)-5)
-				break
-			}
-			hops := make([]string, 0, len(p.Nodes))
-			for _, n := range p.Nodes {
-				hops = append(hops, n.Name)
-			}
-			fmt.Fprintf(w, "  [P%.0f] %s\n", p.Priority, strings.Join(hops, " -> "))
-		}
+		printPaths(w, v.Paths)
+	case v.Attribution == "diff":
+		fmt.Fprintf(w, "CLEAN    %s@%s: analysed, this change opens or worsens no critical attack path\n", slug, shortSHA(sha))
 	default:
 		fmt.Fprintf(w, "CLEAN    %s@%s: analysed, no critical path reaches a sensitive asset through it\n", slug, shortSHA(sha))
 	}
+	if v.Attribution != "diff" || !v.Analysed {
+		return
+	}
+	if v.Preexisting > 0 {
+		fmt.Fprintf(w, "  %d existing route(s) run through the change's assets. They were there before it, so they do not count.\n", v.Preexisting)
+	}
+	if v.Recorded {
+		fmt.Fprintln(w, "  The engine already held this commit (-persist, or another step posting the same scan), so the")
+		fmt.Fprintln(w, "  comparison cannot tell its routes from older ones: routes through it count as the per-commit gate counts them.")
+	}
+	if !v.Reachable {
+		fmt.Fprintln(w, "  None of the change's assets can be reached from an attack seed. If it runs somewhere, check that the")
+		fmt.Fprintln(w, "  scanned image is named as the workload runs it - a mismatch looks exactly like this.")
+	}
+}
+
+// printPaths lists what a verdict blocked on, the first five of them.
+func printPaths(w io.Writer, paths []gatePath) {
+	for i, p := range paths {
+		if i == 5 {
+			fmt.Fprintf(w, "  ... and %d more\n", len(paths)-5)
+			break
+		}
+		if p.Redacted {
+			fmt.Fprintf(w, "  [P%.0f] %sa route outside the applications this token may read\n", p.Priority, changeLabel(p))
+			continue
+		}
+		hops := make([]string, 0, len(p.Nodes))
+		for _, n := range p.Nodes {
+			hops = append(hops, n.Name)
+		}
+		fmt.Fprintf(w, "  [P%.0f] %s%s\n", p.Priority, changeLabel(p), strings.Join(hops, " -> "))
+	}
+}
+
+// changeLabel says why a route counts, under diff attribution; nothing under commit.
+func changeLabel(p gatePath) string {
+	switch p.Change {
+	case "introduced":
+		return "new: "
+	case "worsened":
+		return fmt.Sprintf("worse, %.0f%% -> %.0f%%: ", p.PreviousScore*100, p.Score*100)
+	case "recorded":
+		return "through this commit: "
+	}
+	return ""
 }
