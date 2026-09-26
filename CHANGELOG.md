@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.23.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.22.0...v1.23.0) (2026-09-26)
+
+
+### Features
+
+* forget what a source stops reporting, and let the Helm ingress pass scanner reports ([#259](https://github.com/luiacuaniello/perspectivegraph/issues/259)) ([bd31abf](https://github.com/luiacuaniello/perspectivegraph/commit/bd31abfa78e051217399bd40f9612e0a391bad67))
+
 ## [1.22.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.21.0...v1.22.0) (2026-09-26)
 
 
