@@ -116,6 +116,13 @@ type Config struct {
 	// required for any real write: empty means every write is refused.
 	RepoAllowlist []string
 
+	// PRAttribution is which critical paths the engine's own pull-request feedback - the
+	// commit status and the PR/MR comments - counts against a commit: "diff" (the
+	// default) the routes the change opened or made likelier, the merge gate's rule (see
+	// impact.Ledger); "commit" every route through an asset stamped with it, the rule
+	// before 1.22.
+	PRAttribution string
+
 	// GitLab MR commenter (action layer)
 	GitLabToken  string
 	GitLabAPIURL string
@@ -388,6 +395,7 @@ func Load() Config {
 		GitHubDryRun: getbool("GITHUB_DRY_RUN", false),
 
 		RepoAllowlist: getlist("REPO_ALLOWLIST", ""),
+		PRAttribution: getenv("PR_ATTRIBUTION", "diff"),
 
 		GitLabToken:  sec.get("GITLAB_TOKEN", ""),
 		GitLabAPIURL: getenv("GITLAB_API_URL", "https://gitlab.com/api/v4"),

@@ -17,6 +17,77 @@ digest, take the backup, stage it.
 
 ---
 
+## 1.22.0
+
+### The merge gate counts what the change adds, and writes nothing
+
+**Affects you if** you run the merge gate - the GitHub Action, `perspectivegraph gate`, or
+the Trivy plugin.
+
+The gate used to count every critical path through an asset stamped with the commit. A pull
+request that rescanned an image already in production, or re-rendered a deployment's
+manifests, carried the commit onto assets that were on routes long before it - and every one
+of those routes blocked it: in the demo lab, nine paths where the change itself opened two.
+It now applies the report to a copy of the estate and counts only the routes the change
+**opens or makes likelier**. The routes it merely touches are reported (`preexisting`) and
+do not count. Nothing is written: the comparison runs on `POST /gate/impact`, on the API
+port, with the bearer token.
+
+What changes for a running pipeline:
+
+- **Fewer red checks**, by design: the ones that remain are routes the change caused.
+  `max-critical` now counts those.
+- **Server mode no longer ingests the report.** The live graph does not record a pull
+  request's scan unless you ask: `persist: true` (CLI `-persist`) sends it to the webhook
+  after the verdict. The engine's own pull-request comments and commit status are driven by
+  what is ingested, so they need `persist` - or the webhook step you already had.
+- **Server mode needs `token`** for the comparison if API auth is on (the comparison is an
+  authenticated API call, refused to anonymous callers on a public instance). `ingest` and
+  `hmac-secret` are needed only with `persist` or `attribution: commit`.
+- **Local mode** compares with the estate you give it. Add `base-reports` - the scan of what
+  runs now - or the routes through the scanned image count as the change's, since the estate
+  knows none of its findings.
+- **A proxy in front of the API** must pass `/gate/` - the bundled dashboard nginx and the
+  Helm ingress do - and let a report through: raise an ingress controller's 1 MiB body limit
+  (ingress-nginx: `nginx.ingress.kubernetes.io/proxy-body-size: 32m`), as `/ingest` already
+  needed.
+
+**Action to keep the old behaviour:** `attribution: commit` (CLI `-attribution commit`). The
+gate also falls back to it by itself - saying so in the log and in the `attribution` output -
+when there is no report to compare, or the engine predates 1.22. A gate binary older than
+1.22 under the new action runs per commit with a warning. `prVerdict` is unchanged.
+
+### The engine's commit status and PR comments count what the gate counts
+
+**Affects you if** the engine itself posts to your pull requests - `GITHUB_TOKEN` or
+`GITLAB_TOKEN` set, with `REPO_ALLOWLIST`.
+
+The commit status `perspectivegraph/attack-paths` and the PR/MR comments counted every critical
+path through an asset stamped with the commit, like the gate before this release. They now
+apply the gate's rule, comparing each analysis pass with the one before it. A route that is new,
+or likelier, belongs to the pull-request commits on it that arrived in between. A route that was
+already there when a commit arrived gets no comment and does not turn its status red, and the
+status description says how many there were. A route that appears later through a commit's
+assets belongs to the pull request that arrived with it. If none did, it counts against the
+commits already on it, as "since this change arrived".
+
+What changes:
+
+- **Fewer red statuses and fewer comments**, by design, and the words change: "N critical
+  attack path(s) opened or made likelier by this change". A commit already in the graph when
+  the engine starts - after a restart or an upgrade - has no "before": every route through it
+  counts, and the status says "in the graph before the engine was watching". That is the gate's
+  rule for a commit the engine already holds.
+- **Every commit on a route is judged**, not only the first one found on it. Under the new rule
+  the first could be innocent and the route belong to the second.
+- **A status is posted when it changes**, not re-posted on every analysis pass. GitHub keeps at
+  most 1,000 statuses per commit and context.
+- **Fixed:** with more than one tenant, one tenant's analysis pass posted `success` on another
+  tenant's red commits, and the last route of a tenant closing never cleared its red status.
+
+**Action to keep the old behaviour:** `PR_ATTRIBUTION=commit` (Helm `prAttribution: commit`),
+which restores the old rule and wording. The three changes above stay.
+
 ## 1.21.0
 
 Every probability the engine prints is recomputed under corrected rules, so the dashboard's

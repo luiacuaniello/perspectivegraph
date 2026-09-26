@@ -35,13 +35,13 @@ func TestCheckFailsThenResolves(t *testing.T) {
 	ctx := context.Background()
 
 	// Pass 1: the PR's change sits on a critical path → failure.
-	r.OnCriticalPaths(ctx, []analyzer.AttackPath{pathWithPR("acme/web", "deadbeef", "customers-db")})
+	r.OnCriticalPaths(ctx, "default", []analyzer.AttackPath{pathWithPR("acme/web", "deadbeef", "customers-db")})
 	if len(fp.calls) != 1 || fp.calls[0] != "acme/web@deadbeef=failure" {
 		t.Fatalf("expected one failure status, got %v", fp.calls)
 	}
 
 	// Pass 2: path gone (fixed) → the same commit flips to success.
-	r.OnCriticalPaths(ctx, nil)
+	r.OnCriticalPaths(ctx, "default", nil)
 	if len(fp.calls) != 2 || fp.calls[1] != "acme/web@deadbeef=success" {
 		t.Fatalf("expected a success status on resolution, got %v", fp.calls)
 	}
@@ -56,7 +56,7 @@ func TestCheckSkipsPathsWithoutCommit(t *testing.T) {
 		{ID: "lb", Properties: map[string]any{ontology.PropRepoSlug: "acme/web"}},
 		{ID: "j", Properties: map[string]any{ontology.PropCrownJewel: true}},
 	}}
-	r.OnCriticalPaths(context.Background(), []analyzer.AttackPath{p})
+	r.OnCriticalPaths(context.Background(), "default", []analyzer.AttackPath{p})
 	if len(fp.calls) != 0 {
 		t.Errorf("a path without a commit sha must not post a status, got %v", fp.calls)
 	}

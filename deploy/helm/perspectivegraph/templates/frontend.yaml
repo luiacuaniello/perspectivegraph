@@ -76,6 +76,12 @@ data:
         proxy_pass http://{{ include "perspectivegraph.backendHost" . }}:{{ .Values.service.apiPort }}/remediation/;
         proxy_set_header Host $host;
       }
+      # The merge gate's comparison: its body is a scanner report, often past nginx's 1 MiB.
+      location /gate/ {
+        proxy_pass http://{{ include "perspectivegraph.backendHost" . }}:{{ .Values.service.apiPort }}/gate/;
+        client_max_body_size 32m;
+        proxy_set_header Host $host;
+      }
       location / {
         try_files $uri $uri/ /index.html;
       }

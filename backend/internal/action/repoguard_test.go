@@ -106,12 +106,12 @@ func pathToRepo(slug string) analyzer.AttackPath {
 func TestCheckerRefusesRepoOutsideAllowlist(t *testing.T) {
 	fp := &fakeStatus{}
 	r := newStatusReporter(fp, mustAllow(t, "acme/*"), "")
-	r.OnCriticalPaths(context.Background(), []analyzer.AttackPath{pathToRepo("victim/infra")})
+	r.OnCriticalPaths(context.Background(), "default", []analyzer.AttackPath{pathToRepo("victim/infra")})
 	if len(fp.calls) != 0 {
 		t.Fatalf("posted a commit status to a repository outside the allowlist: %v", fp.calls)
 	}
 	// The allowed repository still works - the guard bounds writes, it does not stop them.
-	r.OnCriticalPaths(context.Background(), []analyzer.AttackPath{pathToRepo("acme/web")})
+	r.OnCriticalPaths(context.Background(), "default", []analyzer.AttackPath{pathToRepo("acme/web")})
 	if len(fp.calls) != 1 {
 		t.Fatalf("allowed repository got %d status calls, want 1", len(fp.calls))
 	}
@@ -128,7 +128,7 @@ func TestCommenterRefusesRepoOutsideAllowlist(t *testing.T) {
 	defer srv.Close()
 
 	c := NewGitHubCommenter(GitHubConfig{Token: "t", BaseURL: srv.URL, Allow: mustAllow(t, "acme/*")})
-	c.OnCriticalPaths(context.Background(), []analyzer.AttackPath{pathToRepo("victim/infra")})
+	c.OnCriticalPaths(context.Background(), "default", []analyzer.AttackPath{pathToRepo("victim/infra")})
 	if hits != 0 {
 		t.Fatalf("made %d call(s) to the forge", hits)
 	}
@@ -157,7 +157,7 @@ func TestPROpenerRefusesRepoOutsideAllowlist(t *testing.T) {
 func TestDryRunIsExemptFromTheAllowlist(t *testing.T) {
 	fp := &fakeStatusDryRun{}
 	r := newStatusReporter(fp, nil, "") // nil allowlist: denies every REAL write
-	r.OnCriticalPaths(context.Background(), []analyzer.AttackPath{pathToRepo("acme/web")})
+	r.OnCriticalPaths(context.Background(), "default", []analyzer.AttackPath{pathToRepo("acme/web")})
 	if fp.calls != 1 {
 		t.Fatalf("dry-run reporter made %d call(s), want 1 (it logs, it does not write)", fp.calls)
 	}

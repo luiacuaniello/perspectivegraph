@@ -27,6 +27,8 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/exportsign"
 	"github.com/luiacuaniello/perspectivegraph/internal/graph"
 	"github.com/luiacuaniello/perspectivegraph/internal/history"
+	"github.com/luiacuaniello/perspectivegraph/internal/ingestion"
+	"github.com/luiacuaniello/perspectivegraph/internal/normalization"
 	"github.com/luiacuaniello/perspectivegraph/internal/policy"
 	"github.com/luiacuaniello/perspectivegraph/internal/ratelimit"
 	"github.com/luiacuaniello/perspectivegraph/internal/remediation"
@@ -77,6 +79,10 @@ type API struct {
 	aiLimiter        *ratelimit.Limiter // per-client cap on /ai/* (nil → none)
 	heavySlots       chan struct{}      // process-wide cap on heavy analyses; see compute.go
 	batches          BatchTracker       // ingest batch progress, for the merge gate (nil → none)
+	// The merge gate's POST /gate/impact (gate.go): the collectors that parse a report,
+	// by source, and the normalizer a change goes through. nil collectors → disabled.
+	gateCollectors map[string]ingestion.Collector
+	gateNormalizer func(*graph.Manager) *normalization.Normalizer
 }
 
 func New(manager *graph.Manager, svc *analyzer.Service, idx search.Indexer) *API {

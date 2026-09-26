@@ -24,6 +24,13 @@ branding:
 # every two-state gate ever written. Here that is UNKNOWN, and it fails the build by
 # default - see the allow-unknown input.
 #
+# It blocks on what the CHANGE does. The report is applied to a copy of the estate and
+# compared with the estate as it stands: a route the change opens, or makes likelier,
+# counts; a route that was there before it does not, even when it runs through an asset
+# the change touches - a rescanned image, a re-rendered deployment. Nothing is written.
+# The rule before 1.22, every route through an asset stamped with the commit, is
+# `attribution: commit`.
+#
 # TWO THINGS TO SETTLE BEFORE YOU WIRE THIS UP.
 #
 # 1. Pull requests from forks. This gate needs secrets - an ingest HMAC and API token in
@@ -50,8 +57,9 @@ branding:
 inputs:
   report:
     description: >-
-      Scanner report to ingest (Trivy JSON, Semgrep JSON, ...). Leave empty to only wait
-      for a verdict, for pipelines where something else already ingested this commit.
+      Scanner report of this change (Trivy JSON, Semgrep JSON, ...). Leave empty to only
+      read the engine's record of the commit, for pipelines where something else already
+      ingested it - there is then nothing to compare, so that verdict is per commit.
     required: false
     default: ""
   source:
@@ -67,12 +75,37 @@ inputs:
       without one there are no attack paths, only a flat list of findings.
     required: false
     default: server
+  attribution:
+    description: >-
+      Which routes count against the change. "diff" (default): the ones it opens or makes
+      likelier, compared with the estate as it stands - nothing is written. "commit": every
+      route through an asset stamped with the commit, the rule before 1.22, which also
+      blocks on routes that were there before the change.
+    required: false
+    default: diff
+  persist:
+    description: >-
+      Server mode, diff attribution: also send the report to the ingest webhook, so the
+      live graph records the change (the engine's own pull-request comments need it). The
+      verdict is computed first, without it. Needs the ingest input.
+    required: false
+    default: "false"
+  base-reports:
+    description: >-
+      Local mode, diff attribution: scans of what runs now - the base branch - one
+      `source=path` per line, applied to the estate before the comparison. Without them a
+      scanned image is compared with an estate that knows none of its findings, so every
+      route through them counts as the change's.
+    required: false
+    default: ""
   api:
     description: Base URL of the PerspectiveGraph API. Required in server mode, unused in local mode.
     required: false
     default: ""
   ingest:
-    description: Base URL of the ingest webhook. Server mode only, and only when a report is given.
+    description: >-
+      Base URL of the ingest webhook. Server mode only, and only where a report is written
+      into the live graph: attribution commit, or persist.
     required: false
     default: ""
   aws-region:
@@ -107,8 +140,9 @@ inputs:
     default: ""
   hmac-secret:
     description: >-
-      Server mode only: shared secret signing the ingest body, if the webhook requires it.
-      Local mode posts to no webhook, so it needs no secret.
+      Server mode only, when a report is ingested (attribution commit, or persist): shared
+      secret signing the ingest body, if the webhook requires it. The comparison goes to
+      the API with the token, and local mode posts to no webhook.
     required: false
     default: ""
   slug:
@@ -127,14 +161,17 @@ inputs:
     required: false
     default: ${{ github.event.pull_request.number || 0 }}
   max-critical:
-    description: Fail when the commit sits on more than this many critical attack paths.
+    description: >-
+      Fail when more than this many critical attack paths count against the change - the
+      ones it opens or worsens, or, with attribution commit, the ones it sits on.
     required: false
     default: "0"
   timeout:
     description: >-
-      Server mode only: how long to wait for the engine to analyse this commit before
-      reporting UNKNOWN. Must comfortably exceed your ANALYZER_INTERVAL. Local mode
-      computes the verdict in one pass, so it never waits.
+      Server mode, attribution commit only: how long to wait for the engine to analyse
+      this commit before reporting UNKNOWN. Must comfortably exceed your
+      ANALYZER_INTERVAL. The comparison and local mode answer in one call, so they never
+      wait.
     required: false
     default: 5m
   allow-unknown:
@@ -180,8 +217,18 @@ outputs:
     description: One of clean, blocked or unknown.
     value: ${{ steps.gate.outputs.verdict }}
   critical-paths:
-    description: How many critical attack paths run through this commit.
+    description: >-
+      How many critical attack paths count against the change: opened or worsened by it,
+      or, with attribution commit, running through it.
     value: ${{ steps.gate.outputs.critical-paths }}
+  attribution:
+    description: >-
+      The rule that produced the verdict: diff, or commit - asked for, or fallen back to
+      when there was no report or the engine predates the comparison.
+    value: ${{ steps.gate.outputs.attribution }}
+  preexisting:
+    description: Diff attribution - routes through the change's assets that were there before it, and do not count.
+    value: ${{ steps.gate.outputs.preexisting }}
   exit-code:
     description: "0 clean, 1 blocked, 2 unknown, 3 error."
     value: ${{ steps.gate.outputs.exit-code }}
@@ -194,6 +241,7 @@ runs:
       uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
     - name: Download the gate binary
+      id: download
       shell: bash
       env:
         VERSION: ${{ inputs.version }}
@@ -316,6 +364,13 @@ runs:
             ;;
         esac
 
+        # A release older than 1.22 has no -attribution, and would refuse the whole
+        # invocation over it. Its gate is the per-commit one; say so, and let it run.
+        case "$probe" in
+          *-attribution*) echo "attribution=yes" >> "$GITHUB_OUTPUT" ;;
+          *) echo "attribution=no" >> "$GITHUB_OUTPUT" ;;
+        esac
+
         echo "$dir" >> "$GITHUB_PATH"
 
     - name: Gate on attack paths
@@ -341,6 +396,10 @@ runs:
         MAX_CRITICAL: ${{ inputs.max-critical }}
         TIMEOUT: ${{ inputs.timeout }}
         ALLOW_UNKNOWN: ${{ inputs.allow-unknown }}
+        ATTRIBUTION: ${{ inputs.attribution }}
+        PERSIST: ${{ inputs.persist }}
+        BASE_REPORTS: ${{ inputs.base-reports }}
+        KNOWS_ATTRIBUTION: ${{ steps.download.outputs.attribution }}
       run: |
         # -e OFF, explicitly. GitHub runs composite bash steps as `bash -e -o pipefail`,
         # so a non-zero exit from the gate would abort this step at the line that produces
@@ -360,6 +419,15 @@ runs:
         [ -n "$PR" ] && [ "$PR" != "0" ] && args+=(-pr "$PR")
         [ -n "$REPORT" ] && args+=(-report "$REPORT" -source "$SOURCE")
         [ "$ALLOW_UNKNOWN" = "true" ] && args+=(-allow-unknown)
+        case "$ATTRIBUTION" in
+          diff|commit) ;;
+          *) echo "::error::attribution '${ATTRIBUTION}': want diff or commit"; exit 1 ;;
+        esac
+        if [ "$KNOWS_ATTRIBUTION" = "yes" ]; then
+          args+=(-attribution "$ATTRIBUTION")
+        elif [ "$ATTRIBUTION" = "diff" ]; then
+          echo "::warning::this release predates diff attribution (1.22), so its verdict counts every route through the commit"
+        fi
 
         if [ "$MODE" = "local" ]; then
           if [ -z "$AWS_REGION_IN" ] && [ -z "$ESTATE" ]; then
@@ -367,6 +435,10 @@ runs:
             exit 1
           fi
           args+=(-local)
+          # One source=path per line, like reports.
+          while IFS= read -r spec; do
+            [ -n "$spec" ] && args+=(-base-reports "$spec")
+          done <<< "$BASE_REPORTS"
           [ -n "$AWS_REGION_IN" ] && args+=(-aws-region "$AWS_REGION_IN")
           [ -n "$AWS_ROLE" ] && args+=(-aws-role "$AWS_ROLE")
           [ -n "$ESTATE" ] && args+=(-estate "$ESTATE")
@@ -379,12 +451,15 @@ runs:
             echo "::error::server mode needs the api input (or use mode: local, which needs no deployment)"
             exit 1
           fi
-          if [ -n "$REPORT" ] && [ -z "$INGEST" ]; then
-            echo "::error::a report was given but no ingest URL, so there is nowhere to send it"
+          # Only a report that is written into the live graph needs the webhook: the per-commit
+          # rule ingests it, and so does persist. The comparison goes to the API.
+          if [ -n "$REPORT" ] && [ -z "$INGEST" ] && { [ "$ATTRIBUTION" = "commit" ] || [ "$PERSIST" = "true" ] || [ "$KNOWS_ATTRIBUTION" != "yes" ]; }; then
+            echo "::error::this report is to be ingested (attribution commit, persist, or a release older than 1.22), but no ingest URL was given"
             exit 1
           fi
           args+=(-api "$API")
           [ -n "$INGEST" ] && args+=(-ingest "$INGEST")
+          [ "$PERSIST" = "true" ] && [ "$KNOWS_ATTRIBUTION" = "yes" ] && args+=(-persist)
         fi
 
         # This is the line -e must not be allowed to abort (see the top of the step): the
@@ -402,6 +477,12 @@ runs:
         paths="$(jq -r '.criticalPaths // 0' verdict.json 2>/dev/null || echo 0)"
         analysed="$(jq -r '.analysed // false' verdict.json 2>/dev/null || echo false)"
         incomplete="$(jq -r '.incomplete // ""' verdict.json 2>/dev/null || echo "")"
+        # An engine or binary older than 1.22 says nothing about the rule: it was per commit.
+        attribution="$(jq -r '.attribution // "commit"' verdict.json 2>/dev/null || echo commit)"
+        [ -z "$attribution" ] && attribution=commit
+        preexisting="$(jq -r '.preexisting // 0' verdict.json 2>/dev/null || echo 0)"
+        reachable="$(jq -r '.reachable // false' verdict.json 2>/dev/null || echo false)"
+        recorded="$(jq -r '.recorded // false' verdict.json 2>/dev/null || echo false)"
         if [ "$code" -ge 3 ]; then
           verdict=error
         elif [ "$code" = "1" ]; then
@@ -420,6 +501,8 @@ runs:
           echo "verdict=${verdict}"
           echo "critical-paths=${paths}"
           echo "exit-code=${code}"
+          echo "attribution=${attribution}"
+          echo "preexisting=${preexisting}"
         } >> "$GITHUB_OUTPUT"
 
         # Rendered once, into both the job log and the run summary: an engineer reading a
@@ -429,14 +512,42 @@ runs:
           echo
           case "$verdict" in
             clean)
-              echo "**Clean.** \`${SHA}\` was analysed. No critical attack path reaches a sensitive asset through it."
+              if [ "$attribution" = "diff" ]; then
+                echo "**Clean.** \`${SHA}\` was analysed. It opens or worsens no critical attack path."
+                if [ "$preexisting" != "0" ]; then
+                  echo
+                  echo "${preexisting} existing route(s) run through what it changes. They were there before it, so they do not count."
+                fi
+                if [ "$reachable" != "true" ]; then
+                  echo
+                  echo "None of the change's assets can be reached from an attack seed. If it runs somewhere, check that"
+                  echo "the scanned image is named as the workload runs it - a mismatch looks exactly like this."
+                fi
+              else
+                echo "**Clean.** \`${SHA}\` was analysed. No critical attack path reaches a sensitive asset through it."
+              fi
               ;;
             blocked)
-              echo "**Blocked.** ${paths} critical attack path(s) run through \`${SHA}\`."
+              if [ "$attribution" = "diff" ] && [ "$recorded" = "true" ]; then
+                echo "**Blocked.** ${paths} critical attack path(s) count against \`${SHA}\`."
+              elif [ "$attribution" = "diff" ]; then
+                echo "**Blocked.** \`${SHA}\` opens or worsens ${paths} critical attack path(s)."
+              else
+                echo "**Blocked.** ${paths} critical attack path(s) run through \`${SHA}\`."
+              fi
               echo
               echo '```'
-              jq -r '.paths[]? | "[P" + (.priority | floor | tostring) + "] " + ([.nodes[].name] | join(" -> "))' verdict.json
+              jq -r '.paths[]? | "[P" + (.priority | floor | tostring) + "] "
+                + (if .change == "introduced" then "new: "
+                   elif .change == "worsened" then "worse, " + ((.previousScore * 100) | floor | tostring) + "% -> " + ((.score * 100) | floor | tostring) + "%: "
+                   elif .change == "recorded" then "through this commit: "
+                   else "" end)
+                + (if .redacted then "a route outside the applications this token may read" else ([.nodes[]?.name] | join(" -> ")) end)' verdict.json
               echo '```'
+              if [ "$recorded" = "true" ]; then
+                echo
+                echo "The engine already held this commit, so routes through it count as the per-commit gate counts them."
+              fi
               ;;
             unknown)
               if [ -n "$incomplete" ]; then

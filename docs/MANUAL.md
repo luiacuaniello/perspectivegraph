@@ -536,7 +536,7 @@ The full, dated feature history is in [CHANGELOG.md](../CHANGELOG.md).
 - **Data classification:** Macie/DLP findings (`/ingest/dataclass`) mark assets as sensitive assets with an authoritative `classified:<source>:<kind>` basis
 - **Agentless connectors:** scheduled, leader-only **PULL** sources that reach out to a cloud account instead of waiting for an upload (`CONNECTORS_ENABLED`, health at `GET /connectors`). Connectors: **AWS** (`aws`) and **Azure** (`azure`)
 - **Multi-tenant + SSO:** per-tenant isolated graphs (proven by test), bearer/OIDC auth with per-tenant/per-app/role RBAC, and a runtime login gate (`GET /auth/config` → token or "Sign in with SSO")
-- **Dev workflow:** GitHub PR comment + a **PR merge-gate status** (red when the change opens an internet→sensitive-asset path), and **remediation-as-PR** (`POST /remediation/pr` opens a branch+commit+PR with the fix)
+- **Dev workflow:** GitHub PR comment + a **PR merge-gate status** (red when the change opens an internet→sensitive-asset path; the CI gate compares the change with the estate), and **remediation-as-PR** (`POST /remediation/pr` opens a branch+commit+PR with the fix)
 - **AI-native (Claude *or* HuggingFace):** natural-language Q&A over the graph, a board-level executive summary, and plain-English path explanations - grounded in the live attack paths (`ANTHROPIC_API_KEY`, or a free `HF_TOKEN`)
 - **ATT&CK:** each kill-chain hop mapped to a MITRE ATT&CK technique + tactic
 
@@ -625,6 +625,29 @@ GitHub Enterprise via `GITHUB_API_URL`). The same path context the analyzer alre
 carries (`repo_slug` / `pr_number` / `commit_sha`) is what routes each action to the
 right PR and commit.
 
+**The comment and the status count what the merge gate counts** (below): the routes a change
+opened or made likelier, not every route through an asset it touched. They run after the
+report has landed, so the comparison is between analysis passes. A route between an entry and a
+sensitive asset that is new, or likelier, since the previous pass belongs to the pull-request
+commits on it that arrived in between - the previous pass is the estate the change found. A
+route that was already there gets no comment and keeps the status out of it. When a change makes
+a route red, the status says how many routes were already there, and the comment says whether
+the change opened the route or made it likelier, with both figures. Every commit on a route is
+judged, not only the first one found on it.
+
+A route that appears through a commit's assets *after* it arrived belongs to the pull request
+that arrived with it: a second request putting a load balancer in front of a rescanned image is
+the second request's doing, not the rescan's. If no pull request arrived with it - the rest of a
+report too large to land at once, a change made outside any pull request - it counts against
+the commits already on it, and the status says "since this change arrived" rather than claiming
+the change opened it.
+
+This state is kept in memory on every replica, so a new leader has it. A restart loses it, and
+a commit already in the graph when the engine starts is judged by the per-commit rule. The
+status says so ("in the graph before the engine was watching"), as the gate does for a commit
+the engine already holds. `PR_ATTRIBUTION=commit` (Helm `prAttribution: commit`) keeps the
+rule before 1.22: every route through the commit counts.
+
 **`REPO_ALLOWLIST` is required for any of it to write.** That routing context is a node
 property, and node properties arrive on the ingest path - which every scanner holding
 the shared HMAC key can reach. Without a bound, one planted node redirects a write to
@@ -645,7 +668,28 @@ path, not noise.
 
 #### The merge gate: GitHub Action, CLI and Trivy plugin
 
-**Local mode needs no deployment.** The runner reads your estate read-only, ingests this pull
+**What counts against the change.** The gate applies this pull request's report to a copy of
+the estate - through the same normalizer the ingest path runs - and compares the critical paths
+of the copy with the estate's own. A route between an entry and a sensitive asset that did not
+exist before is one the change **opens**; one that became likelier, it **worsens**. Those count.
+A route that was there before does not, even when it runs through an asset the change touches -
+the rescanned image, the re-rendered deployment - and the verdict reports how many there were
+(`preexisting`) rather than hiding them. Nothing is written into the live graph.
+
+Before 1.22 the gate counted every route through an asset stamped with the commit, and so
+blocked a change for routes it did not cause: in the demo lab, nine where the change opened two.
+That rule is still there, by name: `attribution: commit` (CLI `-attribution commit`). The gate
+also falls back to it by itself - and says so - when it has no report to compare (poll-only), or
+the engine predates the comparison. And when the engine *already* holds the commit (`persist` on
+an earlier run, or another step posting the same scan to the webhook), the comparison cannot
+tell its routes from older ones, so routes through it count per commit: conservative on purpose,
+it can block a change the comparison would pass, never the reverse.
+
+When none of the change's assets can be reached from an attack seed at all, a clean verdict says
+so. That is fine for a service that is not deployed; for one that is, the usual cause is a scan
+naming the image differently from the workload that runs it.
+
+**Local mode needs no deployment.** The runner reads your estate read-only, applies this pull
 request's scan, and answers in-process with the same engine:
 
 ```yaml
@@ -654,7 +698,13 @@ request's scan, and answers in-process with the same engine:
     mode: local
     aws-region: eu-west-1     # read-only; give the job an OIDC role with SecurityAudit
     report: trivy.json
+    base-reports: |           # the scan of what runs now - the base branch
+      trivy=trivy-base.json
 ```
+
+`base-reports` is what makes the comparison fair. Without it the estate knows nothing of the
+scanned image's findings, so every route through them counts as the change's - the same answer
+the per-commit rule gives.
 
 An estate is not optional, and that is the point: without one there are no attack paths, only
 a flat list of findings - the thing this replaces. If you collect your estate on its own
@@ -662,24 +712,34 @@ schedule, pass `estate: estate.json` (what `perspectivegraph awscollect -json` w
 of `aws-region`.
 
 **Server mode points at a running engine**, which keeps the graph across pull requests, plus
-triage, history and the dashboard:
+triage, history and the dashboard. The comparison is an API call (`POST /gate/impact`, the same
+query parameters as the ingest webhook, the report as the body), so it takes the API token:
 
 ```yaml
 - uses: luiacuaniello/perspectivegraph@v1
   with:
     api: https://perspectivegraph.internal
-    ingest: https://perspectivegraph.internal:8081
+    token: ${{ secrets.PG_API_TOKEN }}
     report: trivy.json
-    hmac-secret: ${{ secrets.PG_INGEST_HMAC }}
 ```
 
-Both modes run the same normalizer, the same pathfinder and the same triage priority, and
-return the same verdict - a test asserts they agree path-for-path on identical input.
+The baseline is the graph as it stands - what runs now, as your main-branch pipeline and
+connectors last described it. To also record the pull request's scan in the live graph (the
+engine's own PR comments and commit status are driven by what is ingested), add
+`persist: true` with `ingest` and `hmac-secret`; the verdict is computed first, without it. A
+proxy in front of the API must pass `/gate/` and let a report through - the bundled dashboard
+and the Helm ingress do; an ingress controller with a 1 MiB body limit needs it raised, as
+`/ingest` does.
+
+Both modes run the same comparison (package `impact`), the same normalizer, the same pathfinder
+and the same triage priority. Under `attribution: commit` they return the same per-commit verdict
+- a test asserts they agree path-for-path on identical input.
 
 The scan is not the only thing a pull request can send: a rendered manifest set
-(`helm template`, `kustomize build`) posted to `/ingest/k8s?slug=&sha=` attributes the objects
-it contains to that commit, so a change that publishes a Service fails the check the same way a
-vulnerable dependency does. That matters because manifests are how most routes actually open.
+(`helm template`, `kustomize build`) as the report with `source: k8s` is compared the same way,
+so a change that publishes a Service fails the check the same way a vulnerable dependency does -
+and one that re-renders every manifest unchanged passes. That matters because manifests are how
+most routes actually open.
 
 **It has three outcomes, and the third is the point.** Every two-state gate gives a pipeline
 whose scanner output never arrived the same green tick as one that is genuinely clean. Here
@@ -687,8 +747,8 @@ that is `unknown`, and it fails the build by default:
 
 | Verdict | Exit | Meaning |
 | --- | --- | --- |
-| `clean` | 0 | The engine analysed this commit and found no path through it |
-| `blocked` | 1 | Critical attack paths run through it - the check names them |
+| `clean` | 0 | The engine analysed this change: it opens or worsens no critical path |
+| `blocked` | 1 | It opens or worsens critical attack paths - the check names each, and why |
 | `unknown` | 2 | **Nobody analysed it.** The scan, the ingest or the SHA is wrong |
 
 Set `allow-unknown: true` while you roll the gate out. Leaving it on afterwards turns a broken
@@ -724,8 +784,9 @@ folds every verdict other than clean into exit 1.
   public repository are public. Use `soft-fail` and post the detail somewhere private, or keep
   the gate on a private repository.
 
-Full input reference in [`action.yml`](../action.yml); the underlying query is `prVerdict` in
-the [API schema](api/schema.graphql).
+Full input reference in [`action.yml`](../action.yml). The comparison is `POST /gate/impact`;
+the per-commit rule's query is `prVerdict` in the [API schema](api/schema.graphql), unchanged
+for the gates built on it.
 
 ### Agentless connectors: pull, don't wait for an upload
 

@@ -192,6 +192,9 @@ func (a *API) Handler() (http.Handler, error) {
 	mux.Handle("POST /tickets/{id}/close", secured("tickets_close", http.HandlerFunc(a.closeTicket)))
 	// Remediation-as-PR: open a pull request with a path's generated fix.
 	mux.Handle("POST /remediation/pr", secured("remediation_pr", http.HandlerFunc(a.openRemediationPR)))
+	// The merge gate: what a change adds to the attack paths, computed on a copy of the
+	// graph and never written (gate.go). A heavy analysis, so it gets the request budget.
+	mux.Handle("POST /gate/impact", secured("gate_impact", withComputeScope(http.HandlerFunc(a.handleGateImpact))))
 	// AI-native layer (self-gated on ANTHROPIC_API_KEY): NL query, exec summary,
 	// and plain-English path explanation.
 	// Signed-in callers only, and a rate limit of their own: see aiGate.

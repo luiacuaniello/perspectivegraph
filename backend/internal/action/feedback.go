@@ -18,16 +18,16 @@ import (
 // logging + GitHub PR comments).
 type MultiSink []analyzer.Sink
 
-func (m MultiSink) OnCriticalPaths(ctx context.Context, paths []analyzer.AttackPath) {
+func (m MultiSink) OnCriticalPaths(ctx context.Context, tenant string, paths []analyzer.AttackPath) {
 	for _, s := range m {
-		s.OnCriticalPaths(ctx, paths)
+		s.OnCriticalPaths(ctx, tenant, paths)
 	}
 }
 
 // ConsoleSink renders critical paths to the log. It satisfies analyzer.Sink.
 type ConsoleSink struct{}
 
-func (ConsoleSink) OnCriticalPaths(_ context.Context, paths []analyzer.AttackPath) {
+func (ConsoleSink) OnCriticalPaths(_ context.Context, _ string, paths []analyzer.AttackPath) {
 	for _, p := range paths {
 		slog.Warn("critical attack path detected",
 			"id", p.ID,

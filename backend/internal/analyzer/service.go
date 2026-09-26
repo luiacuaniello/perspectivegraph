@@ -15,10 +15,20 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
 )
 
-// Sink receives the critical paths found on each analysis pass (e.g. the action
-// layer that posts PR comments). It is optional.
+// Sink receives the critical paths found on each analysis pass of a tenant (e.g. the
+// action layer that posts PR comments and commit statuses). It is optional, it runs on
+// the leader only, and it is called on every pass the analyzer computes - with no paths
+// too, which is how a commit status that was red learns that its route is gone.
 type Sink interface {
-	OnCriticalPaths(ctx context.Context, paths []AttackPath)
+	OnCriticalPaths(ctx context.Context, tenant string, paths []AttackPath)
+}
+
+// PassObserver sees every pass the analyzer computes, on every replica, leader or not,
+// before the sink acts on it. It is for state built from the sequence of passes - which
+// routes were there before a commit arrived - that must not start from nothing when
+// leadership moves to another replica.
+type PassObserver interface {
+	ObservePass(tenant string, snap graph.Snapshot, paths []AttackPath)
 }
 
 // riskSeed fixes the Monte Carlo seed for the cached, per-pass risk simulation
@@ -100,7 +110,8 @@ type Service struct {
 	ttl        time.Duration // staleness TTL; 0 disables pruning
 	pruneEvery time.Duration // how often to run the (leader-only) pruner
 
-	history history.Temporal // temporal store (path lifecycle + posture trend)
+	history  history.Temporal // temporal store (path lifecycle + posture trend)
+	observer PassObserver     // sees every computed pass (nil: none)
 	// calibrator, when set, returns a tenant's current calibration headline so each
 	// pass can sample the calibration trend into history. Injected (the analyzer
 	// doesn't depend on the validation store directly).
@@ -160,6 +171,13 @@ func (s *Service) WithTTL(d time.Duration) *Service {
 // store is a no-op. Returns the service for chaining.
 func (s *Service) WithHistory(h history.Temporal) *Service {
 	s.history = h
+	return s
+}
+
+// WithPassObserver shows o every pass the analyzer computes, on every replica. Returns
+// the service for chaining.
+func (s *Service) WithPassObserver(o PassObserver) *Service {
+	s.observer = o
 	return s
 }
 
@@ -438,6 +456,13 @@ func (s *Service) runTenant(ctx context.Context, tenant string) {
 		s.history.ObservePass(tenant, obs, risk.AnyCompromiseProbability*100)
 	}
 
+	// Like the history above, the observer's state is derived and in-process, so every
+	// replica keeps it - the one that becomes leader must already know what each commit
+	// found when it arrived.
+	if s.observer != nil {
+		s.observer.ObservePass(tenant, snap, paths)
+	}
+
 	// External side-effects (drift alerts, PR comments) are at-most-once across
 	// the fleet: only the leader fires them, so adding replicas never duplicates
 	// outbound notifications. Every replica still updated its own cache above.
@@ -462,9 +487,11 @@ func (s *Service) runTenant(ctx context.Context, tenant string) {
 		slog.Warn("policy invariant violated", "tenant", tenant, "id", v.InvariantID, "severity", v.Severity)
 	}
 
-	// The sink posts PR/MR comments - also leader-only, at most once per fleet.
-	if isLeader && s.sink != nil && len(paths) > 0 {
-		s.sink.OnCriticalPaths(ctx, paths)
+	// The sink posts PR/MR comments and commit statuses - also leader-only, at most once
+	// per fleet. It hears a pass with no paths too: a status that went red on a route
+	// must be told when the last route is gone, or it stays red.
+	if isLeader && s.sink != nil {
+		s.sink.OnCriticalPaths(ctx, tenant, paths)
 	}
 }
 

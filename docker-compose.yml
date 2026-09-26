@@ -270,6 +270,9 @@ services:
       # separated. The destination otherwise comes from ingested graph data.
       # Empty ⇒ every real write is refused. See .env.example.
       REPO_ALLOWLIST: ${REPO_ALLOWLIST:-}
+      # diff: the commit status and PR comments count the routes a change opened or
+      # made likelier (the merge gate's rule); commit: every route through it.
+      PR_ATTRIBUTION: ${PR_ATTRIBUTION:-diff}
       # AI-native layer. Anthropic (Claude) is preferred; HuggingFace (HF_TOKEN,
       # OpenAI-compatible) is the free fallback used when no Anthropic key is set.
       # Empty for both → /ai/* disabled (self-gated).

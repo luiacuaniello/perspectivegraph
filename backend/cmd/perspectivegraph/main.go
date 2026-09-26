@@ -41,6 +41,7 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/graph/age"
 	"github.com/luiacuaniello/perspectivegraph/internal/graph/memory"
 	"github.com/luiacuaniello/perspectivegraph/internal/history"
+	"github.com/luiacuaniello/perspectivegraph/internal/impact"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/iam"
 	"github.com/luiacuaniello/perspectivegraph/internal/kevholdout"
@@ -380,6 +381,13 @@ func run(parent context.Context, cfg config.Config) error {
 		slog.Info("threat intel: KEV + EPSS enrichment enabled")
 	}
 	normalizer := normalization.New(manager).WithIndexer(indexer).WithThreatIntel(intel).WithScrub(cfg.ScrubIngest)
+	// The merge gate applies a change to a copy of the graph (POST /gate/impact). It goes
+	// through a normalizer configured as this one is - the same threat intel, the same
+	// secret scrubbing - so it lands as the ingest path would land it; only the full-text
+	// index is left out, because nothing of a dry run may leave it.
+	gateNormalizer := func(m *graph.Manager) *normalization.Normalizer {
+		return normalization.New(m).WithThreatIntel(intel).WithScrub(cfg.ScrubIngest)
+	}
 
 	// Where the engine is allowed to write. The forge writers take their destination
 	// from an ingested node property, so without this they write wherever the graph
@@ -393,25 +401,39 @@ func run(parent context.Context, cfg config.Config) error {
 		slog.Warn("forge token set but REPO_ALLOWLIST is empty: every PR comment, commit status and remediation PR will be refused",
 			"fix", "set REPO_ALLOWLIST=owner/repo[,owner/*]")
 	}
+	// Which routes the engine's commit status and PR comments count against a commit: by
+	// default the merge gate's rule - what the change opened or made likelier - which
+	// needs a ledger watching every pass; "commit" is the rule before 1.22.
+	var attribution *impact.Ledger
+	switch cfg.PRAttribution {
+	case "diff":
+		attribution = impact.NewLedger()
+	case "commit":
+	default:
+		return fmt.Errorf("PR_ATTRIBUTION %q is not diff|commit", cfg.PRAttribution)
+	}
 	sinks := action.MultiSink{
 		action.ConsoleSink{},
 		action.NewGitHubCommenter(action.GitHubConfig{
-			Token:   cfg.GitHubToken,
-			BaseURL: cfg.GitHubAPIURL,
-			DryRun:  cfg.GitHubDryRun,
-			Allow:   repoAllow,
+			Token:       cfg.GitHubToken,
+			BaseURL:     cfg.GitHubAPIURL,
+			DryRun:      cfg.GitHubDryRun,
+			Allow:       repoAllow,
+			Attribution: attribution,
 		}),
 		action.NewGitHubChecker(action.GitHubConfig{
-			Token:   cfg.GitHubToken,
-			BaseURL: cfg.GitHubAPIURL,
-			DryRun:  cfg.GitHubDryRun,
-			Allow:   repoAllow,
+			Token:       cfg.GitHubToken,
+			BaseURL:     cfg.GitHubAPIURL,
+			DryRun:      cfg.GitHubDryRun,
+			Allow:       repoAllow,
+			Attribution: attribution,
 		}, cfg.DashboardURL),
 		action.NewGitLabCommenter(action.GitLabConfig{
-			Token:   cfg.GitLabToken,
-			BaseURL: cfg.GitLabAPIURL,
-			DryRun:  cfg.GitLabDryRun,
-			Allow:   repoAllow,
+			Token:       cfg.GitLabToken,
+			BaseURL:     cfg.GitLabAPIURL,
+			DryRun:      cfg.GitLabDryRun,
+			Allow:       repoAllow,
+			Attribution: attribution,
 		}),
 	}
 	notifier := notify.New(cfg.AlertWebhookURL, cfg.AlertWebhookFormat)
@@ -527,6 +549,10 @@ func run(parent context.Context, cfg config.Config) error {
 		WithIncremental(cfg.AnalyzerIncremental).
 		WithTTL(cfg.GraphTTL).
 		WithHistory(historyStore)
+	if attribution != nil {
+		// Not passed when nil: a nil *Ledger in the interface would be a non-nil observer.
+		analyzerSvc.WithPassObserver(attribution)
+	}
 	if cfg.GraphTTL > 0 {
 		slog.Info("staleness pruning enabled - assets not re-observed within the TTL are removed (leader only)", "ttl", cfg.GraphTTL)
 	}
@@ -859,7 +885,7 @@ func run(parent context.Context, cfg config.Config) error {
 		provider, model := ai.Provider(aiCfg)
 		slog.Info("AI-native layer enabled", "provider", provider, "model", model)
 	}
-	apiHandler, err := buildAPI(manager, analyzerSvc, indexer, authn, auditRec, apiLimiter, suppressStore, historyStore, ticketStore, validationStore, cfg.CORSAllowedOrigins, exportSigner, exfilWatcher, authGuard, authInfoFromConfig(cfg, authn.Enabled()), prOpener, aiClient, aiLimiter, bus, coverageStore, degradedReason(backend, cfg.Env), cfg.MetricsAddr != "", ips, cfg.GraphQLIntrospection)
+	apiHandler, err := buildAPI(manager, analyzerSvc, indexer, authn, auditRec, apiLimiter, suppressStore, historyStore, ticketStore, validationStore, cfg.CORSAllowedOrigins, exportSigner, exfilWatcher, authGuard, authInfoFromConfig(cfg, authn.Enabled()), prOpener, aiClient, aiLimiter, bus, coverageStore, degradedReason(backend, cfg.Env), cfg.MetricsAddr != "", ips, cfg.GraphQLIntrospection, gateNormalizer)
 	if err != nil {
 		return err
 	}
@@ -1151,8 +1177,8 @@ func authInfoFromConfig(cfg config.Config, authEnabled bool) api.AuthInfo {
 	return info
 }
 
-func buildAPI(manager *graph.Manager, svc *analyzer.Service, idx search.Indexer, authn auth.Authenticator, rec audit.Recorder, limiter *ratelimit.Limiter, suppressStore suppress.Suppressions, historyStore history.Temporal, ticketStore ticket.Tickets, validationStore validation.Verdicts, corsOrigins []string, exportSigner *exportsign.Signer, exfilWatcher, authGuard *secwatch.Watcher, authInfo api.AuthInfo, prOpener action.PROpener, aiClient ai.Client, aiLimiter *ratelimit.Limiter, batches api.BatchTracker, coverageStore *coverage.Store, degraded string, metricsElsewhere bool, ips *clientip.Resolver, introspection string) (http.Handler, error) {
-	return api.New(manager, svc, idx).WithAuth(authn, rec).WithRateLimit(limiter).WithSuppress(suppressStore).WithHistory(historyStore).WithTickets(ticketStore).WithValidation(validationStore).WithCORSOrigins(corsOrigins).WithExportSigner(exportSigner).WithAbuseWatchers(exfilWatcher, authGuard).WithClientIP(ips).WithIntrospection(introspection).WithAuthInfo(authInfo).WithRemediationPR(prOpener).WithAI(aiClient).WithAIRateLimit(aiLimiter).WithIngestBatches(batches).WithCoverage(coverageStore).WithDegraded(degraded).WithMetricsElsewhere(metricsElsewhere).Handler()
+func buildAPI(manager *graph.Manager, svc *analyzer.Service, idx search.Indexer, authn auth.Authenticator, rec audit.Recorder, limiter *ratelimit.Limiter, suppressStore suppress.Suppressions, historyStore history.Temporal, ticketStore ticket.Tickets, validationStore validation.Verdicts, corsOrigins []string, exportSigner *exportsign.Signer, exfilWatcher, authGuard *secwatch.Watcher, authInfo api.AuthInfo, prOpener action.PROpener, aiClient ai.Client, aiLimiter *ratelimit.Limiter, batches api.BatchTracker, coverageStore *coverage.Store, degraded string, metricsElsewhere bool, ips *clientip.Resolver, introspection string, gateNormalizer func(*graph.Manager) *normalization.Normalizer) (http.Handler, error) {
+	return api.New(manager, svc, idx).WithGate(allCollectors(), gateNormalizer).WithAuth(authn, rec).WithRateLimit(limiter).WithSuppress(suppressStore).WithHistory(historyStore).WithTickets(ticketStore).WithValidation(validationStore).WithCORSOrigins(corsOrigins).WithExportSigner(exportSigner).WithAbuseWatchers(exfilWatcher, authGuard).WithClientIP(ips).WithIntrospection(introspection).WithAuthInfo(authInfo).WithRemediationPR(prOpener).WithAI(aiClient).WithAIRateLimit(aiLimiter).WithIngestBatches(batches).WithCoverage(coverageStore).WithDegraded(degraded).WithMetricsElsewhere(metricsElsewhere).Handler()
 }
 
 // serveHTTP runs srv until ctx ends. A listener that fails - a port already taken, a

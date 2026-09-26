@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/luiacuaniello/perspectivegraph/internal/impact"
 )
 
 // GitHubConfig configures the GitHub PR commenter.
@@ -19,6 +21,10 @@ type GitHubConfig struct {
 	// Allow is the repository allowlist. It is required for any real write: the
 	// destination otherwise comes from ingested graph data. Nil denies everything.
 	Allow *RepoAllow
+	// Attribution decides which critical paths count against a commit - the merge
+	// gate's rule, routes the change opened or made likelier. Nil counts every route
+	// through the commit (PR_ATTRIBUTION=commit).
+	Attribution *impact.Ledger
 }
 
 // NewGitHubCommenter returns a Commenter that posts to GitHub pull requests.
@@ -30,7 +36,7 @@ func NewGitHubCommenter(cfg GitHubConfig) *Commenter {
 		slog.Warn("github commenter: no token set, running in dry-run (comments logged, not posted)")
 		cfg.DryRun = true
 	}
-	return newCommenter(&githubPoster{cfg: cfg, http: &http.Client{Timeout: 10 * time.Second}}, cfg.Allow)
+	return newCommenter(&githubPoster{cfg: cfg, http: &http.Client{Timeout: 10 * time.Second}}, cfg.Allow).withJudge(cfg.Attribution)
 }
 
 type githubPoster struct {

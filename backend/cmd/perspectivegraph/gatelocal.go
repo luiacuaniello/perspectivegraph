@@ -15,6 +15,7 @@ import (
 	awsconnector "github.com/luiacuaniello/perspectivegraph/internal/connector/aws"
 	"github.com/luiacuaniello/perspectivegraph/internal/graph"
 	"github.com/luiacuaniello/perspectivegraph/internal/graph/memory"
+	"github.com/luiacuaniello/perspectivegraph/internal/impact"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion"
 	"github.com/luiacuaniello/perspectivegraph/internal/normalization"
 	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
@@ -127,9 +128,15 @@ type localOpts struct {
 	pr         int
 	repository string
 	reports    []reportSpec
-	estate     string // events JSON, as written by `awscollect -json`
-	awsRegion  string
-	awsRole    string
+	// baseReports are scans of what runs now - the base branch - applied to the estate,
+	// unstamped, before the comparison (diff attribution).
+	baseReports []reportSpec
+	// attribution is "diff" (the default: the routes the reports open or worsen) or
+	// "commit" (every route through an asset stamped with the commit).
+	attribution string
+	estate      string // events JSON, as written by `awscollect -json`
+	awsRegion   string
+	awsRole     string
 	// stdin is the report read from standard input, for a -report of "-". It is read by
 	// the caller before anything else, for the reason drainStdinReport gives.
 	stdin []byte
@@ -178,9 +185,13 @@ func localVerdict(ctx context.Context, o localOpts) (gateVerdict, error) {
 		return gateVerdict{}, fmt.Errorf("the estate source produced no events, so there is nothing for this commit to be reachable through")
 	}
 
-	reports, err := o.parseReports()
+	reports, err := o.parseReports(o.reports, true)
 	if err != nil {
 		return gateVerdict{}, err
+	}
+
+	if o.attribution != "commit" {
+		return o.diffVerdict(ctx, norm, store, est, reports)
 	}
 
 	if err := applyEvents(ctx, norm, store, append(reports, est.events...)); err != nil {
@@ -199,8 +210,75 @@ func localVerdict(ctx context.Context, o localOpts) (gateVerdict, error) {
 	analyzer.Prioritize(paths)
 
 	v := buildVerdict(snap, paths, o.slug, o.sha)
+	v.Attribution = "commit"
 	v.Incomplete = est.partial
 	return v, nil
+}
+
+// diffVerdict is local mode's comparison, the same one a server runs (package impact):
+// the estate - with the scans of what runs now, when given - against the estate with
+// this change's reports applied.
+func (o localOpts) diffVerdict(ctx context.Context, norm *normalization.Normalizer, store *memory.Store, est estate, reports []ontology.Event) (gateVerdict, error) {
+	base, err := o.parseReports(o.baseReports, false)
+	if err != nil {
+		return gateVerdict{}, err
+	}
+	for _, ev := range append(est.events, base...) {
+		if err := norm.Handle(ctx, ev); err != nil && !errors.Is(err, graph.ErrEndpointsMissing) {
+			return gateVerdict{}, fmt.Errorf("apply event: %w", err)
+		}
+	}
+	snap, err := store.Snapshot(ctx)
+	if err != nil {
+		return gateVerdict{}, err
+	}
+	// The estate's links to assets only the change describes wait in the store; they go
+	// into the comparison with it, or the change's image would look unreachable.
+	pending, _, err := store.PendingEdges(ctx, -1)
+	if err != nil {
+		return gateVerdict{}, err
+	}
+	res, err := impact.Evaluate(ctx, impact.Input{
+		Base: snap, BasePending: pending, Change: reports, Slug: o.slug, SHA: o.sha,
+	})
+	if err != nil {
+		return gateVerdict{}, err
+	}
+	// What still waits once the change is in is a reference nothing describes, and the
+	// edge that gets dropped may be exactly the one that made the change reachable: an
+	// error, as it always was here, never a clean verdict.
+	if res.Waiting > 0 {
+		e := res.Sample
+		return gateVerdict{}, fmt.Errorf(
+			"the estate refers to an asset that nothing else described, so the graph cannot be "+
+				"completed (pass the missing scan with -report/-reports/-base-reports, or drop the reference): "+
+				"%d edge(s) wait for an endpoint, e.g. %s %s->%s: %w", res.Waiting, e.Type, e.From, e.To, graph.ErrEndpointsMissing)
+	}
+	v := verdictFromImpact(res)
+	v.Incomplete = est.partial
+	return v, nil
+}
+
+// verdictFromImpact renders a comparison as the gate's verdict, the shape POST
+// /gate/impact answers with.
+func verdictFromImpact(res impact.Result) gateVerdict {
+	v := gateVerdict{
+		Attribution: "diff",
+		Analysed:    res.Analysed,
+		AnalysedAt:  time.Now().UTC().Format(time.RFC3339Nano),
+		Preexisting: res.Preexisting,
+		Recorded:    res.Recorded,
+		Reachable:   res.Reachable,
+	}
+	for _, p := range res.Blocking {
+		gp := gatePath{ID: p.ID, Score: p.Score, Priority: p.Priority, Change: string(p.Change), PreviousScore: p.PreviousScore}
+		for _, n := range p.Nodes {
+			gp.Nodes = append(gp.Nodes, gateNode{Name: n.Name, Label: string(n.Label)})
+		}
+		v.Paths = append(v.Paths, gp)
+	}
+	v.CriticalPaths = len(v.Paths)
+	return v
 }
 
 // buildVerdict applies the same three-state rule as the prVerdict resolver: "analysed" is
@@ -301,18 +379,17 @@ func (o localOpts) collectAWS(ctx context.Context) ([]ontology.Event, error) {
 	return conn.Collect(ctx)
 }
 
-// parseReports turns this pull request's scanner output into events, stamped with the
-// commit. The stamp is what makes the change findable in the graph afterwards; without
-// it every verdict here would be UNKNOWN.
-func (o localOpts) parseReports() ([]ontology.Event, error) {
-	opts := ingestion.Options{
-		Repository: o.repository,
-		RepoSlug:   o.slug,
-		CommitSHA:  o.sha,
-		PRNumber:   o.pr,
+// parseReports turns scanner output into events. This pull request's are stamped with the
+// commit: the stamp is what makes the change findable in the graph afterwards, and
+// without it every verdict here would be UNKNOWN. The base branch's are not - they are
+// what runs now, not the change.
+func (o localOpts) parseReports(specs []reportSpec, stamped bool) ([]ontology.Event, error) {
+	opts := ingestion.Options{Repository: o.repository}
+	if stamped {
+		opts.RepoSlug, opts.CommitSHA, opts.PRNumber = o.slug, o.sha, o.pr
 	}
 	var out []ontology.Event
-	for _, spec := range o.reports {
+	for _, spec := range specs {
 		c, ok := collectorFor(spec.source)
 		if !ok {
 			return nil, fmt.Errorf("no collector for source %q", spec.source)

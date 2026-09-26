@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/httpx"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/analyzer"
+	"github.com/luiacuaniello/perspectivegraph/internal/impact"
 	remediationpkg "github.com/luiacuaniello/perspectivegraph/internal/remediation"
 	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
 )
@@ -43,9 +45,15 @@ type poster interface {
 // levels: an in-memory body hash skips the API when nothing changed, and a
 // hidden marker lets it update the existing comment instead of posting anew
 // (which survives restarts).
+//
+// It comments on the paths that count against the change - the merge gate's rule, see
+// impact.Ledger - and says why: a route the change opened, or one it made likelier. A
+// route that was there before the change is not its to answer for, and a comment on
+// every one of them is the noise that teaches a team to stop reading.
 type Commenter struct {
 	p      poster
-	allow  *RepoAllow // where writes are permitted; nil denies everything
+	allow  *RepoAllow     // where writes are permitted; nil denies everything
+	judge  *impact.Ledger // nil: every route through the change counts
 	mu     sync.Mutex
 	posted map[string]string // dedupe key -> last body hash
 }
@@ -56,6 +64,11 @@ const maxCommentPages = 20
 
 func newCommenter(p poster, allow *RepoAllow) *Commenter {
 	return &Commenter{p: p, allow: allow, posted: map[string]string{}}
+}
+
+func (c *Commenter) withJudge(l *impact.Ledger) *Commenter {
+	c.judge = l
+	return c
 }
 
 // permitted reports whether this comment may be posted at all. The slug comes from a
@@ -71,22 +84,52 @@ func (c *Commenter) permitted(slug string) bool {
 	return false
 }
 
-func (c *Commenter) OnCriticalPaths(ctx context.Context, paths []analyzer.AttackPath) {
+func (c *Commenter) OnCriticalPaths(ctx context.Context, tenant string, paths []analyzer.AttackPath) {
 	for _, p := range paths {
-		slug, num, ok := prTarget(p)
-		if !ok {
-			continue // no PR/MR context on this path
-		}
-		if !c.permitted(slug) {
-			continue
-		}
-		ref := prRef{slug: slug, number: num}
-		marker := fmt.Sprintf("<!-- perspectivegraph:attack-path:%s -->", p.ID)
-		body := marker + "\n" + commentBody(p)
-		if err := c.upsert(ctx, ref, p.ID, marker, body); err != nil {
-			slog.Error("pr commenter failed", "forge", c.p.forge(), "slug", slug, "number", num, "path", p.ID, "err", err)
+		for _, t := range prsOn(p) {
+			if !c.permitted(t.slug) {
+				continue
+			}
+			v, counts := c.verdict(tenant, t, p)
+			if !counts {
+				continue // there before this change: not its to answer for
+			}
+			ref := prRef{slug: t.slug, number: t.number}
+			marker := fmt.Sprintf("<!-- perspectivegraph:attack-path:%s -->", p.ID)
+			body := marker + "\n" + commentBody(p, v)
+			if err := c.upsert(ctx, ref, p.ID, marker, body); err != nil {
+				slog.Error("pr commenter failed", "forge", c.p.forge(), "slug", t.slug, "number", t.number, "path", p.ID, "err", err)
+			}
 		}
 	}
+}
+
+// verdict judges a path against a pull request through the commits of it the path
+// carries - a later push may have restamped some of its assets and not others. The
+// strongest reason wins, so the comment does not flip between two on alternate passes.
+func (c *Commenter) verdict(tenant string, t prOnPath, p analyzer.AttackPath) (impact.Verdict, bool) {
+	var best impact.Verdict
+	for _, sha := range t.shas {
+		v := c.judge.Judge(tenant, t.slug, sha, p)
+		if v.Counts && rank(v.Change) > rank(best.Change) {
+			best = v
+		}
+	}
+	return best, best.Counts
+}
+
+func rank(ch impact.Change) int {
+	switch ch {
+	case impact.Introduced:
+		return 4
+	case impact.Worsened:
+		return 3
+	case impact.Later:
+		return 2
+	case impact.Recorded:
+		return 1
+	}
+	return 0
 }
 
 func (c *Commenter) upsert(ctx context.Context, ref prRef, pathID, marker, body string) error {
@@ -134,20 +177,41 @@ func (c *Commenter) remember(key, hash string) {
 
 // ── comment rendering (forge-agnostic) ──────────────────────────────
 
-// prTarget finds the first node on the path carrying PR/MR context and returns
-// the repo slug and PR/MR number to comment on.
-func prTarget(p analyzer.AttackPath) (slug string, number int, ok bool) {
+// prOnPath is a pull/merge request whose context a path carries, with the commits of it
+// stamped on the path's nodes.
+type prOnPath struct {
+	slug   string
+	number int
+	shas   []string
+}
+
+// prsOn lists the distinct pull/merge requests a path carries - every one, not the
+// first: a route through two changes is a question for each of them.
+func prsOn(p analyzer.AttackPath) []prOnPath {
+	var out []prOnPath
+	at := map[prRef]int{}
 	for _, n := range p.Nodes {
 		s, _ := n.Properties[ontology.PropRepoSlug].(string)
 		num := toInt(n.Properties[ontology.PropPRNumber])
-		if num > 0 && ValidSlug(s) {
-			return s, num, true
+		if num <= 0 || !ValidSlug(s) {
+			continue
+		}
+		sha, _ := n.Properties[ontology.PropCommitSHA].(string)
+		ref := prRef{slug: s, number: num}
+		i, ok := at[ref]
+		if !ok {
+			i = len(out)
+			at[ref] = i
+			out = append(out, prOnPath{slug: s, number: num})
+		}
+		if !slices.Contains(out[i].shas, sha) {
+			out[i].shas = append(out[i].shas, sha)
 		}
 	}
-	return "", 0, false
+	return out
 }
 
-func commentBody(p analyzer.AttackPath) string {
+func commentBody(p analyzer.AttackPath, v impact.Verdict) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## 🚨 PerspectiveGraph - reachable attack path detected\n\n")
 	if p.RuntimeConfirmed {
@@ -156,6 +220,18 @@ func commentBody(p analyzer.AttackPath) string {
 	fmt.Fprintf(&b, "This change sits on a **verified attack path** "+
 		"(exploit likelihood **%.0f%%**) from an internet-exposed entry point "+
 		"to a sensitive asset (`%s`).\n\n", p.Score*100, p.Target().Name)
+	switch v.Change {
+	case impact.Introduced:
+		fmt.Fprintf(&b, "**This change opens it:** nothing led from `%s` to `%s` before it.\n\n",
+			p.Source().Name, p.Target().Name)
+	case impact.Worsened:
+		fmt.Fprintf(&b, "**This change makes it likelier:** %.0f%% before it, %.0f%% now.\n\n",
+			v.PreviousScore*100, p.Score*100)
+	case impact.Later:
+		b.WriteString("**This route appeared through this change's assets after it arrived**, with no other " +
+			"pull request arriving on it at the time - the rest of a large report, or a change made outside " +
+			"a pull request. It runs through this change, so it counts.\n\n")
+	}
 
 	b.WriteString("**Path**\n```\n")
 	b.WriteString(strings.TrimLeft(RenderPath(p), "\n"))
