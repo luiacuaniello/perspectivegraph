@@ -74,11 +74,11 @@ func LastSeen(props map[string]any) (int64, bool) {
 }
 
 // Delta is the set of graph elements observed at or after a watermark: idempotent
-// upserts a consumer can patch onto a cached snapshot. It carries no deletions -
-// the only source of removals is the TTL pruner, and the analyzer rebuilds a full
-// snapshot whenever it prunes (and periodically), so a delta only ever adds or
-// updates. Both stores stamp last_seen on every write (see ApplyEvent), which is
-// what makes the "since" filter possible.
+// upserts a consumer can patch onto a cached snapshot. It carries no deletions: the
+// removals - the TTL pruner and a Sweeper - move the store's RemovalEpoch, and a
+// consumer that sees it move rebuilds from a full snapshot instead, so a delta only
+// ever adds or updates. Both stores stamp last_seen on every write (see ApplyEvent),
+// which is what makes the "since" filter possible.
 type Delta struct {
 	Nodes []ontology.Node
 	Edges []ontology.Edge
@@ -91,6 +91,66 @@ type Delta struct {
 // every analyzer pass). Stores that don't implement it fall back to full Snapshot.
 type DeltaStore interface {
 	SnapshotSince(ctx context.Context, since int64) (Delta, error)
+}
+
+// Origin is who asserted a graph element, and in what capacity.
+type Origin struct {
+	// Source is the collector that asserted it: the event's Source.
+	Source string
+	// Scope is set when the assertion is part of a complete snapshot of that scope
+	// (ontology.Snapshot): only then can the source later retract the element by
+	// leaving it out. Empty for a partial observation, which is never retracted by
+	// omission - an element it asserted leaves the graph by staleness alone.
+	Scope string
+	// Seen is when the engine received the assertion. A snapshot retracts only what
+	// was asserted before it was taken, so an older snapshot landing late cannot undo a
+	// newer one.
+	Seen time.Time
+}
+
+// OriginWriter is an OPTIONAL Store capability: a batch write (see BatchWriter) that
+// also records the origin of every element it writes, parked edges included. That
+// record is what a Sweeper retracts by; a store that keeps none never sweeps anything.
+type OriginWriter interface {
+	UpsertBatchFrom(ctx context.Context, o Origin, nodes []ontology.Node, edges []ontology.Edge) error
+}
+
+// SweepStats reports what a sweep took out of the graph.
+type SweepStats struct {
+	Nodes int // nodes no source asserts any more
+	Edges int // edges no source asserts any more, or that went with a removed node
+	// Parked counts edges another source still asserts that joined a removed node. They
+	// wait for it (EdgeParker), and land again if it comes back.
+	Parked int
+}
+
+// Removed reports whether the sweep changed the graph.
+func (s SweepStats) Removed() bool { return s.Nodes+s.Edges+s.Parked > 0 }
+
+// Sweeper is an OPTIONAL Store capability: apply the omissions of a complete snapshot.
+//
+// Sweep withdraws the (source, scope) origin from every element it was recorded on
+// before taken - everything the source asserted in that scope and did not assert again
+// in the snapshot taken then. An element left with no origin at all is removed: nobody
+// says it exists any more. Removing a node removes its edges; one that another origin
+// still asserts is parked rather than lost.
+//
+// Two things are never swept. An element that was never given an origin - written
+// before provenance existed, or through a path that records none - is not a candidate:
+// nothing says who owned it, so only staleness pruning may take it. And an empty scope
+// is refused: it is the partial observations' scope, which omission does not retract.
+type Sweeper interface {
+	Sweep(ctx context.Context, source, scope string, taken time.Time) (SweepStats, error)
+}
+
+// ErrEmptyScope is returned by a Sweep for the empty scope.
+var ErrEmptyScope = errors.New("a sweep needs a scope: partial observations are never retracted by omission")
+
+// RemovalEpocher is an OPTIONAL Store capability: a counter that moves whenever
+// something is removed from the graph, by any replica. A consumer that patches a cached
+// snapshot from deltas (which carry no deletions) watches it and rebuilds when it moves.
+type RemovalEpocher interface {
+	RemovalEpoch(ctx context.Context) (int64, error)
 }
 
 // PathStore is an OPTIONAL Store capability: compute internet-exposed →
@@ -235,6 +295,49 @@ func (v *VersionedStore) Prune(ctx context.Context, before time.Time) (PruneStat
 	return stats, err
 }
 
+// UpsertBatchFrom writes through the wrapped store's OriginWriter, recording o on every
+// element; a store without one gets a plain batch write and records nothing.
+func (v *VersionedStore) UpsertBatchFrom(ctx context.Context, o Origin, nodes []ontology.Node, edges []ontology.Edge) error {
+	ow, ok := v.Store.(OriginWriter)
+	if !ok {
+		return v.UpsertBatch(ctx, nodes, edges)
+	}
+	err := ow.UpsertBatchFrom(ctx, o, nodes, edges)
+	if (err == nil || errors.Is(err, ErrEndpointsMissing)) && len(nodes)+len(edges) > 0 {
+		v.version.Add(1)
+	}
+	return err
+}
+
+// Sweep delegates to the wrapped store's Sweeper and bumps the write version when it
+// removed anything. A store that is not a Sweeper sweeps nothing.
+func (v *VersionedStore) Sweep(ctx context.Context, source, scope string, taken time.Time) (SweepStats, error) {
+	sw, ok := v.Store.(Sweeper)
+	if !ok {
+		return SweepStats{}, nil
+	}
+	stats, err := sw.Sweep(ctx, source, scope, taken)
+	if err == nil && stats.Removed() {
+		v.version.Add(1)
+	}
+	return stats, err
+}
+
+// AsRemovalEpocher reports whether s (unwrapping a VersionedStore) keeps a removal
+// epoch, returning it if so.
+func AsRemovalEpocher(s Store) (RemovalEpocher, bool) {
+	for {
+		if r, ok := s.(RemovalEpocher); ok {
+			return r, true
+		}
+		vs, ok := s.(*VersionedStore)
+		if !ok {
+			return nil, false
+		}
+		s = vs.Store
+	}
+}
+
 // AsPathStore reports whether s (unwrapping a VersionedStore) can compute paths
 // in the database, returning the PathStore if so. Optional capabilities aren't
 // promoted through the VersionedStore wrapper, so callers go through this.
@@ -349,6 +452,18 @@ func ApplyEvent(ctx context.Context, s Store, ev ontology.Event) error {
 		}
 		e.Properties = withLastSeen(e.Properties, ts)
 		edges = append(edges, e)
+	}
+	// Who says so. A snapshot's elements carry its scope and the time it was taken, so
+	// the sweep that follows it can tell what it asserted from what it left out.
+	origin := Origin{Source: ev.Source, Seen: time.Now()}
+	if sn := ev.Snapshot; sn != nil && sn.Scope != "" {
+		origin.Scope = sn.Scope
+		if !sn.Taken.IsZero() {
+			origin.Seen = sn.Taken
+		}
+	}
+	if ow, ok := s.(OriginWriter); ok {
+		return ow.UpsertBatchFrom(ctx, origin, nodes, edges)
 	}
 	if bw, ok := s.(BatchWriter); ok {
 		return bw.UpsertBatch(ctx, nodes, edges)

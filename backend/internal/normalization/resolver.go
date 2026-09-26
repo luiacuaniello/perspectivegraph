@@ -71,6 +71,14 @@ func (n *Normalizer) WithScrub(enabled bool) *Normalizer {
 // Handle is the broker consumer callback: it routes the event to its tenant's
 // store and search index.
 func (n *Normalizer) Handle(ctx context.Context, ev ontology.Event) error {
+	// A pull request's scan describes a change that may never be merged, not what runs:
+	// it must never retract anything. The ingest webhook already refuses to declare one
+	// complete; this holds for whatever reaches the bus by another way.
+	if ev.Snapshot != nil && ev.CompleteSnapshot() == nil {
+		slog.Warn("ignoring a complete-snapshot declaration on a pull request's event, or with an invalid scope",
+			"source", ev.Source)
+		ev.Snapshot = nil
+	}
 	ev = n.canonicalize(ev)
 	ev = inferImageHosts(ev)
 	ev = classifyCrownJewels(ev) // authoritative data classification (Macie/DLP/tag) first…
@@ -101,8 +109,14 @@ func (n *Normalizer) Handle(ctx context.Context, ev ontology.Event) error {
 }
 
 // canonicalize rewrites node ids through image-ref normalization so duplicate
-// assets converge before they hit the graph.
+// assets converge before they hit the graph - and an image scope with them, so two
+// scans of one image under different registry spellings describe the same scope.
 func (n *Normalizer) canonicalize(ev ontology.Event) ontology.Event {
+	if sn := ev.Snapshot; sn != nil {
+		c := *sn
+		c.Scope = CanonicalScope(sn.Scope)
+		ev.Snapshot = &c
+	}
 	rewrite := map[string]string{}
 	for i := range ev.Nodes {
 		node := &ev.Nodes[i]
@@ -378,6 +392,19 @@ func NormalizeImageRef(ref string) string {
 		ref = rest
 	}
 	return ref
+}
+
+// ImageScope is the snapshot scope of one scanned image: its reference, normalized as
+// its node id is.
+func ImageScope(ref string) string { return ontology.ImageScopePrefix + NormalizeImageRef(ref) }
+
+// CanonicalScope is the form a snapshot scope is recorded and swept under: an image
+// scope's reference is normalized, every other scope is taken as written.
+func CanonicalScope(scope string) string {
+	if ref, ok := strings.CutPrefix(scope, ontology.ImageScopePrefix); ok {
+		return ImageScope(ref)
+	}
+	return scope
 }
 
 func hasNode(nodes []ontology.Node, id string) bool {

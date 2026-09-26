@@ -122,6 +122,11 @@ type Store struct {
 	// pendingReady records that the parked-edge table exists; see preparePending.
 	pendingMu    sync.Mutex
 	pendingReady bool
+
+	// provReady records that the provenance and removal-epoch tables exist; see
+	// prepareProvenance.
+	provMu    sync.Mutex
+	provReady bool
 }
 
 func newStore(dsn, graphName string) (*Store, error) {
@@ -194,14 +199,14 @@ func (s *Store) Ping(ctx context.Context) error {
 
 // UpsertNode creates or updates one vertex. It is a batch of one: see UpsertBatch.
 func (s *Store) UpsertNode(ctx context.Context, n ontology.Node) error {
-	return s.upsertBatch(ctx, []ontology.Node{n}, nil, false)
+	return s.upsertBatch(ctx, []ontology.Node{n}, nil, false, nil)
 }
 
 // UpsertEdge creates or updates one directed relationship. It is a batch of one that
 // does not park: when either endpoint is not in the graph yet it returns an error
 // wrapping graph.ErrEndpointsMissing instead of silently doing nothing.
 func (s *Store) UpsertEdge(ctx context.Context, e ontology.Edge) error {
-	return s.upsertBatch(ctx, nil, []ontology.Edge{e}, false)
+	return s.upsertBatch(ctx, nil, []ontology.Edge{e}, false, nil)
 }
 
 // UpsertBatch writes nodes, then edges, in ONE transaction that holds this graph's
@@ -226,10 +231,16 @@ func (s *Store) UpsertEdge(ctx context.Context, e ontology.Edge) error {
 // the same lock, so a replica parking an edge and another writing its endpoint cannot
 // miss each other.
 func (s *Store) UpsertBatch(ctx context.Context, nodes []ontology.Node, edges []ontology.Edge) error {
-	return s.upsertBatch(ctx, nodes, edges, true)
+	return s.upsertBatch(ctx, nodes, edges, true, nil)
 }
 
-func (s *Store) upsertBatch(ctx context.Context, nodes []ontology.Node, edges []ontology.Edge, park bool) error {
+// UpsertBatchFrom is UpsertBatch that also records, in the same transaction, who asserted
+// every element it writes - the edges it parks included (graph.OriginWriter).
+func (s *Store) UpsertBatchFrom(ctx context.Context, o graph.Origin, nodes []ontology.Node, edges []ontology.Edge) error {
+	return s.upsertBatch(ctx, nodes, edges, true, &o)
+}
+
+func (s *Store) upsertBatch(ctx context.Context, nodes []ontology.Node, edges []ontology.Edge, park bool, origin *graph.Origin) error {
 	// Every statement is built before the transaction opens, so a value the store
 	// refuses fails the event before anything is written.
 	nodeQs := make([]nodeStmts, 0, len(nodes))
@@ -254,6 +265,11 @@ func (s *Store) upsertBatch(ctx context.Context, nodes []ontology.Node, edges []
 	s.prepareLabels(ctx, labels)
 	if park {
 		if err := s.preparePending(ctx); err != nil {
+			return err
+		}
+	}
+	if origin != nil {
+		if err := s.prepareProvenance(ctx); err != nil {
 			return err
 		}
 	}
@@ -310,6 +326,9 @@ func (s *Store) upsertBatch(ctx context.Context, nodes []ontology.Node, edges []
 				}
 			}
 			waiting = nil
+		}
+		if origin != nil {
+			return s.recordOrigins(ctx, tx, *origin, nodes, edges)
 		}
 		return nil
 	})
@@ -455,9 +474,28 @@ func (s *Store) preparePending(ctx context.Context) error {
 func (s *Store) landParked(ctx context.Context, tx *sql.Tx, nodes []ontology.Node) error {
 	t := s.pendingRef()
 	// #nosec G202 -- t is two quoted identifiers built from a validated graph name
-	if _, err := tx.ExecContext(ctx, `DELETE FROM `+t+` WHERE parked_at < now() - make_interval(secs => $1)`,
-		graph.PendingEdgeTTL.Seconds()); err != nil {
+	expired, err := tx.QueryContext(ctx, `DELETE FROM `+t+` WHERE parked_at < now() - make_interval(secs => $1)
+		RETURNING edge_type, from_id, to_id`, graph.PendingEdgeTTL.Seconds())
+	if err != nil {
 		return fmt.Errorf("expire parked edges: %w", err)
+	}
+	var gone []elemKey
+	for expired.Next() {
+		var k elemKey
+		if err := expired.Scan(&k.a, &k.b, &k.c); err != nil {
+			expired.Close()
+			return err
+		}
+		k.kind = "e"
+		gone = append(gone, k)
+	}
+	expired.Close()
+	if err := expired.Err(); err != nil {
+		return err
+	}
+	// An edge that waited out the TTL is gone for good; so is the record of who sent it.
+	if err := s.forgetOrigins(ctx, tx, gone); err != nil {
+		return err
 	}
 	if len(nodes) == 0 {
 		return nil
@@ -841,12 +879,20 @@ func (s *Store) Prune(ctx context.Context, before time.Time) (graph.PruneStats, 
 		return graph.PruneStats{}, err
 	}
 
+	if err := s.prepareProvenance(ctx); err != nil {
+		return graph.PruneStats{}, err
+	}
 	var stats graph.PruneStats
 	err = s.withAGE(ctx, func(tx *sql.Tx) error {
 		// Under the write lock, so a prune never interleaves with an event that is
 		// writing an edge to a node this is deleting.
 		if err := s.lockForWrite(ctx, tx); err != nil {
 			return err
+		}
+		// An assertion nobody repeated within the TTL is as stale as the element it named.
+		// #nosec G202 -- the table reference is two quoted identifiers built from a validated graph name
+		if _, err := tx.ExecContext(ctx, `DELETE FROM `+s.provRef()+` WHERE seen_at < $1`, before); err != nil {
+			return fmt.Errorf("prune provenance: %w", err)
 		}
 		// Count what's stale before deleting (DETACH DELETE removes a node's
 		// remaining edges silently; the edge count captures edges stale in their
@@ -862,6 +908,9 @@ func (s *Store) Prune(ctx context.Context, before time.Time) (graph.PruneStats, 
 		}
 		if _, err := tx.ExecContext(ctx, delNodes); err != nil {
 			return fmt.Errorf("prune nodes: %w", err)
+		}
+		if stats.Nodes+stats.Edges > 0 {
+			return s.bumpRemovals(ctx, tx)
 		}
 		return nil
 	})

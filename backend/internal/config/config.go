@@ -254,6 +254,13 @@ type Config struct {
 	// phantom attack paths. 0 (default) disables pruning.
 	GraphTTL time.Duration
 
+	// GraphSweep applies complete snapshots: when a source that described a scope in full
+	// (one scanned image, one AWS account and region, a cluster posted with
+	// ?snapshot=) no longer lists something it did, that assertion is withdrawn, and an
+	// element nobody asserts any more leaves the graph. On by default; false keeps every
+	// element until GRAPH_TTL, as before 1.23.
+	GraphSweep bool
+
 	// ScrubIngest redacts secret-looking values (AWS/GitHub/Slack tokens, private
 	// keys, `secret=…` assignments) out of scanner output before it is stored, so
 	// the attack map never persists a live credential. On by default - disable only
@@ -456,6 +463,7 @@ func Load() Config {
 		AIRatePerMin:  getfloat("AI_RATE_PER_MIN", 10),
 		GraphStrict:   getbool("GRAPH_STRICT", false),
 		GraphTTL:      getdur("GRAPH_TTL", 0),
+		GraphSweep:    getbool("GRAPH_SWEEP", true),
 		ScrubIngest:   getbool("SCRUB_INGEST", true),
 
 		ConnectorsEnabled: getlist("CONNECTORS_ENABLED", ""),

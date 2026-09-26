@@ -13,6 +13,12 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
 )
 
+// BatchPublisher publishes a whole collection as one tracked batch (broker.Broker), which
+// is what lets the complete snapshots in it be applied once all of it has landed.
+type BatchPublisher interface {
+	PublishBatch(ctx context.Context, events []ontology.Event) (string, int, error)
+}
+
 // Publisher pushes collected events onto the bus (implemented by broker.Broker).
 type Publisher interface {
 	Publish(ctx context.Context, ev ontology.Event) error
@@ -151,21 +157,50 @@ func (s *Scheduler) collectOne(ctx context.Context, c Connector) {
 	events, cerr := c.Collect(cctx)
 	now := time.Now()
 
-	var published, nodes int
-	for _, ev := range events {
-		ev.Tenant = s.tenant // route to the configured tenant's graph
-		if perr := s.pub.Publish(ctx, ev); perr != nil {
-			if errors.Is(perr, context.Canceled) {
-				return
+	// A feed the connector read in full is a complete snapshot (ontology.Snapshot), taken
+	// now. It is applied - what it no longer lists retracted - only once the whole
+	// collection has landed, which only a tracked batch can tell; published any other way
+	// it is a partial observation.
+	bp, batched := s.pub.(BatchPublisher)
+	for i := range events {
+		events[i].Tenant = s.tenant // route to the configured tenant's graph
+		if sn := events[i].Snapshot; sn != nil {
+			events[i].Snapshot = &ontology.Snapshot{Scope: sn.Scope, Taken: now.UTC()}
+			if !batched {
+				events[i].Snapshot = nil
 			}
-			metrics.ConnectorRuns.WithLabelValues(src, "error").Inc()
-			s.record(src, now, false, "publish: "+perr.Error(), published)
-			slog.Error("connector publish failed", "source", src, "err", perr)
+		}
+	}
+	fail := func(perr error, published int) {
+		metrics.ConnectorRuns.WithLabelValues(src, "error").Inc()
+		s.record(src, now, false, "publish: "+perr.Error(), published)
+		slog.Error("connector publish failed", "source", src, "err", perr)
+	}
+	var published, nodes int
+	if batched && len(events) > 0 {
+		if _, _, perr := bp.PublishBatch(ctx, events); perr != nil {
+			if !errors.Is(perr, context.Canceled) {
+				fail(perr, 0)
+			}
 			return
 		}
-		published++
-		nodes += len(ev.Nodes)
-		metrics.ConnectorEvents.WithLabelValues(src).Inc()
+		for _, ev := range events {
+			published++
+			nodes += len(ev.Nodes)
+			metrics.ConnectorEvents.WithLabelValues(src).Inc()
+		}
+	} else {
+		for _, ev := range events {
+			if perr := s.pub.Publish(ctx, ev); perr != nil {
+				if !errors.Is(perr, context.Canceled) {
+					fail(perr, published)
+				}
+				return
+			}
+			published++
+			nodes += len(ev.Nodes)
+			metrics.ConnectorEvents.WithLabelValues(src).Inc()
+		}
 	}
 
 	if cerr != nil {

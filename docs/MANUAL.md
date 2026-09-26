@@ -727,9 +727,11 @@ The baseline is the graph as it stands - what runs now, as your main-branch pipe
 connectors last described it. To also record the pull request's scan in the live graph (the
 engine's own PR comments and commit status are driven by what is ingested), add
 `persist: true` with `ingest` and `hmac-secret`; the verdict is computed first, without it. A
-proxy in front of the API must pass `/gate/` and let a report through - the bundled dashboard
-and the Helm ingress do; an ingress controller with a 1 MiB body limit needs it raised, as
-`/ingest` does.
+proxy in front of the API must pass `/gate/` and let a report through, up to the 32 MiB the
+backend accepts, as for `/ingest`. The bundled dashboard does, and so does the Helm ingress: it
+raises the nginx-based controllers' 1 MiB default (`ingress.maxBodySize`, rendered as the
+ingress-nginx and F5 NGINX annotations; one you set yourself wins). Any other proxy needs the
+same.
 
 Both modes run the same comparison (package `impact`), the same normalizer, the same pathfinder
 and the same triage priority. Under `attribution: commit` they return the same per-commit verdict
@@ -2202,7 +2204,43 @@ code is actually reachable in the running stack:
 
 A correlation engine that only *adds* drifts toward fiction: a pod is deleted, a
 security group is torn down, but the path through it lingers and gets reported
-forever. Two things keep the graph honest over time.
+forever. Three things keep the graph honest over time.
+
+- **Complete snapshots (`GRAPH_SWEEP`, on by default).** The engine records who said
+  each node and edge exists: the source, and the scope when the source described that
+  scope in full. When a complete snapshot of a scope has landed - every message of the
+  ingest, however it was split - whatever the same source said about that scope before
+  and did not say again is withdrawn. An element leaves the graph only when *no* source
+  asserts it any more. So a CVE fixed in an image disappears at the image's next scan,
+  and an instance terminated at the next AWS pull, instead of lingering for a TTL.
+
+  Who declares a snapshot complete is whoever can vouch for it:
+
+  | Source | Complete for | When |
+  |---|---|---|
+  | Trivy | the image (`image:<ref>`, registry-normalized) | scanned by reference, something scanned, no PR context |
+  | Semgrep | the repository (`repository:<repo>`) | `?repo=` given, no analysis errors, no PR context |
+  | AWS connector | IAM: the account; network: the account and region | the feed was read without error and the account is known |
+  | anything else | the scope you name with `?snapshot=<scope>` | you sent the whole scope |
+
+  Five safeguards, because this is the one part of the engine that deletes:
+
+  - A pull request's scan never retracts: it describes a change that may never run.
+  - Nothing is retracted until the *whole* ingest has reached the graph, and exactly
+    one replica applies it. A batch that never completes - a message dead-lettered -
+    retracts nothing.
+  - An older snapshot that lands after a newer one retracts nothing the newer one said.
+  - An edge another source still asserts, joined to a node that was removed, is parked
+    rather than lost, and lands again if the node comes back.
+  - Elements already in the graph when you upgrade to 1.23 were never attributed to a
+    source, so no snapshot takes them. `GRAPH_TTL` still can, as it can anything.
+
+  A scan filtered by severity is complete only for its filter: if two pipelines feed
+  the same image differently, send the filtered one with `?snapshot=none`. Visibility:
+  a log line per snapshot that removed something, and
+  `perspectivegraph_graph_swept_total{kind="node|edge|parked"}` and
+  `perspectivegraph_graph_sweeps_total{source,result}`. `GRAPH_SWEEP=false` (Helm
+  `graph.sweep: false`) keeps everything until `GRAPH_TTL`, as before 1.23.
 
 - **Staleness pruning (`GRAPH_TTL`).** Every node and edge is stamped with a
   `last_seen` time on each observation. When `GRAPH_TTL` is set, the analyzer
@@ -2378,6 +2416,17 @@ arrived yet are retried), but this is the logical flow:
 > reports paths running through a machine that does not exist. Identities need no flag
 > (an ARN already carries its account). Leave it off for a single-account estate and
 > every id stays exactly as it is today.
+
+> **Complete snapshots: `?snapshot=`.** An ingest that describes a scope *in full* lets
+> the engine forget what that scope no longer contains - see
+> [Operating it](#operating-it-freshness-backup--dr). Trivy (an image scanned by reference)
+> and Semgrep (a repository named with `?repo=`) declare it on their own. For any other
+> source you say it: `?snapshot=cluster:prod` on a dump of the whole cluster,
+> `?snapshot=aws:123456789012/eu-west-1` on a whole account's network. Name only a scope
+> you really sent in full: what it omits is retracted. `?snapshot=none` declares a report
+> partial - a Trivy scan filtered by `--severity` or `--ignore-unfixed`, sent beside an
+> unfiltered feed of the same image. A pull request's scan (`slug`/`sha`/`pr`) is never
+> complete, and asking for it is refused.
 
 
 Sources 6–8 are the **discovery** collectors: they extract the network/exposure
@@ -2918,7 +2967,9 @@ section of the README above.
 
 #### Keep it fresh (so it can't drift into fiction)
 
-Once feeds run on a cadence, set **`GRAPH_TTL`** to a few feed-cycles (e.g.
+Complete snapshots (`GRAPH_SWEEP`, on by default) already retract what an image scan or
+an account pull no longer lists; feeds that cannot vouch for a whole scope - a Falco
+alert, a Custodian filter, a partial dump - need a TTL. Once feeds run on a cadence, set **`GRAPH_TTL`** to a few feed-cycles (e.g.
 `168h`). Each observation stamps `last_seen`; the analyzer then removes anything
 not re-seen within the window, so a deleted pod or torn-down security group stops
 producing a **phantom path** instead of lingering forever. Make the TTL

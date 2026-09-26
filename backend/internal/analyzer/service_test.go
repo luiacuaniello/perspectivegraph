@@ -245,3 +245,51 @@ func pathScores(paths []AttackPath) map[string]float64 {
 	}
 	return m
 }
+
+// A delta carries no deletions, so an incremental analyzer that only patched its cache
+// would keep reporting a route through an asset a complete snapshot has retracted - on
+// every replica, until the periodic full read. The removal epoch makes it rebuild.
+func TestIncrementalAnalyzerSeesARetractedAsset(t *testing.T) {
+	ctx := context.Background()
+	mgr, err := graph.NewManager(ctx, func(context.Context, string) (graph.Store, error) { return memory.New(), nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, _ := mgr.For(ctx, graph.DefaultTenant)
+	taken := time.Now().Add(-time.Minute)
+	for _, id := range []string{"a", "b"} {
+		if err := graph.ApplyEvent(ctx, store, ontology.Event{Source: "cloudnet", ObservedAt: taken,
+			Snapshot: &ontology.Snapshot{Scope: "aws:1/eu-west-1", Taken: taken},
+			Nodes: []ontology.Node{
+				{ID: "lb-" + id, Label: ontology.LabelLoadBalancer, Name: "lb-" + id, Properties: map[string]any{ontology.PropInternetExposed: true}},
+				{ID: "db-" + id, Label: ontology.LabelDatabase, Name: "db-" + id, Properties: map[string]any{ontology.PropCrownJewel: true}}},
+			Edges: []ontology.Edge{{Type: ontology.EdgeExposes, From: "lb-" + id, To: "db-" + id, ExploitProbability: 0.9}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	svc := NewService(mgr, time.Minute, nil).WithIncremental(true)
+	svc.runTenant(ctx, graph.DefaultTenant)
+	if got := len(svc.Latest(graph.DefaultTenant)); got != 2 {
+		t.Fatalf("first pass: %d paths, want 2", got)
+	}
+
+	// The next pull lists only "a": "b"'s load balancer and database are retracted.
+	now := time.Now()
+	if err := graph.ApplyEvent(ctx, store, ontology.Event{Source: "cloudnet", ObservedAt: now,
+		Snapshot: &ontology.Snapshot{Scope: "aws:1/eu-west-1", Taken: now},
+		Nodes: []ontology.Node{
+			{ID: "lb-a", Label: ontology.LabelLoadBalancer, Name: "lb-a", Properties: map[string]any{ontology.PropInternetExposed: true}},
+			{ID: "db-a", Label: ontology.LabelDatabase, Name: "db-a", Properties: map[string]any{ontology.PropCrownJewel: true}}},
+		Edges: []ontology.Edge{{Type: ontology.EdgeExposes, From: "lb-a", To: "db-a", ExploitProbability: 0.9}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if stats, err := store.Sweep(ctx, "cloudnet", "aws:1/eu-west-1", now); err != nil || stats.Nodes != 2 {
+		t.Fatalf("sweep: %+v %v", stats, err)
+	}
+	svc.runTenant(ctx, graph.DefaultTenant)
+	if got := len(svc.Latest(graph.DefaultTenant)); got != 1 {
+		t.Fatalf("after the retraction: %d paths, want 1 - the cache kept the retracted route", got)
+	}
+}

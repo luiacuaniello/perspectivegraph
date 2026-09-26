@@ -2,6 +2,7 @@ package trivy
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -250,6 +251,38 @@ func TestImageNameForArchiveScans(t *testing.T) {
 			}
 			if _, ok := img.Properties["name_note"]; ok != tc.note {
 				t.Errorf("name_note present = %v, want %v", ok, tc.note)
+			}
+		})
+	}
+}
+
+// A scan retracts the CVEs it no longer lists only when it describes its image in full:
+// an image scanned by reference, with something scanned, outside a pull request.
+func TestWhenATrivyScanIsComplete(t *testing.T) {
+	image := `{"ArtifactName":"%s","ArtifactType":"%s","Results":%s}`
+	for _, tc := range []struct {
+		name, artifact, typ, results string
+		opts                         ingestion.Options
+		want                         string
+	}{
+		{"an image by reference", "registry.io/app:1.0", "container_image", `[{"Target":"app"}]`, ingestion.Options{}, "image:registry.io/app:1.0"},
+		{"a clean image is complete too", "app:1.0", "container_image", `[{"Target":"app","Vulnerabilities":[]}]`, ingestion.Options{}, "image:app:1.0"},
+		{"a filesystem scan names a path two projects share", ".", "filesystem", `[{"Target":"go.mod"}]`, ingestion.Options{}, ""},
+		{"an untagged archive", "image.tar", "container_image", `[{"Target":"app"}]`, ingestion.Options{}, ""},
+		{"a report that scanned nothing", "app:1.0", "container_image", `null`, ingestion.Options{}, ""},
+		{"a pull request's scan", "app:1.0", "container_image", `[{"Target":"app"}]`, ingestion.Options{RepoSlug: "acme/app", CommitSHA: "abc"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			evs, err := New().Parse(strings.NewReader(fmt.Sprintf(image, tc.artifact, tc.typ, tc.results)), tc.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := ""
+			if sn := evs[0].Snapshot; sn != nil {
+				got = sn.Scope
+			}
+			if got != tc.want {
+				t.Fatalf("scope %q, want %q", got, tc.want)
 			}
 		})
 	}

@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/audit"
 	"github.com/luiacuaniello/perspectivegraph/internal/auth"
@@ -159,7 +161,51 @@ func (s *Server) handleTool(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if err := declareSnapshot(events, q.Get("snapshot"), opts.PRProps() != nil, time.Now().UTC()); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	s.publishAll(w, r.Context(), events)
+}
+
+// declareSnapshot settles whether an ingest is a complete snapshot, whose omissions the
+// engine retracts once it has landed (ontology.Snapshot), from the ?snapshot= parameter:
+//
+//   - absent: the collector decides - Trivy for an image scanned by reference, Semgrep
+//     for a named repository; every other source is partial;
+//   - "none": the ingest is partial, whatever the collector would say - a scan filtered
+//     by severity, say, beside an unfiltered feed of the same image;
+//   - anything else: the scope this ingest describes in full, chosen by whoever sent it -
+//     "cluster:prod" for a whole cluster's manifests, "aws:123456789012/eu-west-1" for a
+//     whole account and region.
+//
+// A pull request's ingest is never complete: it describes a change that may never be
+// merged, and retracting on its word would erase what runs. Asking for it is refused.
+// Taken is stamped here, by the engine, so a sender's clock cannot order snapshots.
+func declareSnapshot(events []ontology.Event, param string, pr bool, now time.Time) error {
+	if param != "" && param != "none" {
+		if !ontology.ValidScope(param) {
+			return fmt.Errorf("snapshot scope must be 1-%d printable characters without spaces", ontology.MaxScopeLen)
+		}
+		if pr {
+			return errors.New("a pull request's scan cannot be a complete snapshot: it describes a change, not what runs")
+		}
+	}
+	for i := range events {
+		ev := &events[i]
+		switch {
+		case pr || param == "none":
+			ev.Snapshot = nil
+		case param != "":
+			ev.Snapshot = &ontology.Snapshot{Scope: param}
+		}
+		if sn := ev.CompleteSnapshot(); sn != nil {
+			ev.Snapshot = &ontology.Snapshot{Scope: sn.Scope, Taken: now}
+		} else {
+			ev.Snapshot = nil
+		}
+	}
+	return nil
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
@@ -179,6 +225,15 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		events = []ontology.Event{single}
+	}
+	// A snapshot is declared with the query parameter, never by a field in the body: one
+	// way to ask, and not one an event copied from elsewhere can carry in unnoticed.
+	for i := range events {
+		events[i].Snapshot = nil
+	}
+	if err := declareSnapshot(events, r.URL.Query().Get("snapshot"), false, time.Now().UTC()); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 	s.publishAll(w, r.Context(), events)
 }

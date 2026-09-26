@@ -92,6 +92,8 @@ type Broker struct {
 	// kv records which messages of an ingest batch were applied (batch.go). Behind an
 	// atomic pointer because a reconnect may create it while consumers read it.
 	kv atomic.Pointer[kvHolder]
+	// sweeper applies complete snapshots once their batch is applied (snapshot.go).
+	sweeper Sweeper
 }
 
 type kvHolder struct{ jetstream.KeyValue }
@@ -386,8 +388,10 @@ func (b *Broker) Consume(ctx context.Context, handler func(context.Context, onto
 			return
 		}
 		metrics.NormalizeEvents.WithLabelValues("ok").Inc()
+		b.recordSnapshot(ctx, msg.Headers(), ev) // before the mark, so a complete batch has all its records
 		b.markApplied(ctx, msg.Headers())
 		_ = msg.Ack()
+		b.maybeSweep(ctx, msg.Headers())
 	},
 		jetstream.PullMaxMessages(pullBuffer),
 		jetstream.ConsumeErrHandler(func(_ jetstream.ConsumeContext, err error) {

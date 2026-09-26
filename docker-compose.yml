@@ -149,6 +149,9 @@ services:
       # removed (leader-only) so departed assets can't produce phantom paths.
       # Empty/0 disables it (the default).
       GRAPH_TTL: ${GRAPH_TTL:-}
+      # Complete snapshots retract what their source no longer lists (a fixed CVE, a
+      # terminated instance). false keeps everything until GRAPH_TTL. See .env.example.
+      GRAPH_SWEEP: ${GRAPH_SWEEP:-true}
       # Set to http://opensearch:9200 when running with --profile search.
       OPENSEARCH_URL: ${OPENSEARCH_URL:-}
       THREATINTEL: ${THREATINTEL:-off}

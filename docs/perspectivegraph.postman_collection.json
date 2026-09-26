@@ -283,6 +283,12 @@
 								{
 									"key": "sha",
 									"value": "{{sha}}"
+								},
+								{
+									"key": "snapshot",
+									"value": "none",
+									"description": "Optional. A Trivy scan of an image by reference, outside a pull request, is a complete snapshot of the image: CVEs it no longer lists are removed once it lands (GRAPH_SWEEP). `none` declares this report partial - a scan filtered by --severity or --ignore-unfixed, sent beside an unfiltered feed of the same image. Ignored with slug/sha/pr: a pull request's scan never removes anything.",
+									"disabled": true
 								}
 							]
 						},
@@ -505,6 +511,12 @@
 									"key": "sha",
 									"value": "{{sha}}",
 									"description": "Optional, with slug. The commit the manifests were rendered from."
+								},
+								{
+									"key": "snapshot",
+									"value": "cluster:prod",
+									"description": "Optional, and never with slug/sha. Declares this dump the COMPLETE state of the named scope: once it lands, whatever an earlier complete dump of the same scope listed and this one does not - a deleted pod, a removed binding - leaves the graph (GRAPH_SWEEP). Name only what you really sent in full; a partial dump under a cluster-wide scope removes everything it left out.",
+									"disabled": true
 								}
 							]
 						},

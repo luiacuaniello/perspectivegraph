@@ -129,13 +129,33 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 		}
 	}
 
-	return []ontology.Event{{
+	ev := ontology.Event{
 		Source:     c.Source(),
 		Kind:       ontology.KindFinding,
 		ObservedAt: time.Now().UTC(),
 		Nodes:      nodes,
 		Edges:      edges,
-	}}, nil
+	}
+	if completeScan(rep, name, opts) {
+		ev.Snapshot = &ontology.Snapshot{Scope: ontology.ImageScopePrefix + name}
+	}
+	return []ontology.Event{ev}, nil
+}
+
+// completeScan reports whether the report describes its image in full - every library
+// and CVE the image carries - so that a CVE missing from it is one the image no longer
+// has, and can be retracted.
+//
+// Only an image scanned by reference qualifies: a filesystem or repository scan names
+// its target by a path ("."), which two different projects share, and so does an
+// archive saved without a tag. A report with no scanned target at all saw nothing and
+// proves nothing. And a pull request's scan describes an image that may never run.
+// A scan filtered by severity or fixability is complete for its filter only; a pipeline
+// that sends one beside an unfiltered feed of the same image says so with
+// ?snapshot=none (see the ingest webhook).
+func completeScan(rep report, name string, opts ingestion.Options) bool {
+	return rep.ArtifactType == "container_image" && !isArchivePath(name) && len(rep.Results) > 0 &&
+		opts.PRProps() == nil
 }
 
 // imageName is the name the scanned image is known by in the estate: the key a running

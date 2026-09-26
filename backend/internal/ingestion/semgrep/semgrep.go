@@ -43,6 +43,8 @@ type report struct {
 			} `json:"metadata"`
 		} `json:"extra"`
 	} `json:"results"`
+	// Errors are the files semgrep could not analyse; their findings are missing.
+	Errors []json.RawMessage `json:"errors"`
 }
 
 type Collector struct {
@@ -113,13 +115,20 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 		})
 	}
 
-	return []ontology.Event{{
+	ev := ontology.Event{
 		Source:     c.Source(),
 		Kind:       ontology.KindFinding,
 		ObservedAt: time.Now().UTC(),
 		Nodes:      nodes,
 		Edges:      edges,
-	}}, nil
+	}
+	// The report describes the repository's findings in full - so one missing from it
+	// was fixed - only when the repository is named (every unnamed report shares one
+	// default name), semgrep analysed every file, and it is not a pull request's scan.
+	if opts.Repository != "" && len(rep.Errors) == 0 && opts.PRProps() == nil {
+		ev.Snapshot = &ontology.Snapshot{Scope: ontology.RepositoryScopePrefix + repoName}
+	}
+	return []ontology.Event{ev}, nil
 }
 
 func isSecret(checkID, category string) bool {

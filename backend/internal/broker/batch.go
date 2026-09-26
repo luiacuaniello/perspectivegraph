@@ -115,12 +115,24 @@ func (b *Broker) PublishBatch(ctx context.Context, events []ontology.Event) (str
 			id = candidate
 		}
 	}
+	// A complete snapshot is applied - what it omits retracted - only once the whole batch
+	// has reached the graph, and only a tracked batch can say when that is.
+	snapshot := false
+	for _, ev := range events {
+		snapshot = snapshot || ev.Snapshot != nil
+	}
+	if snapshot && id == "" {
+		slog.Warn("a complete snapshot was published untracked: nothing it omits will be retracted")
+	}
 	for i, body := range bodies {
 		msg := &nats.Msg{Subject: subjects[i], Data: body, Header: nats.Header{}}
 		if id != "" {
 			msg.Header.Set(hdrBatch, id)
 			msg.Header.Set(hdrSeq, strconv.Itoa(i))
 			msg.Header.Set(hdrTotal, strconv.Itoa(len(bodies)))
+			if snapshot {
+				msg.Header.Set(hdrSnapshot, "1")
+			}
 		}
 		if _, err := b.js.PublishMsg(ctx, msg); err != nil {
 			return "", 0, fmt.Errorf("publish %q: %w", subjects[i], err)
