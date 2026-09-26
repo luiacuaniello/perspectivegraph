@@ -26,6 +26,11 @@ type Config struct {
 	NATSTLSCAFile   string
 	NATSTLSCertFile string
 	NATSTLSKeyFile  string
+	// NATSUser and NATSPassword authenticate to a NATS that requires it (the chart's
+	// bundled server does). Empty user sends no credentials. The password is a secret:
+	// NATS_PASSWORD_FILE works too.
+	NATSUser     string
+	NATSPassword string
 	// NATSMaxAge is how long an event may wait unprocessed in the stream, and how long
 	// a dead-lettered one is kept (NATS_MAX_AGE, default 168h). Processed events are
 	// removed as soon as they are acked, so this bounds a backlog, not the history.
@@ -370,6 +375,8 @@ func Load() Config {
 		NATSTLSCAFile:   getenv("NATS_TLS_CA", ""),
 		NATSTLSCertFile: getenv("NATS_TLS_CERT", ""),
 		NATSTLSKeyFile:  getenv("NATS_TLS_KEY", ""),
+		NATSUser:        getenv("NATS_USER", ""),
+		NATSPassword:    sec.get("NATS_PASSWORD", ""),
 		NATSMaxAge:      getdur("NATS_MAX_AGE", 7*24*time.Hour),
 
 		Env:         getenv("PG_ENV", "demo"),

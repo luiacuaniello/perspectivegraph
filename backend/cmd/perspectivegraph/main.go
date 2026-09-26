@@ -363,6 +363,8 @@ func run(parent context.Context, cfg config.Config) error {
 			CertFile: cfg.NATSTLSCertFile,
 			KeyFile:  cfg.NATSTLSKeyFile,
 		},
+		User:     cfg.NATSUser,
+		Password: cfg.NATSPassword,
 		MaxAge:   cfg.NATSMaxAge,
 		OnClosed: fatal,
 	})

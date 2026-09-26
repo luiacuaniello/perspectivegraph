@@ -9,7 +9,7 @@ metadata:
     {{- include "perspectivegraph.labels" . | nindent 4 }}
 type: Opaque
 stringData:
-  POSTGRES_PASSWORD: {{ .Values.postgres.auth.password | quote }}
+  POSTGRES_PASSWORD: {{ include "perspectivegraph.postgresPassword" . | quote }}
   GITHUB_TOKEN: {{ .Values.github.token | quote }}
   GITLAB_TOKEN: {{ .Values.gitlab.token | quote }}
   API_TOKENS: {{ .Values.auth.apiTokens | quote }}
@@ -41,6 +41,9 @@ data:
   NATS_STREAM: {{ .Values.nats.stream | quote }}
   NATS_SUBJECT: {{ .Values.nats.subject | quote }}
   NATS_MAX_AGE: {{ .Values.nats.maxAge | quote }}
+  # The user the backend authenticates to NATS as; empty when it sends no credentials.
+  # The password comes from a Secret (see backend.yaml).
+  NATS_USER: {{ ternary .Values.nats.auth.user "" (eq (include "perspectivegraph.natsAuth" .) "yes") | quote }}
   API_ADDR: {{ printf ":%d" (int .Values.service.apiPort) | quote }}
   INGEST_ADDR: {{ printf ":%d" (int .Values.service.ingestPort) | quote }}
   ANALYZER_INTERVAL: {{ .Values.backend.analyzerInterval | quote }}

@@ -1,0 +1,104 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- /*
+  Who may open a connection to what. The bundled database and bus are the point: they
+  hold the attack map and carry every event the engine reasons over, and only the
+  backend has any business with either. The backend itself is left open to the cluster
+  unless networkPolicy.backendFrom names who may call it - its API and ingest endpoints
+  authenticate on their own, and which namespace an ingress controller runs in is not
+  something a chart can guess without cutting off the traffic it exists to serve.
+
+  Ingress only. Egress is left alone: the backend reaches cloud APIs, threat intel, the
+  forge and an AI provider, and nothing here would know their addresses. A CNI that does
+  not enforce NetworkPolicy ignores all of this, which is why NATS also authenticates.
+*/}}
+{{- if .Values.postgres.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "perspectivegraph.fullname" . }}-postgres
+  labels:
+    {{- include "perspectivegraph.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: postgres
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: backend
+        {{- with .Values.networkPolicy.postgresFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        - port: 5432
+          protocol: TCP
+---
+{{- end }}
+{{- if .Values.nats.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "perspectivegraph.fullname" . }}-nats
+  labels:
+    {{- include "perspectivegraph.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: nats
+  policyTypes: ["Ingress"]
+  # The client port, from the backend only. The monitoring port (8222) is reachable by
+  # nothing in the cluster: the kubelet's probes do not pass through NetworkPolicy.
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: backend
+      ports:
+        - port: 4222
+          protocol: TCP
+---
+{{- end }}
+{{- with .Values.networkPolicy.backendFrom }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "perspectivegraph.fullname" $ }}-backend
+  labels:
+    {{- include "perspectivegraph.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+      app.kubernetes.io/component: backend
+  policyTypes: ["Ingress"]
+  ingress:
+    # The dashboard's nginx proxies the API.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ $.Release.Name }}
+              app.kubernetes.io/component: frontend
+      ports:
+        - port: {{ $.Values.service.apiPort }}
+          protocol: TCP
+    # Whoever else was named: the ingress controller, a CI runner posting to /ingest,
+    # a Prometheus scraping a metrics port.
+    - from:
+        {{- toYaml . | nindent 8 }}
+      ports:
+        - port: {{ $.Values.service.apiPort }}
+          protocol: TCP
+        - port: {{ $.Values.service.ingestPort }}
+          protocol: TCP
+---
+{{- end }}
+{{- end }}

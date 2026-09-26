@@ -2119,7 +2119,7 @@ helm install perspective deploy/helm/perspectivegraph \
   --set ingest.hmacSecret="$(openssl rand -hex 16)" \      # scanners must sign ingest bodies
   --set persistence.enabled=true \                         # PVC for the governance stores + audit log
   --set graph.ttl=168h \                                   # prune stale assets (phantom paths)
-  --set postgres.auth.password="$(openssl rand -hex 16)"   # don't ship the demo default
+  --set networkPolicy.enabled=true                         # only the backend reaches NATS and Postgres
 ```
 
 - **`auth.apiTokens` / `auth.oidc.*`** - without a token the API is open; set
@@ -2134,6 +2134,20 @@ helm install perspective deploy/helm/perspectivegraph \
   where every replica reads the same rows. The audit log stays a single-writer hash
   chain, so the chart **refuses to render with `backend.replicas > 1`** while persistence
   is on - scale-out would split-brain it.
+- **The bus and the database authenticate on their own.** The bundled NATS requires a
+  user and a password the chart generates into a Secret and hands the backend, so a pod
+  that can reach port 4222 cannot publish events past the ingest signature check. The
+  bundled Postgres gets a random password on install (an existing install keeps its
+  own). Both are kept across `helm upgrade`; a `helm template` render (Argo CD, Flux)
+  cannot read the cluster, so there set `postgres.auth.password` and
+  `nats.auth.password` - or bring `secrets.existingSecret` and `nats.auth.existingSecret`.
+- **`networkPolicy.enabled`** - only the backend may open a connection to the bundled
+  NATS and Postgres; `networkPolicy.backendFrom` (the ingress controller's namespace,
+  say) also closes the backend to the rest of the cluster. It needs a CNI that enforces
+  NetworkPolicy - which is why NATS authenticates too.
+- **`nats.persistence.enabled`** (default on) keeps the event stream on a volume, so a
+  NATS restart does not lose queued events, dead letters, or the record a merge gate
+  waits on.
 - The release prints a ⚠ in `NOTES` whenever auth or persistence is left off, so
   an insecure exposure is never silent.
 - **Startup ordering** - the backend has `initContainers` that block on the bundled

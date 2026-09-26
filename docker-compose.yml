@@ -121,6 +121,10 @@ services:
       NATS_TLS_CA: ${NATS_TLS_CA:-}
       NATS_TLS_CERT: ${NATS_TLS_CERT:-}
       NATS_TLS_KEY: ${NATS_TLS_KEY:-}
+      # Credentials for a NATS that requires them (the bundled one here does not; it is
+      # bound to localhost). See .env.example.
+      NATS_USER: ${NATS_USER:-}
+      NATS_PASSWORD: ${NATS_PASSWORD:-}
       API_ADDR: ":8080"
       INGEST_ADDR: ":8081"
       # In-app TLS for the API + ingest servers. Empty (default) → plain HTTP,

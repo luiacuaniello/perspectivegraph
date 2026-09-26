@@ -17,6 +17,51 @@ digest, take the backup, stage it.
 
 ---
 
+## 1.24.0
+
+### The chart's bus authenticates and keeps its stream, and its database password is no longer shared
+
+**Affects you if** you install with the Helm chart.
+
+The chart's NATS accepted any client, so any pod that could reach it published events straight
+into the graph - past the ingest webhook's signature check - or deleted the stream. It kept that
+stream on an emptyDir, so a restart lost every queued event. And the bundled Postgres used the
+password `perspective` on every install.
+
+What changes on `helm upgrade`:
+
+- **NATS requires a user and password.** The chart generates the password into a Secret of its
+  own (`<release>-perspectivegraph-nats-auth`), gives it to the backend, and keeps it across
+  upgrades. NATS and the backend both roll during the upgrade, and ingest pauses until both are
+  up. An **external** NATS is untouched unless you set `nats.auth.user` and `nats.auth.password`
+  (or `nats.auth.existingSecret`); the backend reads `NATS_USER`/`NATS_PASSWORD` in any
+  deployment.
+- **NATS is a StatefulSet with a 2 GiB volume** (`nats.persistence`). The upgrade replaces the
+  Deployment, so events still queued in the old pod are lost this once - as every NATS restart
+  lost them before. The volume needs a default StorageClass, as the bundled Postgres's already
+  does; `nats.persistence.enabled: false` keeps the emptyDir.
+- **`postgres.auth.password` defaults to empty.** A new install gets a random password. An
+  existing one keeps the password in its Secret - `perspective` unless you set one - because
+  Postgres reads it only when it first creates its data directory. To rotate it, `ALTER ROLE`
+  in the database, then set `postgres.auth.password`.
+- **`secrets.existingSecret` works for the bundled Postgres.** Its pod named the chart's own
+  Secret, which does not exist when you bring yours, so it could not start. It now reads yours,
+  as the backend always did.
+- **`networkPolicy`**: only the backend may reach the bundled NATS and Postgres. Off by
+  default, on in `values-production.yaml`; `backendFrom` also closes the backend to all but the
+  dashboard and the peers you name.
+
+**Action if you render with `helm template`** (Argo CD, Flux): a render without the cluster
+cannot read the existing Secrets, so it would draw new passwords on every sync - and a new
+Postgres password locks the backend out of the database it already has. Before upgrading, set
+`postgres.auth.password` to the current one (`perspective` if you never set it) and
+`nats.auth.password`, or bring both through `secrets.existingSecret` and
+`nats.auth.existingSecret`. An external Postgres now needs its password set explicitly there
+too.
+
+**Action to keep the old behaviour** (not recommended): `nats.auth.enabled: false`,
+`nats.persistence.enabled: false`.
+
 ## 1.23.0
 
 ### The graph forgets what its sources stop reporting

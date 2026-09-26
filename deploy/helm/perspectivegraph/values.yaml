@@ -155,7 +155,14 @@ postgres:
   sslMode: ""
   auth:
     user: perspective
-    password: perspective
+    # Empty: the bundled Postgres gets a random password, generated on install and kept
+    # across upgrades - an existing install keeps the one it has (Postgres only reads it
+    # when it first initialises its data directory, so a new one would lock the backend
+    # out). It used to default to "perspective", the same on every install. Rendering
+    # with `helm template` (Argo CD, Flux) cannot read the cluster and would draw a new
+    # one each time: set it there, or use secrets.existingSecret. Required for an
+    # external Postgres.
+    password: ""
     database: perspectivegraph
   persistence:
     enabled: true
@@ -178,6 +185,25 @@ nats:
   # How long an event may wait unprocessed, and how long a dead-lettered one is kept.
   # A handled event leaves the stream at once; this bounds a backlog, not a history.
   maxAge: 168h
+  # Clients authenticate. Without it any workload that can reach port 4222 publishes
+  # events straight onto the bus - past the ingest webhook's signature check - or deletes
+  # the stream. The bundled server requires this user; the backend presents it. Empty
+  # password: generated on install, kept in a Secret across upgrades (with `helm
+  # template` - Argo CD, Flux - set it, or existingSecret, as for postgres.auth.password).
+  # existingSecret: a Secret of yours with key NATS_PASSWORD. For an external NATS the
+  # backend sends credentials only when user and password (or existingSecret) are set.
+  # After changing the password, restart NATS and the backend.
+  auth:
+    enabled: true
+    user: perspectivegraph
+    password: ""
+    existingSecret: ""
+  # The stream on a volume, so queued events, dead letters and the ingest-batch record
+  # survive a NATS restart. Off means an emptyDir: a restart loses them.
+  persistence:
+    enabled: true
+    size: 2Gi
+    storageClass: ""
   # App-level TLS to a TLS-enabled NATS (typically external; use a tls:// URL).
   # secretName references a Secret with ca.crt (+ tls.crt/tls.key for mutual TLS);
   # it's mounted and the backend trusts the CA / presents the client cert.
@@ -421,6 +447,20 @@ graph:
   # no longer lists, and an element nobody asserts any more leaves the graph. false
   # keeps everything until ttl, as before 1.23.
   sweep: true
+
+# NetworkPolicy: the bundled Postgres and NATS accept connections from the backend only.
+# Off by default because it does nothing on a CNI that does not enforce it and breaks
+# whatever else talked to them (a backup job - add it to postgresFrom); on in
+# values-production.yaml. backendFrom, when set, also limits who may call the backend's
+# API and ingest ports to the dashboard plus these peers - typically the ingress
+# controller's namespace:
+#   backendFrom:
+#     - namespaceSelector:
+#         matchLabels: { kubernetes.io/metadata.name: ingress-nginx }
+networkPolicy:
+  enabled: false
+  postgresFrom: []
+  backendFrom: []
 
 ingress:
   enabled: false
