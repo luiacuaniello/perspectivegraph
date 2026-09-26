@@ -57,9 +57,31 @@ func pgLog(t *testing.T) (*PGLog, *sql.DB) {
 // that is still being written, and would fail on timing rather than on behaviour.
 func settled(t *testing.T, l *PGLog) {
 	t.Helper()
+	l.drainTimeout = drainBudget(t)
 	if err := l.Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
+}
+
+// drainBudget is how long a test lets Close drain: until shortly before the test binary's
+// own -timeout, instead of production's 15 s.
+//
+// These tests ask Close to prove that it DRAINS. How long 200 serial transactions take is
+// the host's load, not the code's: 2 s idle, over 15 s with the rest of `go test ./...`
+// and a build sharing the machine - and then Close gave up, the writers it left running
+// kept appending into the next test's chain, and three tests failed for one slow host.
+// A writer that really is stuck still fails here, with Close's own message, before the
+// binary's timeout panic.
+func drainBudget(t *testing.T) time.Duration {
+	t.Helper()
+	deadline, ok := t.Deadline()
+	if !ok {
+		return 10 * time.Minute // -timeout 0: wait as long as go test would by default
+	}
+	if left := time.Until(deadline) - 10*time.Second; left > defaultDrainTimeout {
+		return left
+	}
+	return defaultDrainTimeout
 }
 
 // slowSealer makes each append take a controllable amount of time, standing in for a
@@ -69,6 +91,14 @@ type slowSealer struct{ per time.Duration }
 func (s slowSealer) Seal(b []byte) ([]byte, error) { time.Sleep(s.per); return b, nil }
 func (slowSealer) Open(b []byte) ([]byte, error)   { return b, nil }
 func (slowSealer) Enabled() bool                   { return true }
+
+// blockingSealer holds every append until released, standing in for a database that has
+// stopped answering altogether.
+type blockingSealer struct{ release chan struct{} }
+
+func (s blockingSealer) Seal(b []byte) ([]byte, error) { <-s.release; return b, nil }
+func (blockingSealer) Open(b []byte) ([]byte, error)   { return b, nil }
+func (blockingSealer) Enabled() bool                   { return true }
 
 // THE problem this store could not solve by repeating the earlier pattern. Each record
 // carries the hash of the one before it, so two replicas appending at once would both
@@ -81,6 +111,7 @@ func TestConcurrentAppendsProduceOneUnbrokenChain(t *testing.T) {
 
 	// Several "replicas" over the same database, appending at once.
 	const writers, each = 8, 25
+	budget := drainBudget(t) // settled's budget: its t.Fatalf cannot run off the test goroutine
 	var wg sync.WaitGroup
 	for w := 0; w < writers; w++ {
 		wg.Add(1)
@@ -91,6 +122,7 @@ func TestConcurrentAppendsProduceOneUnbrokenChain(t *testing.T) {
 				t.Error(err)
 				return
 			}
+			other.drainTimeout = budget
 			for i := 0; i < each; i++ {
 				other.Record(ctx, "api", fmt.Sprintf("user-%d", w), "admin", "acme",
 					map[string]any{"i": i})
@@ -241,6 +273,38 @@ func TestRecordDoesNotBlockOnASlowDatabase(t *testing.T) {
 	// Asynchronous must not mean lossy on a clean shutdown: Close drains.
 	if n != 200 {
 		t.Fatalf("verified %d records, want all 200 - a graceful shutdown dropped some", n)
+	}
+}
+
+// The other half of Close's contract, and the reason production keeps a deadline the tests
+// lift. Draining must not become hanging: a replica whose database has stopped answering
+// still has to exit inside its grace period - and must say it left records behind rather
+// than report a clean shutdown, which is all Close used to do.
+func TestCloseGivesUpOnAWedgedDatabaseAndSaysSo(t *testing.T) {
+	_, db := pgLog(t)
+	release := make(chan struct{})
+	l, err := OpenPG(db, WithSealer(blockingSealer{release}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.drainTimeout != defaultDrainTimeout {
+		t.Fatalf("drain timeout = %s, want production's %s", l.drainTimeout, defaultDrainTimeout)
+	}
+	// Whatever happens below, let the writer finish before the pool closes under it.
+	defer func() { close(release); <-l.done }()
+
+	ctx := context.Background()
+	l.Record(ctx, "auth.deny", "mallory", "", "acme", nil) // wedges the writer
+	l.Record(ctx, "auth.deny", "mallory", "", "acme", nil) // stays queued behind it
+
+	l.drainTimeout = 50 * time.Millisecond
+	start := time.Now()
+	err = l.Close()
+	if took := time.Since(start); took > 5*time.Second {
+		t.Fatalf("Close took %v on a wedged database - shutdown is not bounded", took)
+	}
+	if err == nil {
+		t.Fatal("Close reported a clean drain while records were still queued")
 	}
 }
 

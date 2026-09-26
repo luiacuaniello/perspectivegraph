@@ -57,7 +57,19 @@ type PGLog struct {
 	// load-bearing here (see storedPrecision), and on a host whose clock is already
 	// coarse the bug this guards against is invisible.
 	now func() time.Time
+
+	// drainTimeout is how long Close waits for the queue to empty: defaultDrainTimeout,
+	// except in a test. A test's budget is the test binary's own deadline, not a pod's
+	// grace period, and draining a few hundred serial transactions takes whatever the
+	// host's load makes it - a fixed 15 s made the suite fail on a busy machine.
+	drainTimeout time.Duration
 }
+
+// defaultDrainTimeout bounds how long a graceful shutdown waits for the audit queue. The
+// chart leaves Kubernetes' 30 s termination grace period at its default, and the HTTP
+// server and the other stores drain inside that same window, so a database that has
+// stopped answering must not hold the process until it is killed mid-write.
+const defaultDrainTimeout = 15 * time.Second
 
 // storedPrecision is the resolution PostgreSQL keeps in a timestamptz column.
 //
@@ -93,12 +105,13 @@ func OpenPG(db *sql.DB, opts ...Option) (*PGLog, error) {
 		return nil, errors.New("audit: nil database handle")
 	}
 	l := &PGLog{
-		db:     db,
-		now:    time.Now,
-		sealer: sealerFrom(opts),
-		queue:  make(chan Record, queueDepth),
-		done:   make(chan struct{}),
-		closed: make(chan struct{}),
+		db:           db,
+		now:          time.Now,
+		sealer:       sealerFrom(opts),
+		queue:        make(chan Record, queueDepth),
+		done:         make(chan struct{}),
+		closed:       make(chan struct{}),
+		drainTimeout: defaultDrainTimeout,
 	}
 	// ONE writer per replica. The advisory lock is then almost always uncontended
 	// within a process, and contention across replicas is bounded by their count
@@ -302,6 +315,10 @@ func (l *PGLog) sealFields(raw []byte) ([]byte, error) {
 // Close stops accepting records and waits for the queue to drain, so a graceful
 // shutdown does not discard what is already in flight. The pool itself is owned by the
 // caller, which shares it with the other governance stores.
+//
+// It waits at most drainTimeout. Giving up is logged AND returned: it used to return nil,
+// so a caller - a test included - could not tell an abandoned queue from a drained one,
+// and the only symptom was a chain that came up short later.
 func (l *PGLog) Close() error {
 	if l == nil {
 		return nil
@@ -309,10 +326,14 @@ func (l *PGLog) Close() error {
 	l.closeOnce.Do(func() { close(l.closed) })
 	select {
 	case <-l.done:
-	case <-time.After(15 * time.Second):
-		slog.Error("audit: the queue did not drain before shutdown - records were lost")
+		return nil
+	case <-time.After(l.drainTimeout):
+		queued := len(l.queue)
+		slog.Error("audit: the queue did not drain before shutdown - records were lost",
+			"still_queued", queued, "waited", l.drainTimeout)
+		return fmt.Errorf("audit: the queue did not drain within %s - %d record(s) still queued",
+			l.drainTimeout, queued)
 	}
-	return nil
 }
 
 // Checkpoint records how far retention has pruned the chain, and the hash of the last

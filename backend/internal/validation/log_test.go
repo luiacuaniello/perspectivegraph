@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -31,35 +32,53 @@ func mustPut(t *testing.T, s *Store, r Record) Record {
 // exactly the thing the product asks customers to accumulate.
 func TestWriteCostDoesNotGrowWithDatasetSize(t *testing.T) {
 	dir := t.TempDir()
-	s, err := New(filepath.Join(dir, "v.log"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	measure := func(n int) time.Duration {
-		start := time.Now()
+	grown := func(name string, n int) *Store {
+		s, err := New(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
 		for i := 0; i < n; i++ {
 			mustPut(t, s, rec("", Missed)) // Missed accumulates: the store really grows
 		}
-		return time.Since(start) / time.Duration(n)
+		return s
 	}
+	small := grown("small.log", 0)    // holds 0 to 300 while it is measured
+	large := grown("large.log", 4600) // 4600 to 4900
 
-	early := measure(300) // store now holds ~300
-	for i := 0; i < 4000; i++ {
+	// The two stores are written IN TURN, and each is judged by its median write. A write
+	// is one append and an fsync, and fsync latency on a shared CI runner comes in bursts.
+	// Measured one window after the other, a burst inside the second moved the mean 7.2x
+	// (234µs → 1.68ms) with nothing in the code changed - and a slowdown that outlasts a
+	// whole window moves its median too. In turn, a slowdown lands on both stores alike;
+	// the regression this guards against lands on the large one only.
+	const n = 300
+	onSmall, onLarge := make([]time.Duration, n), make([]time.Duration, n)
+	timed := func(s *Store) time.Duration {
+		start := time.Now()
 		mustPut(t, s, rec("", Missed))
+		return time.Since(start)
 	}
-	late := measure(300) // store now holds ~4600, 15x bigger
+	for i := 0; i < n; i++ {
+		onSmall[i] = timed(small)
+		onLarge[i] = timed(large)
+	}
+	median := func(d []time.Duration) time.Duration {
+		slices.Sort(d)
+		return d[len(d)/2]
+	}
+	early, late := median(onSmall), median(onLarge)
 
-	if s.liveCountLocked() < 4000 {
-		t.Fatalf("store only holds %d records - the test did not grow it", s.liveCountLocked())
+	if large.liveCountLocked() < 4000 {
+		t.Fatalf("store only holds %d records - the test did not grow it", large.liveCountLocked())
 	}
-	// Generous: the old format was strictly linear, so at 15x the data it was ~15x the
-	// cost. Anything near constant passes; a linear regression fails loudly.
-	if late > 5*early {
-		t.Fatalf("per-write cost grew from %v to %v (%.1fx) as the store grew 15x - writes are not O(1)",
+	// Measured in turn, correct code reads within a few percent of 1x. The old format was
+	// strictly linear, and a full rewrite forced on every write reads 5-8x here even with
+	// its fixed cost diluting the ratio - so 3x fails a regression and nothing else.
+	if late > 3*early {
+		t.Fatalf("median write cost is %v on up to 300 records and %v on ~4600 (%.1fx) - writes are not O(1)",
 			early, late, float64(late)/float64(early))
 	}
-	t.Logf("per-write: %v at ~300 records, %v at ~4600", early, late)
+	t.Logf("median write: %v on up to 300 records, %v on ~4600", early, late)
 }
 
 // Replay must reproduce the live store exactly, including the replacement rule (a new
