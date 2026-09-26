@@ -241,25 +241,24 @@ func predictIsotonic(blocks []isoBlock, p float64) float64 {
 }
 
 // recalibrate returns the Brier a monotone (isotonic) rescale can reach and the map to
-// apply (the full-data fit, for publishing). The Brier is k-fold CROSS-VALIDATED when
-// there are enough samples - an honest out-of-sample floor rather than the optimistic
-// in-sample fit that overfits exactly when data is thin (the real-world case).
+// apply (the full-data fit, for publishing). The Brier is always measured out of sample:
+// k-fold when there are enough samples, leave-one-out below that.
+//
+// Below cvMinSamples it used to be the in-sample fit, and an isotonic fit on a dozen
+// points is perfect by construction: the Trust page reported a recalibrated Brier of
+// 0.000 on 14 outcomes - "a rescale fixes everything" - exactly when the data could say
+// least. Leave-one-out predicts each outcome from a map fitted without it, which is the
+// honest reading at any size.
 func recalibrate(samples []calSample) (float64, []CalibrationPoint) {
 	n := len(samples)
 	if n == 0 {
 		return 0, nil
 	}
-	blocks, pts := fitIsotonic(samples) // full-data map for publishing/applying
+	_, pts := fitIsotonic(samples) // full-data map for publishing/applying
 	if n >= cvMinSamples {
 		return isotonicBrierCV(samples, cvFolds), pts
 	}
-	// In-sample fallback (too few to cross-validate).
-	var sum float64
-	for _, s := range samples {
-		d := predictIsotonic(blocks, s.p) - s.y
-		sum += d * d
-	}
-	return sum / float64(n), pts
+	return isotonicBrierCV(samples, n), pts // leave-one-out
 }
 
 // isotonicBrierCV estimates the recalibrated Brier out-of-sample: a deterministic

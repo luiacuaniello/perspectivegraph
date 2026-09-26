@@ -17,6 +17,48 @@ digest, take the backup, stage it.
 
 ---
 
+## 1.25.0
+
+### P1 means "act now", and red-team verdicts move a route
+
+**Affects you if** you triage by band (P1/P2/P3), read `priority` or `priorityLabel` from
+the API or the MCP tools, or alert on P1 counts.
+
+A route with a runtime alert into AdministratorAccess used to read P2: the blended priority
+weighs exploitability at a third and could not reach P1 without a KEV entry. Now:
+
+- **A fact about the route makes it P1**: a runtime alert on it, an asset open to anyone, a
+  KEV weakness on a route an attacker is likely to complete, or a likely route (≥ 80%, on
+  evidence rather than default weights) into a high-value asset. `priorityReason` (new)
+  says which. Every P1 path sits at 70 plus 30% of its blended priority, so the band keeps
+  an order and a natural P1 of 76 now reads 92.8.
+- **Red-team and BAS verdicts re-band a route where paths are listed**
+  (`attackPaths`, the dashboard, the MCP tools): confirmed → P1; refuted → P3, unless a
+  runtime alert or open access contradicts the test - then it stays and says the evidence
+  conflicts. The Priority recorded with a verdict, which grades the triage order, still
+  contains none.
+- **Expect more P1s** where routes are runtime-confirmed or tested; expect refuted routes
+  at the bottom. The dashboard no longer re-sorts refuted routes itself.
+
+### Corrected ATT&CK mapping
+
+`AFFECTS` (a library has a CVE) and `DEPENDS_ON` (an image ships a library) no longer carry a
+technique: they are facts about software, not attacker actions. An exploit is **T1190**
+(initial access) until the attacker is inside, then **T1210** (lateral movement), and the
+exposure before an exploit carries no technique of its own. `CAN_ESCALATE_TO` is
+**T1098.003** (Account Manipulation: Additional Cloud Roles), no longer T1078.004. Anything
+that stored or keyed on the old technique ids per hop will see different ones.
+
+### Calibration reads that could not be trusted
+
+`brier_recalibrated` is measured out of sample at every size - leave-one-out below 20
+outcomes, where it was the in-sample fit and read a perfect 0.000 on a dozen points. Below 30
+outcomes the Trust page headlines "Not enough outcomes yet" with the direction beside it, and
+an AUC below its floor shows the counts it rests on instead of an interval.
+
+**Action:** none; nothing to configure. Check anything that alerts on P1 counts or keys on
+per-hop ATT&CK ids.
+
 ## 1.24.0
 
 ### The chart's bus authenticates and keeps its stream, and its database password is no longer shared

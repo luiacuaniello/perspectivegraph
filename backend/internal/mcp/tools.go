@@ -159,7 +159,7 @@ func listPaths(api *API) Tool {
 		Call: func(ctx context.Context, args map[string]any) (string, error) {
 			var out json.RawMessage
 			q := fmt.Sprintf(`{ attackPaths(%s) {
-              id score priority priorityLabel priorityFactors confidenceLabel runtimeConfirmed
+              id score priority priorityLabel priorityReason priorityFactors confidenceLabel runtimeConfirmed
               scoreUpperBound correlatedHops
               nodes { name label internetExposed crownJewel } } }`, scopeArgs(args, 20))
 			err := api.query(ctx, q, &out)
@@ -189,10 +189,10 @@ func explainPath(api *API) Tool {
 			err := api.query(ctx, `{ attackPaths(limit: 500) {
               id score scoreUpperBound correlatedHops confidence confidenceLabel posteriorMean scoreCiLow scoreCiHigh
               mixtureScore profileScores { profile prior score }
-              priority priorityLabel priorityFactors runtimeConfirmed
+              priority priorityLabel priorityReason priorityFactors runtimeConfirmed
               nodes { id name label internetExposed crownJewel severity cvss kev }
               steps { edgeType from to probability weightBasis weightConfidence attack { id name tactic } }
-              remediations { title kind rationale content } } }`, &res)
+              remediations { title kind rationale content cut { from to type } } } }`, &res)
 			if err != nil {
 				return "", err
 			}

@@ -63,3 +63,30 @@ describe("TrustView verdict sentence", () => {
     expect(screen.getByText(/ranking as sound/)).toBeInTheDocument();
   });
 });
+
+describe("TrustView headline", () => {
+  // Fourteen outcomes used to headline "Underconfident" in 26px. Below the floor the
+  // headline is the sample size; the direction sits beside the count that qualifies it.
+  it("does not headline a verdict on too few outcomes", () => {
+    render(<TrustView calibration={calibration({ samples: 14, verdict: "underconfident" })} />);
+    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("Not enough outcomes yet");
+    expect(screen.getByText(/leaning underconfident · 14 of the 30 outcomes/)).toBeInTheDocument();
+  });
+
+  it("headlines the verdict once there are enough", () => {
+    render(<TrustView calibration={calibration({ samples: 500, verdict: "overconfident" })} />);
+    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("Overconfident");
+  });
+
+  // "between 100% and 100%" read like a bug.
+  it("calls a saturated estimate saturated instead of printing a band with no width", () => {
+    render(
+      <TrustView
+        calibration={calibration({})}
+        risk={{ anyCompromiseProbability: 1, sensitivityLow: 1, sensitivityHigh: 1 } as never}
+      />,
+    );
+    expect(screen.getByText(/saturated at 100%/)).toBeInTheDocument();
+    expect(screen.queryByText(/between/)).not.toBeInTheDocument();
+  });
+});

@@ -127,6 +127,10 @@ type AttackPath struct {
 	Priority        float64  `json:"priority,omitempty"`
 	PriorityLabel   string   `json:"priority_label,omitempty"`
 	PriorityFactors []string `json:"priority_factors,omitempty"`
+	// PriorityReason says, in one sentence, why the path is in its band when a fact put
+	// it there - "a runtime alert fired on this route" - rather than the blend of weights.
+	// Empty when the band is the blended number's alone.
+	PriorityReason string `json:"priority_reason,omitempty"`
 	// DirectAccess marks a crown jewel the attacker holds without crossing an edge - a
 	// bucket anyone may read, a role anyone may assume (ontology.Node.HeldByAttacker). Its
 	// path is the jewel alone: no hops, Score 1, because nothing stands in the way. It is

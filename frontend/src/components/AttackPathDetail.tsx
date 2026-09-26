@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import {
   aiExplain,
   type AIAnswer,
@@ -33,8 +33,9 @@ import {
 import InfoTip from "./InfoTip";
 import Button from "./ui/Button";
 import { useReadOnly } from "../auth/readOnly";
-import Badge, { type Tone } from "./ui/Badge";
+import Badge from "./ui/Badge";
 import { ModelAttribution } from "./ModelAttribution";
+import { hopReason, hopVerb, pathSummary, typeName } from "./pathLanguage";
 
 interface Props {
   path: AttackPath;
@@ -124,7 +125,7 @@ function TriageControl({ path, onTriaged }: { path: AttackPath; onTriaged?: () =
   if (!open) {
     return (
       <Button
-        variant="secondary"
+        variant="ghost"
         onClick={() => setOpen(true)}
         disabled={!!readOnly}
         title={readOnly ?? "Triage this path: accept the risk, mark a false positive, note a mitigating control or a duplicate"}
@@ -242,7 +243,7 @@ function TicketControl({ path, onChanged }: { path: AttackPath; onChanged?: () =
   }
   if (!open) {
     return (
-      <Button variant="secondary" onClick={() => setOpen(true)} disabled={!!readOnly} icon={<TicketIcon className="h-3.5 w-3.5" />} title={readOnly ?? "Open an owned, tracked remediation ticket for this path"}>
+      <Button variant="ghost" onClick={() => setOpen(true)} disabled={!!readOnly} icon={<TicketIcon className="h-3.5 w-3.5" />} title={readOnly ?? "Open an owned, tracked remediation ticket for this path"}>
         Create ticket
       </Button>
     );
@@ -285,7 +286,7 @@ function AiExplainControl({ path }: { path: AttackPath }) {
 
   return (
     <>
-      <Button variant="secondary" onClick={explain} disabled={busy} title="Explain this path in plain English with Claude">
+      <Button variant="ghost" onClick={explain} disabled={busy} title="Explain this path in plain English with Claude">
         {busy ? "Explaining…" : text ? "Re-explain (AI)" : "Explain (AI)"}
       </Button>
       {err && <span className="text-[12px] text-flag">{err}</span>}
@@ -302,7 +303,7 @@ function AiExplainControl({ path }: { path: AttackPath }) {
 // RemediationPRControl opens a pull request with this path's generated fix
 // (branch + commit + PR). The backend needs a GitHub token; admin role when auth
 // is on. Closes the loop: the fix arrives as a PR to review, not a copy-paste.
-function RemediationPRControl({ path }: { path: AttackPath }) {
+function RemediationPRControl({ path, primary = false }: { path: AttackPath; primary?: boolean }) {
   const readOnly = useReadOnly();
   const [busy, setBusy] = useState(false);
   const [url, setUrl] = useState<string | null>(null);
@@ -331,7 +332,8 @@ function RemediationPRControl({ path }: { path: AttackPath }) {
   return (
     <span className="inline-flex items-center gap-1.5">
       <Button
-        variant="secondary"
+        variant={primary ? "primary" : "secondary"}
+        size={primary ? "md" : "sm"}
         onClick={open}
         disabled={busy || !!readOnly}
         icon={<ScissorsIcon className="h-3.5 w-3.5" />}
@@ -343,14 +345,6 @@ function RemediationPRControl({ path }: { path: AttackPath }) {
     </span>
   );
 }
-
-// VALIDATION_META maps a red-team/BAS verdict to a chip tone + label.
-const VALIDATION_META: Record<ValidationOutcome, { tone: Tone; label: string }> = {
-  confirmed: { tone: "info", label: "validated real" },
-  refuted: { tone: "neutral", label: "refuted (false positive)" },
-  partial: { tone: "warn", label: "partial" },
-  missed: { tone: "warn", label: "missed" },
-};
 
 const VALIDATION_OPTIONS: { value: ValidationOutcome; label: string }[] = [
   { value: "confirmed", label: "Confirmed - exploitable end-to-end" },
@@ -387,7 +381,7 @@ function ValidationControl({ path, onChanged }: { path: AttackPath; onChanged?: 
 
   if (!open) {
     return (
-      <Button variant="secondary" onClick={() => setOpen(true)} disabled={!!readOnly} icon={<CheckIcon className="h-3.5 w-3.5" />} title={readOnly ?? "Record a red-team / BAS test result for this path (confirmed, refuted or partial)"}>
+      <Button variant="ghost" onClick={() => setOpen(true)} disabled={!!readOnly} icon={<CheckIcon className="h-3.5 w-3.5" />} title={readOnly ?? "Record a red-team / BAS test result for this path (confirmed, refuted or partial)"}>
         {path.validation ? "Re-validate" : "Validate"}
       </Button>
     );
@@ -521,13 +515,30 @@ interface Artifact {
   rationale: string;
 }
 
+// PREVIEW_LINES is how much of a generated file shows before "Show all". The artifacts
+// used to print in full, three of them one under the other, and made the page 2,600px tall
+// - with long lines cut at the panel's edge and no sign there was more to the right.
+const PREVIEW_LINES = 12;
+
 function ArtifactCard({ r, tone = "emerald" }: { r: Artifact; tone?: "emerald" | "indigo" }) {
   const [copied, setCopied] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const lines = r.content.split("\n");
+  const long = lines.length > PREVIEW_LINES;
+  const shown = expanded || !long ? r.content : lines.slice(0, PREVIEW_LINES).join("\n");
   const copy = () => {
     navigator.clipboard.writeText(r.content).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     });
+  };
+  const download = () => {
+    const url = URL.createObjectURL(new Blob([r.content], { type: "text/plain" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = r.filename;
+    a.click();
+    URL.revokeObjectURL(url);
   };
   const badge = tone === "indigo" ? "bg-indigo-500/15 text-indigo-700" : "bg-emerald-500/15 text-emerald-700";
 
@@ -538,26 +549,43 @@ function ArtifactCard({ r, tone = "emerald" }: { r: Artifact; tone?: "emerald" |
           <span className={`shrink-0 rounded-sm px-2 py-0.5 text-[12px] font-semibold uppercase tracking-wide ${badge}`}>{r.kind}</span>
           <span className="truncate text-sm font-medium text-slate-800">{r.title}</span>
         </div>
-        <Button variant="secondary" onClick={copy} icon={copied ? <CheckIcon className="h-3.5 w-3.5" /> : undefined}>
-          {copied ? "copied" : "copy"}
-        </Button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Button variant="ghost" onClick={download} title={`Download ${r.filename}`}>
+            download
+          </Button>
+          <Button variant="secondary" onClick={copy} icon={copied ? <CheckIcon className="h-3.5 w-3.5" /> : undefined}>
+            {copied ? "copied" : "copy"}
+          </Button>
+        </div>
       </div>
       <div className="px-4 py-3">
-        <p className="mb-2 text-xs leading-relaxed text-muted">{r.rationale}</p>
+        <p className="mb-2 text-[13px] leading-relaxed text-slate-600">{r.rationale}</p>
         <div className="mb-1 font-mono text-[12px] text-slate-500">{r.filename}</div>
-        <pre
-          tabIndex={0}
-          role="region"
-          aria-label={`Generated fix: ${r.filename}`}
-          className="max-h-72 overflow-auto rounded-lg bg-ink p-3 font-mono text-[12px] leading-relaxed text-slate-600"
-        >
-          {r.content}
-        </pre>
+        <div className="relative">
+          <pre
+            tabIndex={0}
+            role="region"
+            aria-label={`Generated file: ${r.filename}`}
+            className="overflow-x-auto whitespace-pre rounded-lg bg-ink p-3 font-mono text-[12px] leading-relaxed text-slate-600"
+          >
+            {shown}
+          </pre>
+          {long && !expanded && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 rounded-b-lg bg-gradient-to-t from-ink to-transparent" />
+          )}
+        </div>
+        {long && (
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            className="mt-1.5 text-[12px] font-medium text-accent hover:underline"
+          >
+            {expanded ? "Show less" : `Show all ${lines.length} lines`}
+          </button>
+        )}
       </div>
     </div>
   );
 }
-
 
 // Priority bands by WEIGHT, not by hue.
 //
@@ -572,14 +600,15 @@ const PRIORITY_TONE: Record<string, string> = {
 };
 
 // BASIS_META maps a hop's weight provenance to a short label and whether it is
-// observed evidence (green) or an estimate/assumption (grey).
+// observed evidence (green) or an estimate (grey). "assumed" read like an alarm about the
+// attacker; it means the engine used its default weight for this kind of hop.
 const BASIS_META: Record<string, { label: string; evidence: boolean }> = {
   kev: { label: "KEV", evidence: true },
   epss: { label: "EPSS", evidence: true },
   runtime: { label: "runtime", evidence: true },
-  cvss: { label: "CVSS", evidence: false },
-  severity: { label: "severity", evidence: false },
-  heuristic: { label: "assumed", evidence: false },
+  cvss: { label: "from CVSS", evidence: false },
+  severity: { label: "from severity", evidence: false },
+  heuristic: { label: "default weight", evidence: false },
 };
 
 function BasisChip({ basis }: { basis: string }) {
@@ -591,7 +620,7 @@ function BasisChip({ basis }: { basis: string }) {
       title={
         meta.evidence
           ? "This hop's probability rests on observed exploitation evidence (KEV / EPSS / runtime)."
-          : "This hop's probability is an estimate - severity/CVSS-derived or an assumed topology default, not observed."
+          : "This hop's probability is an estimate - derived from CVSS or severity, or the engine's default for this kind of hop - not observed."
       }
     >
       {meta.label}
@@ -599,10 +628,18 @@ function BasisChip({ basis }: { basis: string }) {
   );
 }
 
+// Generic priority factors that say nothing about THIS path: every critical path ends at a
+// sensitive asset, and a live alert has its own badge.
+const QUIET_FACTORS = new Set(["sensitive asset target", "runtime-confirmed (active)"]);
+
+type Tab = "fix" | "detect" | "evidence";
+
 export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEnabled }: Props) {
   const readOnly = useReadOnly();
   const entry = path.nodes[0];
   const target = path.nodes[path.nodes.length - 1];
+  const [tab, setTab] = useState<Tab>("fix");
+  const tabId = useId();
 
   // The accounts this route passes through, in order and de-duplicated. Empty or
   // single on an estate that ingests one account - which is why nothing below renders
@@ -617,6 +654,7 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
   const [whatIf, setWhatIf] = useState<{ step: Step; result: WhatIfResult } | null>(null);
   const [cutting, setCutting] = useState<string | null>(null);
   const nameOf = (id: string) => path.nodes.find((n) => n.id === id)?.name ?? id;
+  const nodeOf = (id: string) => path.nodes.find((n) => n.id === id);
 
   const simulateCut = (step: Step) => {
     const key = `${step.from}->${step.to}`;
@@ -628,20 +666,53 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
       .finally(() => setCutting(null));
   };
 
-  const hasStatus =
-    path.runtimeConfirmed ||
-    path.openForSeconds != null ||
-    (path.reopens ?? 0) > 0 ||
-    path.suppressed ||
-    !!path.validation;
+  // The hop the first generated fix severs: where the reader should cut.
+  const cut = path.remediations.find((r) => r.cut)?.cut ?? null;
+  const isCut = (s: Step) => !!cut && cut.from === s.from && cut.to === s.to && cut.type === s.edgeType;
+
+  const ciInforms =
+    path.scoreCiLow != null && path.scoreCiHigh != null && path.scoreCiHigh - path.scoreCiLow > 0.02;
+  const verdict = path.validation;
+  // The same rule as the engine's re-banding and the list's status: a failed test does not
+  // undo a runtime alert or an asset open to anyone.
+  const conflict = (path.runtimeConfirmed || !!path.directAccess) && verdict?.outcome === "refuted";
+  const factors = (path.priorityFactors ?? []).filter((f) => !QUIET_FACTORS.has(f));
+
+  const tabs: { id: Tab; label: string }[] = [
+    { id: "fix", label: `Fix${path.remediations.length ? ` (${path.remediations.length})` : ""}` },
+    { id: "detect", label: `Detect${path.detections.length ? ` (${path.detections.length})` : ""}` },
+    { id: "evidence", label: "Evidence" },
+  ];
 
   return (
     <div className="flex flex-col gap-4">
-      {/* ── Header: identity, score, status, actions ─────────────────── */}
-      <header className="flex flex-col gap-3.5 rounded-xl border border-edge bg-panel shadow-card p-5">
+      {/* ── Header: what the route is, how urgent, how likely, what to do ───────── */}
+      <header className="flex flex-col gap-4 rounded-xl border border-edge bg-panel p-5 shadow-card">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
-            <div className="text-[12px] font-semibold text-muted">Attack path</div>
+            <div className="text-[12px] font-semibold text-muted">
+              Attack path ·{" "}
+              {path.directAccess ? (
+                <span title="The sensitive asset is open to anyone - a bucket anyone may read, a role any principal may assume - so no step stands in the way. Closing it is the fix.">
+                  direct access
+                </span>
+              ) : (
+                <>
+                  {path.steps.length} step{path.steps.length === 1 ? "" : "s"}
+                </>
+              )}
+              {crossedAccounts.length > 1 && (
+                <>
+                  {" · "}
+                  <span
+                    className="text-slate-900"
+                    title={`This route does not stay in one account: it runs through ${crossedAccounts.join(" → ")}. A boundary an org chart treats as a wall is being crossed by the path.`}
+                  >
+                    crosses {crossedAccounts.length} accounts
+                  </span>
+                </>
+              )}
+            </div>
             <h2 className="mt-1 flex flex-wrap items-baseline gap-x-2 text-lg font-semibold text-slate-900">
               {path.directAccess ? (
                 <span>{target?.name}</span>
@@ -653,46 +724,15 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
                 </>
               )}
             </h2>
-            <div className="mt-1 text-xs text-muted">
-              {path.directAccess ? (
-                <span title="The sensitive asset is open to anyone - a bucket anyone may read, a role any principal may assume - so no step stands in the way. Closing it is the fix.">
-                  direct access · open to anyone, no step to exploit
-                </span>
-              ) : (
-                <>{path.steps.length} hops</>
-              )}
-              {crossedAccounts.length > 1 && (
-                <>
-                  {" · "}
-                  <span
-                    className="font-semibold text-slate-900"
-                    title={`This route does not stay in one account: it runs through ${crossedAccounts.join(" → ")}. A boundary an org chart treats as a wall is being crossed by the path.`}
-                  >
-                    crosses {crossedAccounts.length} accounts
-                  </span>
-                </>
-              )}
-            </div>
-            {path.priorityFactors && path.priorityFactors.length > 0 && (
-              <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                {path.priorityFactors
-                  .filter((f) => f !== "runtime-confirmed (active)")
-                  .map((f) => (
-                    <span key={f} className="rounded-md bg-slate-500/10 px-1.5 py-0.5 text-[12px] text-slate-600">
-                      {f}
-                    </span>
-                  ))}
-              </div>
-            )}
+            <p className="mt-1.5 max-w-prose text-[13px] leading-relaxed text-slate-600">{pathSummary(path)}</p>
           </div>
-          {/* Two numbers, each named for the question it answers. They used to sit apart -
-              "P2 · priority 60" as a chip on the left, "55%" as the headline on the right -
-              and the list ranks by the first while the detail headlined the second, so a
-              reader comparing them saw a route "drop" from 60 to 55 and trusted neither.
-              Priority leads because it is what orders the queue. */}
+
+          {/* Two numbers, each named for the question it answers: how urgent (priority,
+              what the queue is ordered by) and how likely (one probability, with its range;
+              the other readings of it live under Evidence). */}
           <div className="flex shrink-0 items-start gap-6 sm:text-right">
             {path.priority != null && (
-              <div title="Composite triage priority [0,100]: blends exploitability + trust with runtime/KEV corroboration, target sensitivity, and entry blast radius - the 'fix first' signal.">
+              <div title="Composite triage priority [0,100]: exploitability and trust in it, runtime/KEV corroboration, target sensitivity and entry blast radius - and a fact about the route (a live alert, open access, a red-team verdict) lifts it to P1.">
                 <div className="text-[12px] text-muted">Priority</div>
                 <div className="mt-1 flex items-center gap-2 text-3xl font-semibold leading-none tabular-nums text-slate-900 sm:justify-end">
                   {path.priorityLabel && (
@@ -702,15 +742,15 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
                       {path.priorityLabel}
                     </span>
                   )}
-                  {path.priority.toFixed(0)}
+                  <span>{path.priority.toFixed(0)}</span>
                 </div>
-                <div className="mt-1 text-[12px] text-muted">what to fix first</div>
+                <div className="mt-1 text-[12px] text-muted">of 100 · fix first</div>
               </div>
             )}
             <div>
               <div className="flex items-center gap-1 text-[12px] text-muted sm:justify-end">
                 Exploit probability
-                <InfoTip text="How likely an attacker can walk this whole route - the product of each hop's probability (p). Higher = easier to exploit." />
+                <InfoTip text="How likely an attacker completes the whole route: each hop's probability, multiplied. The range is the 90% credible interval from how much evidence backs each hop; how it varies by attacker is under Evidence." />
               </div>
               <div
                 className={`mt-1 font-semibold leading-none tabular-nums ${
@@ -719,90 +759,60 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
               >
                 {(path.score * 100).toFixed(0)}%
               </div>
-              <div className="mt-1 text-[12px] text-muted">{path.directAccess ? "nothing to exploit" : "every hop succeeds"}</div>
+              <div className="mt-1 text-[12px] tabular-nums text-muted">
+                {path.directAccess
+                  ? "nothing to exploit"
+                  : ciInforms
+                    ? `range ${(path.scoreCiLow! * 100).toFixed(0)}–${(path.scoreCiHigh! * 100).toFixed(0)}%`
+                    : ""}
+              </div>
             </div>
           </div>
         </div>
 
-        {/* The evidence, on request.
-            
-            All of this used to sit at full weight next to the title: a 90% credible
-            interval, a correlation ceiling, three attacker profiles and a blended
-            average, before the reader had been told what the route even was. The
-            honesty is the product's best property and none of it is removed - but it
-            answers "should I believe this number", which is the second question, not
-            the first. Closed by default, one click away, and it stays open once opened
-            for the reader who always wants it. */}
-        <details className="group rounded-lg border border-edge bg-panel-2/60 px-3 py-2">
-          <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[12px] text-muted transition hover:text-slate-700">
-            <svg
-              viewBox="0 0 12 12"
-              className="h-2.5 w-2.5 shrink-0 transition-transform group-open:rotate-90"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M4 2l4 4-4 4" />
-            </svg>
-            Evidence for this score
-          </summary>
-
-          <div className="mt-2.5 flex flex-col gap-2 border-t border-edge pt-2.5">
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] tabular-nums text-muted">
-              {path.scoreCiLow != null && path.scoreCiHigh != null && path.scoreCiHigh - path.scoreCiLow > 0.02 ? (
-                <span title="90% credible interval from per-edge evidence (epistemic): tight = trust the number, wide = a rough estimate. Distinct from the correlation ceiling.">
-                  90% CI {(path.scoreCiLow * 100).toFixed(0)}-{(path.scoreCiHigh * 100).toFixed(0)}%
-                  {path.confidenceLabel ? ` · ${path.confidenceLabel} confidence` : ""}
-                </span>
-              ) : (
-                path.confidenceLabel && <span>{path.confidenceLabel} confidence</span>
-              )}
-              {path.correlatedHops && path.scoreUpperBound != null && path.scoreUpperBound - path.score > 0.05 && (
-                <span title="The score multiplies hops as if independent; if two or more share a cause, the real value could be as high as the weakest hop (the Fréchet ceiling).">
-                  up to {(path.scoreUpperBound * 100).toFixed(0)}% if correlated
-                </span>
-              )}
-            </div>
-            {path.profileScores && path.profileScores.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="flex items-center gap-1 text-[12px] text-muted">
-              by attacker profile
-              <InfoTip text="Success probability per attacker class (commodity / criminal / APT); 'blended' averages them by threat-model prior. Easy for an APT can be hard for a commodity actor." />
+        {/* Why it is in its band - a fact when a fact put it there, else the factors. */}
+        {(path.priorityReason || factors.length > 0) && (
+          <div className="rounded-lg bg-ink/60 px-3 py-2 text-[13px] leading-relaxed text-slate-600">
+            <span className="font-semibold text-slate-800">
+              Why {path.priorityLabel ?? "this priority"}:{" "}
             </span>
-                {path.profileScores.map((p) => {
-              const label = p.profile === "apt" ? "APT" : p.profile.charAt(0).toUpperCase() + p.profile.slice(1);
-              return (
-                <span
-                  key={p.profile}
-                  className="rounded-md border border-edge px-2 py-0.5 text-[12px] tabular-nums text-muted"
-                  title={`Threat-model prior ${(p.prior * 100).toFixed(0)}%`}
-                >
-                  {label} <span className="font-medium text-slate-900">{(p.score * 100).toFixed(0)}%</span>
-                </span>
-              );
-            })}
-            {path.mixtureScore != null && (
-              <span
-                className="text-[12px] tabular-nums text-muted"
-                title="Threat-model-weighted average across profiles - the correlation-aware counterpart to the naive exploit score."
-              >
-                blended {(path.mixtureScore * 100).toFixed(0)}%
-              </span>
-            )}
-              </div>
-            )}
-
+            {path.priorityReason ? `${path.priorityReason}.` : factors.join(" · ")}
           </div>
-        </details>
+        )}
 
-        {hasStatus && (
+        {/* Status: what is known about the route right now. */}
+        {(path.runtimeConfirmed || verdict || path.openForSeconds != null || (path.reopens ?? 0) > 0 || path.suppressed) && (
           <div className="flex flex-wrap items-center gap-1.5">
             {path.runtimeConfirmed && (
-              <Badge tone="danger" icon={<ZapIcon className="h-3.5 w-3.5" />} className="text-[12px] font-bold" title="Runtime-confirmed by Falco - this path is being exercised right now.">
-                ACTIVELY EXPLOITED
+              <Badge
+                tone="danger"
+                icon={<ZapIcon className="h-3.5 w-3.5" />}
+                className="font-semibold"
+                title="A runtime sensor (Falco) fired on a workload of this route: it is being exercised, not only predicted."
+              >
+                Runtime alert on this route
+              </Badge>
+            )}
+            {verdict && (
+              <Badge
+                tone={verdict.outcome === "partial" ? "warn" : "neutral"}
+                icon={verdict.outcome === "confirmed" ? <CheckIcon className="h-3 w-3" /> : undefined}
+                title={`Red-team/BAS verdict from ${verdict.source}${verdict.evidence ? ` - ${verdict.evidence}` : ""}. Feeds the accuracy metrics.`}
+              >
+                {VALIDATION_LABEL[verdict.outcome]} {verdict.source}
+              </Badge>
+            )}
+            {conflict && (
+              <Badge
+                tone="warn"
+                icon={<AlertTriangleIcon className="h-3 w-3" />}
+                title={
+                  path.runtimeConfirmed
+                    ? `A runtime alert fired on this route, but ${verdict!.source} could not walk it. The alert may be that test itself - check before closing either.`
+                    : `The asset is open to anyone, but ${verdict!.source} could not reach it. Check the exposure before trusting the test.`
+                }
+              >
+                Evidence conflicts
               </Badge>
             )}
             {path.openForSeconds != null && (
@@ -816,27 +826,15 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
               </Badge>
             )}
             {path.suppressed && <Badge tone="neutral">suppressed</Badge>}
-            {path.validation && (
-              <Badge
-                tone={VALIDATION_META[path.validation.outcome].tone}
-                title={`Red-team/BAS verdict from ${path.validation.source}${path.validation.evidence ? ` - ${path.validation.evidence}` : ""}. Feeds the precision/recall metric.`}
-              >
-                {VALIDATION_META[path.validation.outcome].label} · {path.validation.source}
-              </Badge>
-            )}
           </div>
         )}
 
-        {/* Action toolbar - Investigate (left) vs Decide (right). */}
+        {/* Actions: one primary - apply the fix - and the rest quieter, but on screen: on a
+            read-only instance they are how a visitor learns what the product does. */}
         <div className="flex flex-wrap items-center gap-2 border-t border-edge pt-3.5">
-          {onShowInGraph && (
-            <Button variant="secondary" onClick={onShowInGraph}>
-              Show in graph →
-            </Button>
-          )}
+          <RemediationPRControl path={path} primary={path.remediations.length > 0} />
           <span className="mx-auto" />
           <ValidationControl path={path} onChanged={onTriaged} />
-          <RemediationPRControl path={path} />
           {aiEnabled && <AiExplainControl path={path} />}
           <TriageControl path={path} onTriaged={onTriaged} />
           <TicketControl path={path} onChanged={onTriaged} />
@@ -849,17 +847,17 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
         </div>
       </header>
 
-      {/* ── Kill chain ───────────────────────────────────────────────── */}
-      <section className="rounded-xl border border-edge bg-panel shadow-card p-5">
+      {/* ── Kill chain ─────────────────────────────────────────────────────────── */}
+      <section className="rounded-xl border border-edge bg-panel p-5 shadow-card">
         <h3 className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-muted">
-          Kill chain
-          <InfoTip text="The step-by-step route, mapped to MITRE ATT&CK: each hop's probability (p), technique, and flags (exposure, sensitive asset, live alert, KEV). Hover a hop (or, on a touch screen, tap its what-if button) to simulate cutting it." />
+          How the attack works
+          <InfoTip text="The route step by step: what each asset does to the next, the chance of that hop, and the MITRE ATT&CK technique where the hop is something an attacker does. Scissors mark where the generated fix cuts; any hop can be simulated cut (what-if)." />
         </h3>
 
         {whatIf && (
           <div className="mb-3 rounded-lg border border-accent/30 bg-accent/6 px-3.5 py-2.5 text-[12px] text-slate-700">
             <div className="font-medium text-slate-800">
-              What-if · cut <span className="font-mono text-[12px]">{whatIf.step.edgeType}</span> ({nameOf(whatIf.step.from)} → {nameOf(whatIf.step.to)})
+              What-if · cut “{hopVerb(whatIf.step.edgeType)}” ({nameOf(whatIf.step.from)} → {nameOf(whatIf.step.to)})
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-slate-600">
               <span>
@@ -893,114 +891,228 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
         )}
 
         <ol className="flex flex-col">
-          {path.nodes.map((node, i) => (
-            <li key={node.id}>
-              <div className="flex items-center gap-3">
-                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-edge bg-ink text-slate-500">
-                  <AssetIcon label={node.label} className="h-4 w-4" />
-                </span>
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-medium text-slate-800">{node.name}</span>
-                    <NodeBadges node={node} />
+          {path.nodes.map((node, i) => {
+            const step = i < path.steps.length ? path.steps[i] : null;
+            const reason = step ? hopReason(step, node, nodeOf(step.to)) : null;
+            const cutHere = step ? isCut(step) : false;
+            return (
+              <li key={node.id}>
+                <div className="flex items-center gap-3">
+                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-edge bg-ink text-slate-500">
+                    <AssetIcon label={node.label} className="h-4 w-4" />
+                  </span>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-medium text-slate-800">{node.name}</span>
+                      <NodeBadges node={node} />
+                    </div>
+                    <div className="text-[12px] text-muted">{typeName(node.label)}</div>
                   </div>
-                  <div className="text-[12px] text-muted">{node.label}</div>
                 </div>
-              </div>
-              {i < path.steps.length && (
-                // Wraps: a hop carries up to six chips, and on a phone the ones past the
-                // edge were clipped - the ATT&CK technique and the weight basis among them.
-                <div className="group/step my-1 ml-4 flex flex-wrap items-center gap-x-2 gap-y-1 border-l border-dashed border-edge py-1.5 pl-5">
-                  <span className="rounded-sm bg-slate-500/10 px-2 py-0.5 font-mono text-[12px] text-slate-500">{path.steps[i].edgeType}</span>
-                  <span className="text-[12px] tabular-nums text-slate-500">p = {path.steps[i].probability.toFixed(2)}</span>
-                  {path.steps[i].attack && (
-                    <a
-                      href={path.steps[i].attack!.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 rounded-sm bg-accent/10 px-1.5 py-0.5 text-[12px] font-medium text-accent transition hover:bg-accent/20"
-                      title={`MITRE ATT&CK ${path.steps[i].attack!.id} - ${path.steps[i].attack!.name} · tactic: ${path.steps[i].attack!.tactic}`}
-                    >
-                      <CrosshairIcon className="h-3 w-3" />
-                      {path.steps[i].attack!.id} · {path.steps[i].attack!.tactic}
-                    </a>
-                  )}
-                  {path.steps[i].weightBasis && <BasisChip basis={path.steps[i].weightBasis!} />}
-                  {path.steps[i].resolutionConfidence != null && path.steps[i].resolutionConfidence! < 1 && (
-                    <Badge
-                      tone="warn"
-                      dashed
-                      icon={<AlertTriangleIcon className="h-3 w-3" />}
-                      title={`Inferred by the resolver (${path.steps[i].resolutionMethod} match), not tool-asserted - ${(path.steps[i].resolutionConfidence! * 100).toFixed(0)}% confidence. Verify this link; the probability above already accounts for it.`}
-                    >
-                      heuristic join · {(path.steps[i].resolutionConfidence! * 100).toFixed(0)}%
-                    </Badge>
-                  )}
-                  {/* Revealed on hover where there is a hover. A touch screen has none, so
-                      there the cut was invisible and untappable: always show it. */}
-                  <button
-                    onClick={() => simulateCut(path.steps[i])}
-                    disabled={cutting !== null}
-                    className="ml-1 inline-flex items-center gap-1 rounded-sm border border-edge px-1.5 py-0.5 text-[12px] text-slate-500 opacity-0 transition hover:border-accent/50 hover:text-accent focus-visible:opacity-100 group-hover/step:opacity-100 pointer-coarse:opacity-100 disabled:opacity-40"
-                    title="Simulate cutting this edge and see the residual risk"
+                {step && (
+                  // Wraps: a hop carries up to six chips, and on a phone the ones past the
+                  // edge were clipped - the ATT&CK technique and the weight basis among them.
+                  <div
+                    className={`group/step my-1 ml-4 flex flex-col gap-1 border-l py-1.5 pl-5 ${
+                      cutHere ? "border-solid border-accent" : "border-dashed border-edge"
+                    }`}
                   >
-                    {cutting === `${path.steps[i].from}->${path.steps[i].to}` ? (
-                      "…"
-                    ) : (
-                      <>
-                        <ScissorsIcon className="h-3 w-3" /> what-if
-                      </>
-                    )}
-                  </button>
-                </div>
-              )}
-            </li>
-          ))}
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="text-[13px] text-slate-700" title={step.edgeType}>
+                        {hopVerb(step.edgeType)}
+                      </span>
+                      <span
+                        className="text-[12px] font-semibold tabular-nums text-slate-600"
+                        title="The chance an attacker completes this hop."
+                      >
+                        {(step.probability * 100).toFixed(0)}%
+                      </span>
+                      {step.attack && (
+                        <a
+                          href={step.attack.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 rounded-sm bg-accent/10 px-1.5 py-0.5 text-[12px] font-medium text-accent transition hover:bg-accent/20"
+                          title={`MITRE ATT&CK ${step.attack.id} - ${step.attack.name} · tactic: ${step.attack.tactic}`}
+                        >
+                          <CrosshairIcon className="h-3 w-3" />
+                          {step.attack.id} · {step.attack.tactic}
+                        </a>
+                      )}
+                      {step.weightBasis && <BasisChip basis={step.weightBasis} />}
+                      {step.resolutionConfidence != null && step.resolutionConfidence < 1 && (
+                        <Badge
+                          tone="warn"
+                          dashed
+                          icon={<AlertTriangleIcon className="h-3 w-3" />}
+                          title={`Linked by the resolver (${step.resolutionMethod} match), not asserted by a tool - ${(step.resolutionConfidence * 100).toFixed(0)}% confidence. Verify this link; the probability already accounts for it.`}
+                        >
+                          inferred link · {(step.resolutionConfidence * 100).toFixed(0)}%
+                        </Badge>
+                      )}
+                      {cutHere && (
+                        <Badge tone="accent" icon={<ScissorsIcon className="h-3 w-3" />} title="The generated fix severs this hop.">
+                          the fix cuts here
+                        </Badge>
+                      )}
+                      {/* Revealed on hover where there is a hover. A touch screen has none, so
+                          there the cut was invisible and untappable: always show it. */}
+                      <button
+                        onClick={() => simulateCut(step)}
+                        disabled={cutting !== null}
+                        className="ml-1 inline-flex items-center gap-1 rounded-sm border border-edge px-1.5 py-0.5 text-[12px] text-slate-500 opacity-0 transition hover:border-accent/50 hover:text-accent focus-visible:opacity-100 group-hover/step:opacity-100 pointer-coarse:opacity-100 disabled:opacity-40"
+                        title="Simulate cutting this hop and see the residual risk"
+                      >
+                        {cutting === `${step.from}->${step.to}` ? (
+                          "…"
+                        ) : (
+                          <>
+                            <ScissorsIcon className="h-3 w-3" /> what-if
+                          </>
+                        )}
+                      </button>
+                    </div>
+                    {reason && <div className="text-[12px] text-muted">because {reason}</div>}
+                  </div>
+                )}
+              </li>
+            );
+          })}
         </ol>
       </section>
 
-      {/* ── Remediations ─────────────────────────────────────────────── */}
-      <section>
-        <h3 className="mb-2 text-xs font-semibold text-muted">
-          Suggested remediation{path.remediations.length === 1 ? "" : "s"}
-          {path.remediations.length > 0 && ` (${path.remediations.length})`}
-        </h3>
-        {path.remediations.length === 0 ? (
-          <div className="rounded-xl border border-edge bg-panel shadow-card p-4 text-xs text-muted">
-            No generated remediation for this path shape yet.
-          </div>
-        ) : (
-          <div className="flex flex-col gap-3">
-            {path.remediations.map((r, i) => (
-              <ArtifactCard key={`${r.filename}-${i}`} r={r} />
-            ))}
-          </div>
-        )}
-      </section>
+      {/* ── Fix / Detect / Evidence ────────────────────────────────────────────── */}
+      <section className="rounded-xl border border-edge bg-panel shadow-card">
+        <div className="flex items-center gap-1 border-b border-edge px-3" role="tablist" aria-label="Path details">
+          {tabs.map((t) => (
+            <button
+              key={t.id}
+              role="tab"
+              id={`${tabId}-tab-${t.id}`}
+              aria-selected={tab === t.id}
+              aria-controls={`${tabId}-panel-${t.id}`}
+              onClick={() => setTab(t.id)}
+              className={`-mb-px border-b-2 px-3 py-2.5 text-[13px] font-medium transition ${
+                tab === t.id ? "border-accent text-slate-900" : "border-transparent text-muted hover:text-slate-700"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+          <span className="mx-auto" />
+          {onShowInGraph && (
+            <Button variant="ghost" onClick={onShowInGraph}>
+              Show in graph →
+            </Button>
+          )}
+        </div>
 
-      {/* ── Detection-as-code ────────────────────────────────────────── */}
-      {path.detections.length > 0 && (
-        <section>
-          {/* "Detection-as-code (2)" read as two things to deploy. They are the same
-              detection in two formats - one for Falco, one for a SIEM - so the heading
-              says how many FORMATS there are and the sentence says to pick one. The
-              remediation above is the action; this only watches. */}
-          <h3 className="mb-2 text-xs font-semibold text-muted">
-            Detection-as-code · {path.detections.length === 1 ? "1 format" : `${path.detections.length} formats, pick one`}
-          </h3>
-          <p className="mb-2 text-xs text-muted">
-            The remediation above <span className="font-medium">cuts</span> the path; these rules{" "}
-            <span className="font-medium">watch</span> it until it is cut. They express the{" "}
-            <span className="font-medium">same</span> detection for different stacks - deploy the one that matches what you
-            already run, not both.
-          </p>
-          <div className="flex flex-col gap-3">
-            {path.detections.map((d, i) => (
-              <ArtifactCard key={`${d.filename}-${i}`} r={d} tone="indigo" />
-            ))}
+        {/* Every panel stays in the document, hidden when not selected: the tab pattern, and
+            what keeps the evidence findable by a screen reader's search. */}
+        <div role="tabpanel" id={`${tabId}-panel-fix`} aria-labelledby={`${tabId}-tab-fix`} hidden={tab !== "fix"} className="p-4">
+          {path.remediations.length === 0 ? (
+            <div className="text-[13px] text-muted">No generated fix for this path shape yet.</div>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {path.remediations.map((r, i) => (
+                <ArtifactCard key={`${r.filename}-${i}`} r={r} />
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div role="tabpanel" id={`${tabId}-panel-detect`} aria-labelledby={`${tabId}-tab-detect`} hidden={tab !== "detect"} className="p-4">
+          {path.detections.length === 0 ? (
+            <div className="text-[13px] text-muted">No generated detection for this path shape yet.</div>
+          ) : (
+            <>
+              {/* The same detection in different formats, not several things to deploy. */}
+              <p className="mb-3 text-[13px] leading-relaxed text-slate-600">
+                The fix <span className="font-medium">cuts</span> the path; these rules <span className="font-medium">watch</span> it
+                until it is cut. They are the <span className="font-medium">same</span> detection for different stacks - deploy the
+                one that matches what you run.
+              </p>
+              <div className="flex flex-col gap-3">
+                {path.detections.map((d, i) => (
+                  <ArtifactCard key={`${d.filename}-${i}`} r={d} tone="indigo" />
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
+        <div role="tabpanel" id={`${tabId}-panel-evidence`} aria-labelledby={`${tabId}-tab-evidence`} hidden={tab !== "evidence"} className="flex flex-col gap-4 p-4 text-[13px]">
+          {(path.priorityFactors ?? []).length > 0 && (
+            <div>
+              <div className="mb-1.5 text-[12px] font-semibold text-muted">What the priority weighs</div>
+              <div className="flex flex-wrap gap-1.5">
+                {(path.priorityFactors ?? []).map((f) => (
+                  <span key={f} className="rounded-md bg-slate-500/10 px-1.5 py-0.5 text-[12px] text-slate-600">
+                    {f}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          <div>
+            <div className="mb-1.5 text-[12px] font-semibold text-muted">How sure the probability is</div>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] tabular-nums text-muted">
+              {ciInforms ? (
+                <span title="90% credible interval from per-edge evidence (epistemic): tight = trust the number, wide = a rough estimate. Distinct from the correlation ceiling.">
+                  90% CI {(path.scoreCiLow! * 100).toFixed(0)}-{(path.scoreCiHigh! * 100).toFixed(0)}%
+                  {path.confidenceLabel ? ` · ${path.confidenceLabel} confidence` : ""}
+                </span>
+              ) : (
+                path.confidenceLabel && <span>{path.confidenceLabel} confidence</span>
+              )}
+              {path.correlatedHops && path.scoreUpperBound != null && path.scoreUpperBound - path.score > 0.05 && (
+                <span title="The probability multiplies hops as if independent; if two or more share a cause, the real value could be as high as the weakest hop (the Fréchet ceiling).">
+                  up to {(path.scoreUpperBound * 100).toFixed(0)}% if correlated
+                </span>
+              )}
+            </div>
           </div>
-        </section>
-      )}
+          {path.profileScores && path.profileScores.length > 0 && (
+            <div>
+              <div className="mb-1.5 flex items-center gap-1 text-[12px] font-semibold text-muted">
+                by attacker profile
+                <InfoTip text="Success probability per attacker class (commodity / criminal / APT); 'blended' averages them by threat-model prior. Easy for an APT can be hard for a commodity actor." />
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {path.profileScores.map((p) => {
+                  const label = p.profile === "apt" ? "APT" : p.profile.charAt(0).toUpperCase() + p.profile.slice(1);
+                  return (
+                    <span
+                      key={p.profile}
+                      className="rounded-md border border-edge px-2 py-0.5 text-[12px] tabular-nums text-muted"
+                      title={`Threat-model prior ${(p.prior * 100).toFixed(0)}%`}
+                    >
+                      {label} <span className="font-medium text-slate-900">{(p.score * 100).toFixed(0)}%</span>
+                    </span>
+                  );
+                })}
+                {path.mixtureScore != null && (
+                  <span
+                    className="text-[12px] tabular-nums text-muted"
+                    title="Threat-model-weighted average across profiles - the correlation-aware counterpart to the plain product."
+                  >
+                    blended {(path.mixtureScore * 100).toFixed(0)}%
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
     </div>
   );
 }
+
+// VALIDATION_LABEL is how a verdict reads next to its source: "Proven by caldera" - the
+// list's word for a route a tester walked (routeChannels).
+const VALIDATION_LABEL: Record<ValidationOutcome, string> = {
+  confirmed: "Proven by",
+  refuted: "Refuted by",
+  partial: "Partly walked by",
+  missed: "Missed by",
+};

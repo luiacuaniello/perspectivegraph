@@ -130,3 +130,58 @@ func TestDiscriminationResolvesANumberOnceBothClassesExist(t *testing.T) {
 		t.Errorf("priority discrimination %v, want auc 1", pd)
 	}
 }
+
+// A red-team verdict re-bands the path where it is listed - a route the team walked is
+// P1 - but the Priority captured with the NEXT verdict is still the analyzer's, with no
+// verdict in it. Otherwise re-validating a confirmed path would grade the triage order on
+// a ranking the first verdict had already moved, and the AUC would reward itself.
+func TestAVerdictReBandsTheListButNotWhatItIsGradedAgainst(t *testing.T) {
+	a, _ := testAPI(t)
+	vs, err := validation.New("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.WithValidation(vs)
+	pathID := seedPRPath(t, a)
+	var live float64
+	for _, p := range a.analyzer.Latest(auth.DefaultTenant) {
+		if p.ID == pathID {
+			live = p.Priority
+		}
+	}
+	if live >= 70 {
+		t.Fatalf("the seeded path is already P1 (%.1f); this test needs one a verdict moves", live)
+	}
+	record := func() {
+		t.Helper()
+		body := `{"pathId":"` + pathID + `","outcome":"confirmed","source":"caldera"}`
+		rec := httptest.NewRecorder()
+		a.putValidation(rec, httptest.NewRequest(http.MethodPost, "/validations", strings.NewReader(body)))
+		if rec.Code != http.StatusCreated && rec.Code != http.StatusOK {
+			t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+		}
+	}
+	record()
+
+	data := query(t, a, `{ attackPaths { id priority priorityLabel priorityReason priorityFactors } }`)
+	paths, _ := data["attackPaths"].([]any)
+	var shown map[string]any
+	for _, p := range paths {
+		if m := p.(map[string]any); m["id"] == pathID {
+			shown = m
+		}
+	}
+	if shown == nil || shown["priorityLabel"] != "P1" || !strings.Contains(shown["priorityReason"].(string), "caldera") {
+		t.Fatalf("a confirmed path is listed as %v", shown)
+	}
+
+	record() // re-validation
+	got, _, _ := vs.Get(context.Background(), auth.DefaultTenant, pathID)
+	if got.PredictedPriority == nil {
+		t.Fatal("re-validation captured no priority")
+	}
+	if *got.PredictedPriority != live {
+		t.Fatalf("re-validation captured priority %.1f; the analyzer's is %.1f - the verdict leaked into what it is graded against",
+			*got.PredictedPriority, live)
+	}
+}

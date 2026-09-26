@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strconv"
 	"sync"
@@ -293,30 +294,30 @@ func (a *API) Schema() (graphql.Schema, error) {
 	stepType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "AttackPathStep",
 		Fields: graphql.Fields{
-			"edgeType":    &graphql.Field{Type: graphql.String, Resolve: field[analyzer.Step](func(s analyzer.Step) any { return string(s.EdgeType) })},
-			"from":        &graphql.Field{Type: graphql.String, Resolve: field[analyzer.Step](func(s analyzer.Step) any { return s.From })},
-			"to":          &graphql.Field{Type: graphql.String, Resolve: field[analyzer.Step](func(s analyzer.Step) any { return s.To })},
-			"probability": &graphql.Field{Type: graphql.Float, Resolve: field[analyzer.Step](func(s analyzer.Step) any { return s.Probability })},
-			"attack": &graphql.Field{Type: attackType, Description: "The MITRE ATT&CK technique this hop maps to (nil for structural hops).", Resolve: field[analyzer.Step](func(s analyzer.Step) any {
-				if t, ok := attck.ForEdge(s.EdgeType); ok {
-					return t
+			"edgeType":    &graphql.Field{Type: graphql.String, Resolve: field[stepView](func(s stepView) any { return string(s.EdgeType) })},
+			"from":        &graphql.Field{Type: graphql.String, Resolve: field[stepView](func(s stepView) any { return s.From })},
+			"to":          &graphql.Field{Type: graphql.String, Resolve: field[stepView](func(s stepView) any { return s.To })},
+			"probability": &graphql.Field{Type: graphql.Float, Resolve: field[stepView](func(s stepView) any { return s.Probability })},
+			"attack": &graphql.Field{Type: attackType, Description: "The MITRE ATT&CK technique this hop maps to, read in the context of its route: initial access is credited to the hop where access is gained (the exploit when the route has one), and an exploit after the attacker is inside is lateral movement. Nil for structural hops - a library that has a CVE, an image that ships a library.", Resolve: field[stepView](func(s stepView) any {
+				if s.technique == nil {
+					return nil
 				}
-				return nil
+				return *s.technique
 			})},
-			"resolutionMethod": &graphql.Field{Type: graphql.String, Description: "Set when this hop's join was inferred by the resolver (digest|tag|name); absent for a hard, tool-asserted edge.", Resolve: field[analyzer.Step](func(s analyzer.Step) any {
+			"resolutionMethod": &graphql.Field{Type: graphql.String, Description: "Set when this hop's join was inferred by the resolver (digest|tag|name); absent for a hard, tool-asserted edge.", Resolve: field[stepView](func(s stepView) any {
 				if s.ResolutionMethod == "" {
 					return nil
 				}
 				return s.ResolutionMethod
 			})},
-			"resolutionConfidence": &graphql.Field{Type: graphql.Float, Description: "How confident this inferred hop is, [0,1]. <1 means a heuristic correlation to verify (and the probability is already discounted for it).", Resolve: field[analyzer.Step](func(s analyzer.Step) any {
+			"resolutionConfidence": &graphql.Field{Type: graphql.Float, Description: "How confident this inferred hop is, [0,1]. <1 means a heuristic correlation to verify (and the probability is already discounted for it).", Resolve: field[stepView](func(s stepView) any {
 				if s.ResolutionMethod == "" {
 					return nil
 				}
 				return s.ResolutionConfidence
 			})},
-			"weightBasis":      &graphql.Field{Type: graphql.String, Description: "Where this hop's probability came from: kev|epss|runtime (evidence) vs cvss|severity|heuristic (estimate).", Resolve: field[analyzer.Step](func(s analyzer.Step) any { return s.WeightBasis })},
-			"weightConfidence": &graphql.Field{Type: graphql.Float, Description: "How much to trust this hop's probability, [0,1], given its basis.", Resolve: field[analyzer.Step](func(s analyzer.Step) any { return s.WeightConfidence })},
+			"weightBasis":      &graphql.Field{Type: graphql.String, Description: "Where this hop's probability came from: kev|epss|runtime (evidence) vs cvss|severity|heuristic (estimate).", Resolve: field[stepView](func(s stepView) any { return s.WeightBasis })},
+			"weightConfidence": &graphql.Field{Type: graphql.Float, Description: "How much to trust this hop's probability, [0,1], given its basis.", Resolve: field[stepView](func(s stepView) any { return s.WeightConfidence })},
 		},
 	})
 
@@ -334,9 +335,29 @@ func (a *API) Schema() (graphql.Schema, error) {
 		},
 	})
 
+	cutEdgeType := graphql.NewObject(graphql.ObjectConfig{
+		Name:        "CutEdge",
+		Description: "The edge of an attack path a fix severs.",
+		Fields: graphql.Fields{
+			"from": &graphql.Field{Type: graphql.String, Resolve: field[remediation.CutEdge](func(c remediation.CutEdge) any { return c.From })},
+			"to":   &graphql.Field{Type: graphql.String, Resolve: field[remediation.CutEdge](func(c remediation.CutEdge) any { return c.To })},
+			"type": &graphql.Field{Type: graphql.String, Description: "The edge type, e.g. EXPOSES.", Resolve: field[remediation.CutEdge](func(c remediation.CutEdge) any { return c.Type })},
+		},
+	})
+
 	suggestionType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "Remediation",
 		Fields: graphql.Fields{
+			"cut": &graphql.Field{
+				Type:        cutEdgeType,
+				Description: "The edge of the path this fix severs - where a reader should cut the kill chain.",
+				Resolve: field[remediation.Suggestion](func(s remediation.Suggestion) any {
+					if s.Cut.From == "" && s.Cut.To == "" {
+						return nil
+					}
+					return s.Cut
+				}),
+			},
 			"title":     &graphql.Field{Type: graphql.String, Resolve: field[remediation.Suggestion](func(s remediation.Suggestion) any { return s.Title })},
 			"kind":      &graphql.Field{Type: graphql.String, Resolve: field[remediation.Suggestion](func(s remediation.Suggestion) any { return s.Kind })},
 			"filename":  &graphql.Field{Type: graphql.String, Resolve: field[remediation.Suggestion](func(s remediation.Suggestion) any { return s.Filename })},
@@ -455,10 +476,16 @@ func (a *API) Schema() (graphql.Schema, error) {
 			"mixtureScore":     &graphql.Field{Type: graphql.Float, Description: "The deterministic plug-in of the attacker-capability mixture, Σ P(c)·∏ p(e|c) at the point probabilities (the fast closed form; posteriorMean is its sampled, epistemic-aware counterpart). See profileScores for the per-profile breakdown.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.MixtureScore })},
 			"profileScores":    &graphql.Field{Type: graphql.NewList(profileScoreType), Description: "Per-attacker-profile success probability ∏ p(e|c) with that profile's prior - the \"72% vs an APT, 18% vs commodity\" breakdown. A path trivial for an APT but hard for a commodity actor reads very differently here than from the single naive score. This is an interpretive lens, not the triage axis: the ordering to work through is `priority`.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.ProfileScores })},
 			"priority":         &graphql.Field{Type: graphql.Float, Description: "Composite triage priority [0,100] blending exploitability (score) and trust (confidence) with corroboration (runtime-confirmed, KEV on path), target sensitivity (classified > tagged > inferred jewel), and entry blast radius. Paths are returned priority-first, so attackPaths(limit:N) is the actionable Top-N.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.Priority })},
-			"priorityLabel":    &graphql.Field{Type: graphql.String, Description: "Priority band: P1 (≥70) | P2 (≥40) | P3 - the \"fix these first\" bucket.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.PriorityLabel })},
-			"priorityFactors":  &graphql.Field{Type: graphql.NewList(graphql.String), Description: "Human-readable reasons behind the priority (e.g. \"runtime-confirmed (active)\", \"KEV on path\", \"classified PII target\", \"entry shared by N paths\") - explainable triage, not a black-box rank.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.PriorityFactors })},
-			"nodes":            &graphql.Field{Type: graphql.NewList(nodeType), Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.Nodes })},
-			"steps":            &graphql.Field{Type: graphql.NewList(stepType), Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.Steps })},
+			"priorityLabel":    &graphql.Field{Type: graphql.String, Description: "Priority band: P1 (≥70) | P2 (≥40) | P3 - the \"fix these first\" bucket. A fact about the route (see priorityReason) lifts it to P1; a red-team/BAS verdict re-bands it where paths are listed: confirmed to P1, refuted to P3 unless a runtime alert or open access contradicts the test.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.PriorityLabel })},
+			"priorityFactors":  &graphql.Field{Type: graphql.NewList(graphql.String), Description: "Human-readable reasons behind the priority (e.g. \"runtime-confirmed (active)\", \"KEV on path\", \"classified PII target\", \"entry shared by N paths\", \"confirmed by caldera\") - explainable triage, not a black-box rank.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.PriorityFactors })},
+			"priorityReason": &graphql.Field{Type: graphql.String, Description: "Why the path is in its band, in one sentence, when a fact put it there rather than the blended number: a runtime alert on the route, an asset open to anyone, a known-exploited weakness on a likely route, a likely route on evidence into a high-value asset, or a red-team/BAS verdict. Null when the band is the blend's alone.", Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any {
+				if p.PriorityReason == "" {
+					return nil
+				}
+				return p.PriorityReason
+			})},
+			"nodes": &graphql.Field{Type: graphql.NewList(nodeType), Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return p.Nodes })},
+			"steps": &graphql.Field{Type: graphql.NewList(stepType), Resolve: field[analyzer.AttackPath](func(p analyzer.AttackPath) any { return stepViews(p) })},
 			"suppressed": &graphql.Field{
 				Type:        graphql.Boolean,
 				Description: "True when an in-force triage decision hides this path from the active board.",
@@ -976,7 +1003,7 @@ func (a *API) Schema() (graphql.Schema, error) {
 					"limit": &graphql.ArgumentConfig{Type: graphql.Int, DefaultValue: 0},
 				},
 				Resolve: func(p graphql.ResolveParams) (any, error) {
-					paths := a.scopedLatest(p.Context)
+					paths := a.shownPaths(p.Context)
 					app, _ := p.Args["app"].(string)
 					if app != "" {
 						filtered := paths[:0:0]
@@ -1583,6 +1610,35 @@ func (a *API) scopedLatest(ctx context.Context) []analyzer.AttackPath {
 	return out
 }
 
+// shownPaths is scopedLatest re-banded by the red-team and BAS verdicts recorded on the
+// paths (analyzer.ApplyVerdicts): the order and bands the dashboard shows. What GRADES the
+// ranking - the Priority captured with a verdict - reads scopedLatest instead, which
+// carries none, so a verdict can never be graded against a ranking it already moved.
+func (a *API) shownPaths(ctx context.Context) []analyzer.AttackPath {
+	paths := a.scopedLatest(ctx)
+	if a.validation == nil || len(paths) == 0 {
+		return paths
+	}
+	records, err := a.validation.List(ctx, tenantOf(ctx))
+	if err != nil {
+		slog.Warn("attack paths shown without their test verdicts", "err", err)
+		return paths
+	}
+	latest := make(map[string]analyzer.Verdict, len(records))
+	for _, r := range records { // newest first: the first verdict per path is its current one
+		if r.PathID == "" || r.Outcome == validation.Missed {
+			continue
+		}
+		if _, seen := latest[r.PathID]; !seen {
+			latest[r.PathID] = analyzer.Verdict{Outcome: string(r.Outcome), Source: r.Source}
+		}
+	}
+	return analyzer.ApplyVerdicts(paths, func(id string) (analyzer.Verdict, bool) {
+		v, ok := latest[id]
+		return v, ok
+	})
+}
+
 // scopedPathIDs is the set of attack-path ids the caller may act on, or nil when the
 // caller is unrestricted.
 //
@@ -1751,4 +1807,26 @@ func paginate(nodes []ontology.Node, edges []ontology.Edge, limit, offset int) (
 // cannot drift apart. See ontology.StampedWith.
 func stampedWith(props map[string]any, slug, sha string) bool {
 	return ontology.StampedWith(props, slug, sha)
+}
+
+// stepView is a path's hop with what can only be read from the whole route: its ATT&CK
+// technique (attck.ForStep).
+type stepView struct {
+	analyzer.Step
+	technique *attck.Technique
+}
+
+func stepViews(p analyzer.AttackPath) []stepView {
+	route := make([]ontology.EdgeType, len(p.Steps))
+	for i, st := range p.Steps {
+		route[i] = st.EdgeType
+	}
+	out := make([]stepView, len(p.Steps))
+	for i, st := range p.Steps {
+		out[i] = stepView{Step: st}
+		if t, ok := attck.ForStep(route, i); ok {
+			out[i].technique = &t
+		}
+	}
+	return out
 }

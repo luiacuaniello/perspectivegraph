@@ -732,7 +732,7 @@
 						"body": {
 							"mode": "graphql",
 							"graphql": {
-								"query": "query Dashboard {\n  posture { criticalPaths runtimeConfirmed policyViolations nodes edges }\n  attackPaths {\n    id\n    score\n    runtimeConfirmed\n    directAccess\n    nodes { id label name internetExposed crownJewel crownJewelBasis classification secretsScrubbed runtimeAlert severity cvss }\n    steps { edgeType from to probability attack { id name tactic } }\n    remediations { title kind filename rationale content }\n  }\n  invariantViolations { invariantId description severity nodes { id label name } }\n  graph {\n    nodes { id label name internetExposed crownJewel runtimeAlert }\n    edges { type from to probability attack { id tactic } }\n  }\n}",
+								"query": "query Dashboard {\n  posture { criticalPaths runtimeConfirmed policyViolations nodes edges }\n  attackPaths {\n    id\n    score\n    runtimeConfirmed\n    directAccess\n    nodes { id label name internetExposed crownJewel crownJewelBasis classification secretsScrubbed runtimeAlert severity cvss }\n    priority\n    priorityLabel\n    priorityReason\n    steps { edgeType from to probability attack { id name tactic } }\n    remediations { title kind filename rationale content cut { from to type } }\n  }\n  invariantViolations { invariantId description severity nodes { id label name } }\n  graph {\n    nodes { id label name internetExposed crownJewel runtimeAlert }\n    edges { type from to probability attack { id tactic } }\n  }\n}",
 								"variables": ""
 							}
 						},

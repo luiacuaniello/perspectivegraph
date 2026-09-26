@@ -99,7 +99,7 @@ is - so a lower-scoring route can outrank a higher-scoring one.
 | | |
 |---|---|
 | ![Attack path detail](docs/screenshot-paths.png) | ![Score calibration](docs/screenshot-trust.png) |
-| Every hop, its probability, where that probability came from, and the ATT&CK technique. | Whether the engine's own scores held up against recorded outcomes. |
+| Why the route is P1, one probability with its range, and every hop with what it lets the attacker do and where its probability came from. | Whether the engine's own scores held up against recorded outcomes - and whether there are enough of them to say. |
 
 *The screenshots are `make demo` with **seeded** verdicts, which is why the calibration panel
 gives one ("underconfident": across 14 outcomes generated to exercise it, the engine predicted 60%

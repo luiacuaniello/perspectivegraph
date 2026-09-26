@@ -2,6 +2,7 @@ import { useState } from "react";
 import { fetchValidations, type Calibration, type CalibrationTrendPoint, type DetectionStats, type RiskSimulation, type ValidationMetrics } from "../api/client";
 import { CalibrationPanel } from "./CalibrationPanel";
 import InfoTip from "./InfoTip";
+import { isProvisional, PROVISIONAL_BELOW } from "./trustVerdict";
 
 // Trust is the case for believing the numbers, given its own page.
 //
@@ -18,27 +19,23 @@ interface Props {
   risk?: RiskSimulation;
 }
 
-// Below this many recorded outcomes the verdict is stated but marked provisional.
-//
-// It is not a statistical threshold so much as an honesty one: at n=14 the 95% interval
-// on an observed rate spans roughly 42%-90%, so an 11-point gap between predicted and
-// observed sits comfortably inside the noise. The page used to print "Underconfident" in
-// 26px while three of its own segment chips said "insufficient data" - stating as a
-// measurement what its own evidence called a guess. The count now sits beside the
-// verdict, where it qualifies it.
-const PROVISIONAL_BELOW = 30;
 
 export default function TrustView({ calibration, trend, validation, risk }: Props) {
   const has = calibration?.hasData;
-  const provisional = has ? calibration!.samples < PROVISIONAL_BELOW : false;
+  const provisional = isProvisional(calibration);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto pr-1">
       <section className="rounded-2xl border border-edge bg-panel px-5 py-5">
         <div className="text-[12px] text-muted">Verdict on the engine's own scores</div>
         <div className="mt-1.5 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h2 className="text-[26px] font-semibold capitalize leading-none text-slate-900">
-            {(calibration?.verdict ?? "not measured").replace(/-/g, " ")}
+          {/* Below the floor the headline is the sample size, not a verdict: a verdict in
+              26px on fourteen outcomes is a measurement claim the data cannot back. The
+              direction is still given, beside the count that qualifies it. */}
+          <h2 className="text-[26px] font-semibold leading-none text-slate-900">
+            {provisional
+              ? "Not enough outcomes yet"
+              : capitalize((calibration?.verdict ?? "not measured").replace(/-/g, " "))}
           </h2>
           {has && (
             <span
@@ -49,8 +46,9 @@ export default function TrustView({ calibration, trend, validation, risk }: Prop
                   : `${calibration!.samples} recorded outcomes`
               }
             >
-              on {calibration!.samples} outcome{calibration!.samples === 1 ? "" : "s"}
-              {provisional ? " - provisional" : ""}
+              {provisional
+                ? `leaning ${calibration!.verdict.replace(/-/g, " ")} · ${calibration!.samples} of the ${PROVISIONAL_BELOW} outcomes a verdict needs`
+                : `on ${calibration!.samples} outcome${calibration!.samples === 1 ? "" : "s"}`}
             </span>
           )}
         </div>
@@ -96,11 +94,22 @@ export default function TrustView({ calibration, trend, validation, risk }: Prop
             <InfoTip text="The modeled band comes from resampling every edge probability from its evidence, so a wide band means the number rests on soft inputs rather than measurements." />
           </div>
           <p className="text-[13px] leading-relaxed text-slate-600">
-            The overall compromise estimate sits at{" "}
-            <span className="font-semibold text-slate-800">{pct(risk.anyCompromiseProbability)}</span>, and resampling
-            the evidence puts it between{" "}
-            <span className="font-semibold text-slate-800">{pct(risk.sensitivityLow)}</span> and{" "}
-            <span className="font-semibold text-slate-800">{pct(risk.sensitivityHigh)}</span>.{" "}
+            {risk.anyCompromiseProbability >= 0.99 ? (
+              // Pinned at the top, "between 100% and 100%" read like a bug. It is saturation,
+              // and the sentence says so instead of printing a band with no width.
+              <>
+                The overall compromise estimate is{" "}
+                <span className="font-semibold text-slate-800">saturated at {pct(risk.anyCompromiseProbability)}</span>.{" "}
+              </>
+            ) : (
+              <>
+                The overall compromise estimate sits at{" "}
+                <span className="font-semibold text-slate-800">{pct(risk.anyCompromiseProbability)}</span>, and resampling
+                the evidence puts it between{" "}
+                <span className="font-semibold text-slate-800">{pct(risk.sensitivityLow)}</span> and{" "}
+                <span className="font-semibold text-slate-800">{pct(risk.sensitivityHigh)}</span>.{" "}
+              </>
+            )}
             {bandNote(risk)}
           </p>
         </section>
@@ -116,7 +125,7 @@ export default function TrustView({ calibration, trend, validation, risk }: Prop
 function bandNote(risk: RiskSimulation): string {
   const width = risk.sensitivityHigh - risk.sensitivityLow;
   if (risk.anyCompromiseProbability >= 0.99) {
-    return "The estimate is pinned at the top of its range, so the narrow band reflects saturation rather than precision: with this many open routes, the model cannot distinguish bad from worse. Cut routes and this number starts carrying information again.";
+    return "With this many open routes some sensitive asset falls in almost every simulated attack, so the number cannot tell bad from worse - and resampling the evidence cannot move it. Cut routes and it starts carrying information again; until then, the expected number of assets compromised is the figure that moves.";
   }
   if (width < 0.05) {
     return "That band is tight: the estimate is driven by evidence rather than guesses.";
@@ -321,4 +330,8 @@ function DetectionRow({ detection }: { detection: DetectionStats }) {
       </p>
     </section>
   );
+}
+
+function capitalize(t: string): string {
+  return t.charAt(0).toUpperCase() + t.slice(1);
 }

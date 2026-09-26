@@ -38,9 +38,18 @@ function Line({ label, tip, d, emptyText }: { label: string; tip: string; d?: Di
             title={`${d.positives} confirmed · ${d.negatives} refuted · 95% interval ${d.aucLow?.toFixed(2)}–${d.aucHigh?.toFixed(2)}`}
           >
             AUC {d.auc!.toFixed(2)}{" "}
-            <span className="text-muted">
-              [{d.aucLow?.toFixed(2)}–{d.aucHigh?.toFixed(2)}]
-            </span>
+            {JUDGED.has(d.verdict) ? (
+              <span className="text-muted">
+                [{d.aucLow?.toFixed(2)}–{d.aucHigh?.toFixed(2)}]
+              </span>
+            ) : (
+              // Below the floor the interval is the least trustworthy thing on the row: an
+              // approximation that reads tightest exactly when the sample is smallest
+              // ("[0.95–1.00]" on fourteen verdicts). The counts say what the figure rests on.
+              <span className="text-muted">
+                from {d.positives} confirmed · {d.negatives} refuted
+              </span>
+            )}
           </span>
           <span className={`rounded-md px-1.5 py-0.5 text-[12px] font-medium ${style.cls}`}>{style.label}</span>
         </>

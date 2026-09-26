@@ -13,6 +13,7 @@ type AttackPath {
   priority: Float
   priorityFactors: [String]
   priorityLabel: String
+  priorityReason: String
   profileScores: [ProfileScore]
   remediations: [Remediation]
   reopens: Int
@@ -110,6 +111,12 @@ type CrownJewelRisk {
   id: String
   label: String
   name: String
+}
+
+type CutEdge {
+  from: String
+  to: String
+  type: String
 }
 
 type Detection {
@@ -299,6 +306,7 @@ type ReliabilityBin {
 
 type Remediation {
   content: String
+  cut: CutEdge
   filename: String
   kind: String
   rationale: String

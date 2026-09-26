@@ -3,7 +3,7 @@ import { fetchDashboard, fetchGraph, fetchHistory, fetchStatus, type Dashboard, 
 import { BottomBar, TopBar, type View } from "./components/Navigation";
 import ExportMenu from "./components/ExportMenu";
 import AttackPathList from "./components/AttackPathList";
-import { orderForDisplay, routeLabel } from "./components/routeChannels";
+import { routeLabel } from "./components/routeChannels";
 import TodayView from "./components/TodayView";
 import TrustView from "./components/TrustView";
 import AttackPathDetail from "./components/AttackPathDetail";
@@ -193,8 +193,12 @@ export default function App() {
 
   // The list hides triaged-off (suppressed) paths unless the analyst opts in.
   const allPaths = useMemo(() => data?.attackPaths ?? [], [data]);
+  // In the engine's order. A route a tester disproved used to be sunk here, because the
+  // ranking knew nothing of verdicts; it does now (a refuted route drops to P3 server-side),
+  // and sinking it again buried the one refuted route that must not be buried - a runtime
+  // alert the test contradicts, which the engine keeps in P1 as an evidence conflict.
   const visiblePaths = useMemo(
-    () => orderForDisplay(showSuppressed ? allPaths : allPaths.filter((p) => !p.suppressed)),
+    () => (showSuppressed ? allPaths : allPaths.filter((p) => !p.suppressed)),
     [allPaths, showSuppressed],
   );
   const suppressedCount = useMemo(() => allPaths.filter((p) => p.suppressed).length, [allPaths]);
@@ -213,6 +217,12 @@ export default function App() {
   // produce a picture: the layout collapses into an unreadable smear and the tab
   // stalls. One hop keeps the answer legible and bounded no matter how big the
   // estate grows, which is the point of showing it beside a path at all.
+  // The route's node ids in order, for the graph's left-to-right layout. Memoised on the
+  // ids themselves: the dashboard polls with fresh arrays, and a new array every few
+  // seconds would re-lay the canvas out under the reader's hands.
+  const routeKey = selected?.nodes.map((n) => n.id).join("\u0000") ?? "";
+  const routeIds = useMemo(() => (routeKey ? routeKey.split("\u0000") : undefined), [routeKey]);
+
   const pathNeighbourhood = useMemo(() => {
     if (!graphData || !selected) return { nodes: [], edges: [] };
     const core = new Set(selected.nodes.map((n) => n.id));
@@ -452,6 +462,7 @@ export default function App() {
                             edges={pathNeighbourhood.edges}
                             highlightNodes={highlightNodes}
                             highlightEdges={highlightEdges}
+                            route={routeIds}
                           />
                         </Suspense>
                       </div>

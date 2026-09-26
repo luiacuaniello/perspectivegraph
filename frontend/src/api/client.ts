@@ -70,12 +70,20 @@ export interface Step {
   attack?: AttackTechnique | null;
 }
 
+// CutEdge is the edge of a path a fix severs - where the kill chain is cut.
+export interface CutEdge {
+  from: string;
+  to: string;
+  type: string;
+}
+
 export interface Remediation {
   title: string;
   kind: string;
   filename: string;
   rationale: string;
   content: string;
+  cut?: CutEdge | null;
 }
 
 export interface Detection {
@@ -276,6 +284,9 @@ export interface AttackPath {
   priority?: number | null;
   priorityLabel?: string | null;
   priorityFactors?: string[] | null;
+  // Why the path is in its band, when a fact put it there (a runtime alert, open access,
+  // a KEV on a likely route, a red-team verdict) rather than the blended number.
+  priorityReason?: string | null;
   nodes: Node[];
   steps: Step[];
   remediations: Remediation[];
@@ -485,6 +496,7 @@ const dashboardQuery = (app?: string) => {
       priority
       priorityLabel
       priorityFactors
+      priorityReason
       suppressed
       suppression { reason owner note createdAt expiresAt }
       firstSeen openForSeconds reopens
@@ -492,7 +504,7 @@ const dashboardQuery = (app?: string) => {
       validation { outcome source evidence testedAt }
       nodes { ${NODE_FIELDS} }
       steps { edgeType from to probability resolutionMethod resolutionConfidence weightBasis weightConfidence attack { id name tactic tacticId url } }
-      remediations { title kind filename rationale content }
+      remediations { title kind filename rationale content cut { from to type } }
       detections { kind title filename rationale content }
     }
     remediationPlan${scope} {

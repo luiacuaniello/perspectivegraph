@@ -45,5 +45,8 @@ describe("DiscriminationRow", () => {
     expect(fig).toHaveTextContent("AUC 1.00");
     expect(fig.className).toContain("text-slate-500");
     expect(screen.getByText("insufficient data")).toBeInTheDocument();
+    // Not the interval: it reads tightest when the sample is smallest.
+    expect(fig).not.toHaveTextContent("[0.50–1.00]");
+    expect(fig).toHaveTextContent("from 1 confirmed · 1 refuted");
   });
 });

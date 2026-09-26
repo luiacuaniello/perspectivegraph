@@ -9,8 +9,9 @@ import { STATUS_META, type RouteStatus } from "./routeChannels";
 export function StatusPill({ status }: { status: RouteStatus }) {
   const meta = STATUS_META[status];
   // "Proven" is the one filled pill, so it drops the dot: the fill is already the mark,
-  // and a dot inside a solid block reads as a smudge rather than a signal.
-  const filled = status === "proven";
+  // and a dot inside a solid block reads as a smudge rather than a signal. The outlined
+  // "Evidence conflicts" drops it for the same reason.
+  const filled = status === "proven" || status === "conflict";
   return (
     <span
       className={`inline-flex shrink-0 items-center gap-1.5 text-[12px] font-medium ${meta.className}`}

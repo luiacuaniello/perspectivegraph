@@ -3,6 +3,8 @@ import cytoscape, { type Core, type ElementDefinition, type StylesheetJson } fro
 import type { Edge, Node } from "../api/client";
 import { useTheme } from "../theme";
 import { category, CATEGORY_STYLE, labelColor, type Category } from "./graphColors";
+import { routeLayout } from "./graphLayout";
+import { hopVerb } from "./pathLanguage";
 
 
 // Small SVG glyph matching each category's node shape, for the legend.
@@ -84,7 +86,7 @@ function buildStyle(p: GraphPalette): StylesheetJson {
         // Monospace, like the rest of the map's chrome: these are identifiers - image
         // digests, role names, CIDRs - and a proportional face makes them read as prose.
         "font-family": "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-        "font-size": 9.5,
+        "font-size": 11,
         "font-weight": 400,
         "text-valign": "bottom",
         "text-margin-y": 7,
@@ -120,7 +122,10 @@ function buildStyle(p: GraphPalette): StylesheetJson {
         "target-arrow-shape": "triangle",
         "arrow-scale": 0.85,
         "curve-style": "bezier",
-        "text-rotation": "autorotate",
+        // Horizontal, above the line: rotated along a vertical edge the label ran across
+        // the node names it sat between.
+        "text-rotation": "none",
+        "text-margin-y": -9,
       },
     },
     // ── The map's four colours, one meaning each ────────────────────────────────
@@ -200,6 +205,17 @@ function buildStyle(p: GraphPalette): StylesheetJson {
       selector: ".faded",
       style: { opacity: 0.22 },
     },
+    {
+      // The route's neighbours are context: their names stay out of the way until you
+      // point at one. Eight libraries of one image, labelled at once, printed over each
+      // other in a smudge above and below the route.
+      selector: "node.faded",
+      style: { "text-opacity": 0 },
+    },
+    {
+      selector: "node.faded.hover",
+      style: { "text-opacity": 1, opacity: 0.9 },
+    },
   ];
 }
 
@@ -209,9 +225,13 @@ interface Props {
   highlightNodes: Set<string>;
   highlightEdges: Set<string>; // keys: `${from}->${to}`
   onSelectNode?: (id: string) => void;
+  // The selected route's node ids, entry first. Given, the route is laid out as a line
+  // read left to right, its neighbours above and below the hop they hang off; without it
+  // the canvas falls back to a generic hierarchy.
+  route?: string[];
 }
 
-export default function GraphCanvas({ nodes, edges, highlightNodes, highlightEdges, onSelectNode }: Props) {
+export default function GraphCanvas({ nodes, edges, highlightNodes, highlightEdges, onSelectNode, route }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<Core | null>(null);
   const sigRef = useRef<string>("");
@@ -240,6 +260,7 @@ export default function GraphCanvas({ nodes, edges, highlightNodes, highlightEdg
     const signature = JSON.stringify([
       nodes.map((n) => [n.id, n.name, n.label, n.internetExposed, n.crownJewel, n.runtimeAlert]),
       edges.map((e) => [e.from, e.to, e.type, e.probability]),
+      route ?? [],
     ]);
     if (signature === sigRef.current && cyRef.current && !cyRef.current.destroyed()) return;
     sigRef.current = signature;
@@ -273,27 +294,33 @@ export default function GraphCanvas({ nodes, edges, highlightNodes, highlightEdg
             id: `${e.from}->${e.to}`,
             source: e.from,
             target: e.to,
-            // Lead with the MITRE ATT&CK technique when this hop maps to one, so a
-            // highlighted path reads as a kill chain (T1190 · EXPOSES (0.90)).
-            label: `${e.attack?.id ? e.attack.id + " · " : ""}${e.type} (${e.probability.toFixed(2)})`,
+            // What the hop does, in words, and its chance - the same reading as the kill
+            // chain beside it. "T1190 · EXPOSES (0.90)" was the ontology, rotated along
+            // the edge and printed across the node names.
+            label: `${hopVerb(e.type)} ${(e.probability * 100).toFixed(0)}%`,
           },
         })),
     ];
 
     cyRef.current?.destroy();
+    const onRoute = route && route.length > 0 && route.every((id) => nodeIds.has(id));
     const cy = cytoscape({
       container: containerRef.current,
       elements,
       style: buildStyle(graphPalette()),
-      layout: { name: "breadthfirst", directed: true, spacingFactor: 1.55, padding: 36, avoidOverlap: true, grid: false },
+      layout: onRoute
+        ? { name: "preset", positions: routeLayout(route!, nodes, edges), padding: 48, fit: true }
+        : { name: "breadthfirst", directed: true, spacingFactor: 1.55, padding: 36, avoidOverlap: true, grid: false },
     });
 
     if (onSelectNode) {
       cy.on("tap", "node", (evt) => onSelectNode(evt.target.id()));
     }
+    cy.on("mouseover", "node", (evt) => evt.target.addClass("hover"));
+    cy.on("mouseout", "node", (evt) => evt.target.removeClass("hover"));
     cyRef.current = cy;
     setCyVersion((v) => v + 1);
-  }, [nodes, edges, onSelectNode]);
+  }, [nodes, edges, onSelectNode, route]);
 
   // Destroy the instance only on unmount (and reset the cache so a remount -
   // including React StrictMode's dev double-mount - rebuilds from scratch).

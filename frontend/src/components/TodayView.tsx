@@ -1,6 +1,8 @@
 import type { AttackPath, Calibration, Dashboard, Fix, History, IngestSource, RiskSimulation } from "../api/client";
 import InfoTip from "./InfoTip";
+import { bareName } from "./pathLanguage";
 import { routeStatus, verdictSource } from "./routeChannels";
+import { isProvisional, PROVISIONAL_BELOW } from "./trustVerdict";
 import { SeverityBar, StatusPill, TargetIcon , NodeName } from "./routeChannelViews";
 import { ZapIcon } from "./icons";
 
@@ -231,10 +233,22 @@ function Briefing({
   // from scores the engine itself currently rates mis-scaled, and asserting 61% in bold
   // while that caveat lives two screens away is the page believing its own output more
   // than its own measurement does.
-  const provisional = calibration?.hasData ? calibration.samples < 30 : false;
-  // The asset's own name, without the trailing "(AdministratorAccess)" qualifier the
+  const provisional = isProvisional(calibration);
+  // The assets' own names, without the trailing "(AdministratorAccess)" qualifier the
   // engine appends. A headline names the thing; the qualifier belongs in the detail.
-  const target = live[0]?.nodes?.[live[0].nodes.length - 1]?.name?.replace(/\s*\(.*\)\s*$/, "");
+  // Every target is counted: naming only the first said "2 routes are being walked into
+  // payments-admin" when the second led to a customer database.
+  const targets: { name: string; id: string }[] = [];
+  for (const p of live) {
+    const last = p.nodes?.[p.nodes.length - 1]?.name;
+    const name = last ? bareName(last) : "";
+    if (name && !targets.some((t) => t.name === name)) targets.push({ name, id: p.id });
+  }
+  const targetLink = (t: { name: string; id: string }) => (
+    <button onClick={() => onOpenPath(t.id)} className="text-flag underline-offset-4 hover:underline">
+      {t.name}
+    </button>
+  );
   return (
     <section className="flex flex-col gap-2">
       <p className="font-mono text-[12px] uppercase tracking-[0.14em] text-muted">Today</p>
@@ -242,15 +256,11 @@ function Briefing({
       {live.length > 0 ? (
         <h1 className="max-w-[34ch] text-[22px] font-semibold leading-[1.25] tracking-[-0.02em] text-slate-900">
           {live.length} route{live.length === 1 ? " is" : "s are"} being walked
-          {target ? (
+          {targets.length > 0 ? (
             <>
-              {" "}into{" "}
-              <button
-                onClick={() => onOpenPath(live[0].id)}
-                className="text-flag underline-offset-4 hover:underline"
-              >
-                {target}
-              </button>
+              {" "}into {targetLink(targets[0])}
+              {targets.length === 2 ? <> and {targetLink(targets[1])}</> : null}
+              {targets.length > 2 ? ` and ${targets.length - 1} other assets` : null}
             </>
           ) : null}{" "}
           right now.
@@ -400,21 +410,31 @@ function PathRow({ path, onOpen }: { path: AttackPath; onOpen: () => void }) {
 function TrustCard({ calibration, onOpen }: { calibration?: Calibration; onOpen: () => void }) {
   const has = calibration?.hasData;
   const verdict = calibration?.verdict ?? "not measured";
+  // The same rule as the Trust page: below the floor the headline is the sample size, and
+  // the direction is stated as a lean. The card used to headline "Underconfident" on
+  // fourteen outcomes while the page it links to could not back it.
+  const provisional = isProvisional(calibration);
   const tone =
-    verdict === "well-calibrated" ? "text-emerald-600" : verdict === "insufficient-data" || !has ? "text-slate-600" : "text-amber-600";
+    provisional || verdict === "insufficient-data" || !has
+      ? "text-slate-600"
+      : verdict === "well-calibrated"
+        ? "text-emerald-600"
+        : "text-amber-600";
   return (
     <button
       onClick={onOpen}
       className="min-w-0 rounded-2xl border border-edge bg-panel px-4 py-3.5 text-left transition hover:border-accent/50"
     >
       <div className="text-[12px] text-muted">Can you trust these numbers?</div>
-      <div className={`mt-1.5 text-[17px] font-semibold capitalize leading-none ${tone}`}>
-        {verdict.replace(/-/g, " ")}
+      <div className={`mt-1.5 text-[17px] font-semibold leading-none ${provisional ? "" : "capitalize"} ${tone}`}>
+        {provisional ? "Not enough outcomes yet" : verdict.replace(/-/g, " ")}
       </div>
       <div className="mt-1.5 text-[12px] text-muted">
-        {has
-          ? `measured against ${calibration!.samples} tested routes · see how →`
-          : "no verdicts recorded yet · see how →"}
+        {!has
+          ? "no verdicts recorded yet · see how →"
+          : provisional
+            ? `leaning ${verdict.replace(/-/g, " ")} · ${calibration!.samples} of ${PROVISIONAL_BELOW} tested routes · see how →`
+            : `measured against ${calibration!.samples} tested routes · see how →`}
       </div>
     </button>
   );

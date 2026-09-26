@@ -66,6 +66,23 @@ describe("AttackPathList", () => {
     expect(row).not.toHaveTextContent("0 hops");
   });
 
+  it("does not paint a live route green because a tester could not walk it", () => {
+    // Refuted is green - suppress it as a false positive. On a route with a runtime alert
+    // that is the one reading the evidence rules out.
+    const refuted = (p: AttackPath): AttackPath => ({
+      ...p,
+      validation: { outcome: "refuted", source: "caldera-bas", evidence: "", testedAt: "" },
+    });
+    const { rerender } = render(<AttackPathList paths={[refuted(route)]} selectedId={null} onSelect={() => {}} />);
+    expect(screen.getByRole("button", { name: /payments-admin/ })).toHaveTextContent("Evidence conflicts");
+    expect(screen.queryByText("Refuted")).toBeNull();
+
+    rerender(
+      <AttackPathList paths={[refuted({ ...route, runtimeConfirmed: false })]} selectedId={null} onSelect={() => {}} />,
+    );
+    expect(screen.getByRole("button", { name: /payments-admin/ })).toHaveTextContent("Refuted");
+  });
+
   it("offers row actions on an ordinary instance", () => {
     render(<AttackPathList paths={[route]} selectedId={null} onSelect={() => {}} />);
     expect(screen.getByRole("button", { name: "Triage" })).toBeInTheDocument();

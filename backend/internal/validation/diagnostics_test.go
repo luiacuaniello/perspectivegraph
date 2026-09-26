@@ -7,9 +7,19 @@ import (
 	"testing"
 )
 
-func TestRecalibrateIsMonotoneAndLowersBrier(t *testing.T) {
-	// A non-monotone observed pattern: raw Brier 0.2, isotonic should beat it.
-	samples := []calSample{{p: 0.2, y: 0}, {p: 0.4, y: 1}, {p: 0.6, y: 0}, {p: 0.8, y: 1}}
+// A systematic miscalibration - scores that run cold, in order - is what a monotone
+// rescale repairs, and it repairs it out of sample: each outcome predicted by a map
+// fitted without it.
+func TestRecalibrateRepairsASystematicErrorOutOfSample(t *testing.T) {
+	var samples []calSample
+	for _, g := range []struct {
+		p float64
+		y float64
+	}{{0.1, 0}, {0.2, 0}, {0.3, 1}, {0.4, 1}} {
+		for i := 0; i < 3; i++ {
+			samples = append(samples, calSample{p: g.p, y: g.y})
+		}
+	}
 	raw := calibrationStats(samples).brier
 	brierRecal, m := recalibrate(samples)
 	if brierRecal >= raw {
@@ -20,6 +30,17 @@ func TestRecalibrateIsMonotoneAndLowersBrier(t *testing.T) {
 		if m[i].Calibrated < m[i-1].Calibrated-1e-12 {
 			t.Errorf("recalibration map not monotone at %d: %.3f < %.3f", i, m[i].Calibrated, m[i-1].Calibrated)
 		}
+	}
+}
+
+// On a handful of outcomes with no order to learn, a rescale fixes nothing - and the
+// report must not say it does. In-sample, an isotonic fit on few points is perfect by
+// construction: the Trust page read a recalibrated Brier of 0.000 on 14 outcomes.
+func TestRecalibrateOnFewPointsPromisesNothingItCannotKeep(t *testing.T) {
+	samples := []calSample{{p: 0.2, y: 0}, {p: 0.4, y: 1}, {p: 0.6, y: 0}, {p: 0.8, y: 1}}
+	raw := calibrationStats(samples).brier
+	if brierRecal, _ := recalibrate(samples); brierRecal < raw {
+		t.Errorf("recalibrated Brier %.4f claims to beat raw %.4f on four alternating outcomes", brierRecal, raw)
 	}
 }
 

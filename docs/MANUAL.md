@@ -1085,11 +1085,15 @@ Every edge weight now declares **where it came from**, and every path a
 > heuristics too, which is why they carry low-confidence bases. See
 > [`internal/threatintel`](../backend/internal/threatintel) and `internal/ingestion/severity.go`.
 
-Each hop in the kill chain is tagged (**KEV**/**runtime** green, **assumed** grey)
-and mapped to a **MITRE ATT&CK technique + tactic** (`T1190 · Initial Access`,
-clickable to the ATT&CK page; also shown on the highlighted graph edges) - so a
-probability-ranked route reads as a recognizable kill chain a defender can map to
-detections and controls. The path also carries `confidence` + a `confidenceLabel`
+Each hop in the kill chain is tagged (**KEV**/**runtime** green, **default weight** grey)
+and, when it is something an attacker does, mapped to a **MITRE ATT&CK technique + tactic**
+(`T1190 · Initial Access`, clickable to the ATT&CK page) - so a probability-ranked route
+reads as a recognizable kill chain a defender can map to detections and controls. The
+technique is read in the route's context: initial access is credited to the hop where
+access is gained (the exploit when the route has one, the exposure otherwise), and an
+exploit after the attacker is already inside is lateral movement (T1210). Facts about
+software - an image that ships a library, a library that has a CVE - carry none, and IAM
+privilege escalation is T1098.003 (additional cloud roles). The path also carries `confidence` + a `confidenceLabel`
 (**high / medium / low**)
 - the mean trustworthiness of its hops. So *"58%, **low confidence** - rests
 mostly on severity heuristics, here are the assumed hops to validate"* replaces a
@@ -1150,6 +1154,21 @@ today" list, and every priority is **explainable** - it carries the factors
 `"entry shared by 4 paths"`) rather than a black-box rank. The effect is the
 honest re-ranking you want: a **runtime-confirmed path to PII at 36%** outranks an
 **uncorroborated 90%** one. (Weights and bands are documented and tunable.)
+
+**A fact about the route makes it P1**, whatever the blend says - the blend weighs
+exploitability at a third, and alone it could not put a live attack into
+AdministratorAccess above P2. The facts: a **runtime alert** on the route; an asset **open
+to anyone**; a **KEV** weakness on a route an attacker is likely (≥ 50%) to complete; or a
+route that is likely (≥ 80%), on evidence rather than default weights, into a
+high-value (not name-inferred) asset. `priorityReason` says which, in one sentence. Inside
+P1 the order is kept: every P1 path sits at 70 plus 30% of its blend.
+
+**Red-team and BAS verdicts re-band a path where paths are listed**: one a tester walked
+end to end is P1; one a tester could not walk drops to P3 - unless a runtime alert fired on
+it or it is open to anyone, which a failed test does not undo: that path stays and says
+the **evidence conflicts**. The analyzer's own Priority never contains a verdict: it is
+what the next verdict records and the triage order is graded against
+(`priorityDiscrimination`), and a ranking a verdict already moved would grade itself.
 
 ### Data hygiene: a map of the attack surface, never a vault of secrets
 

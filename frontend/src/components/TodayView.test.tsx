@@ -118,6 +118,28 @@ describe("TodayView", () => {
     expect(head.textContent).not.toContain("AdministratorAccess");
   });
 
+  it("names every asset being walked into, not just the first", () => {
+    // It said "2 routes are being walked into payments-admin" when the second route led
+    // to a customer database.
+    const to = (id: string, name: string): AttackPath => {
+      const p = path(id, true);
+      p.nodes = [p.nodes[0], { ...p.nodes[1], id: `t-${id}`, name }];
+      return p;
+    };
+    const { unmount } = renderToday({ paths: [to("p1", "payments-admin"), to("p2", "customers-db (PII)")] });
+    expect(screen.getByRole("heading", { name: /being walked/ }).textContent).toMatch(
+      /2 routes are being walked into payments-admin and customers-db right now/,
+    );
+    unmount();
+
+    renderToday({
+      paths: [to("p1", "payments-admin"), to("p2", "customers-db"), to("p3", "exports-bucket"), to("p4", "payments-admin")],
+    });
+    expect(screen.getByRole("heading", { name: /being walked/ }).textContent).toMatch(
+      /4 routes are being walked into payments-admin and 2 other assets right now/,
+    );
+  });
+
   it("stays quiet when nothing is runtime-confirmed", () => {
     renderToday();
     expect(screen.queryByText(/being walked/)).not.toBeInTheDocument();
@@ -144,6 +166,17 @@ describe("TodayView", () => {
     expect(screen.getByText("Can you trust these numbers?")).toBeInTheDocument();
     expect(screen.getByText("overconfident")).toBeInTheDocument();
     expect(screen.getByText(/977 tested routes/)).toBeInTheDocument();
+  });
+
+  it("states a verdict on too few outcomes as a lean, as the Trust page does", () => {
+    renderToday({
+      calibration: {
+        samples: 14, brier: 0.12, logLoss: 0, ece: 0.25, meanPredicted: 0.6, observedRate: 0.71,
+        verdict: "underconfident", hasData: true, bins: [], persistent: false,
+      },
+    });
+    expect(screen.getByText("Not enough outcomes yet")).toBeInTheDocument();
+    expect(screen.getByText(/leaning underconfident · 14 of 30 tested routes/)).toBeInTheDocument();
   });
 
   it("degrades honestly when no remediation was generated", () => {

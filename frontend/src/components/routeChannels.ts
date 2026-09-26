@@ -14,7 +14,7 @@ import type { AttackPath } from "../api/client";
 // still ranks correctly for someone who cannot separate a red from a green - and so that
 // colour is free to say the thing colour is actually good at: state.
 
-export type RouteStatus = "new" | "triaged" | "fixing" | "proven" | "refuted";
+export type RouteStatus = "new" | "triaged" | "fixing" | "proven" | "refuted" | "conflict";
 
 export const STATUS_META: Record<RouteStatus, { label: string; className: string; hint: string }> = {
   new: {
@@ -50,6 +50,14 @@ export const STATUS_META: Record<RouteStatus, { label: string; className: string
     className: "text-status-verified",
     hint: "A tester tried this route and it did not work. The engine was wrong; suppress it as a false positive.",
   },
+  // A refuted route with a runtime alert on it, or to an asset open to anyone. The green
+  // of Refuted would tell the reader to suppress the one route whose evidence says it is
+  // live. Outlined rather than a new hue, like Proven: red stays reserved for runtime.
+  conflict: {
+    label: "Evidence conflicts",
+    className: "border border-current text-slate-800 px-1.5 rounded",
+    hint: "A tester could not walk this route, but a runtime alert fired on it or the asset is open to anyone. A failed test does not undo that - find out which is wrong before suppressing it.",
+  },
 };
 
 // The engine already knows all of these - it opens tickets, records suppressions and
@@ -62,7 +70,7 @@ export const STATUS_META: Record<RouteStatus, { label: string; className: string
 export function routeStatus(path: AttackPath): RouteStatus {
   const outcome = path.validation?.outcome;
   if (outcome === "confirmed" || outcome === "partial") return "proven";
-  if (outcome === "refuted") return "refuted";
+  if (outcome === "refuted") return path.runtimeConfirmed || path.directAccess ? "conflict" : "refuted";
   if (path.ticket) return "fixing";
   if (path.suppressed || path.suppression) return "triaged";
   return "new";
@@ -72,21 +80,6 @@ export function routeStatus(path: AttackPath): RouteStatus {
 // an intruder or your own exercise.
 export function verdictSource(path: AttackPath): string | undefined {
   return path.validation?.source || undefined;
-}
-
-// Order for display: a route a tester DISPROVED sinks to the bottom.
-//
-// The engine ranks by composite priority, which knows nothing about verdicts - so a
-// route the red team walked and could not exploit kept its score and sat second on the
-// home page, in one of the three slots the product spends its credibility on. The
-// trust page counted the same route among the refuted. Two screens, opposite advice.
-//
-// Sunk rather than hidden: "the engine was wrong here" is information, and a reader
-// scrolling the full list should still meet it - with its Refuted pill on - rather than
-// wonder where it went. Everything else keeps the engine's own order, so this changes
-// exactly one thing.
-export function orderForDisplay(paths: AttackPath[]): AttackPath[] {
-  return [...paths].sort((a, b) => Number(routeStatus(a) === "refuted") - Number(routeStatus(b) === "refuted"));
 }
 
 // routeLabel names a route in one line: "entry → target", or, for a sensitive asset
