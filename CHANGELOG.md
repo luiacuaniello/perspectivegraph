@@ -9,6 +9,18 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.25.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.24.0...v1.25.0) (2026-09-26)
+
+
+### Features
+
+* a live attack is P1, a red-team verdict moves a route, and the path detail reads as a kill chain ([#263](https://github.com/luiacuaniello/perspectivegraph/issues/263)) ([336dc48](https://github.com/luiacuaniello/perspectivegraph/commit/336dc4868c3e71b21ab593ff8960610889c4335e))
+
+
+### Bug Fixes
+
+* the audit log says when a shutdown abandons its queue, and two timing tests stop failing on a busy runner ([#265](https://github.com/luiacuaniello/perspectivegraph/issues/265)) ([7e402fc](https://github.com/luiacuaniello/perspectivegraph/commit/7e402fc6f48304ba16ec451855512af6ce5da820))
+
 ## [1.24.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.23.0...v1.24.0) (2026-09-26)
 
 
