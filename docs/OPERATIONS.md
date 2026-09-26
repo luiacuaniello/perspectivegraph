@@ -477,7 +477,7 @@ they cross the boundary - verifying inside is verifying a copy you already trust
 
 ```bash
 # The release you are approving.
-V=1.22.0 # x-release-please-version
+V=1.23.0 # x-release-please-version
 ID_RE='https://github.com/luiacuaniello/perspectivegraph/.*'
 ISSUER=https://token.actions.githubusercontent.com
 
@@ -537,7 +537,7 @@ spec:
     repoURL: ghcr.io/luiacuaniello/charts
     chart: perspectivegraph
     # Pinned: let a bump be a reviewed commit, not a surprise resync.
-    targetRevision: 1.22.0 # x-release-please-version
+    targetRevision: 1.23.0 # x-release-please-version
     helm:
       valueFiles: [values-production.yaml] # ships inside the chart; override with your own
   destination:
