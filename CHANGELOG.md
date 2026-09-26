@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.24.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.23.0...v1.24.0) (2026-09-26)
+
+
+### Features
+
+* the chart authenticates its bus, keeps its stream, and stops sharing one database password ([#261](https://github.com/luiacuaniello/perspectivegraph/issues/261)) ([176a22e](https://github.com/luiacuaniello/perspectivegraph/commit/176a22e4fbbc08bf66af4f07c902a0e13dc3dd03))
+
 ## [1.23.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.22.0...v1.23.0) (2026-09-26)
 
 
