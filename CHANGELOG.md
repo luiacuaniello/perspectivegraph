@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.25.1](https://github.com/luiacuaniello/perspectivegraph/compare/v1.25.0...v1.25.1) (2026-09-27)
+
+
+### Bug Fixes
+
+* **dashboard:** the path detail passes WCAG 2.2 AA again, and the colours a read-only demo hides are checked too ([#266](https://github.com/luiacuaniello/perspectivegraph/issues/266)) ([657ebb0](https://github.com/luiacuaniello/perspectivegraph/commit/657ebb01547e0c5754ae124a3163eac893189cba))
+
 ## [1.25.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.24.0...v1.25.0) (2026-09-26)
 
 
