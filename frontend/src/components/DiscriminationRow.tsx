@@ -11,7 +11,7 @@ import InfoTip from "./InfoTip";
 
 const STYLE: Record<string, { label: string; cls: string }> = {
   discriminates: { label: "discriminates", cls: "bg-emerald-500/15 text-emerald-700" },
-  "indistinguishable-from-chance": { label: "not shown to beat chance", cls: "bg-amber-500/15 text-amber-700" },
+  "indistinguishable-from-chance": { label: "not shown to beat chance", cls: "bg-amber-500/15 text-amber-800" },
   inverted: { label: "inverted", cls: "bg-red-500/15 text-flag" },
   "insufficient-data": { label: "insufficient data", cls: "bg-slate-400/15 text-slate-500" },
 };

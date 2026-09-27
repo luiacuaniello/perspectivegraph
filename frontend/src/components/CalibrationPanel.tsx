@@ -34,9 +34,9 @@ const VERDICT_STYLE: Record<string, { label: string; cls: string }> = {
   "well-calibrated": { label: "well-calibrated", cls: "bg-emerald-500/15 text-emerald-700" },
   // The mean agrees and the bins do not: not a success to colour green, and not the absence
   // of data either - without its own entry it would fall back to "insufficient data".
-  "calibrated-on-average": { label: "calibrated on average", cls: "bg-amber-500/15 text-amber-700" },
+  "calibrated-on-average": { label: "calibrated on average", cls: "bg-amber-500/15 text-amber-800" },
   overconfident: { label: "overconfident", cls: "bg-red-500/15 text-flag" },
-  underconfident: { label: "underconfident", cls: "bg-amber-500/15 text-amber-700" },
+  underconfident: { label: "underconfident", cls: "bg-amber-500/15 text-amber-800" },
   "insufficient-data": { label: "insufficient data", cls: "bg-slate-400/15 text-slate-500" },
 };
 
@@ -92,10 +92,10 @@ function Stat({ label, value, tone = "text-slate-700" }: { label: string; value:
 // fixes it, red when the order points the wrong way (the same red as an inverted Score
 // order, so the two lines agree at a glance), amber when a new model/axis is indicated.
 function diagTone(d: string): string {
-  if (d.startsWith("calibrated")) return "text-emerald-600";
+  if (d.startsWith("calibrated")) return "text-emerald-700";
   if (d.startsWith("recalibrate")) return "text-accent";
   if (d.startsWith("inverted")) return "text-flag";
-  return "text-amber-600";
+  return "text-amber-700";
 }
 
 // CalibrationPanel is the demo→production artifact: it shows whether the engine's
@@ -121,7 +121,7 @@ export function CalibrationPanel({ calibration, trend }: { calibration: Calibrat
         <div className="flex items-center gap-1.5">
           {ephemeral && (
             <span
-              className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[12px] font-semibold text-amber-700"
+              className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[12px] font-semibold text-amber-800"
               title="The verdict store is in-memory: this calibration dataset is lost on restart. Set VALIDATIONS_PATH to persist it for a real calibration program."
             >
               in-memory
@@ -138,8 +138,8 @@ export function CalibrationPanel({ calibration, trend }: { calibration: Calibrat
         <ReliabilityDiagram bins={calibration.bins} />
         <div className="flex flex-col gap-4">
           <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
-            <Stat label="Brier" value={calibration.brier.toFixed(3)} tone={calibration.brier <= 0.1 ? "text-emerald-600" : calibration.brier <= 0.25 ? "text-amber-600" : "text-flag"} />
-            <Stat label="ECE" value={calibration.ece.toFixed(3)} tone={calibration.ece <= 0.1 ? "text-emerald-600" : calibration.ece <= 0.2 ? "text-amber-600" : "text-flag"} />
+            <Stat label="Brier" value={calibration.brier.toFixed(3)} tone={calibration.brier <= 0.1 ? "text-emerald-700" : calibration.brier <= 0.25 ? "text-amber-700" : "text-flag"} />
+            <Stat label="ECE" value={calibration.ece.toFixed(3)} tone={calibration.ece <= 0.1 ? "text-emerald-700" : calibration.ece <= 0.2 ? "text-amber-700" : "text-flag"} />
             <Stat label="Predicted" value={pct(calibration.meanPredicted)} />
             <Stat label="Observed" value={pct(calibration.observedRate)} tone="text-accent" />
             <Stat label="Samples" value={String(calibration.samples)} />

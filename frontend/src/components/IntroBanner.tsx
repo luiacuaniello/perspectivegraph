@@ -57,7 +57,7 @@ export default function IntroBanner({ onDismiss }: { onDismiss: () => void }) {
         <FlowChip
           icon={<GemIcon className="h-3.5 w-3.5" />}
           label="Sensitive asset (target)"
-          tone="bg-amber-500/15 text-amber-700"
+          tone="bg-amber-500/15 text-amber-800"
         />
       </div>
 
@@ -84,7 +84,7 @@ export default function IntroBanner({ onDismiss }: { onDismiss: () => void }) {
           </span>
         </li>
         <li className="flex gap-2">
-          <CheckIcon className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+          <CheckIcon className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" />
           <span>
             <span className="font-medium text-slate-800">Remediation</span> shows the fewest fixes that remove the most
             risk - the choke points. Fix those first.

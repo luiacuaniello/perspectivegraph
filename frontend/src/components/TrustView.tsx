@@ -70,10 +70,10 @@ export default function TrustView({ calibration, trend, validation, risk }: Prop
             <InfoTip text="Outcomes recorded against surfaced paths. Precision is how many tested paths turned out real; recall is how many real paths the engine had surfaced." />
           </div>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">
-            <Figure label="Precision" value={pct(validation.precision)} tone="text-emerald-600" />
+            <Figure label="Precision" value={pct(validation.precision)} tone="text-emerald-700" />
             <Figure label="Recall" value={pct(validation.recall)} tone="text-accent" />
             <Figure label="Confirmed" value={String(validation.confirmed)} />
-            <Figure label="Refuted" value={String(validation.refuted)} tone="text-amber-600" />
+            <Figure label="Refuted" value={String(validation.refuted)} tone="text-amber-700" />
             <MissedFigure count={validation.missed} />
           </div>
         </section>

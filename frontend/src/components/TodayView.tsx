@@ -418,8 +418,8 @@ function TrustCard({ calibration, onOpen }: { calibration?: Calibration; onOpen:
     provisional || verdict === "insufficient-data" || !has
       ? "text-slate-600"
       : verdict === "well-calibrated"
-        ? "text-emerald-600"
-        : "text-amber-600";
+        ? "text-emerald-700"
+        : "text-amber-700";
   return (
     <button
       onClick={onOpen}

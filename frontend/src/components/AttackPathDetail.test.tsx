@@ -325,6 +325,26 @@ describe("AttackPathDetail in plain language", () => {
     expect(tab).toHaveAttribute("aria-selected", "true");
   });
 
+  it("holds only tabs in its tablist, and moves between them with the arrow keys", () => {
+    // The graph button sat inside the tablist, which axe fails as aria-required-children.
+    render(<AttackPathDetail path={log4shell} onShowInGraph={() => {}} />);
+    const list = screen.getByRole("tablist", { name: "Path details" });
+    expect([...list.children].every((c) => c.getAttribute("role") === "tab")).toBe(true);
+    expect(within(list).queryByRole("button", { name: /Show in graph/ })).toBeNull();
+
+    const fix = within(list).getByRole("tab", { name: /Fix/ });
+    const tabs = within(list).getAllByRole("tab");
+    expect(tabs.map((t) => t.tabIndex)).toEqual([0, -1, -1]);
+    fix.focus();
+    fireEvent.keyDown(fix, { key: "ArrowLeft" }); // wraps to the last tab
+    const evidence = within(list).getByRole("tab", { name: /Evidence/ });
+    expect(evidence).toHaveAttribute("aria-selected", "true");
+    expect(evidence).toHaveFocus();
+    fireEvent.keyDown(evidence, { key: "Home" });
+    expect(fix).toHaveAttribute("aria-selected", "true");
+    expect(fix).toHaveFocus();
+  });
+
   it("collapses a long generated file behind 'Show all'", () => {
     const long = Array.from({ length: 40 }, (_, i) => `line ${i}`).join("\n");
     render(

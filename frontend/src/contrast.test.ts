@@ -39,6 +39,27 @@ describe("text contrast", () => {
     expect(missing, "add a .dark [class*=\"text-<shade>\"] rule in index.css").toEqual([]);
   });
 
+  // Three failures an audit of the public demo could not see, because they need a writable
+  // instance or a calibration state the demo's data does not reach. axe against a local
+  // instance measured them for 1.25: white on the accent fill (2.15:1 in the dark theme,
+  // whose accent is light), -600 text on white (emerald 3.65:1, amber 3.19:1), and
+  // amber-700 on the amber tint (4.48:1).
+  it("keeps the colour pairs that failed out of the sources", () => {
+    const rules: [RegExp, string][] = [
+      [/\bbg-accent\b(?![/\w-])[^"`]*\btext-white\b/, "text on the accent fill is text-panel: white fails on the dark theme's accent"],
+      [/\btext-(?:emerald|amber)-600\b/, "use the -700 shade: -600 fails 4.5:1 on white"],
+      [/\bbg-amber-500\/15\b[^"`]*\btext-amber-700\b/, "text on the amber tint is amber-800: amber-700 measured 4.48:1"],
+    ];
+    const offenders = Object.entries(sources)
+      .filter(([path]) => !path.endsWith("contrast.test.ts"))
+      .flatMap(([path, src]) =>
+        src.split("\n").flatMap((line, i) =>
+          rules.filter(([re]) => re.test(line)).map(([, why]) => `${path}:${i + 1} - ${why}`),
+        ),
+      );
+    expect(offenders).toEqual([]);
+  });
+
   it("actually reads the sources it guards", () => {
     // An empty glob would make the check above pass vacuously.
     expect(Object.keys(sources).length).toBeGreaterThan(20);

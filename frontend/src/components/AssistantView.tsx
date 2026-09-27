@@ -54,7 +54,7 @@ export default function AssistantView() {
           <button
             onClick={runSummary}
             disabled={summaryBusy}
-            className="rounded-lg bg-accent px-3 py-1.5 text-[13px] font-medium text-white transition hover:opacity-90 disabled:opacity-60"
+            className="rounded-lg bg-accent px-3 py-1.5 text-[13px] font-medium text-panel transition hover:opacity-90 disabled:opacity-60"
           >
             {summaryBusy ? "Generating…" : summary ? "Regenerate" : "Generate"}
           </button>
@@ -86,7 +86,7 @@ export default function AssistantView() {
           <button
             onClick={ask}
             disabled={answerBusy || !question.trim()}
-            className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-60"
+            className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-panel transition hover:opacity-90 disabled:opacity-60"
           >
             {answerBusy ? "Thinking…" : "Ask"}
           </button>

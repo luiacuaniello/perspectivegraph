@@ -49,7 +49,7 @@ function FixRow({ fix, rank, cumulative }: { fix: Fix; rank: number; cumulative:
                 </span>
               ) : (
                 <span
-                  className="inline-flex items-center gap-1 rounded-sm bg-amber-500/15 px-1.5 py-0.5 text-[12px] font-medium text-amber-700"
+                  className="inline-flex items-center gap-1 rounded-sm bg-amber-500/15 px-1.5 py-0.5 text-[12px] font-medium text-amber-800"
                   title="Simulating this fix removed no path and protected no sensitive asset - review before applying."
                 >
                   <AlertTriangleIcon className="h-3 w-3" /> unverified

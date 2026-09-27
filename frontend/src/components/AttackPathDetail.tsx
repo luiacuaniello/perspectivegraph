@@ -683,6 +683,15 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
     { id: "detect", label: `Detect${path.detections.length ? ` (${path.detections.length})` : ""}` },
     { id: "evidence", label: "Evidence" },
   ];
+  const onTabKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const i = tabs.findIndex((t) => t.id === tab);
+    const next = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: tabs.length - 1 }[e.key];
+    if (next === undefined) return;
+    e.preventDefault();
+    const to = tabs[(next + tabs.length) % tabs.length].id;
+    setTab(to);
+    document.getElementById(`${tabId}-tab-${to}`)?.focus();
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -983,22 +992,29 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
 
       {/* ── Fix / Detect / Evidence ────────────────────────────────────────────── */}
       <section className="rounded-xl border border-edge bg-panel shadow-card">
-        <div className="flex items-center gap-1 border-b border-edge px-3" role="tablist" aria-label="Path details">
-          {tabs.map((t) => (
-            <button
-              key={t.id}
-              role="tab"
-              id={`${tabId}-tab-${t.id}`}
-              aria-selected={tab === t.id}
-              aria-controls={`${tabId}-panel-${t.id}`}
-              onClick={() => setTab(t.id)}
-              className={`-mb-px border-b-2 px-3 py-2.5 text-[13px] font-medium transition ${
-                tab === t.id ? "border-accent text-slate-900" : "border-transparent text-muted hover:text-slate-700"
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
+        <div className="flex items-center gap-1 border-b border-edge px-3">
+          {/* The tablist holds the tabs and nothing else: with the graph button inside it,
+              axe failed every detail view (aria-required-children), which the 1.25 audit
+              caught. Arrows, Home and End move between tabs and only the selected one is in
+              the Tab order - the keyboard contract a screen reader announces for a tablist. */}
+          <div role="tablist" aria-label="Path details" className="flex items-center gap-1" onKeyDown={onTabKey}>
+            {tabs.map((t) => (
+              <button
+                key={t.id}
+                role="tab"
+                id={`${tabId}-tab-${t.id}`}
+                aria-selected={tab === t.id}
+                aria-controls={`${tabId}-panel-${t.id}`}
+                tabIndex={tab === t.id ? 0 : -1}
+                onClick={() => setTab(t.id)}
+                className={`-mb-px border-b-2 px-3 py-2.5 text-[13px] font-medium transition ${
+                  tab === t.id ? "border-accent text-slate-900" : "border-transparent text-muted hover:text-slate-700"
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
           <span className="mx-auto" />
           {onShowInGraph && (
             <Button variant="ghost" onClick={onShowInGraph}>

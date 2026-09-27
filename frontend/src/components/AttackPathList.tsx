@@ -16,7 +16,7 @@ interface Props {
 
 function scoreTone(score: number): string {
   if (score >= 0.3) return "bg-red-500/15 text-flag";
-  if (score >= 0.1) return "bg-amber-500/15 text-amber-700";
+  if (score >= 0.1) return "bg-amber-500/15 text-amber-800";
   return "bg-slate-500/15 text-slate-600";
 }
 
