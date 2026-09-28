@@ -71,7 +71,7 @@ func parseRoles(t *testing.T, bundle string) (map[string]ontology.Node, map[stri
 }
 
 // TestPermissionsBoundaryCapsEscalation is the regression for the engine's first
-// demonstrated false positive, reproduced live on AWS account 231016596764: the engine
+// demonstrated false positive, reproduced live on a real AWS account: the engine
 // emitted CAN_ESCALATE_TO for BOTH roles while SimulatePrincipalPolicy allowed only the
 // unbounded one. The unbounded role is the control - without it a "fix" that simply
 // stopped emitting escalation edges would pass this test.

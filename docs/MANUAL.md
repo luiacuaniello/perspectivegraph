@@ -87,8 +87,8 @@ normalized events → graph → attack paths → actions.
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ 1. INGESTION LAYER  (Go plugins)                                              │
-│    Static collectors (Trivy, Semgrep, Checkov)  - push via webhook / file     │
-│    Agentless connectors (AWS, Azure, …)         - scheduled PULL, leader-only │
+│    Static collectors (Trivy, Semgrep, …)        - push via webhook / file     │
+│    Agentless connectors (AWS, Azure: fixtures)  - scheduled PULL, leader-only │
 │    Discovery collectors (K8s, cloud-net, IAM)   - topology & privesc graph    │
 │    Runtime collectors (Falco / eBPF)            - live syscall stream         │
 │    → push and pull both normalize to an event and publish it on the same bus  │
@@ -343,7 +343,7 @@ whether a permissions boundary is attached. The boundary allows just `s3:Get*` a
 intersection strips the privesc grant - no explicit `Deny` needed, which is how boundaries are actually
 used and precisely the case a policy reader that ignores them gets wrong.
 
-Measured on a real account (231016596764), it caught one:
+Measured on a real account, it caught one:
 
 | | engine, before the fix | AWS (`redteam`) | |
 |---|---|---|---|
@@ -534,7 +534,7 @@ The full, dated feature history is in [CHANGELOG.md](../CHANGELOG.md).
 - **Sensors:** Trivy, Semgrep, Cloud Custodian, Falco, CI build-provenance (`/ingest/build`), supply-chain cosign/SLSA/SBOM (`/ingest/supplychain`)
 - **Discovery:** Kubernetes (`/ingest/k8s`, incl. **container-escape** detection → ATT&CK T1611), cloud-network (`/ingest/cloudnet`), IAM privilege-escalation graph (`/ingest/iam`), and SSO/IdP federation (`/ingest/sso`)
 - **Data classification:** Macie/DLP findings (`/ingest/dataclass`) mark assets as sensitive assets with an authoritative `classified:<source>:<kind>` basis
-- **Agentless connectors:** scheduled, leader-only **PULL** sources that reach out to a cloud account instead of waiting for an upload (`CONNECTORS_ENABLED`, health at `GET /connectors`). Connectors: **AWS** (`aws`) and **Azure** (`azure`)
+- **Agentless connectors:** scheduled, leader-only **PULL** sources that reach out to a cloud account instead of waiting for an upload (`CONNECTORS_ENABLED`, health at `GET /connectors`). Connectors: **AWS** (`aws`), live through the AWS SDK with read-only credentials, and **Azure** (`azure`), which maps normalized `az` state but runs from fixtures only: its live SDK transport is not wired yet, and `AZURE_CONNECTOR_MODE=sdk` refuses to start
 - **Multi-tenant + SSO:** per-tenant isolated graphs (proven by test), bearer/OIDC auth with per-tenant/per-app/role RBAC, and a runtime login gate (`GET /auth/config` → token or "Sign in with SSO")
 - **Dev workflow:** GitHub PR comment + a **PR merge-gate status** (red when the change opens an internet→sensitive-asset path; the CI gate compares the change with the estate), and **remediation-as-PR** (`POST /remediation/pr` opens a branch+commit+PR with the fix)
 - **AI-native (Claude *or* HuggingFace):** natural-language Q&A over the graph, a board-level executive summary, and plain-English path explanations - grounded in the live attack paths (`ANTHROPIC_API_KEY`, or a free `HF_TOKEN`)
@@ -546,7 +546,7 @@ The full, dated feature history is in [CHANGELOG.md](../CHANGELOG.md).
 findings correlate into the top ranked attack path with its fix:
 
 ```bash
-make demo           # needs Docker + jq; then open http://localhost:3000
+make demo           # needs Docker, curl and jq; then open http://localhost:3000
 ```
 
 Nothing is compiled: it runs the **published, signed release images**
@@ -584,14 +584,15 @@ make run-backend
 # 3. Run the frontend (React + Vite)
 make run-frontend
 
-# 4. Feed sample Trivy + Semgrep reports; they correlate into attack paths
+# 4. Feed the sample scanner output; it correlates into attack paths
 make seed
 ```
 
-`make seed` posts six sources - an infra/identity context, a Trivy report
-(dependency CVEs), CI build provenance (image ↔ repository), a Semgrep report
-(SAST weaknesses), a Cloud Custodian export (cloud infra/identity), and a Falco
-runtime alert. They **correlate** into
+`make seed` posts eight sources - an infra/identity context, a Trivy report
+(dependency CVEs), CI build provenance (image ↔ repository), supply-chain
+provenance (cosign, SLSA, SBOM), a Semgrep report (SAST weaknesses), a Cloud
+Custodian export (cloud infra/identity), a Falco runtime alert, and
+data-classification findings (which assets hold sensitive data). They **correlate** into
 multiple ranked attack paths to sensitive assets, for example:
 
 - **Trivy** → `internet LB → container → image → log4j → Log4Shell → admin IAM role`

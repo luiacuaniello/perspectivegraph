@@ -251,7 +251,7 @@ func TestSDKInstanceProfileJoinsNetworkAndIdentity(t *testing.T) {
 }
 
 // TestSDKCarriesPermissionsBoundary closes the false positive the boundary lab
-// demonstrated on a live account (231016596764): two roles with a byte-identical
+// demonstrated on a live account: two roles with a byte-identical
 // admin grant, differing only in a permissions boundary, were reported as equally
 // able to reach account-admin because `GetAccountAuthorizationDetails` returns the
 // boundary and the connector's role struct dropped it before ingestion.
