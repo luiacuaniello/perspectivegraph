@@ -772,7 +772,7 @@ outside the ontology: node "n": unknown label "MyCustomThing"
 ```
 
 Map your events onto the labels and edge types listed in
-[MANUAL §5](MANUAL.md). If you need a value that is not there, open an issue - adding one
+[the manual](manual/how-it-works.md#the-ontology). If you need a value that is not there, open an issue - adding one
 is a minor release, and a local string that only worked on one backend was never portable.
 
 ### An `apps`-scoped principal can no longer act outside its applications

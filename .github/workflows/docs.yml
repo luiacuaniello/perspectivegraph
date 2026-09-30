@@ -1,0 +1,81 @@
+# The documentation site, https://docs.a3thinker.it.
+#
+# Built from the repository's own Markdown (see site/README.md) on every pull request that
+# touches it, so a broken link or a renamed heading fails the check before it merges - the
+# build validates every internal link and anchor. Published from main only.
+name: Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "README.md"
+      - "SECURITY.md"
+      - "CONTRIBUTING.md"
+      - "docs/**"
+      - "site/**"
+      - ".github/workflows/docs.yml"
+  pull_request:
+    paths:
+      - "README.md"
+      - "SECURITY.md"
+      - "CONTRIBUTING.md"
+      - "docs/**"
+      - "site/**"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deployment at a time, and a newer push does not cancel one already publishing.
+concurrency:
+  group: docs-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and check links
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: ./site
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      # The same Node as the dashboard's release image - see scripts/node-image.sh.
+      - id: node
+        name: Node version from the release Dockerfile
+        run: |
+          version="$(bash ../scripts/node-image.sh --version)"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ steps.node.outputs.version }}
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - name: npm audit (high/critical)
+        run: npm audit --audit-level=high
+      - name: Build (fails on a broken internal link or anchor)
+        run: npm run build
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site/dist
+
+  deploy:
+    name: Publish to GitHub Pages
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

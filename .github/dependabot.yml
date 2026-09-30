@@ -46,6 +46,20 @@ updates:
     commit-message:
       prefix: "chore(deps)"
 
+  # Documentation site (docs.a3thinker.it). Build-time only: nothing from it ships in an
+  # image, but its build runs in CI and publishes a public site.
+  - package-ecosystem: npm
+    directory: /site
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      docs-site-dependencies:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "chore(deps)"
+
   # GitHub Actions used in CI
   - package-ecosystem: github-actions
     directory: /

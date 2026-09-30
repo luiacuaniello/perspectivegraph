@@ -13,7 +13,7 @@ What does this change, and why? Link any issue (`Closes #123`).
 - [ ] Backend: `gofmt`, `go vet`, `go test ./...`, and `gosec` are clean
       (CI runs them; `make test` locally)
 - [ ] Frontend (if touched): `tsc`, `npm run build`, and `vitest` pass
-- [ ] **Docs + Postman updated** for any user-facing change - `docs/MANUAL.md`
+- [ ] **Docs + Postman updated** for any user-facing change - the page in `docs/manual/`
       (the README only if the first screen changes), `.env.example` **and**
       `docs/perspectivegraph.postman_collection.json`
 - [ ] New behavior has tests (and a fuzz test for any new parser)

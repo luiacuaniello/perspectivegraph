@@ -191,7 +191,10 @@ dependency, say why in the pull request rather than widening the list quietly.
   `.env.example` **and** the Postman collection
   (`docs/perspectivegraph.postman_collection.json`). `README.md` is the landing
   page - keep it short; the depth (architecture, scoring, deploy, onboarding
-  runbook) lives in [`docs/MANUAL.md`](docs/MANUAL.md).
+  runbook) lives in the pages under [`docs/manual/`](docs/manual/), indexed by
+  [`docs/MANUAL.md`](docs/MANUAL.md). Those files are also the source of
+  [docs.a3thinker.it](https://docs.a3thinker.it): edit them as usual, and the Docs
+  workflow checks every link and publishes the site on merge (see `site/README.md`).
 - **Security:** this tool is a map of how to attack the org, so don't weaken its
   own controls (ingest HMAC, API auth/RBAC, audit log, at-rest encryption,
   export signing). Never commit secrets - the gitleaks gate enforces it. Found a

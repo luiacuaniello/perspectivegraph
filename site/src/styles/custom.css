@@ -1,0 +1,13 @@
+/* The dashboard's accent - "fir" - so the documentation and the product read as one thing.
+   Starlight's dark theme is the default; the light one is set on data-theme="light". */
+:root {
+  --sl-color-accent-low: #163e39;
+  --sl-color-accent: #6fbfae;
+  --sl-color-accent-high: #d9f1ec;
+}
+
+:root[data-theme="light"] {
+  --sl-color-accent-low: #d4e6e1;
+  --sl-color-accent: #1f5f57;
+  --sl-color-accent-high: #0f2f2b;
+}

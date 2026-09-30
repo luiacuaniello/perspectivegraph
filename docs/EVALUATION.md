@@ -81,7 +81,7 @@ helm install perspectivegraph oci://ghcr.io/luiacuaniello/charts/perspectivegrap
   --set postgres.externalHost=db.internal --set ingress.host=pg.example.com
 ```
 
-The [onboarding runbook](MANUAL.md#onboarding-runbook) has the per-source ingest calls. Feed
+The [onboarding runbook](manual/onboarding.md) has the per-source ingest calls. Feed
 **at least** one scanner report and the cloud/IAM topology, or there is nothing to correlate
 into a path.
 
@@ -131,7 +131,7 @@ Stated here so it is not discovered halfway through:
 - **The scores are not field-calibrated.** They are the model's belief with its evidence
   named, not a measured frequency. Use them to rank and to cut routes; do not put the
   percentage in front of a board. The
-  [calibration panel](MANUAL.md#closing-the-loop-calibration-against-observed-outcomes)
+  [calibration panel](manual/accuracy.md#closing-the-loop-calibration-against-observed-outcomes)
   withholds a verdict entirely until real outcomes exist.
 - **One cloud is genuinely connected.** AWS is live; Azure is fixtures only; there is no GCP
   connector. Several AWS accounts can be pulled in one pass, but they are listed, not

@@ -98,7 +98,7 @@ Please give us a reasonable window to ship a fix before any public disclosure.
 Because the tool maps how to breach the org, **harden any deployment reachable
 beyond a trusted boundary**. See the [threat model](docs/THREAT-MODEL.md) for the
 full trust-boundary and asset analysis and the operator checklist. The controls below are built in and documented in the
-[manual's "Application hardening" section](./docs/MANUAL.md#application-hardening) and in
+[manual's "Application hardening" section](./docs/manual/security.md#application-hardening) and in
 [`.env.example`](./.env.example):
 
 - **`API_TOKENS` / OIDC** - bearer auth with role + per-application RBAC (tokens

@@ -93,7 +93,7 @@ Two ready-to-use hardened profiles apply all of the above:
   ```
 
   It is cosign-signed; verify it before it runs (see the
-  [manual](MANUAL.md#deploy-to-kubernetes)). From a git checkout instead, swap the
+  [manual](manual/kubernetes.md)). From a git checkout instead, swap the
   `oci://…` reference for `deploy/helm/perspectivegraph`.
 
 - **Docker Compose (single host / on-prem):** `.env.production.example` (copy to `.env`,

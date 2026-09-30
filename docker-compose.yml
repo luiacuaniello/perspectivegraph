@@ -330,7 +330,7 @@ services:
   # Opt-in demo identity provider so you can exercise the dashboard's SSO login
   # gate end-to-end on a laptop, no cloud IdP needed:
   #   docker compose --profile app --profile sso up -d
-  # then set the backend OIDC_* env (the exact values are in docs/MANUAL.md, "Trying SSO
+  # then set the backend OIDC_* env (the exact values are in docs/manual/security.md, "Trying SSO
   # end-to-end on a laptop") and open
   # http://localhost:3000. Realm "demo", user demo/demo, client perspectivegraph.
   # Dev image/flags (start-dev, in-memory) - for local testing only, not production.

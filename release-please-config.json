@@ -20,7 +20,7 @@
         },
         {
           "type": "generic",
-          "path": "docs/MANUAL.md"
+          "path": "docs/manual/kubernetes.md"
         },
         {
           "type": "generic",

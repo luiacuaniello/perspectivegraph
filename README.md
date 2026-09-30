@@ -12,6 +12,7 @@
   <a href="https://github.com/luiacuaniello/perspectivegraph/actions/workflows/ci.yml"><img src="https://github.com/luiacuaniello/perspectivegraph/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/luiacuaniello/perspectivegraph/releases"><img src="https://img.shields.io/github/v/release/luiacuaniello/perspectivegraph?sort=semver" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License: Apache 2.0"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/luiacuaniello/perspectivegraph"><img src="https://api.scorecard.dev/projects/github.com/luiacuaniello/perspectivegraph/badge" alt="OpenSSF Scorecard"></a>
   <a href="https://demo.a3thinker.it"><img src="https://img.shields.io/website?url=https%3A%2F%2Fdemo.a3thinker.it&label=live%20demo&up_message=online&down_message=offline" alt="Live demo status"></a>
 </p>
 
@@ -31,6 +32,7 @@ chain and the fix it generates → whether the scores can be trusted. Sample sca
 seeded verdicts, not a real environment.*
 
 - **[See it running](https://demo.a3thinker.it)** - the same dashboard, published read-only. Nothing to install.
+- **[Read the documentation](https://docs.a3thinker.it)** - the manual, one page per subject, with search.
 - **[Check your own AWS account](#check-your-own-account-in-30-seconds)** - one read-only command, no deployment.
 - **[Put it on your pull requests](#block-the-pull-request-that-opens-the-path)** - ten lines of YAML.
 
@@ -60,7 +62,7 @@ is signed with cosign and carries SLSA provenance, and two commands
 
 Add `-compare` and it also runs the engine over the same account, **exiting non-zero where the
 two disagree**. That is how the engine's
-[first real false positive](docs/MANUAL.md#the-engines-first-demonstrated-false-positive---found-then-closed)
+[first real false positive](docs/manual/accuracy.md#the-engines-first-demonstrated-false-positive---found-then-closed)
 was found, and how it stays fixed. If it disagrees on yours,
 [report it](https://github.com/luiacuaniello/perspectivegraph/issues/new?template=engine-vs-aws.yml): no report is more useful. From here, [how to evaluate this](docs/EVALUATION.md) walks to a
 verdict on your own estate in stages that each end in an answer.
@@ -162,7 +164,7 @@ trivy image -f json myapp:pr-42 | trivy perspectivegraph gate -local -aws-region
 > **On a public repository**, a blocked check prints the route (real asset names, the CVE, the
 > sensitive asset) into a public job log. Use `soft-fail` and post the detail somewhere private.
 
-The [manual](docs/MANUAL.md#the-merge-gate-github-action-cli-and-trivy-plugin) covers the rest:
+The [manual](docs/manual/ci-gate.md#the-merge-gate-github-action-cli-and-trivy-plugin) covers the rest:
 pointing the action at a deployed engine, gating rendered manifests, a pre-collected estate,
 rolling the gate out, and every input in [`action.yml`](action.yml).
 
@@ -181,7 +183,7 @@ Eight tools, every one **read-only** and declared so on the wire. The one worth 
 is `simulate_fix`: it re-runs the simulation with the given edges cut and reports what actually
 changes. The server is in the official [MCP Registry](https://registry.modelcontextprotocol.io)
 and on [Glama](https://glama.ai/mcp/servers/luiacuaniello/perspectivegraph); the tools and the
-client configuration are in the [manual](docs/MANUAL.md#letting-an-agent-query-it-mcp).
+client configuration are in the [manual](docs/manual/ai-and-mcp.md#letting-an-agent-query-it-mcp).
 
 [![PerspectiveGraph MCP server on Glama](https://glama.ai/mcp/servers/luiacuaniello/perspectivegraph/badges/score.svg)](https://glama.ai/mcp/servers/luiacuaniello/perspectivegraph)
 

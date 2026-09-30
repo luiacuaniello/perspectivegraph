@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help chart-install up up-full up-demo demo demo-build demo-run up-search down logs run-backend build-backend test bench bench-cloudgoat mcp reachability-lab-aws redteam-aws boundary-lab-aws tidy run-frontend install-frontend lockfile seed seed-discovery seed-load clean
+.PHONY: help chart-install up up-full up-demo demo demo-build demo-run up-search down logs run-backend build-backend test bench bench-cloudgoat mcp reachability-lab-aws redteam-aws boundary-lab-aws tidy run-frontend install-frontend lockfile docs-site seed seed-discovery seed-load clean
 
 # CGO is disabled so the Go binaries link statically (Go's pure-Go DNS resolver
 # instead of the system one). This also sidesteps a macOS system-linker bug on
@@ -46,7 +46,7 @@ demo-run:
 	  | jq '.data.attackPaths[0]'
 	@echo ""
 	@echo "→ Open the dashboard: http://localhost:3000  (see the kill chain, then click 'Open fix PR')"
-	@echo "  Make the fix a REAL pull request: set GITHUB_TOKEN on a sandbox repo - see docs/MANUAL.md."
+	@echo "  Make the fix a REAL pull request: set GITHUB_TOKEN on a sandbox repo - see docs/manual/ci-gate.md."
 	@echo ""
 	@echo "  The 'Accuracy' view reads 'insufficient data' on purpose: no outcomes have been"
 	@echo "  recorded, so the scores are estimates, and the page says so instead of inventing"
@@ -119,11 +119,18 @@ install-frontend:
 
 ## lockfile: regenerate frontend/package-lock.json after changing package.json. Runs npm INSIDE the same Linux image the release build uses, because npm only records the transitive deps of optional platform packages for the platform it runs on - regenerating on macOS drops entries the Linux build needs and breaks `npm ci` in CI. Never run a bare `npm install` in frontend/ to add a dependency; edit package.json, then run this.
 lockfile:
-	image="$$(scripts/node-image.sh)" && docker run --rm -v "$(CURDIR)/frontend":/app -w /app "$$image" \
-	  npm install --package-lock-only --no-audit --no-fund
+	image="$$(scripts/node-image.sh)" && for dir in frontend site; do \
+	  docker run --rm -v "$(CURDIR)/$$dir":/app -w /app "$$image" \
+	    npm install --package-lock-only --no-audit --no-fund || exit 1; \
+	done
 	@echo ""
-	@echo "→ regenerated frontend/package-lock.json on linux. Verify before committing:"
-	@echo "    git diff --stat frontend/package-lock.json"
+	@echo "→ regenerated frontend/ and site/ package-lock.json on linux. Verify before committing:"
+	@echo "    git diff --stat frontend/package-lock.json site/package-lock.json"
+
+## docs-site: build the documentation site (docs.a3thinker.it) from docs/ - fails on any broken link or anchor
+docs-site:
+	cd site && npm ci --no-audit --no-fund && npm run build
+	@echo "→ built site/dist. Preview it with: cd site && npm run preview"
 
 ## run-frontend: start the Vite dev server
 run-frontend:

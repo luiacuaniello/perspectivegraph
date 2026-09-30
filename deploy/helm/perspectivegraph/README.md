@@ -41,7 +41,7 @@ The service name depends on the release name, which is why the command looks it 
 
 A new install starts empty: the graph fills up as scanner output reaches the ingest
 endpoint. The
-[manual](https://github.com/luiacuaniello/perspectivegraph/blob/main/docs/MANUAL.md#1-the-order-that-builds-a-correct-graph)
+[manual](https://github.com/luiacuaniello/perspectivegraph/blob/main/docs/manual/onboarding.md#1-the-order-that-builds-a-correct-graph)
 shows what to send, and in which order.
 
 ## Requirements
