@@ -3,7 +3,9 @@ import { fetchValidations, type AttackPath, type Calibration, type CalibrationTr
 import { CalibrationPanel } from "./CalibrationPanel";
 import InfoTip from "./InfoTip";
 import { isProvisional, meaningFor, PROVISIONAL_BELOW } from "./accuracyVerdict";
+import { predictions, testFirst } from "./awaitingOutcomes";
 import { routeLabel } from "./routeChannels";
+import Badge from "./ui/Badge";
 
 // Accuracy is the case for believing the numbers, given its own page. It was called
 // "Trust", which in a security tool reads as IAM trust policies.
@@ -45,6 +47,8 @@ export default function AccuracyView({ calibration, trend, validation, paths, on
           {meaningFor(calibration)}
         </p>
       </section>
+
+      {!has && paths && paths.length > 0 && <AwaitingOutcomes paths={paths} onOpenPath={onOpenPath} />}
 
       {validation && validation.tested + validation.missed > 0 && (
         <section className="rounded-2xl border border-edge bg-panel px-5 py-4">
@@ -152,6 +156,128 @@ function plainVerdict(c?: Calibration): string {
     return `Across ${c.samples} tested routes the engine predicted ${predicted} on average but ${observed} held up. Reality is harsher than the model expects, so the scores understate what an attacker achieves.`;
   }
   return `Only ${c.samples} tested route${c.samples === 1 ? "" : "s"} so far - too few to judge the scores. Record more outcomes before reading the numbers as probabilities.`;
+}
+
+const RECORDING_DOCS = "https://docs.a3thinker.it/manual/accuracy/#validated-against-reality-precision--recall";
+const ROWS_SHOWN = 15;
+
+// AwaitingOutcomes is the page before the first outcome. A calibration point pairs a
+// prediction with what happened; with nothing recorded, the honest thing to show is the
+// half that exists - every open route's predicted probability and how far it could move -
+// on the same 0-100% axis the reliability diagram will use, with no observed side drawn.
+// It also says where an outcome would teach the most, which is the question a team setting
+// up its first test run actually has.
+function AwaitingOutcomes({ paths, onOpenPath }: { paths: AttackPath[]; onOpenPath?: (id: string) => void }) {
+  const [all, setAll] = useState(false);
+  const preds = predictions(paths);
+  const picks = testFirst(preds);
+  const shown = all ? preds : preds.filter((p, i) => i < ROWS_SHOWN || picks.has(p.path.id));
+  const lowest = pct(preds[preds.length - 1].score);
+  const highest = pct(preds[0].score);
+  const evidenced = preds.filter((p) => p.evidenced).length;
+  const estimated = preds.length - evidenced;
+  const grid = "grid grid-cols-[minmax(0,1fr)_2.75rem] items-center gap-x-3 sm:grid-cols-[minmax(0,20rem)_minmax(0,1fr)_2.75rem]";
+
+  return (
+    <section className="rounded-2xl border border-edge bg-panel px-5 py-4">
+      <div className="mb-2 flex items-center gap-1 text-[12px] text-muted">
+        The predictions waiting for an outcome
+        <InfoTip text="Each row is an open route. The dot is the engine's predicted probability that an attacker completes it; the bar is its 90% interval - how far that estimate could move on the evidence behind it. Once outcomes are recorded, the reliability diagram sets each prediction against what happened." />
+      </div>
+      <p className="max-w-[70ch] text-[13px] leading-relaxed text-slate-700">
+        {preds.length === 1
+          ? `One route, predicted at ${highest}. `
+          : `${preds.length} routes, predicted between ${lowest} and ${highest}. `}
+        {evidenceSentence(estimated, evidenced)}
+      </p>
+
+      <ul className="mt-3 flex flex-col gap-2">
+        {shown.map((p) => {
+          const picked = picks.has(p.path.id);
+          return (
+            <li key={p.path.id} className={`${grid} gap-y-1`}>
+              <div className="col-span-2 flex min-w-0 items-center gap-2 text-[12px] sm:col-span-1">
+                {onOpenPath ? (
+                  <button
+                    onClick={() => onOpenPath(p.path.id)}
+                    className="min-w-0 truncate text-left text-slate-800 underline-offset-4 hover:underline"
+                  >
+                    {routeLabel(p.path)}
+                  </button>
+                ) : (
+                  <span className="min-w-0 truncate text-slate-800">{routeLabel(p.path)}</span>
+                )}
+                {picked && (
+                  <Badge dashed className="shrink-0">
+                    test first
+                  </Badge>
+                )}
+              </div>
+              <div className="relative h-4" aria-hidden="true">
+                <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-edge" />
+                <div className="absolute left-1/2 top-0.5 bottom-0.5 w-px bg-edge" />
+                <div
+                  className="absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-slate-500/40"
+                  style={{ left: `${p.low * 100}%`, width: `${Math.max(0.5, (p.high - p.low) * 100)}%` }}
+                />
+                <div
+                  className="absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-slate-800"
+                  style={{ left: `${p.score * 100}%` }}
+                />
+              </div>
+              <span className="text-right text-[12px] tabular-nums text-slate-800">
+                {pct(p.score)}
+                <span className="sr-only">
+                  {p.high > p.low ? `, 90% interval ${pct(p.low)} to ${pct(p.high)}` : ""}
+                </span>
+              </span>
+            </li>
+          );
+        })}
+        <li className={`${grid} text-[12px] text-muted`} aria-hidden="true">
+          <span className="hidden sm:block" />
+          <div className="relative h-4">
+            <span className="absolute left-0">0%</span>
+            <span className="absolute left-1/2 -translate-x-1/2">50%</span>
+            <span className="absolute right-0">100%</span>
+          </div>
+          <span />
+        </li>
+      </ul>
+      {preds.length > shown.length || all ? (
+        <button onClick={() => setAll(!all)} className="mt-2 text-[12px] font-medium text-slate-700 underline-offset-4 hover:underline">
+          {all ? "Show fewer" : `Show all ${preds.length}`}
+        </button>
+      ) : null}
+
+      {picks.size > 0 && (
+        <p className="mt-4 max-w-[70ch] text-[13px] leading-relaxed text-slate-600">
+          <span className="font-medium text-slate-900">Test first</span> marks one route from each score band, the one
+          with the widest interval: that is where an outcome moves the estimate most. Testing only the likeliest routes
+          would flatter the engine, since its confident predictions would be the only ones ever checked.
+        </p>
+      )}
+      <p className="mt-3 max-w-[70ch] text-[13px] leading-relaxed text-slate-600">
+        To record an outcome, post it to <code className="font-mono text-[12px]">/validations</code> with the route's id,
+        or import a Pacu, Caldera or pentest report that names the target:{" "}
+        <a href={RECORDING_DOCS} target="_blank" rel="noreferrer" className="font-medium text-slate-800 underline underline-offset-4">
+          recording outcomes
+        </a>
+        .
+      </p>
+    </section>
+  );
+}
+
+function evidenceSentence(estimated: number, evidenced: number): string {
+  if (estimated + evidenced === 1) {
+    return evidenced ? "It carries observed evidence on at least one hop." : "It rests on estimates alone: none of its hops has been observed.";
+  }
+  if (evidenced === 0) return "All of them rest on estimates alone: no hop on any of them has been observed.";
+  if (estimated === 0) return "Every one carries observed evidence on at least one hop.";
+  return `${estimated} rest${estimated === 1 ? "s" : ""} on estimates alone; ${evidenced} carr${
+    evidenced === 1 ? "ies" : "y"
+  } observed evidence - a KEV entry, an EPSS score or a runtime alert - on at least one hop.`;
 }
 
 // The verdict records come back from REST in the store's own snake_case, not the

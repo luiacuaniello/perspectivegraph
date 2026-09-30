@@ -157,3 +157,64 @@ describe("AccuracyView evidence register", () => {
     expect(onOpenPath).toHaveBeenCalledWith("ap-1");
   });
 });
+
+describe("AccuracyView before the first outcome", () => {
+  const noData = calibration({ hasData: false, samples: 0, verdict: "insufficient-data" });
+  function route(id: string, score: number, low: number, high: number, basis = "heuristic"): AttackPath {
+    return {
+      id,
+      score,
+      scoreCiLow: low,
+      scoreCiHigh: high,
+      runtimeConfirmed: false,
+      nodes: [
+        { id: "a", label: "LoadBalancer", name: `${id}-entry`, properties: {} },
+        { id: "b", label: "IAM_Role", name: `${id}-target`, properties: {} },
+      ],
+      steps: [{ edgeType: "EXPOSES", from: "a", to: "b", probability: score, weightBasis: basis }],
+      remediations: [],
+      detections: [],
+    };
+  }
+  const paths = [
+    route("ap-a", 0.9, 0.7, 0.99),
+    route("ap-b", 0.85, 0.6, 0.99, "runtime"),
+    route("ap-c", 0.5, 0.3, 0.8),
+    route("ap-d", 0.3, 0.2, 0.5),
+  ];
+
+  // The page had a headline and nothing under it. What exists before any outcome is the
+  // prediction side of every calibration point, so that is what it shows - and no more.
+  it("shows every open route's prediction and interval, and draws no observed side", () => {
+    render(<AccuracyView calibration={noData} paths={paths} onOpenPath={vi.fn()} />);
+    expect(screen.getByText("The predictions waiting for an outcome")).toBeInTheDocument();
+    expect(screen.getByText(/4 routes, predicted between 30% and 90%/)).toBeInTheDocument();
+    expect(screen.getByText(/3 rest on estimates alone; 1 carries observed evidence/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "ap-a-entry → ap-a-target" })).toBeInTheDocument();
+    expect(screen.getByText(/90% interval 70% to 99%/)).toBeInTheDocument();
+    // No reliability diagram and no verdict: nothing has been observed.
+    expect(screen.queryByRole("img", { name: /Reliability diagram/ })).toBeNull();
+    expect(screen.queryByText("Calibration details")).toBeNull();
+  });
+
+  it("marks one route per score band to test first, the widest interval in each", () => {
+    render(<AccuracyView calibration={noData} paths={paths} onOpenPath={vi.fn()} />);
+    const picked = screen.getAllByText("test first").map((chip) => chip.closest("li")!.textContent);
+    // Top band: ap-a (0.29 wide) loses to ap-b (0.39 wide); ap-c and ap-d are alone in theirs.
+    expect(picked).toHaveLength(3);
+    expect(picked.some((t) => t!.includes("ap-b-entry"))).toBe(true);
+    expect(picked.some((t) => t!.includes("ap-a-entry"))).toBe(false);
+  });
+
+  it("opens the route a row names", () => {
+    const onOpenPath = vi.fn();
+    render(<AccuracyView calibration={noData} paths={paths} onOpenPath={onOpenPath} />);
+    screen.getByRole("button", { name: "ap-c-entry → ap-c-target" }).click();
+    expect(onOpenPath).toHaveBeenCalledWith("ap-c");
+  });
+
+  it("gives way to the measured page once outcomes exist", () => {
+    render(<AccuracyView calibration={calibration({ samples: 40 })} paths={paths} />);
+    expect(screen.queryByText("The predictions waiting for an outcome")).toBeNull();
+  });
+});

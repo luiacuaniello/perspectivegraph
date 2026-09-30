@@ -227,6 +227,11 @@ how trust is earned. The dashboard's **Accuracy** page leads with the verdict an
 for how to read a score, then lists every recorded outcome - which route, who tested it, when -
 with the statistics (reliability diagram, error scores, ranking quality, diagnosis) closed
 underneath; each tested path shows **Proven by** / **Refuted by** the source that tested it.
+Before the first outcome it gives no verdict and shows the half of every calibration point that
+already exists: each open route's predicted probability with its 90% interval, on the 0-100% scale
+the reliability diagram will use. It marks one route per score band, the one with the widest
+interval, as **test first**. That is where an outcome moves the estimate most, and spreading the
+first tests across bands keeps the sample from checking only the engine's confident predictions.
 What the detection stack caught is on **Today**, since it is a fact about the estate rather
 than about the scores. Set `VALIDATIONS_PATH` to persist. `make seed-validation` records synthetic verdicts on part of the live paths the
 way a BAS run would: about 40% of them plus every one a runtime alert fired on, each confirmed
