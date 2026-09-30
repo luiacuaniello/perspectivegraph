@@ -9,6 +9,18 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.27.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.26.0...v1.27.0) (2026-09-30)
+
+
+### Features
+
+* **dashboard:** show the predictions waiting for an outcome, and open tooltips on a tap ([#278](https://github.com/luiacuaniello/perspectivegraph/issues/278)) ([3d7fc62](https://github.com/luiacuaniello/perspectivegraph/commit/3d7fc62401e9499390ac787925399d6377615277))
+
+
+### Bug Fixes
+
+* **dashboard:** the info tooltips never opened on an iPhone. They showed on hover and focus, ([3d7fc62](https://github.com/luiacuaniello/perspectivegraph/commit/3d7fc62401e9499390ac787925399d6377615277))
+
 ## [1.26.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.25.1...v1.26.0) (2026-09-30)
 
 
