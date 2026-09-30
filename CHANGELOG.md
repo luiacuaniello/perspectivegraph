@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.27.1](https://github.com/luiacuaniello/perspectivegraph/compare/v1.27.0...v1.27.1) (2026-09-30)
+
+
+### Bug Fixes
+
+* **site:** axe on a phone found every wide table scrollable but unreachable by keyboard, and ([87a37d9](https://github.com/luiacuaniello/perspectivegraph/commit/87a37d9276be249b29a1bc97a1137181c967a86d))
+
 ## [1.27.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.26.0...v1.27.0) (2026-09-30)
 
 
