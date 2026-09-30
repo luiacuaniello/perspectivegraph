@@ -8,7 +8,11 @@
 //   - the first "# Title" becomes the page's front matter (Starlight prints the title);
 //   - links between documents become links between pages ("../MANUAL.md#x" -> "/manual/#x");
 //   - links into the code (../backend/...) point at the file on GitHub;
-//   - images are copied under public/img/ and linked from there.
+//   - images are copied under public/img/ and linked from there;
+//   - the page's first sentence becomes its description (search results, link previews), and
+//     its last commit its "last updated" date.
+// The front page is the site's own (landing/index.mdx): it only points into these pages.
+import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,10 +25,11 @@ const GITHUB = "https://github.com/luiacuaniello/perspectivegraph";
 
 // Repository file -> page slug. The sidebar order lives in astro.config.mjs.
 export const PAGES = {
-  "README.md": "index",
+  "README.md": "overview",
   "docs/EVALUATION.md": "evaluation",
   "docs/POSITIONING.md": "positioning",
   "docs/MANUAL.md": "manual",
+  "docs/manual/concepts.md": "manual/concepts",
   "docs/manual/quick-start.md": "manual/quick-start",
   "docs/manual/how-it-works.md": "manual/how-it-works",
   "docs/manual/scoring.md": "manual/scoring",
@@ -44,6 +49,10 @@ export const PAGES = {
   "docs/THREAT-MODEL.md": "threat-model",
   "SECURITY.md": "security-policy",
   "CONTRIBUTING.md": "contributing",
+  "ROADMAP.md": "roadmap",
+  "SUPPORT.md": "support",
+  "ADOPTERS.md": "adopters",
+  "GOVERNANCE.md": "governance",
 };
 
 const IMAGE = /\.(png|svg|gif|jpe?g|webp)$/i;
@@ -74,9 +83,14 @@ function convert(file) {
   let text = readFileSync(join(REPO, file), "utf8");
   let title;
   if (file === "README.md") {
-    // The README opens with a centred logo and wordmark for GitHub; the site has its own.
-    text = text.replace(/^<h1[\s\S]*?<\/h1>\s*/, "");
-    title = "PerspectiveGraph";
+    // The README opens with GitHub's front matter: a centred logo and wordmark, the tagline, and
+    // a row of badges. The site has its own logo, the tagline is on the front page, and badges
+    // render one per line outside GitHub's centred paragraph.
+    text = text
+      .replace(/^<h1[\s\S]*?<\/h1>\s*/, "")
+      .replace(/^<p align="center"><strong>[\s\S]*?<\/p>\s*/, "")
+      .replace(/^<p align="center">\s*<a[\s\S]*?<\/p>\s*/, "");
+    title = "Overview";
   } else {
     const m = text.match(/^# (.+)\n+/);
     if (!m) throw new Error(`${file}: no "# Title" on the first line`);
@@ -97,15 +111,14 @@ function convert(file) {
         .replace(/\b(src|href|srcset)="([^"]+)"/g, (_, a, t) => `${a}="${rewriteTarget(t, file)}"`),
     );
   }
+  const description = describe(text);
+  const updated = lastCommit(file);
   const front = [
     "---",
     `title: ${JSON.stringify(title)}`,
+    ...(description ? [`description: ${JSON.stringify(description)}`] : []),
     `editUrl: ${JSON.stringify(`${GITHUB}/edit/main/${file}`)}`,
-    // The home page's title is the site's name, and the browser tab read
-    // "PerspectiveGraph | PerspectiveGraph".
-    ...(file === "README.md"
-      ? ["tableOfContents: false", "head:", "  - tag: title", "    content: PerspectiveGraph documentation"]
-      : []),
+    ...(updated ? [`lastUpdated: ${updated}`] : []),
     "---",
     "",
   ].join("\n");
@@ -114,9 +127,55 @@ function convert(file) {
   writeFileSync(dest, front + out.join("\n"));
 }
 
+// describe returns the page's opening sentence as plain text: the manual pages' line after
+// "Part of the manual.", otherwise the first paragraph of prose. It is what a search result and a
+// shared link show under the title; without it every page carried the site's one description.
+function describe(text) {
+  const plain = (s) =>
+    s
+      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/[*_`]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  for (const para of text.split(/\n\s*\n/)) {
+    const p = para.trim();
+    if (!p || /^(#|<|!|\||>|```|-|\d+\.|\{)/.test(p)) continue;
+    let t = plain(p.replace(/^\*Part of the \[[^\]]+\]\([^)]+\)\.\*\s*/, ""));
+    if (t.length < 40) continue;
+    const end = t.search(/[.!?](\s|$)/);
+    if (end > 60) t = t.slice(0, end + 1);
+    return t.length > 240 ? `${t.slice(0, t.lastIndexOf(" ", 236))}…` : t;
+  }
+  return "";
+}
+
+// lastCommit is the date of the last commit that touched a source file, which is when its page
+// last changed. On a shallow clone every file's last commit is the one checked out, so every page
+// would claim to be new: there the date is left off rather than made up.
+const history = (() => {
+  try {
+    return execFileSync("git", ["rev-parse", "--is-shallow-repository"], { cwd: REPO }).toString().trim() === "false";
+  } catch {
+    return false;
+  }
+})();
+function lastCommit(file) {
+  if (!history) return "";
+  try {
+    return execFileSync("git", ["log", "-1", "--format=%cs", "--", file], { cwd: REPO }).toString().trim();
+  } catch {
+    return "";
+  }
+}
+
 rmSync(OUT, { recursive: true, force: true });
 rmSync(IMG, { recursive: true, force: true });
 for (const file of Object.keys(PAGES)) convert(file);
+copyFileSync(join(SITE, "landing", "index.mdx"), join(OUT, "index.mdx"));
 mkdirSync(join(SITE, "src", "assets"), { recursive: true });
 copyFileSync(join(REPO, "docs", "logo.svg"), join(SITE, "src", "assets", "logo.svg"));
-console.log(`synced ${Object.keys(PAGES).length} pages into src/content/docs`);
+// The front page shows the dashboard, and a shared link shows the same card the dashboard does.
+mkdirSync(IMG, { recursive: true });
+copyFileSync(join(REPO, "docs", "screenshot-overview.png"), join(IMG, "docs-screenshot-overview.png"));
+copyFileSync(join(REPO, "docs", "social-card.png"), join(SITE, "public", "social-card.png"));
+console.log(`synced ${Object.keys(PAGES).length} pages and the front page into src/content/docs`);

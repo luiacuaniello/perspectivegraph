@@ -43,6 +43,11 @@ jobs:
         working-directory: ./site
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+        with:
+          # Each page's "last updated" is the last commit to its source file. A shallow clone
+          # has one commit, so the sync script leaves the dates off rather than date every
+          # page today; the whole history is what makes them real.
+          fetch-depth: 0
       # The same Node as the dashboard's release image - see scripts/node-image.sh.
       - id: node
         name: Node version from the release Dockerfile

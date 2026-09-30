@@ -241,6 +241,7 @@ caught one false positive, a permissions boundary the engine ignored; it is fixe
 
 ## Documentation
 
+- [Concepts in plain words](docs/manual/concepts.md) - route, score, interval, priority, outcome, calibration: the words the dashboard uses
 - [Manual](docs/MANUAL.md) - architecture, scoring, every integration, deployment, and the runbook for your own environment
 - [Evaluation](docs/EVALUATION.md) - trying it on your own estate, in stages that each end in an answer
 - [Positioning](docs/POSITIONING.md) - what is claimed, what is **not**, and how to check

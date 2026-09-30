@@ -12,6 +12,7 @@ source of that site: a change to either is a change to both.
 
 | Page | What it covers |
 |---|---|
+| [Concepts in plain words](manual/concepts.md) | The words the dashboard uses - route, hop, score, interval, priority, outcome, calibration - each in a few sentences. Start here if the rest assumes too much. |
 | [How it works](manual/how-it-works.md) | What an attack path is, the architecture that finds one, and the data model underneath. |
 | [Scoring and priority](manual/scoring.md) | How a route gets its probability, how honest that probability is, and what decides which route to fix first. |
 | [Accuracy: calibration and validation](manual/accuracy.md) | How the engine grades its own scores against real outcomes, and what it does with the result. |

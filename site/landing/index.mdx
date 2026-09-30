@@ -1,0 +1,104 @@
+---
+title: PerspectiveGraph
+description: Open-source attack-path analysis. It joins the scanners and cloud state you already have into one graph, finds the routes from the internet to something worth stealing, and stops the pull request that opens one.
+template: splash
+editUrl: false
+head:
+  - tag: title
+    content: PerspectiveGraph documentation
+hero:
+  title: Your scanners find issues. This finds the way in.
+  tagline: PerspectiveGraph joins what you already run into one graph of your real environment and asks a single question of it - can someone get from the internet, through privilege that is too broad, to something worth stealing? Then it stops the pull request that opens that route.
+  image:
+    file: ../../assets/logo.svg
+    alt: ""
+  actions:
+    - text: Start in five minutes
+      link: /manual/quick-start/
+      icon: right-arrow
+    - text: Open the live demo
+      link: https://demo.a3thinker.it
+      icon: external
+      variant: minimal
+    - text: The concepts in plain words
+      link: /manual/concepts/
+      variant: minimal
+---
+
+import { Card, CardGrid, LinkCard } from "@astrojs/starlight/components";
+
+{/* This page belongs to the site, not to the repository's Markdown: it is the front door and
+    only points into the manual. Anything with a number or a version in it lives in the pages
+    it links to, so nothing here can go stale on its own. */}
+
+## What it does
+
+<CardGrid>
+  <Card title="Joins what you already run" icon="puzzle">
+    Trivy, Semgrep, Cloud Custodian and Falco findings, plus your AWS and Kubernetes state, in one
+    graph of the environment as it really is. Cloud accounts are read, never written to.
+  </Card>
+  <Card title="Finds the way in" icon="magnifier">
+    Every route from an internet entry point, through too much privilege, to a sensitive asset -
+    ranked by what to fix first, each with how far its number can be trusted.
+  </Card>
+  <Card title="Stops it in the pull request" icon="github">
+    The check goes red only when this change opens a route, names it, and the fix comes back as its
+    own pull request to review and merge.
+  </Card>
+  <Card title="Says how far to trust it" icon="approve-check">
+    It grades its own scores against real test outcomes, and says "not enough data yet" rather than
+    make a verdict up.
+  </Card>
+</CardGrid>
+
+![The dashboard's Today view: the routes being walked right now, what to fix first, and how far the scores can be trusted](/img/docs-screenshot-overview.png)
+
+*The dashboard on sample scanner output, with synthetic test outcomes recorded so that every panel
+has something to show - not a real environment. [The live demo](https://demo.a3thinker.it) runs the
+same sample data with no outcomes at all.*
+
+## Where to start
+
+<CardGrid>
+  <LinkCard
+    title="See it without installing anything"
+    description="The same dashboard, published read-only on sample data."
+    href="https://demo.a3thinker.it"
+  />
+  <LinkCard
+    title="Check your own AWS account"
+    description="One read-only command, no deployment."
+    href="/overview/#check-your-own-account-in-30-seconds"
+  />
+  <LinkCard
+    title="Put it on your pull requests"
+    description="The merge gate: a GitHub Action, a CLI and a Trivy plugin."
+    href="/manual/ci-gate/"
+  />
+  <LinkCard
+    title="Evaluate it on your own estate"
+    description="In stages that each end in an answer."
+    href="/evaluation/"
+  />
+  <LinkCard
+    title="Understand the numbers"
+    description="What a score is the probability of, and what it is not."
+    href="/manual/scoring/"
+  />
+  <LinkCard
+    title="Run it for real"
+    description="The Helm chart, single sign-on, hardening, backup."
+    href="/manual/kubernetes/"
+  />
+</CardGrid>
+
+## What it does not claim
+
+A score is what the model concludes from the evidence it was given, not a measured frequency.
+Nothing has been calibrated against field data yet, and the engine says so itself -
+[positioning](/positioning/) states what is claimed, what is not, and how to check.
+
+Open source under Apache 2.0. It runs on your infrastructure and collects no telemetry.
+[Contributions](/contributing/), [questions](/support/) and [a line in the adopters list](/adopters/)
+are all welcome.

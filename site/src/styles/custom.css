@@ -11,3 +11,17 @@
   --sl-color-accent: #1f5f57;
   --sl-color-accent-high: #0f2f2b;
 }
+
+/* A badge is a 20px image inside a link, and a row of them put targets smaller than WCAG 2.2's
+   24px minimum side by side. The padding makes each link a 24px target. */
+.sl-markdown-content a:has(> img) {
+  display: inline-block;
+  padding-block: 2px;
+  margin-inline-end: 4px;
+}
+
+/* A focused table - one a keyboard user is scrolling - shows where the focus is. */
+.sl-markdown-content table:focus-visible {
+  outline: 2px solid var(--sl-color-accent);
+  outline-offset: 2px;
+}
