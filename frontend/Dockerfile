@@ -32,7 +32,7 @@ RUN npm ci --no-audit --no-fund
 COPY . .
 RUN npm run build
 
-FROM nginx:1.31.6-alpine@sha256:adad2ae9204d0fd7a34f40299bc838c3782be1293b10005eac4315ff5a1abf4e
+FROM nginx:1.31.6-alpine@sha256:df221db836e1754089190208cee7eeda94f233197056426eda74a43ab1abeac2
 # Base is pinned by digest for reproducibility; apk upgrade patches any OS-package
 # CVEs disclosed since that digest was built (e.g. openssl/libxml2), so the image
 # stays current without waiting on a base rebuild. Keeps the Trivy CI gate green.
