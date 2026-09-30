@@ -21,7 +21,7 @@ export default function EmptyState() {
           <div className="mb-1 text-[12px] font-medium text-muted">
             Feed the sample data
           </div>
-          <code className="block font-mono text-[13px] text-teal-700">make seed</code>
+          <code className="block font-mono text-[13px] text-slate-700">make seed</code>
           <code className="mt-1 block font-mono text-[12px] text-slate-500">
             make seed-discovery <span className="text-slate-500"># + Kubernetes, cloud network &amp; IAM privesc</span>
           </code>

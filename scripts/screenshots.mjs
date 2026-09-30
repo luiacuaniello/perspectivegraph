@@ -62,7 +62,7 @@ const nav = (label) => `
 const SHOTS = [
   { file: "screenshot-overview.png", act: "", settle: 2500 },
   { file: "screenshot-paths.png", act: nav("Attack paths"), settle: 3500 },
-  { file: "screenshot-trust.png", act: nav("Trust"), settle: 2500 },
+  { file: "screenshot-accuracy.png", act: nav("Accuracy"), settle: 2500 },
 ];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

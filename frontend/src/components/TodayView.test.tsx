@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import TodayView from "./TodayView";
 import type { AttackPath, Dashboard, Fix, RiskSimulation } from "../api/client";
@@ -67,7 +67,7 @@ function renderToday(over: Partial<Parameters<typeof TodayView>[0]> = {}) {
       violations={[]}
       onOpenPath={vi.fn()}
       onSeeAllPaths={vi.fn()}
-      onOpenTrust={vi.fn()}
+      onOpenAccuracy={vi.fn()}
       {...over}
     />,
   );
@@ -145,7 +145,7 @@ describe("TodayView", () => {
     expect(screen.queryByText(/being walked/)).not.toBeInTheDocument();
   });
 
-  it("surfaces the trust verdict instead of hiding it in diagnostics", () => {
+  it("surfaces the accuracy verdict instead of hiding it in diagnostics", () => {
     renderToday({
       calibration: {
         samples: 977,
@@ -163,7 +163,7 @@ describe("TodayView", () => {
         persistent: false,
       },
     });
-    expect(screen.getByText("Can you trust these numbers?")).toBeInTheDocument();
+    expect(screen.getByText("How accurate are the scores?")).toBeInTheDocument();
     expect(screen.getByText("overconfident")).toBeInTheDocument();
     expect(screen.getByText(/977 tested routes/)).toBeInTheDocument();
   });
@@ -193,12 +193,44 @@ const sources = (stale: boolean) => [
   { source: "falco", firstSeen: "", lastSeen: "", events: 1, nodes: 1, edges: 0, stale: false, silentFor: "" },
 ];
 
+describe("TodayView numbers", () => {
+  it("prints fix shares that add up to the total beside them", () => {
+    // Rounded one by one, 30.7 + 19.7 + 10.6 read 31 + 20 + 11 = 62 beside a total of 61.
+    renderToday({ plan: [fix("A", 0.307, 4), fix("B", 0.197, 4), fix("C", 0.106, 2)] });
+    expect(screen.getByText(/They cut/)).toHaveTextContent("They cut 61% of");
+    const list = screen.getByText("A").closest("ol")!;
+    const shares = within(list).getAllByText(/^\d+%$/).map((e) => Number(e.textContent!.replace("%", "")));
+    expect(shares.reduce((a, v) => a + v, 0)).toBe(61);
+  });
+
+  it("reports what detection caught as a fact about the estate", () => {
+    renderToday({
+      calibration: {
+        samples: 8, brier: 0.3, logLoss: 0, ece: 0.3, meanPredicted: 0.58, observedRate: 0.5,
+        verdict: "calibrated-on-average", hasData: true, bins: [],
+        detection: { tested: 4, detected: 1, detectionRate: 0.25, highScoreTested: 0, highScoreDetectionRate: 0 },
+      },
+    });
+    expect(screen.getByText("What detection caught")).toBeInTheDocument();
+    expect(screen.getByText("1 of 4")).toBeInTheDocument();
+    expect(screen.getByText("3 walked unseen")).toBeInTheDocument();
+  });
+});
+
 describe("ingest coverage", () => {
-  it("names the sources the board was built from", () => {
+  it("says in one line that every source is reporting, and names them on hover", () => {
+    // A chip per source, each saying "current", was a row the eye learned to skip - and
+    // then skipped the day one of them said "silent".
     renderToday({ coverage: sources(false) });
-    expect(screen.getByText(/Built from/)).toBeInTheDocument();
+    const line = screen.getByText("Built from 2 sources, all reporting.");
+    expect(line).toHaveAttribute("title", "trivy, falco");
+    expect(screen.queryByText("current")).not.toBeInTheDocument();
+  });
+
+  it("names a source that has gone silent", () => {
+    renderToday({ coverage: sources(true) });
     expect(screen.getByText("trivy")).toBeInTheDocument();
-    expect(screen.getByText("falco")).toBeInTheDocument();
+    expect(screen.getByText(/silent 3d/)).toBeInTheDocument();
   });
 
   // The case the feature exists for: nothing found AND a source has gone quiet. A green

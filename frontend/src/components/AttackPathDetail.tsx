@@ -25,6 +25,7 @@ import {
   FlameIcon,
   GemIcon,
   GlobeIcon,
+  LinkIcon,
   LockIcon,
   ScissorsIcon,
   TicketIcon,
@@ -36,6 +37,7 @@ import { useReadOnly } from "../auth/readOnly";
 import Badge from "./ui/Badge";
 import { ModelAttribution } from "./ModelAttribution";
 import { hopReason, hopVerb, pathSummary, typeName } from "./pathLanguage";
+import { linkToPath } from "../routeHash";
 
 interface Props {
   path: AttackPath;
@@ -300,6 +302,39 @@ function AiExplainControl({ path }: { path: AttackPath }) {
   );
 }
 
+// CopyLinkControl puts a link to this one route on the clipboard, for a ticket or a chat.
+// It is not a write, so it stays enabled where the other actions are read-only - sharing a
+// route is exactly what a visitor to the public demo might want to do.
+function CopyLinkControl({ pathId }: { pathId: string }) {
+  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(linkToPath(pathId));
+      setState("copied");
+    } catch {
+      // No clipboard (an insecure origin, a denied permission). The address bar already
+      // holds the same link, so say where it is rather than just that copying failed.
+      setState("failed");
+    }
+    window.setTimeout(() => setState("idle"), 2500);
+  };
+  return (
+    <>
+      <Button
+        variant="ghost"
+        onClick={copy}
+        icon={<LinkIcon className="h-3.5 w-3.5" />}
+        title="Copy a link that opens this route - for a ticket or a chat"
+      >
+        {state === "copied" ? "Link copied" : state === "failed" ? "Copy it from the address bar" : "Copy link"}
+      </Button>
+      <span role="status" className="sr-only">
+        {state === "copied" ? "Link to this route copied" : ""}
+      </span>
+    </>
+  );
+}
+
 // RemediationPRControl opens a pull request with this path's generated fix
 // (branch + commit + PR). The backend needs a GitHub token; admin role when auth
 // is on. Closes the loop: the fix arrives as a PR to review, not a copy-paste.
@@ -442,12 +477,13 @@ function NodeBadges({ node }: { node: Node }) {
   return (
     <span className="flex flex-wrap items-center gap-1.5">
       {node.internetExposed && (
-        <Badge tone="info" icon={<GlobeIcon className="h-3 w-3" />}>
+        <Badge tone="neutral" icon={<GlobeIcon className="h-3 w-3" />}>
           internet-exposed
         </Badge>
       )}
       {node.crownJewel && (
-        <Badge tone="warn" icon={<GemIcon className="h-3 w-3" />} title={jewelTitle}>
+        // Amber only when it is a guess from the name: a tagged or classified asset is a fact.
+        <Badge tone={inferredJewel ? "warn" : "fact"} icon={<GemIcon className="h-3 w-3" />} title={jewelTitle}>
           sensitive asset{inferredJewel ? " (inferred)" : classifiedJewel ? " (classified)" : ""}
         </Badge>
       )}
@@ -457,7 +493,7 @@ function NodeBadges({ node }: { node: Node }) {
         </Badge>
       )}
       {node.classification && (
-        <Badge tone="danger" title={`Data classification: ${node.classification.toUpperCase()} (from a real classifier - Macie/DLP/tag policy).`}>
+        <Badge tone="fact" title={`Data classification: ${node.classification.toUpperCase()} (from a real classifier - Macie/DLP/tag policy).`}>
           {node.classification.toLowerCase()}
         </Badge>
       )}
@@ -472,7 +508,7 @@ function NodeBadges({ node }: { node: Node }) {
         </Badge>
       )}
       {node.kev && (
-        <Badge tone="danger" icon={<FlameIcon className="h-3 w-3" />} title="In CISA's Known Exploited Vulnerabilities catalog - exploited in the wild" className="font-bold uppercase">
+        <Badge tone="danger" icon={<FlameIcon className="h-3 w-3" />} title="In CISA's Known Exploited Vulnerabilities catalog - exploited in the wild">
           KEV
         </Badge>
       )}
@@ -482,8 +518,8 @@ function NodeBadges({ node }: { node: Node }) {
         </Badge>
       )}
       {node.severity && (
-        <Badge tone="neutral" className="uppercase">
-          {node.severity}
+        <Badge tone="neutral">
+          {node.severity.charAt(0).toUpperCase() + node.severity.slice(1).toLowerCase()}
           {node.cvss ? ` · ${node.cvss.toFixed(1)}` : ""}
         </Badge>
       )}
@@ -546,7 +582,7 @@ function ArtifactCard({ r, tone = "emerald" }: { r: Artifact; tone?: "emerald" |
     <div className="overflow-hidden rounded-xl border border-edge bg-panel shadow-card">
       <div className="flex items-center justify-between gap-3 border-b border-edge px-4 py-2.5">
         <div className="flex min-w-0 items-center gap-2.5">
-          <span className={`shrink-0 rounded-sm px-2 py-0.5 text-[12px] font-semibold uppercase tracking-wide ${badge}`}>{r.kind}</span>
+          <span className={`shrink-0 rounded-sm px-2 py-0.5 font-mono text-[12px] font-medium ${badge}`}>{r.kind}</span>
           <span className="truncate text-sm font-medium text-slate-800">{r.title}</span>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
@@ -600,7 +636,8 @@ const PRIORITY_TONE: Record<string, string> = {
 };
 
 // BASIS_META maps a hop's weight provenance to a short label and whether it is
-// observed evidence (green) or an estimate (grey). "assumed" read like an alarm about the
+// observed evidence (a firm neutral) or an estimate (a quiet one). It was green for
+// evidence, which read as "safe" on the hops that are most certainly exploitable. "assumed" read like an alarm about the
 // attacker; it means the engine used its default weight for this kind of hop.
 const BASIS_META: Record<string, { label: string; evidence: boolean }> = {
   kev: { label: "KEV", evidence: true },
@@ -616,7 +653,7 @@ function BasisChip({ basis }: { basis: string }) {
   if (!meta) return null;
   return (
     <Badge
-      tone={meta.evidence ? "ok" : "neutral"}
+      tone={meta.evidence ? "fact" : "neutral"}
       title={
         meta.evidence
           ? "This hop's probability rests on observed exploitation evidence (KEV / EPSS / runtime)."
@@ -843,6 +880,7 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
         <div className="flex flex-wrap items-center gap-2 border-t border-edge pt-3.5">
           <RemediationPRControl path={path} primary={path.remediations.length > 0} />
           <span className="mx-auto" />
+          <CopyLinkControl pathId={path.id} />
           <ValidationControl path={path} onChanged={onTriaged} />
           {aiEnabled && <AiExplainControl path={path} />}
           <TriageControl path={path} onTriaged={onTriaged} />
@@ -941,7 +979,7 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
                           href={step.attack.url}
                           target="_blank"
                           rel="noreferrer"
-                          className="inline-flex items-center gap-1 rounded-sm bg-accent/10 px-1.5 py-0.5 text-[12px] font-medium text-accent transition hover:bg-accent/20"
+                          className="inline-flex items-center gap-1 rounded-sm bg-slate-500/10 px-1.5 py-0.5 text-[12px] font-medium text-slate-700 underline-offset-2 transition hover:bg-slate-500/20 hover:underline"
                           title={`MITRE ATT&CK ${step.attack.id} - ${step.attack.name} · tactic: ${step.attack.tactic}`}
                         >
                           <CrosshairIcon className="h-3 w-3" />

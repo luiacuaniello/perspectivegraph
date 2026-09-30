@@ -5,7 +5,7 @@ import ExportMenu from "./components/ExportMenu";
 import AttackPathList from "./components/AttackPathList";
 import { routeLabel } from "./components/routeChannels";
 import TodayView from "./components/TodayView";
-import TrustView from "./components/TrustView";
+import AccuracyView from "./components/AccuracyView";
 import AttackPathDetail from "./components/AttackPathDetail";
 // Code-split: GraphCanvas pulls in Cytoscape (the heaviest dependency), so it loads
 // lazily only when the Graph view is opened - keeping the initial bundle small.
@@ -20,26 +20,9 @@ import DashboardSkeleton from "./components/DashboardSkeleton";
 import ThemeToggle from "./components/ThemeToggle";
 import { InfoIcon } from "./components/icons";
 import { hasRuntimeToken, signOut } from "./api/client";
+import { hashFor, parseHash } from "./routeHash";
 
 const POLL_MS = 5000;
-
-const VIEWS: View[] = ["today", "paths", "trust", "assistant"];
-
-// Deep-linkable views: #paths, #trust, … open the app on that section. The old
-// hashes still resolve so existing links and bookmarks don't break.
-const LEGACY_VIEWS: Record<string, View> = {
-  overview: "today",
-  plan: "today",
-  violations: "today",
-  graph: "paths",
-  search: "paths",
-};
-
-function viewFromHash(): View {
-  const h = window.location.hash.slice(1);
-  if (VIEWS.includes(h as View)) return h as View;
-  return LEGACY_VIEWS[h] ?? "today";
-}
 
 const VIEW_META: Record<View, { title: string; subtitle: string }> = {
   today: {
@@ -50,9 +33,9 @@ const VIEW_META: Record<View, { title: string; subtitle: string }> = {
     title: "Attack paths",
     subtitle: "Ranked end-to-end routes from internet exposure to sensitive assets.",
   },
-  trust: {
-    title: "Trust",
-    subtitle: "How well the engine's probabilities match what actually happened.",
+  accuracy: {
+    title: "Accuracy",
+    subtitle: "Whether the engine's probabilities match what actually happened.",
   },
   assistant: {
     title: "AI assistant",
@@ -63,8 +46,12 @@ const VIEW_META: Record<View, { title: string; subtitle: string }> = {
 export default function App() {
   const [data, setData] = useState<Dashboard | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [view, setViewState] = useState<View>(viewFromHash);
-  const [selectedPathId, setSelectedPathId] = useState<string | null>(null);
+  // Deep-linkable: #paths, #accuracy, … open the app on that section, and #paths/<id> on one
+  // route (see routeHash.ts).
+  const [view, setViewState] = useState<View>(() => parseHash(window.location.hash).view);
+  const [selectedPathId, setSelectedPathId] = useState<string | null>(() => parseHash(window.location.hash).pathId);
+  // The route a cold-loaded link named, until the first data arrives - see revealDetail.
+  const linkedOnLoad = useRef(parseHash(window.location.hash).pathId);
   // "" = whole environment; otherwise scope paths + graph to one application.
   const [app, setApp] = useState<string>("");
   const [analyzedAt, setAnalyzedAt] = useState<string | null>(null);
@@ -97,7 +84,15 @@ export default function App() {
 
   const setView = (v: View) => {
     setViewState(v);
-    window.location.hash = v;
+    window.location.hash = hashFor(v, selectedPathId);
+  };
+
+  // Choosing a route rewrites the link in place rather than pushing a history entry:
+  // clicking down a list of twenty routes must not take twenty presses of back to leave.
+  // Moving between views still pushes, through setView.
+  const selectPath = (id: string | null) => {
+    setSelectedPathId(id);
+    if (view === "paths") window.history.replaceState(null, "", `#${hashFor("paths", id)}`);
   };
 
   // The view lives in the URL hash, so the browser's own back and forward buttons
@@ -107,7 +102,13 @@ export default function App() {
   // setView) is deliberate: the hash is already what changed, and writing it back
   // would push a duplicate entry and trap the reader in their own history.
   useEffect(() => {
-    const onHashChange = () => setViewState(viewFromHash());
+    const onHashChange = () => {
+      const { view, pathId } = parseHash(window.location.hash);
+      setViewState(view);
+      // A hash that names no route leaves the choice alone: back from #accuracy to #paths
+      // should find the route that was open, not the top of the list.
+      if (pathId) setSelectedPathId(pathId);
+    };
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
@@ -190,6 +191,10 @@ export default function App() {
     const paths = data?.attackPaths ?? [];
     return paths.find((p) => p.id === selectedPathId) ?? paths[0] ?? null;
   }, [data, selectedPathId]);
+  // A link can outlive its route: fixed since, or outside the application scope now shown.
+  // Falling back to the top route without a word would show the reader a different route
+  // under the link they were sent, which is worse than showing nothing.
+  const linkMissed = !!data && !!selectedPathId && !data.attackPaths.some((p) => p.id === selectedPathId);
 
   // The list hides triaged-off (suppressed) paths unless the analyst opts in.
   const allPaths = useMemo(() => data?.attackPaths ?? [], [data]);
@@ -267,10 +272,19 @@ export default function App() {
     if (revealDetail === 0 || window.matchMedia("(min-width: 64rem)").matches) return;
     detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [revealDetail]);
+  // A link to a route opened on a phone lands on the list otherwise, with the route it names
+  // a long scroll below. Reveal it once the data it needs has arrived.
+  useEffect(() => {
+    if (!data || !linkedOnLoad.current) return;
+    linkedOnLoad.current = null;
+    showDetail();
+  }, [data]);
 
+  // From another view: a navigation, so it pushes, and back returns to where it started.
   const openPath = (id: string) => {
     setSelectedPathId(id);
-    setView("paths");
+    setViewState("paths");
+    window.location.hash = hashFor("paths", id);
     showDetail();
   };
 
@@ -298,7 +312,7 @@ export default function App() {
               value={app}
               onChange={(e) => {
                 setApp(e.target.value);
-                setSelectedPathId(null);
+                selectPath(null);
               }}
               aria-label="Scope the dashboard to one application"
               // min-w-0 + w-full: on a phone the select gives up width to the buttons beside
@@ -390,7 +404,7 @@ export default function App() {
                   history={history ?? undefined}
                   onOpenPath={openPath}
                   onSeeAllPaths={() => setView("paths")}
-                  onOpenTrust={() => setView("trust")}
+                  onOpenAccuracy={() => setView("accuracy")}
                   coverage={data.ingestCoverage}
                 />
               </div>
@@ -421,13 +435,31 @@ export default function App() {
                     paths={visiblePaths}
                     selectedId={selected?.id ?? null}
                     onSelect={(p) => {
-                      setSelectedPathId(p.id);
+                      selectPath(p.id);
                       showDetail();
                     }}
                     onChanged={() => setReloadKey((k) => k + 1)}
                   />
                 </div>
                 <div ref={detailRef} className="lg:col-span-8 lg:min-h-0 lg:overflow-y-auto lg:pr-1">
+                  {linkMissed && (
+                    <div
+                      role="status"
+                      className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-edge bg-panel px-3.5 py-2.5 text-[13px] text-slate-700"
+                    >
+                      <span>
+                        The route in this link is not open any more - it may have been fixed, or it is
+                        outside the application scope shown. Showing the top route instead.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => selectPath(null)}
+                        className="text-[12px] font-medium text-accent underline-offset-4 hover:underline"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  )}
                   {selected && graphOpen ? (
                     // The graph earns its weight only as a lens on a route you have
                     // already chosen - never as a hairball you land on.
@@ -483,20 +515,21 @@ export default function App() {
                   ) : (
                     <div className="rounded-xl border border-edge bg-panel shadow-card p-6 text-sm text-slate-500">
                       No attack paths yet. Seed the demo with{" "}
-                      <code className="text-teal-700">make seed</code>.
+                      <code className="text-slate-700">make seed</code>.
                     </div>
                   )}
                 </div>
               </div>
             )}
 
-            {view === "trust" && (
+            {view === "accuracy" && (
               <div className="h-full min-h-0 overflow-y-auto pr-1">
-                <TrustView
+                <AccuracyView
                   calibration={data.calibration}
                   trend={data.calibrationTrend}
                   validation={data.validation}
-                  risk={data.riskSimulation}
+                  paths={allPaths}
+                  onOpenPath={openPath}
                 />
               </div>
             )}

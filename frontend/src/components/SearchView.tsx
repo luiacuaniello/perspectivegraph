@@ -59,7 +59,7 @@ export default function SearchView({ enabled = true }: { enabled?: boolean }) {
           </p>
           <div className="mt-4 rounded-xl bg-ink px-4 py-3 text-left text-[12px]">
             <div className="mb-1 text-[12px] font-medium text-muted">Enable it</div>
-            <code className="block font-mono text-teal-700">
+            <code className="block font-mono text-slate-700">
               docker compose --profile app --profile search up -d --build
             </code>
             <code className="mt-1 block font-mono text-slate-500">
@@ -114,9 +114,9 @@ export default function SearchView({ enabled = true }: { enabled?: boolean }) {
               No results for <span className="text-slate-700">“{query.trim()}”</span>.
               <p className="mt-2 text-xs text-slate-500">
                 Full-text search needs the optional OpenSearch index: start it with{" "}
-                <code className="text-teal-700">make up-search</code>, run the backend with{" "}
-                <code className="text-teal-700">OPENSEARCH_URL=http://localhost:9200</code> and re-ingest
-                (<code className="text-teal-700">make seed</code>) so assets get indexed.
+                <code className="text-slate-700">make up-search</code>, run the backend with{" "}
+                <code className="text-slate-700">OPENSEARCH_URL=http://localhost:9200</code> and re-ingest
+                (<code className="text-slate-700">make seed</code>) so assets get indexed.
               </p>
             </div>
           ) : (
@@ -130,14 +130,14 @@ export default function SearchView({ enabled = true }: { enabled?: boolean }) {
                     className="h-2.5 w-2.5 shrink-0 rounded-full"
                     style={{ background: labelColor(h.label) }}
                   />
-                  <span className="w-28 shrink-0 text-[12px] uppercase tracking-wide text-slate-500">
+                  <span className="w-28 shrink-0 text-[12px] text-slate-500">
                     {h.label}
                   </span>
                   <span className="min-w-0 flex-1 truncate text-sm text-slate-800">{h.name}</span>
                   <span className="flex w-32 shrink-0 items-center gap-2">
                     <span className="h-1 flex-1 overflow-hidden rounded-full bg-ink">
                       <span
-                        className="block h-full rounded-full bg-teal-400/70"
+                        className="block h-full rounded-full bg-slate-500/70"
                         style={{ width: `${Math.max(8, (h.score / maxScore) * 100)}%` }}
                       />
                     </span>

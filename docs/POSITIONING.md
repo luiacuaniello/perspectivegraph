@@ -107,7 +107,7 @@ class, and `Partial` verdicts are excluded because half credit is not a class.
 Three things the number does not say. A modest Priority AUC is partly by design: Priority
 weighs target sensitivity and blast radius on purpose, so a refuted path to a crown jewel
 ranking high is the order doing its job, not failing at it. The synthetic self-test
-(`make seed-validation`) shows the separation cleanly - its `overconfident` scenario is
+(`make calibration-selftest`) shows the separation cleanly - its `overconfident` scenario is
 badly miscalibrated and orders paths *better* than any other, while `low-resolution`
 cannot be told apart from a coin - but those verdicts are generated, and prove the
 instrument rather than the engine. And the gate diagnosis takes its claims about order

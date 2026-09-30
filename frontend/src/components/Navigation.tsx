@@ -8,12 +8,13 @@ import { Logo } from "./icons";
 //
 //   today - the decision surface: what is being exploited, what to fix, what moved
 //   paths - the evidence: every route, searchable and inspectable
-//   trust - the differentiator: calibration, validation, how honest the scores are
+//   accuracy - the differentiator: whether the scores match what happened (it was called
+//              "Trust", which in a security tool reads as IAM trust policies)
 //
 // They are tabs, not a sidebar. A 224px column held three entries and cost the attack-path
 // list the width it needed to show a route's name, and on a phone it hid all three behind a
 // hamburger. Desktop gets a top bar; a phone gets a tab bar at the bottom, where a thumb is.
-export type View = "today" | "paths" | "trust" | "assistant";
+export type View = "today" | "paths" | "accuracy" | "assistant";
 
 type IconProps = { className?: string };
 
@@ -83,7 +84,7 @@ function sections(pathCount: number, aiEnabled: boolean): Item[] {
   return [
     { view: "today", label: "Today", short: "Today", Icon: TodayIcon },
     { view: "paths", label: "Attack paths", short: "Paths", Icon: PathsIcon, count: pathCount },
-    { view: "trust", label: "Trust", short: "Trust", Icon: TrustIcon },
+    { view: "accuracy", label: "Accuracy", short: "Accuracy", Icon: TrustIcon },
     ...(aiEnabled ? [{ view: "assistant" as const, label: "AI assistant", short: "Assistant", Icon: AssistantIcon }] : []),
   ];
 }

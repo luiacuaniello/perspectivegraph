@@ -21,8 +21,8 @@ describe("TopBar", () => {
   it("navigates when a tab is chosen", () => {
     const onNavigate = vi.fn();
     render(<TopBar view="today" onNavigate={onNavigate} pathCount={0} live />);
-    fireEvent.click(within(screen.getByRole("navigation", { name: "Sections" })).getByRole("button", { name: "Trust" }));
-    expect(onNavigate).toHaveBeenCalledWith("trust");
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Sections" })).getByRole("button", { name: "Accuracy" }));
+    expect(onNavigate).toHaveBeenCalledWith("accuracy");
   });
 
   it("offers the assistant only when the backend has AI configured", () => {
@@ -51,7 +51,7 @@ describe("BottomBar", () => {
     render(<BottomBar view="today" onNavigate={onNavigate} pathCount={14} aiEnabled />);
     const nav = screen.getByRole("navigation", { name: "Sections" });
     expect(within(nav).getByRole("button", { current: "page" })).toHaveTextContent("Today");
-    expect(within(nav).getAllByRole("button").map((b) => b.textContent)).toEqual(["Today", "Paths14", "Trust", "Assistant"]);
+    expect(within(nav).getAllByRole("button").map((b) => b.textContent)).toEqual(["Today", "Paths14", "Accuracy", "Assistant"]);
     fireEvent.click(within(nav).getByRole("button", { name: /Paths/ }));
     expect(onNavigate).toHaveBeenCalledWith("paths");
   });

@@ -8,45 +8,20 @@ import { STATUS_META, type RouteStatus } from "./routeChannels";
 
 export function StatusPill({ status }: { status: RouteStatus }) {
   const meta = STATUS_META[status];
-  // "Proven" is the one filled pill, so it drops the dot: the fill is already the mark,
-  // and a dot inside a solid block reads as a smudge rather than a signal. The outlined
-  // "Evidence conflicts" drops it for the same reason.
-  const filled = status === "proven" || status === "conflict";
+  // The outlined "Evidence conflicts" drops the dot: the outline is already the mark, and a
+  // dot inside it reads as a smudge rather than a signal. "Proven" carries a check instead.
+  const outlined = status === "conflict";
   return (
     <span
       className={`inline-flex shrink-0 items-center gap-1.5 text-[12px] font-medium ${meta.className}`}
       title={meta.hint}
     >
-      {!filled && <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />}
+      {meta.glyph ? (
+        <span aria-hidden="true">{meta.glyph}</span>
+      ) : (
+        !outlined && <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />
+      )}
       {meta.label}
-    </span>
-  );
-}
-
-// Severity as shape, not hue: a track whose fill length IS the number beside it, so the
-// two encode the same fact twice and neither depends on colour.
-export function SeverityBar({ priority, score }: { priority?: number | null; score: number }) {
-  // Priority is what orders the list; the raw exploit score is the fallback for a path
-  // the analyzer has not banded yet.
-  const value = priority ?? score * 100;
-  return (
-    <span
-      className="flex shrink-0 items-center gap-2"
-      title={
-        priority != null
-          ? `Triage priority ${value.toFixed(0)}/100 - what ranks this list. Exploit score is ${Math.round(score * 100)}%.`
-          : `Exploit score ${Math.round(score * 100)}%`
-      }
-    >
-      <span className="h-1 w-10 overflow-hidden rounded-full bg-slate-200">
-        <span
-          className="block h-full bg-slate-600"
-          style={{ width: `${Math.max(4, Math.min(100, value))}%` }}
-        />
-      </span>
-      <span className="w-6 text-right text-[12px] font-semibold tabular-nums text-slate-800">
-        {value.toFixed(0)}
-      </span>
     </span>
   );
 }

@@ -235,7 +235,7 @@ export default function LoginGate({ children }: { children: ReactNode }) {
         )}
 
         {ssoAvailable && (
-          <div className="my-4 flex items-center gap-3 text-[12px] uppercase tracking-wide text-slate-500">
+          <div className="my-4 flex items-center gap-3 text-[12px] text-slate-500">
             <span className="h-px flex-1 bg-edge" />
             or use a token
             <span className="h-px flex-1 bg-edge" />

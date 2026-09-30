@@ -98,12 +98,14 @@ is - so a lower-scoring route can outrank a higher-scoring one.
 
 | | |
 |---|---|
-| ![Attack path detail](docs/screenshot-paths.png) | ![Score calibration](docs/screenshot-trust.png) |
+| ![Attack path detail](docs/screenshot-paths.png) | ![Score accuracy](docs/screenshot-accuracy.png) |
 | Why the route is P1, one probability with its range, and every hop with what it lets the attacker do and where its probability came from. | Whether the engine's own scores held up against recorded outcomes - and whether there are enough of them to say. |
 
-*The screenshots are `make demo` with **seeded** verdicts, which is why the calibration panel
-gives one ("underconfident": across 14 outcomes generated to exercise it, the engine predicted 60%
-where 71% held up). A fresh install and the [public demo](https://demo.a3thinker.it) report
+*The screenshots are `make demo` with **seeded** verdicts: `make seed-validation` records
+synthetic outcomes on 8 of the 14 routes, the way a BAS run tests part of an estate, which is why
+the calibration panel has something to show - and why it still says **not enough outcomes yet**:
+8 is far short of the 30 a verdict needs (leaning "calibrated on average": the engine predicted
+58% where 50% held up). A fresh install and the [public demo](https://demo.a3thinker.it) report
 **insufficient data** instead, until real outcomes exist. The public demo runs on one free VM, so
 treat it as best-effort.*
 

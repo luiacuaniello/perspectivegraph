@@ -1171,6 +1171,19 @@ the **evidence conflicts**. The analyzer's own Priority never contains a verdict
 what the next verdict records and the triage order is graded against
 (`priorityDiscrimination`), and a ranking a verdict already moved would grade itself.
 
+**The dashboard lists the same order one asset at a time.** Routes are grouped under the
+sensitive asset they reach - "cluster-admin, 4 routes" rather than four rows that look
+unrelated - and a group sits where its most urgent route sits, so reading the groups top to
+bottom is reading the engine's order. Routes a tester refuted (with no runtime alert or open
+access to contradict the test) are set apart in a closed **Refuted by tests** section: they
+are candidates to suppress as false positives, not work still to do.
+
+**Every route has a link**: `#paths/<path id>` opens the dashboard on it, and **Copy link** in
+the detail puts that link on the clipboard for a ticket or a chat. Path ids are derived from
+the route itself, so a link stays good while the route stays open; one whose route has since
+closed - fixed, or outside the application scope shown - says so instead of quietly showing
+another route.
+
 ### Data hygiene: a map of the attack surface, never a vault of secrets
 
 PerspectiveGraph ingests raw scanner output, which can incidentally carry a **live
@@ -1299,9 +1312,15 @@ curl -s "$API/validations" | jq .metrics      # precision / recall over the test
 
 It's deliberately **not** a global precision/recall claim (that needs exhaustive
 ground truth) - it's "here's the evidence on what was actually tested", which is
-how trust is earned. The dashboard shows a **Validation** card (precision) and a
-**✓ validated real / ✗ refuted** badge on each tested path; set `VALIDATIONS_PATH`
-to persist. `make seed-validation` records sample verdicts against the live paths.
+how trust is earned. The dashboard's **Accuracy** page leads with the verdict and what it means
+for how to read a score, then lists every recorded outcome - which route, who tested it, when -
+with the statistics (reliability diagram, error scores, ranking quality, diagnosis) closed
+underneath; each tested path shows **Proven by** / **Refuted by** the source that tested it.
+What the detection stack caught is on **Today**, since it is a fact about the estate rather
+than about the scores. Set `VALIDATIONS_PATH` to persist. `make seed-validation` records synthetic verdicts on part of the live paths the
+way a BAS run would: about 40% of them plus every one a runtime alert fired on, each confirmed
+with probability equal to its score - so some likely routes fail and some unlikely ones work.
+Those verdicts demonstrate the instrument; they are not evidence about the engine.
 
 #### Calibration: does the score mean anything? (the demo→production gate)
 
@@ -1334,7 +1353,7 @@ The verdict needs **both** the mean and the bins before it says well-calibrated:
 The middle row exists because the mean alone cannot carry the last one. A score whose
 outcomes do not depend on it at all can still predict the base rate on average - the
 `low-resolution` self-test scenario has a mean gap of −0.006 and an ECE of 0.21 - and it
-used to be labelled well-calibrated, which the Trust page then read aloud as "70% means
+used to be labelled well-calibrated, which the Accuracy page (then called Trust) read aloud as "70% means
 70%". It is also what too few samples per bucket honestly produce: ECE is noisy on small
 data, so a per-score claim the data cannot support is withheld. The verdict describes the
 pooled population; a miscalibration that differs by evidence basis can still hide inside a
@@ -1383,7 +1402,7 @@ and simply does not count toward the triage-order grade.
 #                          priorityDiscrimination { auc aucLow aucHigh verdict } } }
 ```
 
-`make seed-validation` shows the two claims coming apart on synthetic verdicts: the
+`make calibration-selftest` shows the two claims coming apart on synthetic verdicts: its
 `overconfident` scenario is badly miscalibrated yet orders paths better than any other,
 while `low-resolution` cannot be told apart from a coin. Those verdicts are generated,
 so they prove the instrument, not the engine. The dashboard shows both orders under the
@@ -1694,7 +1713,7 @@ severity-derived weight.
 ### KEV holdout: a calibration dataset that builds itself (optional)
 
 Calibration normally needs verdicts, and verdicts normally need a red team. Most
-installations have neither, so the Trust page reads *"insufficient data"* forever. The
+installations have neither, so the Accuracy page reads *"insufficient data"* forever. The
 KEV holdout fills part of that gap from public feeds alone.
 
 The obvious version of this idea does not work, and it is worth being precise about why.
@@ -1732,7 +1751,7 @@ Two things to expect, both structural:
   What survives the mismatch, and what the track is for, is **discrimination**: whether
   higher-scored CVEs really do turn out exploited more often than lower-scored ones.
 
-It appears as its own section on the Trust page and as `calibration.edge` in GraphQL,
+It appears as its own section on the Accuracy page and as `calibration.edge` in GraphQL,
 never merged into the headline verdict - the same separation the `path` and `target`
 scopes already enforce, for the same reason.
 

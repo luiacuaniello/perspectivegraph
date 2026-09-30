@@ -2,8 +2,9 @@ import type { AttackPath, Calibration, Dashboard, Fix, History, IngestSource, Ri
 import InfoTip from "./InfoTip";
 import { bareName } from "./pathLanguage";
 import { routeStatus, verdictSource } from "./routeChannels";
-import { isProvisional, PROVISIONAL_BELOW } from "./trustVerdict";
-import { SeverityBar, StatusPill, TargetIcon , NodeName } from "./routeChannelViews";
+import { isProvisional, PROVISIONAL_BELOW } from "./accuracyVerdict";
+import { StatusPill, TargetIcon, NodeName } from "./routeChannelViews";
+import { riskBandNote, shareRound } from "./todayNumbers";
 import { ZapIcon } from "./icons";
 
 // Today is the decision surface. The old overview opened with a tutorial, then a
@@ -22,7 +23,7 @@ interface Props {
   history?: History;
   onOpenPath: (id: string) => void;
   onSeeAllPaths: () => void;
-  onOpenTrust: () => void;
+  onOpenAccuracy: () => void;
   coverage?: IngestSource[] | null;
 }
 
@@ -40,11 +41,13 @@ export default function TodayView({
   history,
   onOpenPath,
   onSeeAllPaths,
-  onOpenTrust,
+  onOpenAccuracy,
   coverage,
 }: Props) {
   const topFixes = plan.slice(0, TOP_FIXES);
   const removable = topFixes.reduce((a, f) => a + f.coveragePct, 0);
+  // Whole percentages that add up to the total the page prints (see shareRound).
+  const shares = shareRound(topFixes.map((f) => f.coveragePct));
   const pathsCovered = topFixes.reduce((a, f) => a + f.pathCount, 0);
   // Sensitive assets an attacker can currently reach at all. Unlike an
   // "account compromise %" that pins at 100, this ticks down one by one as
@@ -64,21 +67,33 @@ export default function TodayView({
   // scroller inside the first for no gain.
   return (
     <div className="flex flex-col gap-4">
-      <Briefing
-        live={live}
-        reachable={reachable.length}
-        worst={worst}
-        openRoutes={posture.activePaths}
-        fixes={topFixes.length}
-        closes={pathsCovered}
-        removable={removable}
-        prevOpen={prevOpen}
-        calibration={calibration}
-        onOpenPath={onOpenPath}
-        onOpenTrust={onOpenTrust}
-      />
-
-      <CoverageStrip coverage={coverage} openRoutes={posture.activePaths} />
+      {/* The briefing reads best at a sentence's width, which left two thirds of a desktop
+          screen empty beside it while the three cards that qualify it sat at the bottom of
+          the page. They now take that column; on a phone they follow the briefing. */}
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,22rem)] lg:items-start">
+        <div className="flex min-w-0 flex-col gap-4">
+          <Briefing
+            live={live}
+            reachable={reachable.length}
+            worst={worst}
+            openRoutes={posture.activePaths}
+            fixes={topFixes.length}
+            closes={pathsCovered}
+            removable={removable}
+            prevOpen={prevOpen}
+            calibration={calibration}
+            risk={risk}
+            onOpenPath={onOpenPath}
+            onOpenAccuracy={onOpenAccuracy}
+          />
+          <CoverageStrip coverage={coverage} openRoutes={posture.activePaths} />
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
+          <AccuracyCard calibration={calibration} onOpen={onOpenAccuracy} />
+          {calibration?.detection && calibration.detection.tested > 0 && <DetectionCard detection={calibration.detection} />}
+          {violations.length > 0 && <ViolationCard count={violations.length} violations={violations} />}
+        </div>
+      </div>
 
       <section>
         <div className="mb-2 flex items-baseline justify-between">
@@ -94,12 +109,12 @@ export default function TodayView({
         {topFixes.length > 0 ? (
           <>
             <p className="mb-3 text-[12px] text-muted">
-              They cut <span className="font-semibold text-slate-700">{Math.round(removable * 100)}%</span> of
+              They cut <span className="font-semibold text-slate-700">{shares.reduce((a, v) => a + v, 0)}%</span> of
               reachable risk across {pathsCovered} of your {posture.activePaths} routes.
             </p>
             <ol className="flex flex-col gap-2">
               {topFixes.map((f, i) => (
-                <FixRow key={f.title} fix={f} rank={i + 1} />
+                <FixRow key={f.title} fix={f} rank={i + 1} share={shares[i]} />
               ))}
             </ol>
           </>
@@ -127,10 +142,6 @@ export default function TodayView({
         </ul>
       </section>
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        <TrustCard calibration={calibration} onOpen={onOpenTrust} />
-        {violations.length > 0 && <ViolationCard count={violations.length} violations={violations} />}
-      </div>
     </div>
   );
 }
@@ -146,6 +157,15 @@ function CoverageStrip({ coverage, openRoutes }: { coverage?: IngestSource[] | n
   if (!coverage || coverage.length === 0) return null;
   const stale = coverage.filter((c) => c.stale);
   const alarming = openRoutes === 0 && stale.length > 0;
+  // All current: one line, the names on hover. Twelve chips each saying "current" were a row
+  // of noise the eye learned to skip - and then skipped the day one of them said "silent".
+  if (stale.length === 0) {
+    return (
+      <p className="text-[12px] text-muted" title={coverage.map((c) => c.source).join(", ")}>
+        Built from {coverage.length} source{coverage.length === 1 ? "" : "s"}, all reporting.
+      </p>
+    );
+  }
   return (
     <div
       className={`rounded-xl border px-4 py-2.5 text-[12px] ${
@@ -196,20 +216,22 @@ function Briefing({
   removable,
   prevOpen,
   calibration,
+  risk,
   onOpenPath,
-  onOpenTrust,
+  onOpenAccuracy,
 }: {
   live: AttackPath[];
   reachable: number;
-  worst?: { name: string; compromiseProbability: number };
+  worst?: { name: string; compromiseProbability: number; ciLow: number; ciHigh: number };
   openRoutes: number;
   fixes: number;
   closes: number;
   removable: number;
   prevOpen?: number;
   calibration?: Calibration;
+  risk: RiskSimulation;
   onOpenPath: (id: string) => void;
-  onOpenTrust: () => void;
+  onOpenAccuracy: () => void;
 }) {
   const delta = prevOpen === undefined ? 0 : openRoutes - prevOpen;
   // Who, if anyone, has a recorded verdict on the routes that runtime says are live.
@@ -223,13 +245,13 @@ function Briefing({
   const testers = [...new Set(live.map(verdictSource).filter(Boolean))] as string[];
   // The other half of the live sentence, and the half nobody was saying.
   //
-  // "2 routes are being walked right now" answers whether it is happening. The trust
+  // "2 routes are being walked right now" answers whether it is happening. The accuracy
   // page separately knows that 9 of 10 confirmed-exploitable routes were walked without
   // the detection stack noticing. Put together they mean: it is happening, and probably
   // nobody is watching - which is the thing a reader most needs and neither page said.
   const det = calibration?.detection;
   const blind = det && det.tested > 0 ? det.tested - det.detected : 0;
-  // Provisional carries over from the trust verdict. The percentages below are computed
+  // Provisional carries over from the accuracy verdict. The percentages below are computed
   // from scores the engine itself currently rates mis-scaled, and asserting 61% in bold
   // while that caveat lives two screens away is the page believing its own output more
   // than its own measurement does.
@@ -251,8 +273,6 @@ function Briefing({
   );
   return (
     <section className="flex flex-col gap-2">
-      <p className="font-mono text-[12px] uppercase tracking-[0.14em] text-muted">Today</p>
-
       {live.length > 0 ? (
         <h1 className="max-w-[34ch] text-[22px] font-semibold leading-[1.25] tracking-[-0.02em] text-slate-900">
           {live.length} route{live.length === 1 ? " is" : "s are"} being walked
@@ -292,7 +312,7 @@ function Briefing({
               {" "}Of the routes tested end to end, {det.detected} of {det.tested}{" "}
               {det.detected === 1 ? "was" : "were"} caught by detection - so a route like this one
               is likely to run{" "}
-              <button onClick={onOpenTrust} className="font-medium text-slate-900 underline-offset-4 hover:underline">
+              <button onClick={onOpenAccuracy} className="font-medium text-slate-900 underline-offset-4 hover:underline">
                 unseen
               </button>
               .
@@ -317,7 +337,7 @@ function Briefing({
               <>
                 {" "}
                 <button
-                  onClick={onOpenTrust}
+                  onClick={onOpenAccuracy}
                   className="underline decoration-dotted underline-offset-2 hover:text-slate-700"
                   title={`That percentage rests on scores the engine currently rates provisional, measured on ${calibration?.samples ?? 0} recorded outcomes. The ranking holds; the scale is what is uncertain.`}
                 >
@@ -334,7 +354,15 @@ function Briefing({
         )}
         {worst ? (
           <>
-            {" "}Worst reachable: {worst.name} at {Math.round(worst.compromiseProbability * 100)}%.
+            {" "}Worst reachable: {worst.name} at {Math.round(worst.compromiseProbability * 100)}%
+            {/* The interval beside the number it qualifies. It used to be a section on the
+                accuracy page, reachable only by someone who already doubted the figure. */}
+            {worst.ciHigh - worst.ciLow >= 0.1 && (
+              <span className="tabular-nums" title="The simulation's 95% interval for this asset">
+                {" "}({Math.round(worst.ciLow * 100)}-{Math.round(worst.ciHigh * 100)}%)
+              </span>
+            )}
+            . <InfoTip text={riskBandNote(risk)} />
           </>
         ) : null}
         {delta !== 0 ? (
@@ -348,8 +376,8 @@ function Briefing({
   );
 }
 
-function FixRow({ fix, rank }: { fix: Fix; rank: number }) {
-  const pct = Math.round(fix.coveragePct * 100);
+function FixRow({ fix, rank, share }: { fix: Fix; rank: number; share: number }) {
+  const pct = share;
   return (
     <li className="flex items-center gap-3 rounded-xl border border-edge bg-panel px-4 py-3 transition hover:border-accent/50 sm:gap-5">
       <span className="w-4 shrink-0 text-[12px] tabular-nums text-muted">{rank}</span>
@@ -402,41 +430,82 @@ function PathRow({ path, onOpen }: { path: AttackPath; onOpen: () => void }) {
             </span>
           </span>
         </span>
-        <SeverityBar priority={path.priority} score={path.score} />
+        {/* The priority and its band, as in the list: "60" alone did not say what it measured. */}
+        {path.priority != null ? (
+          <span className="shrink-0 text-right" title={`Triage priority ${path.priority.toFixed(0)}/100 - what ranks these routes`}>
+            <span className="block text-[15px] font-semibold leading-none tabular-nums text-slate-900">{path.priority.toFixed(0)}</span>
+            <span className="mt-0.5 block text-[12px] font-semibold text-muted">{path.priorityLabel ?? "priority"}</span>
+          </span>
+        ) : (
+          <span className="shrink-0 text-[13px] font-semibold tabular-nums text-slate-900" title="Exploit score">
+            {Math.round(path.score * 100)}%
+          </span>
+        )}
       </button>
     </li>
   );
 }
-function TrustCard({ calibration, onOpen }: { calibration?: Calibration; onOpen: () => void }) {
+function AccuracyCard({ calibration, onOpen }: { calibration?: Calibration; onOpen: () => void }) {
   const has = calibration?.hasData;
   const verdict = calibration?.verdict ?? "not measured";
-  // The same rule as the Trust page: below the floor the headline is the sample size, and
+  // The same rule as the Accuracy page: below the floor the headline is the sample size, and
   // the direction is stated as a lean. The card used to headline "Underconfident" on
   // fourteen outcomes while the page it links to could not back it.
   const provisional = isProvisional(calibration);
+  // Neutral unless the verdict is uncertain: a calibration verdict is not "defended", so it
+  // does not get the green that means that everywhere else.
   const tone =
     provisional || verdict === "insufficient-data" || !has
       ? "text-slate-600"
       : verdict === "well-calibrated"
-        ? "text-emerald-700"
+        ? "text-slate-900"
         : "text-amber-700";
   return (
     <button
       onClick={onOpen}
       className="min-w-0 rounded-2xl border border-edge bg-panel px-4 py-3.5 text-left transition hover:border-accent/50"
     >
-      <div className="text-[12px] text-muted">Can you trust these numbers?</div>
+      <div className="text-[12px] text-muted">How accurate are the scores?</div>
       <div className={`mt-1.5 text-[17px] font-semibold leading-none ${provisional ? "" : "capitalize"} ${tone}`}>
         {provisional ? "Not enough outcomes yet" : verdict.replace(/-/g, " ")}
       </div>
       <div className="mt-1.5 text-[12px] text-muted">
         {!has
-          ? "no verdicts recorded yet · see how →"
+          ? "no outcomes recorded yet · see how →"
           : provisional
             ? `leaning ${verdict.replace(/-/g, " ")} · ${calibration!.samples} of ${PROVISIONAL_BELOW} tested routes · see how →`
             : `measured against ${calibration!.samples} tested routes · see how →`}
       </div>
     </button>
+  );
+}
+
+// Of the routes a tester CONFIRMED exploitable, how many the detection stack caught.
+//
+// A fact about the estate, not about the engine's scores - so it moved here from the
+// accuracy page. It needs no statistics to act on: 1 in 10 is a fact at any sample size,
+// and it says something no other number does - these routes are real AND invisible to the
+// controls meant to catch them.
+function DetectionCard({ detection }: { detection: NonNullable<Calibration["detection"]> }) {
+  const unseen = detection.tested - detection.detected;
+  return (
+    <div
+      className="min-w-0 rounded-2xl border border-edge bg-panel px-4 py-3.5"
+      title="Of the routes a red-team or BAS run confirmed exploitable and that carried a detection report, how many were caught or blocked."
+    >
+      <div className="text-[12px] text-muted">What detection caught</div>
+      <div className="mt-1.5 text-[17px] font-semibold leading-none tabular-nums text-slate-900">
+        {detection.detected} of {detection.tested}
+      </div>
+      <div className="mt-1.5 text-[12px] text-muted">
+        proven route{detection.tested === 1 ? "" : "s"} caught
+        {unseen > 0 && (
+          <>
+            {" "}· <span className="text-flag">{unseen} walked unseen</span>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 

@@ -48,7 +48,7 @@ demo-run:
 	@echo "→ Open the dashboard: http://localhost:3000  (see the kill chain, then click 'Open fix PR')"
 	@echo "  Make the fix a REAL pull request: set GITHUB_TOKEN on a sandbox repo - see docs/MANUAL.md."
 	@echo ""
-	@echo "  The 'Trust' view reads 'insufficient data' on purpose: no outcomes have been"
+	@echo "  The 'Accuracy' view reads 'insufficient data' on purpose: no outcomes have been"
 	@echo "  recorded, so the scores are estimates, and the page says so instead of inventing"
 	@echo "  a verdict. To watch the instrument work, 'make seed-validation' records SYNTHETIC"
 	@echo "  verdicts (derived from the scores, so the calibration it produces is a"
@@ -189,27 +189,35 @@ seed-discovery:
 
 ## seed-validation: record sample red-team/BAS verdicts on every current path (outcome correlated with the predicted score, plus a detection report on confirmed ones) so precision/recall AND the calibration panel + diagnostics (Brier/ECE, segments, detection, diagnosis) light up
 seed-validation:
-	@echo "→ recording scored red-team/BAS verdicts on every path → precision/recall + calibration diagnostics"
+	@echo "→ recording SYNTHETIC red-team/BAS verdicts on part of the paths → precision/recall + calibration diagnostics"
+	@# A BAS run tests some routes, not all of them, and its outcomes do not line up with the
+	@# scores: a route at 90% can fail and one at 30% can work. Testing every path and
+	@# confirming each one scored at 50% or more made every tested route P1 (11 of 14 on the
+	@# sample data) and an order no real test produces (AUC 1.00). So: about 40% of the
+	@# paths plus every one a runtime alert fired on, confirmed with probability equal to its
+	@# score, and "detected" only where that alert fired. Deterministic - both draws come
+	@# from a hash of the path id - so every run records the same verdicts.
 	@for i in $$(seq 1 20); do \
-	  pairs=$$(curl -sS -X POST http://localhost:8080/graphql -H 'Content-Type: application/json' \
-	    -d '{"query":"{ attackPaths{ id score } }"}' | jq -r '.data.attackPaths[] | "\(.id)\t\(.score)"'); \
-	  if [ -n "$$pairs" ]; then break; fi; \
+	  rows=$$(curl -sS -X POST http://localhost:8080/graphql -H 'Content-Type: application/json' \
+	    -d '{"query":"{ attackPaths{ id score runtimeConfirmed } }"}' | jq -r '.data.attackPaths[] | "\(.id)\t\(.score)\t\(.runtimeConfirmed)"'); \
+	  if [ -n "$$rows" ]; then break; fi; \
 	  echo "  waiting for the analyzer to surface attack paths…"; sleep 3; \
-	done; \
-	if [ -z "$$pairs" ]; then echo "  ✗ no attack paths yet - run 'make seed' (and give the analyzer a cycle) first"; exit 1; fi; \
-	printf '%s\n' "$$pairs" | while IFS="$$(printf '\t')" read -r id score; do \
+	 done; \
+	if [ -z "$$rows" ]; then echo "  ✗ no attack paths yet - run 'make seed' (and give the analyzer a cycle) first"; exit 1; fi; \
+	printf '%s\n' "$$rows" | while IFS="$$(printf '\t')" read -r id score live; do \
 	  [ -z "$$id" ] && continue; \
-	  outcome=$$(awk -v s="$$score" 'BEGIN{print (s>=0.5)?"confirmed":"refuted"}'); \
+	  pick=$$(printf '%s' "t:$$id" | cksum | cut -d' ' -f1); \
+	  draw=$$(printf '%s' "o:$$id" | cksum | cut -d' ' -f1); \
+	  if [ "$$live" != "true" ] && [ $$((pick % 100)) -ge 40 ]; then continue; fi; \
+	  outcome=$$(awk -v s="$$score" -v u="$$((draw % 100))" 'BEGIN{print (u < int(s*100+0.5))?"confirmed":"refuted"}'); \
 	  body="{\"pathId\":\"$$id\",\"outcome\":\"$$outcome\",\"source\":\"caldera-bas\",\"evidence\":\"atomic test run\""; \
-	  if [ "$$outcome" = "confirmed" ]; then \
-	    det=$$(awk -v s="$$score" 'BEGIN{print (s>=0.88)?"true":"false"}'); \
-	    body="$$body,\"detected\":$$det"; \
-	  fi; \
+	  if [ "$$outcome" = "confirmed" ]; then body="$$body,\"detected\":$$live"; fi; \
 	  curl -sS -X POST http://localhost:8080/validations -H 'Content-Type: application/json' -d "$$body}" >/dev/null; \
 	done; \
 	curl -sS -X POST http://localhost:8080/validations -H 'Content-Type: application/json' \
 	  -d '{"outcome":"missed","source":"red-team","route":"Okta → SaaS → data export (engine missed it)"}' >/dev/null; \
-	echo "  done - Overview ‘Calibration’ panel now shows segments, detection and a diagnosis:"; \
+	echo "  done - the Accuracy view now shows the verdict, the evidence and a diagnosis (verdicts from an"; \
+	echo "  earlier run stay recorded: start from an empty VALIDATIONS_PATH to see only these):"; \
 	curl -sS http://localhost:8080/validations | jq -c '.calibration | {samples,brier,brier_recalibrated,verdict,diagnosis}'
 
 ## seed-load: generate a large synthetic graph and POST it to ingest (scale demo)

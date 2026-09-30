@@ -1,9 +1,15 @@
 import type { ReactNode } from "react";
 
-export type Tone = "neutral" | "danger" | "warn" | "ok" | "info" | "accent";
+export type Tone = "neutral" | "fact" | "danger" | "warn" | "ok" | "info" | "accent";
 
+// The colours carry one meaning each, across the dashboard: danger (red) is the attacker's
+// advantage or something urgent, warn (amber) is uncertain, ok (green) is defended or fixed,
+// and facts are neutral - "fact" a firmer neutral for an observed one, "neutral" for an
+// estimate or a label. Green used to mean "good", "validated", "runtime" and "risk cut" at
+// once, and a chip that means four things means none.
 const TONE: Record<Tone, string> = {
   neutral: "bg-slate-500/10 text-slate-600",
+  fact: "bg-slate-500/15 text-slate-800",
   danger: "bg-red-500/15 text-red-700",
   warn: "bg-amber-500/15 text-amber-800",
   ok: "bg-emerald-500/15 text-emerald-700",

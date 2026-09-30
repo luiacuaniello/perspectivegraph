@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AttackPathList from "./AttackPathList";
 import type { AttackPath } from "../api/client";
@@ -80,7 +80,64 @@ describe("AttackPathList", () => {
     rerender(
       <AttackPathList paths={[refuted({ ...route, runtimeConfirmed: false })]} selectedId={null} onSelect={() => {}} />,
     );
+    fireEvent.click(screen.getByRole("button", { name: /Refuted by tests \(1\)/ }));
     expect(screen.getByRole("button", { name: /payments-admin/ })).toHaveTextContent("Refuted");
+  });
+
+  it("groups the routes to one asset under it, in the engine's order", () => {
+    // cluster-admin reached four ways read as four unrelated rows. The question is what you
+    // stand to lose, and by how many routes.
+    const to = (id: string, target: { id: string; name: string }, entry: string, priority: number): AttackPath => ({
+      ...route,
+      id,
+      priority,
+      priorityLabel: priority >= 70 ? "P1" : "P2",
+      runtimeConfirmed: false,
+      nodes: [
+        { id: `e-${id}`, label: "LoadBalancer", name: entry, properties: {} },
+        { id: target.id, label: "IAM_Role", name: target.name, properties: {} },
+      ],
+      steps: [{ edgeType: "EXPOSES", from: `e-${id}`, to: target.id, probability: 0.9 }],
+    });
+    const admin = { id: "role-admin", name: "account-admin" };
+    const db = { id: "db", name: "customer-db" };
+    render(
+      <AttackPathList
+        paths={[to("ap-1", admin, "edge-alb", 90), to("ap-2", db, "web-lb", 80), to("ap-3", admin, "deployer", 60)]}
+        selectedId="ap-3"
+        onSelect={() => {}}
+      />,
+    );
+    const headings = screen.getAllByRole("heading", { level: 3 });
+    expect(headings.map((h) => h.textContent)).toEqual(["1account-admin2 routes", "2customer-db"]);
+    const adminGroup = screen.getByRole("region", { name: /account-admin/ });
+    const lines = within(adminGroup).getAllByRole("button").filter((b) => b.dataset.routeId);
+    expect(lines.map((b) => b.dataset.routeId)).toEqual(["ap-1", "ap-3"]);
+    expect(lines[1]).toHaveAttribute("aria-current", "true");
+    // Each line still names its target for a screen reader, though the heading shows it.
+    expect(within(adminGroup).getByRole("button", { name: /^account-admin, from deployer · 1 hop/ })).toBe(lines[1]);
+  });
+
+  it("sets refuted routes apart, closed, and opens them when one is chosen", () => {
+    const refuted: AttackPath = {
+      ...route,
+      id: "ap-refuted",
+      runtimeConfirmed: false,
+      validation: { outcome: "refuted", source: "caldera-bas", evidence: "", testedAt: "" },
+    };
+    const { rerender } = render(<AttackPathList paths={[refuted]} selectedId={null} onSelect={() => {}} />);
+    const toggle = screen.getByRole("button", { name: /Refuted by tests \(1\)/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("button", { name: /payments-admin/ })).toBeNull();
+    // Named here, since no asset heading carries it.
+    fireEvent.click(toggle);
+    expect(screen.getByRole("button", { name: /payments-admin/ })).toHaveTextContent("payments-admin (AdministratorAccess)");
+    fireEvent.click(toggle);
+    expect(screen.queryByRole("button", { name: /payments-admin/ })).toBeNull();
+
+    // A link to a refuted route, or a click from Today, must not land on a closed section.
+    rerender(<AttackPathList paths={[refuted]} selectedId="ap-refuted" onSelect={() => {}} />);
+    expect(screen.getByRole("button", { name: /payments-admin/ })).toHaveAttribute("aria-current", "true");
   });
 
   it("offers row actions on an ordinary instance", () => {

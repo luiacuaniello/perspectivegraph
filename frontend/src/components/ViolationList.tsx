@@ -42,8 +42,8 @@ export default function ViolationList({ violations }: { violations: Violation[] 
         return (
           <div key={head.invariantId} className="rounded-xl border border-edge bg-panel p-4">
             <div className="flex flex-wrap items-center gap-2.5">
-              <Badge tone={severityTone(head.severity)} className="font-bold uppercase">
-                {head.severity}
+              <Badge tone={severityTone(head.severity)}>
+                {head.severity.charAt(0).toUpperCase() + head.severity.slice(1).toLowerCase()}
               </Badge>
               <code className="text-sm font-medium text-slate-800">{head.invariantId}</code>
               {group.length > 1 && (
