@@ -55,6 +55,16 @@ export const PAGES = {
   "GOVERNANCE.md": "governance",
 };
 
+// A page outside docs/ is rebuilt and link-checked only when the workflow's path filter
+// names it, so one missing from the filter is published once and then never checked again.
+// ROADMAP, SUPPORT, ADOPTERS and GOVERNANCE joined the site without joining the filter.
+const WORKFLOW = readFileSync(join(REPO, ".github", "workflows", "docs.yml"), "utf8");
+// Twice: once under push (publishing) and once under pull_request (the check).
+const untriggered = Object.keys(PAGES).filter((f) => !f.startsWith("docs/") && WORKFLOW.split(`- "${f}"`).length - 1 < 2);
+if (untriggered.length) {
+  throw new Error(`.github/workflows/docs.yml does not run on changes to ${untriggered.join(", ")}: add them to both path filters`);
+}
+
 const IMAGE = /\.(png|svg|gif|jpe?g|webp)$/i;
 
 function route(slug, frag) {
