@@ -26,6 +26,22 @@
 //
 // Crown-jewel classification is data-driven via resource tags - see
 // ingestion.CrownJewelFromTags.
+//
+// Identities are keyed the way the other AWS sources key them, so the same role or
+// instance is one node whichever source reported it. A role is keyed on its ARN, as the
+// iam, cloudnet and SSO collectors do: keyed on its name, it never met the role those
+// sources describe, and it merged with any Kubernetes ClusterRole of the same name - an
+// AWS role called "admin" and the ClusterRole "admin" every cluster ships became one node,
+// and a namespace admin appeared to reach the account's S3 data. An instance is scoped to
+// the bundle's account_id, as cloudnet scopes it.
+//
+// An instance's role comes from its instance profile, and EC2 reports only the profile.
+// The profile's role is read from aws.iam-profile resources (or an InstanceProfileList on
+// a role) when the export has them. Without them the role is guessed to share the
+// profile's name - true of a profile the console creates, often false of one Terraform or
+// CloudFormation creates - and that join is marked as inferred, at half the confidence.
+// It used to be taken as fact, with the profile's name read as the role's: an instance
+// whose profile was named differently reached a role nobody had defined, and no route.
 package custodian
 
 import (
@@ -60,7 +76,7 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 		return nil, fmt.Errorf("decode custodian bundle: %w", err)
 	}
 
-	g := &builder{nodes: map[string]ontology.Node{}, appOf: map[string]string{}}
+	g := &builder{nodes: map[string]ontology.Node{}, appOf: map[string]string{}, account: b.AccountID, profileRole: map[string]string{}}
 	for _, pol := range b.Policies {
 		for _, res := range pol.Resources {
 			switch strings.ToLower(pol.Resource) {
@@ -68,6 +84,8 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 				g.ec2(res)
 			case "aws.iam-role", "iam-role", "iam":
 				g.iamRole(res)
+			case "aws.iam-profile", "iam-profile", "instance-profile":
+				g.iamProfile(res)
 			case "aws.s3", "s3", "bucket":
 				g.bucket(res)
 			case "aws.rds", "rds", "database":
@@ -77,6 +95,7 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 			}
 		}
 	}
+	g.linkInstanceRoles() // after every policy: the profiles may come after the instances
 	g.inferEdges()
 
 	return []ontology.Event{{
@@ -96,6 +115,16 @@ type builder struct {
 	lbs   []string          // load-balancer node ids
 	vms   []string          // EC2 node ids
 	admin []string          // admin-role node ids
+
+	account     string            // the bundle's account_id, "" when it has none
+	profileRole map[string]string // instance-profile ARN (and name) -> role ARN
+	pending     []instanceLink    // instances whose role is resolved once every policy is read
+}
+
+// instanceLink is an instance and the instance profile it runs with, waiting for the
+// profile's role to be known.
+type instanceLink struct {
+	vm, profileARN, profileName string
 }
 
 func (b *builder) upsert(n ontology.Node) {
@@ -114,14 +143,6 @@ func (b *builder) upsert(n ontology.Node) {
 		return
 	}
 	b.nodes[n.ID] = n
-}
-
-func (b *builder) stub(label ontology.Label, name string) string {
-	id := ontology.NewID(label, name)
-	if _, ok := b.nodes[id]; !ok {
-		b.nodes[id] = ontology.Node{ID: id, Label: label, Name: name}
-	}
-	return id
 }
 
 func (b *builder) edge(t ontology.EdgeType, from, to string, p float64) {
@@ -168,8 +189,11 @@ func (b *builder) ec2(r map[string]any) {
 		return
 	}
 	tg := tags(r)
-	nodeID := ontology.NewID(ontology.LabelVirtualMachine, id)
+	nodeID := ontology.ScopedID(ontology.LabelVirtualMachine, b.account, id)
 	props := map[string]any{ontology.PropARN: str(r["Arn"])}
+	if b.account != "" {
+		props[ontology.PropAccount] = b.account
+	}
 	if ip := str(r["PublicIpAddress"]); ip != "" {
 		props[ontology.PropInternetExposed] = true
 		props["public_ip"] = ip
@@ -182,10 +206,59 @@ func (b *builder) ec2(r map[string]any) {
 	b.upsert(ontology.Node{ID: nodeID, Label: ontology.LabelVirtualMachine, Name: nameFrom(tg, id), Properties: props})
 	b.vms = append(b.vms, nodeID)
 
-	if role := instanceProfile(r); role != "" {
-		roleID := b.stub(ontology.LabelIAMRole, role)
-		b.edge(ontology.EdgeAssumes, nodeID, roleID, 0.8)
+	if arn, name := instanceProfile(r); name != "" {
+		b.pending = append(b.pending, instanceLink{vm: nodeID, profileARN: arn, profileName: name})
 	}
+}
+
+// profileNameConfidence is how far the name convention is trusted when the export says
+// nothing about a profile's role: as likely as not, since the console keeps the names
+// equal and infrastructure-as-code often does not.
+const profileNameConfidence = 0.5
+
+// linkInstanceRoles joins each instance to the role its profile carries: the role the
+// export names when it has the profile, otherwise the role that shares the profile's name,
+// marked as an inferred join at half the probability.
+func (b *builder) linkInstanceRoles() {
+	for _, l := range b.pending {
+		if arn := first(b.profileRole[l.profileARN], b.profileRole[l.profileName]); arn != "" {
+			b.edge(ontology.EdgeAssumes, l.vm, b.roleNode(arn, ""), 0.8)
+			continue
+		}
+		account := first(ingestion.AccountFromARN(l.profileARN), b.account)
+		roleID := b.roleNode(roleARN(account, l.profileName), l.profileName)
+		b.edges = append(b.edges, ontology.Edge{
+			Type: ontology.EdgeAssumes, From: l.vm, To: roleID,
+			ExploitProbability: 0.8 * profileNameConfidence,
+			Properties: map[string]any{
+				ontology.PropResolutionMethod:     "instance-profile-name",
+				ontology.PropResolutionConfidence: profileNameConfidence,
+			},
+		})
+	}
+}
+
+// roleNode returns the id of the role with this ARN, adding a node for it when the export
+// did not list the role itself.
+func (b *builder) roleNode(arn, name string) string {
+	id := ontology.NewID(ontology.LabelIAMRole, arn)
+	if _, ok := b.nodes[id]; !ok {
+		if name == "" {
+			name = arn[strings.LastIndex(arn, "/")+1:]
+		}
+		props := map[string]any{}
+		if acct := ingestion.AccountFromARN(arn); acct != "" {
+			props[ontology.PropAccount] = acct
+		}
+		b.nodes[id] = ontology.Node{ID: id, Label: ontology.LabelIAMRole, Name: name, Properties: props}
+	}
+	return id
+}
+
+// roleARN is the ARN of a role with no path, the one AWS gives a role created without one.
+// It stands in for a role the export names but gives no Arn for.
+func roleARN(account, name string) string {
+	return "arn:aws:iam::" + account + ":role/" + name
 }
 
 func (b *builder) iamRole(r map[string]any) {
@@ -193,8 +266,22 @@ func (b *builder) iamRole(r map[string]any) {
 	if roleName == "" {
 		return
 	}
-	nodeID := ontology.NewID(ontology.LabelIAMRole, roleName)
+	arn := str(r["Arn"])
+	if arn == "" {
+		arn = roleARN(b.account, roleName)
+	}
+	nodeID := ontology.NewID(ontology.LabelIAMRole, arn)
 	props := map[string]any{ontology.PropARN: str(r["Arn"])}
+	if acct := first(ingestion.AccountFromARN(arn), b.account); acct != "" {
+		props[ontology.PropAccount] = acct
+	}
+	// GetAccountAuthorizationDetails lists a role's instance profiles; take them when a
+	// role arrives in that shape.
+	for _, ip := range slice(r["InstanceProfileList"]) {
+		if m, ok := ip.(map[string]any); ok {
+			b.mapProfile(str(m["Arn"]), str(m["InstanceProfileName"]), arn)
+		}
+	}
 	if hasAdminPolicy(r) {
 		// An admin role is itself a crown jewel: owning it is owning the account.
 		props[ontology.PropCrownJewel] = true
@@ -202,6 +289,34 @@ func (b *builder) iamRole(r map[string]any) {
 		b.admin = append(b.admin, nodeID)
 	}
 	b.upsert(ontology.Node{ID: nodeID, Label: ontology.LabelIAMRole, Name: roleName, Properties: props})
+}
+
+// iamProfile reads an instance profile (Custodian's aws.iam-profile: ListInstanceProfiles)
+// and the role it carries - at most one, by AWS's own rule.
+func (b *builder) iamProfile(r map[string]any) {
+	for _, ro := range slice(r["Roles"]) {
+		m, ok := ro.(map[string]any)
+		if !ok {
+			continue
+		}
+		arn := str(m["Arn"])
+		if arn == "" && str(m["RoleName"]) != "" {
+			arn = roleARN(first(ingestion.AccountFromARN(str(r["Arn"])), b.account), str(m["RoleName"]))
+		}
+		if arn != "" {
+			b.mapProfile(str(r["Arn"]), str(r["InstanceProfileName"]), arn)
+			return
+		}
+	}
+}
+
+func (b *builder) mapProfile(profileARN, profileName, roleARN string) {
+	if profileARN != "" {
+		b.profileRole[profileARN] = roleARN
+	}
+	if profileName != "" {
+		b.profileRole[profileName] = roleARN
+	}
 }
 
 func (b *builder) bucket(r map[string]any) {
@@ -328,19 +443,21 @@ func publicGrant(r map[string]any) (granted, readable bool) {
 	return granted, readable
 }
 
-// instanceProfile accepts either a string role name or {"Arn": ".../role"}.
-func instanceProfile(r map[string]any) string {
+// instanceProfile returns the ARN and the name of an instance's profile. EC2 reports it as
+// {"Arn": ".../instance-profile/NAME", "Id": ...}; a flattened export may give the name
+// alone. It is the PROFILE's name: the role inside it can be named anything.
+func instanceProfile(r map[string]any) (arn, name string) {
 	switch p := r["IamInstanceProfile"].(type) {
 	case string:
-		return p
+		if strings.HasPrefix(p, "arn:") {
+			return p, p[strings.LastIndex(p, "/")+1:]
+		}
+		return "", p
 	case map[string]any:
 		arn := str(p["Arn"])
-		if i := strings.LastIndex(arn, "/"); i >= 0 {
-			return arn[i+1:]
-		}
-		return arn
+		return arn, arn[strings.LastIndex(arn, "/")+1:]
 	}
-	return ""
+	return "", ""
 }
 
 func slice(v any) []any {

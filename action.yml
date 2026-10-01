@@ -160,6 +160,13 @@ inputs:
     description: Pull-request number, so findings can be commented back onto it.
     required: false
     default: ${{ github.event.pull_request.number || 0 }}
+  cluster:
+    description: >-
+      The Kubernetes cluster the report describes, when the estate's dumps of it were
+      ingested with ?cluster=. Kubernetes names repeat across clusters, so the change meets
+      the estate's objects only under the same name. Leave empty for a single cluster.
+    required: false
+    default: ""
   max-critical:
     description: >-
       Fail when more than this many critical attack paths count against the change - the
@@ -371,6 +378,14 @@ runs:
           *) echo "attribution=no" >> "$GITHUB_OUTPUT" ;;
         esac
 
+        # -cluster arrived in 1.28.0. An older binary refuses it outright, and dropping it
+        # quietly would compare the change with the wrong cluster's objects, so the run step
+        # stops instead when cluster is set and the binary cannot take it.
+        case "$probe" in
+          *-cluster*) echo "cluster=yes" >> "$GITHUB_OUTPUT" ;;
+          *) echo "cluster=no" >> "$GITHUB_OUTPUT" ;;
+        esac
+
         echo "$dir" >> "$GITHUB_PATH"
 
     - name: Gate on attack paths
@@ -400,6 +415,8 @@ runs:
         PERSIST: ${{ inputs.persist }}
         BASE_REPORTS: ${{ inputs.base-reports }}
         KNOWS_ATTRIBUTION: ${{ steps.download.outputs.attribution }}
+        CLUSTER: ${{ inputs.cluster }}
+        KNOWS_CLUSTER: ${{ steps.download.outputs.cluster }}
       run: |
         # -e OFF, explicitly. GitHub runs composite bash steps as `bash -e -o pipefail`,
         # so a non-zero exit from the gate would abort this step at the line that produces
@@ -417,6 +434,13 @@ runs:
         [ -n "$SLUG" ] && args+=(-slug "$SLUG")
         [ -n "$SHA" ] && args+=(-sha "$SHA")
         [ -n "$PR" ] && [ "$PR" != "0" ] && args+=(-pr "$PR")
+        if [ -n "$CLUSTER" ]; then
+          if [ "$KNOWS_CLUSTER" != "yes" ]; then
+            echo "::error::cluster is set, but this gate binary predates -cluster (1.28.0). Pin a newer version, or leave cluster empty."
+            exit 1
+          fi
+          args+=(-cluster "$CLUSTER")
+        fi
         [ -n "$REPORT" ] && args+=(-report "$REPORT" -source "$SOURCE")
         [ "$ALLOW_UNKNOWN" = "true" ] && args+=(-allow-unknown)
         case "$ATTRIBUTION" in

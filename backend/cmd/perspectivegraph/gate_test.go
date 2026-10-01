@@ -128,7 +128,7 @@ func TestGatePostsPRContextAndSignsTheBody(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := postGateReport(srv.Client(), srv.URL, "trivy", "acme/payments", "abc123", "acme/payments", 42, "", secret, body)
+	_, err := postGateReport(srv.Client(), srv.URL, "trivy", "acme/payments", "abc123", "acme/payments", "", 42, "", secret, body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestGateSendsNoSignatureWithoutASecret(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := postGateReport(srv.Client(), srv.URL, "trivy", "s", "c", "", 0, "", "", []byte("{}")); err != nil {
+	if _, err := postGateReport(srv.Client(), srv.URL, "trivy", "s", "c", "", "", 0, "", "", []byte("{}")); err != nil {
 		t.Fatal(err)
 	}
 	if present {
@@ -177,7 +177,7 @@ func TestGateFailsWhenIngestIsRejected(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := postGateReport(srv.Client(), srv.URL, "trivy", "s", "c", "", 0, "", "x", []byte("{}"))
+	_, err := postGateReport(srv.Client(), srv.URL, "trivy", "s", "c", "", "", 0, "", "x", []byte("{}"))
 	if err == nil {
 		t.Fatal("a rejected ingest was reported as success")
 	}
@@ -216,5 +216,25 @@ func TestGateOutputNamesWhatItBlockedOn(t *testing.T) {
 	}
 	if !strings.Contains(unknown, "NOT a clean result") {
 		t.Errorf("the UNKNOWN output does not say it is not a pass, which is the one thing it must say: %q", unknown)
+	}
+}
+
+// Kubernetes names repeat across clusters, so an estate ingested with ?cluster= keys its
+// objects with the cluster, and a change sent without it would meet none of them: the
+// gate would answer clean for a manifest that opens a route. The cluster travels with the
+// report, inside the signed query.
+func TestGateSendsTheClusterWithTheReport(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Query().Get("cluster")
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+
+	if _, err := postGateReport(srv.Client(), srv.URL, "k8s", "s", "c", "", "prod-eu", 0, "", "", []byte("[]")); err != nil {
+		t.Fatal(err)
+	}
+	if got != "prod-eu" {
+		t.Errorf("cluster = %q, want prod-eu", got)
 	}
 }

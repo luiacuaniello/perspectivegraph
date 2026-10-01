@@ -108,6 +108,7 @@ func runGate(args []string) error {
 	sha := fs.String("sha", os.Getenv("GITHUB_SHA"), "commit SHA under test")
 	pr := fs.Int("pr", 0, "pull-request number, if any")
 	repo := fs.String("repo", "", "repository identity for reports that carry file paths but not the repo (defaults to -slug)")
+	cluster := fs.String("cluster", "", "the Kubernetes cluster the report describes, as the estate's dumps of it were ingested (?cluster=). Kubernetes names repeat across clusters, so the change meets the estate only under the same name")
 	ingest := fs.String("ingest", envOr("INGEST_URL", "http://localhost:8081"), "ingest base URL")
 	api := fs.String("api", envOr("API_URL", "http://localhost:8080"), "API base URL")
 	token := fs.String("token", os.Getenv("API_TOKEN"), "bearer token, if API auth is on")
@@ -169,7 +170,7 @@ func runGate(args []string) error {
 		v, err := localVerdict(context.Background(), localOpts{
 			slug: *slug, sha: *sha, pr: *pr, repository: *repo,
 			reports: specs, baseReports: base, estate: *estate,
-			awsRegion: *awsRegion, awsRole: *awsRole,
+			awsRegion: *awsRegion, awsRole: *awsRole, cluster: *cluster,
 			stdin: stdin, attribution: *attribution,
 		})
 		if err != nil {
@@ -192,7 +193,7 @@ func runGate(args []string) error {
 	v, err := serverVerdict(serverOpts{
 		client: &http.Client{Timeout: 30 * time.Second},
 		api:    *api, ingest: *ingest, token: *token, secret: *secret,
-		source: *source, slug: *slug, sha: *sha, repo: *repo, pr: *pr,
+		source: *source, slug: *slug, sha: *sha, repo: *repo, cluster: *cluster, pr: *pr,
 		report: body, attribution: *attribution, persist: *persist,
 		timeout: *timeout, poll: *poll,
 	}, os.Stderr)
@@ -208,6 +209,7 @@ type serverOpts struct {
 	client                     *http.Client
 	api, ingest, token, secret string
 	source, slug, sha, repo    string
+	cluster                    string
 	pr                         int
 	report                     []byte // nil: poll only, something else ingested
 	attribution                string
@@ -227,7 +229,7 @@ func serverVerdict(o serverOpts, log io.Writer) (gateVerdict, error) {
 		attr = "commit"
 	}
 	if attr == "diff" {
-		v, err := postImpact(o.client, o.api, o.source, o.slug, o.sha, o.repo, o.pr, o.token, o.report)
+		v, err := postImpact(o.client, o.api, o.source, o.slug, o.sha, o.repo, o.cluster, o.pr, o.token, o.report)
 		switch {
 		case errors.Is(err, errNoImpact):
 			// An engine older than 1.22 has no comparison to offer. Falling back keeps the
@@ -238,7 +240,7 @@ func serverVerdict(o serverOpts, log io.Writer) (gateVerdict, error) {
 			return gateVerdict{}, err
 		default:
 			if o.persist {
-				if _, err := postGateReport(o.client, o.ingest, o.source, o.slug, o.sha, o.repo, o.pr, o.token, o.secret, o.report); err != nil {
+				if _, err := postGateReport(o.client, o.ingest, o.source, o.slug, o.sha, o.repo, o.cluster, o.pr, o.token, o.secret, o.report); err != nil {
 					// The verdict stands - it was computed without the report in the graph -
 					// but whoever asked for the write must hear that it did not happen.
 					fmt.Fprintf(log, "gate: the verdict stands, but -persist failed: %v\n", err)
@@ -261,7 +263,7 @@ func serverVerdict(o serverOpts, log io.Writer) (gateVerdict, error) {
 	var floor time.Time
 	if o.report != nil {
 		floor = time.Now().UTC()
-		batch, err := postGateReport(o.client, o.ingest, o.source, o.slug, o.sha, o.repo, o.pr, o.token, o.secret, o.report)
+		batch, err := postGateReport(o.client, o.ingest, o.source, o.slug, o.sha, o.repo, o.cluster, o.pr, o.token, o.secret, o.report)
 		if err != nil {
 			return gateVerdict{}, err
 		}
@@ -300,10 +302,13 @@ var errNoImpact = errors.New("the engine has no /gate/impact")
 // report goes to POST /gate/impact with the same parameters the ingest webhook takes, and
 // the answer is the verdict. The API authenticates it with the bearer token; nothing is
 // written, so it needs no ingest signature.
-func postImpact(client *http.Client, base, source, slug, sha, repo string, pr int, token string, body []byte) (gateVerdict, error) {
+func postImpact(client *http.Client, base, source, slug, sha, repo, cluster string, pr int, token string, body []byte) (gateVerdict, error) {
 	q := url.Values{"source": {source}, "slug": {slug}, "sha": {sha}}
 	if repo != "" {
 		q.Set("repo", repo)
+	}
+	if cluster != "" {
+		q.Set("cluster", cluster)
 	}
 	if pr > 0 {
 		q.Set("pr", strconv.Itoa(pr))
@@ -396,10 +401,13 @@ func readGateReport(path string, stdin []byte) ([]byte, error) {
 // so makes the commit findable later.
 // postGateReport sends a report to ingest and returns the batch id the engine gave it -
 // empty from an engine too old to track batches.
-func postGateReport(client *http.Client, base, source, slug, sha, repo string, pr int, token, secret string, body []byte) (string, error) {
+func postGateReport(client *http.Client, base, source, slug, sha, repo, cluster string, pr int, token, secret string, body []byte) (string, error) {
 	q := url.Values{"slug": {slug}, "sha": {sha}}
 	if repo != "" {
 		q.Set("repo", repo)
+	}
+	if cluster != "" {
+		q.Set("cluster", cluster)
 	}
 	if pr > 0 {
 		q.Set("pr", strconv.Itoa(pr))

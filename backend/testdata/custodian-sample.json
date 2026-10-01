@@ -1,5 +1,5 @@
 {
-  "_comment": "Real AWS/Custodian export shapes: ALB Scheme + app tag, EC2 PublicIpAddress/IamInstanceProfile/Tags, IAM AttachedManagedPolicies, S3 with tag-based data classification. LB→EC2 is inferred from the shared app tag; the admin role's reach over crown-jewel data stores is inferred from AdministratorAccess.",
+  "_comment": "Real AWS/Custodian export shapes: ALB Scheme + app tag, EC2 PublicIpAddress/IamInstanceProfile/Tags, IAM AttachedManagedPolicies, the instance profile that names the EC2 role (aws.iam-profile), S3 with tag-based data classification. LB→EC2 is inferred from the shared app tag; the admin role's reach over crown-jewel data stores is inferred from AdministratorAccess.",
   "provider": "aws",
   "account_id": "123456789012",
   "policies": [
@@ -27,6 +27,17 @@
             { "Key": "Name", "Value": "web-frontend" },
             { "Key": "app", "Value": "web" }
           ]
+        }
+      ]
+    },
+    {
+      "policy": "iam-instance-profiles",
+      "resource": "aws.iam-profile",
+      "resources": [
+        {
+          "InstanceProfileName": "web-admin",
+          "Arn": "arn:aws:iam::123456789012:instance-profile/web-admin",
+          "Roles": [{ "RoleName": "web-admin", "Arn": "arn:aws:iam::123456789012:role/web-admin" }]
         }
       ]
     },

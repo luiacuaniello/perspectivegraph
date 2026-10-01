@@ -6,10 +6,20 @@
 //	Pod ──ASSUMES──▶ ServiceAccount ──ASSUMES──▶ Role   (crown jewel if admin)
 //	Pod ──HOSTS──▶ Image   (inferred from the image ref by the normalizer)
 //
-// Input is the JSON of `kubectl get ingress,service,pod,serviceaccount,
-// clusterrole,clusterrolebinding,rolebinding -A -o json` - a List whose items
+// Input is the JSON of `kubectl get ingress,service,pod,serviceaccount,role,
+// clusterrole,rolebinding,clusterrolebinding -A -o json` - a List whose items
 // the collector walks by kind. This turns a real cluster into discoverable
 // attack surface without hand-stitched ids.
+//
+// Names in Kubernetes are unique only within their scope, and the ids follow it. A Role
+// belongs to a namespace, so it is keyed with its namespace: keyed on its name alone, a
+// harmless "deployer" in one namespace became the same node as a "deployer" that can
+// create pods in another, and inherited its route to cluster-admin. Everything in a dump
+// belongs to one cluster, and a dump sent with ?cluster= is keyed with it: two clusters'
+// prod/web-sa used to be one node, so a route could enter one cluster and end in the
+// other's cluster-admin. Without ?cluster= the ids are the ones a single-cluster estate
+// always had. Users and named groups belong to a directory, not to a cluster, and are
+// shared across clusters on purpose.
 package k8s
 
 import (
@@ -64,7 +74,7 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 
 	// The PR context, when CI sends one. It is carried onto the objects this dump
 	// CONTAINS - see builder.stamp for why not onto the ones it merely mentions.
-	g := &builder{nodes: map[string]ontology.Node{}, stamp: opts.PRProps()}
+	g := &builder{nodes: map[string]ontology.Node{}, stamp: opts.PRProps(), cluster: opts.Cluster}
 	var pods, services, ingresses, sas, bindings []item
 	adminRoles := map[string]bool{}        // role name -> wildcard-admin
 	escalationRoles := map[string]string{} // role name -> escalation primitive it grants
@@ -87,15 +97,16 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 		case "rolebinding", "clusterrolebinding":
 			bindings = append(bindings, it)
 		case "role", "clusterrole":
-			definedRoles[it.Metadata.Name] = true
+			key := roleKey(it.Kind, it.Metadata.Namespace, it.Metadata.Name)
+			definedRoles[key] = true
 			if isAdminRole(it) {
-				adminRoles[it.Metadata.Name] = true
+				adminRoles[key] = true
 			} else if reason := escalateReason(it); reason != "" {
 				// Not wildcard-admin, but grants an RBAC primitive that *becomes*
 				// admin (BloodHound-for-K8s): create pods, read secrets, bind/escalate
 				// roles, impersonate. The shallow "is it named admin / is it *:*" check
 				// misses these.
-				escalationRoles[it.Metadata.Name] = reason
+				escalationRoles[key] = reason
 			}
 		}
 	}
@@ -112,7 +123,7 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 			return nil, err
 		}
 		ns := nsOf(p.Metadata)
-		id := ontology.NewID(ontology.LabelContainer, ns+"/"+p.Metadata.Name)
+		id := g.id(ontology.LabelContainer, ns+"/"+p.Metadata.Name)
 		props := map[string]any{"k8s_ns": ns, "k8s_pod": p.Metadata.Name}
 		if len(spec.Containers) > 0 {
 			props[ontology.PropImageRef] = spec.Containers[0].Image // normalizer infers HOSTS→Image
@@ -145,7 +156,7 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 		}
 		ns := nsOf(s.Metadata)
 		key := ns + "/" + s.Metadata.Name
-		id := ontology.NewID(ontology.LabelLoadBalancer, "svc/"+key)
+		id := g.id(ontology.LabelLoadBalancer, "svc/"+key)
 		props := map[string]any{"k8s_ns": ns, "k8s_kind": "Service", "k8s_service_type": spec.Type}
 		if spec.Type == "LoadBalancer" || spec.Type == "NodePort" {
 			props[ontology.PropInternetExposed] = true
@@ -167,7 +178,7 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 			return nil, err
 		}
 		ns := nsOf(in.Metadata)
-		id := ontology.NewID(ontology.LabelLoadBalancer, "ing/"+ns+"/"+in.Metadata.Name)
+		id := g.id(ontology.LabelLoadBalancer, "ing/"+ns+"/"+in.Metadata.Name)
 		host := ""
 		for _, rule := range spec.Rules {
 			if rule.Host != "" {
@@ -198,7 +209,7 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 	var allSAs []string
 	for _, sa := range sas {
 		ns := nsOf(sa.Metadata)
-		saID := ontology.NewID(ontology.LabelServiceAccount, ns+"/"+sa.Metadata.Name)
+		saID := g.id(ontology.LabelServiceAccount, ns+"/"+sa.Metadata.Name)
 		g.own(ontology.Node{ID: saID,
 			Label: ontology.LabelServiceAccount, Name: ns + "/" + sa.Metadata.Name,
 			Properties: map[string]any{"k8s_ns": ns}})
@@ -209,8 +220,9 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 	// Bindings: a ServiceAccount assumes a Role; admin roles are crown jewels.
 	for _, b := range bindings {
 		roleName := b.RoleRef.Name
-		isAdmin := adminRoles[roleName] || isAdminName(roleName)
-		escalation := escalationRoles[roleName]
+		key := roleKey(b.RoleRef.Kind, b.Metadata.Namespace, roleName)
+		isAdmin := adminRoles[key] || isAdminName(roleName)
+		escalation := escalationRoles[key]
 		props := map[string]any{"k8s_kind": b.RoleRef.Kind}
 		if isAdmin {
 			props[ontology.PropCrownJewel] = true
@@ -218,9 +230,9 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 		} else if escalation != "" {
 			props["k8s_escalation"] = escalation
 		}
-		roleID := ontology.NewID(ontology.LabelIAMRole, roleName)
-		role := ontology.Node{ID: roleID, Label: ontology.LabelIAMRole, Name: roleName, Properties: props}
-		if definedRoles[roleName] {
+		roleID := g.id(ontology.LabelIAMRole, key)
+		role := ontology.Node{ID: roleID, Label: ontology.LabelIAMRole, Name: key, Properties: props}
+		if definedRoles[key] {
 			g.own(role)
 		} else {
 			g.upsert(role)
@@ -398,6 +410,18 @@ type builder struct {
 	// synthetic cluster-admin every escalation ends at) would put the commit on routes it
 	// has nothing to do with, and a gate that is red for everything is a gate nobody reads.
 	stamp map[string]any
+	// cluster is the cluster the dump describes (?cluster=), "" for an estate of one.
+	cluster string
+}
+
+// id is a node id inside this dump's cluster. With no cluster named it is exactly the id
+// it always was, so an estate of one cluster keeps its nodes - and its route ids - as they
+// were.
+func (b *builder) id(label ontology.Label, key string) string {
+	if b.cluster == "" {
+		return ontology.NewID(label, key)
+	}
+	return ontology.NewID(label, "cluster="+b.cluster, key)
 }
 
 // own records a node this dump actually contains, stamped with the pull request that
@@ -415,6 +439,12 @@ func (b *builder) own(n ontology.Node) {
 }
 
 func (b *builder) upsert(n ontology.Node) {
+	if b.cluster != "" && n.Label != ontology.LabelUser {
+		if n.Properties == nil {
+			n.Properties = map[string]any{}
+		}
+		n.Properties["k8s_cluster"] = b.cluster
+	}
 	if existing, ok := b.nodes[n.ID]; ok {
 		for k, v := range n.Properties {
 			if existing.Properties == nil {
@@ -432,9 +462,9 @@ func (b *builder) upsert(n ontology.Node) {
 }
 
 func (b *builder) stub(label ontology.Label, name string) string {
-	id := ontology.NewID(label, name)
+	id := b.id(label, name)
 	if _, ok := b.nodes[id]; !ok {
-		b.nodes[id] = ontology.Node{ID: id, Label: label, Name: name}
+		b.upsert(ontology.Node{ID: id, Label: label, Name: name})
 	}
 	return id
 }
@@ -590,7 +620,8 @@ func bindGroup(g *builder, group, roleID string, saByNS map[string][]string, all
 			g.edge(ontology.EdgeAssumes, saID, roleID, 0.8)
 		}
 	case group == "system:unauthenticated", group == "system:anonymous":
-		anon := ontology.NewID(ontology.LabelUser, "group/"+group)
+		// Anonymous access is a setting of one cluster's API server, unlike a named group.
+		anon := g.id(ontology.LabelUser, "group/"+group)
 		g.upsert(ontology.Node{ID: anon, Label: ontology.LabelUser, Name: group,
 			Properties: map[string]any{ontology.PropInternetExposed: true, "k8s_group": group}})
 		g.edge(ontology.EdgeAssumes, anon, roleID, 0.9)
@@ -606,8 +637,12 @@ func bindGroup(g *builder, group, roleID string, saByNS map[string][]string, all
 // cluster control), the target every escalation primitive reaches - the K8s
 // analogue of the IAM collector's account-admin.
 func clusterAdmin(g *builder) string {
-	id := ontology.NewID(ontology.LabelIAMRole, "perspectivegraph:cluster-admin")
-	g.upsert(ontology.Node{ID: id, Label: ontology.LabelIAMRole, Name: "cluster-admin (effective)",
+	id := g.id(ontology.LabelIAMRole, "perspectivegraph:cluster-admin")
+	name := "cluster-admin (effective)"
+	if g.cluster != "" {
+		name = "cluster-admin (effective, " + g.cluster + ")"
+	}
+	g.upsert(ontology.Node{ID: id, Label: ontology.LabelIAMRole, Name: name,
 		Properties: map[string]any{ontology.PropCrownJewel: true, "admin": true, "k8s_synthetic": true}})
 	return id
 }
@@ -619,6 +654,17 @@ func contains(s []string, v string) bool {
 		}
 	}
 	return false
+}
+
+// roleKey is a role's identity within its cluster. A Role is namespaced - "deployer" in
+// ci and "deployer" in web are two roles, with whatever rules each has - so it is keyed
+// "namespace/name", which no ClusterRole name can be (a name cannot contain "/"). A
+// ClusterRole, or a reference that does not say (the old default), is keyed on its name.
+func roleKey(kind, namespace, name string) string {
+	if strings.EqualFold(kind, "Role") {
+		return nsOrDefault(namespace) + "/" + name
+	}
+	return name
 }
 
 func nsOf(m meta) string { return nsOrDefault(m.Namespace) }

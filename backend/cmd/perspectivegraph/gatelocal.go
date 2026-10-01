@@ -137,6 +137,9 @@ type localOpts struct {
 	estate      string // events JSON, as written by `awscollect -json`
 	awsRegion   string
 	awsRole     string
+	// cluster names the Kubernetes cluster this change's reports describe (see
+	// ingestion.Options.Cluster), so they meet the estate's objects of that cluster.
+	cluster string
 	// stdin is the report read from standard input, for a -report of "-". It is read by
 	// the caller before anything else, for the reason drainStdinReport gives.
 	stdin []byte
@@ -384,7 +387,7 @@ func (o localOpts) collectAWS(ctx context.Context) ([]ontology.Event, error) {
 // without it every verdict here would be UNKNOWN. The base branch's are not - they are
 // what runs now, not the change.
 func (o localOpts) parseReports(specs []reportSpec, stamped bool) ([]ontology.Event, error) {
-	opts := ingestion.Options{Repository: o.repository}
+	opts := ingestion.Options{Repository: o.repository, Cluster: o.cluster}
 	if stamped {
 		opts.RepoSlug, opts.CommitSHA, opts.PRNumber = o.slug, o.sha, o.pr
 	}

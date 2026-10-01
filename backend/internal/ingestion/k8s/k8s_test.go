@@ -398,7 +398,7 @@ func TestPullRequestContextStampsWhatTheDumpDefines(t *testing.T) {
 		"service":        ontology.NewID(ontology.LabelLoadBalancer, "svc/prod/pay"),
 		"pod":            ontology.NewID(ontology.LabelContainer, "prod/pay-1"),
 		"serviceaccount": ontology.NewID(ontology.LabelServiceAccount, "prod/pay-sa"),
-		"role":           ontology.NewID(ontology.LabelIAMRole, "secret-reader"),
+		"role":           ontology.NewID(ontology.LabelIAMRole, "prod/secret-reader"), // a Role is namespaced
 	} {
 		if _, ok := byID[id]; !ok {
 			t.Fatalf("%s missing from the graph", name)
@@ -445,5 +445,83 @@ func TestWithoutPullRequestContextNothingIsStamped(t *testing.T) {
 		if n.Properties[ontology.PropRepoSlug] != nil || n.Properties[ontology.PropCommitSHA] != nil {
 			t.Errorf("node %q carries a commit nobody sent: %+v", n.Name, n.Properties)
 		}
+	}
+}
+
+// A dump sent with ?cluster= is keyed with it, so two clusters' prod/web-sa stay two
+// service accounts; one sent without keeps the ids a single-cluster estate always had.
+// People are the exception: a user or a named group belongs to the directory, and is the
+// same principal in every cluster that binds it.
+func TestClusterScopesEveryObjectButPeople(t *testing.T) {
+	in := `[
+	  {"kind":"Pod","metadata":{"name":"web-1","namespace":"prod"},"spec":{"serviceAccountName":"web-sa"}},
+	  {"kind":"ClusterRoleBinding","metadata":{"name":"b"},"roleRef":{"kind":"ClusterRole","name":"cluster-admin"},
+	   "subjects":[{"kind":"ServiceAccount","name":"web-sa","namespace":"prod"},{"kind":"User","name":"alice"}]},
+	  {"kind":"Pod","metadata":{"name":"bad","namespace":"prod"},"spec":{"containers":[{"securityContext":{"privileged":true}}]}}
+	]`
+	ids := func(cluster string) map[string]ontology.Node {
+		events, err := New().Parse(strings.NewReader(in), ingestion.Options{Cluster: cluster})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]ontology.Node{}
+		for _, n := range events[0].Nodes {
+			out[n.ID] = n
+		}
+		return out
+	}
+	plain, eu := ids(""), ids("eu")
+
+	if _, ok := plain[ontology.NewID(ontology.LabelServiceAccount, "prod/web-sa")]; !ok {
+		t.Error("without a cluster the ids must stay the ones a single-cluster estate has")
+	}
+	for id, n := range eu {
+		if n.Label == ontology.LabelUser {
+			if _, ok := plain[id]; !ok {
+				t.Errorf("%s %q is a person and should be the same node in every cluster", n.Label, n.Name)
+			}
+			continue
+		}
+		if _, ok := plain[id]; ok {
+			t.Errorf("%s %q kept its unscoped id in cluster eu", n.Label, n.Name)
+		}
+		if n.Properties["k8s_cluster"] != "eu" {
+			t.Errorf("%s %q does not say which cluster it is in", n.Label, n.Name)
+		}
+	}
+	admin := eu[ontology.NewID(ontology.LabelIAMRole, "cluster=eu", "perspectivegraph:cluster-admin")]
+	if admin.Name != "cluster-admin (effective, eu)" {
+		t.Errorf("synthetic cluster-admin = %q, want it to name its cluster", admin.Name)
+	}
+}
+
+// A Role belongs to its namespace. Keyed on its name alone, the harmless "deployer" in web
+// became the "deployer" in ci that can create pods, and inherited its route to cluster-admin.
+func TestRolesOfTheSameNameInTwoNamespacesStayApart(t *testing.T) {
+	in := `[
+	  {"kind":"Role","metadata":{"name":"deployer","namespace":"ci"},"rules":[{"verbs":["create"],"resources":["pods"]}]},
+	  {"kind":"Role","metadata":{"name":"deployer","namespace":"web"},"rules":[{"verbs":["get"],"resources":["configmaps"]}]},
+	  {"kind":"RoleBinding","metadata":{"name":"b1","namespace":"ci"},"roleRef":{"kind":"Role","name":"deployer"},
+	   "subjects":[{"kind":"ServiceAccount","name":"builder","namespace":"ci"}]},
+	  {"kind":"RoleBinding","metadata":{"name":"b2","namespace":"web"},"roleRef":{"kind":"Role","name":"deployer"},
+	   "subjects":[{"kind":"ServiceAccount","name":"web-sa","namespace":"web"}]}
+	]`
+	events, err := New().Parse(strings.NewReader(in), ingestion.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ci := ontology.NewID(ontology.LabelIAMRole, "ci/deployer")
+	web := ontology.NewID(ontology.LabelIAMRole, "web/deployer")
+	escalates := map[string]bool{}
+	for _, e := range events[0].Edges {
+		if e.Type == ontology.EdgeCanEscalateTo {
+			escalates[e.From] = true
+		}
+	}
+	if !escalates[ci] {
+		t.Error("ci/deployer can create pods and should escalate to cluster-admin")
+	}
+	if escalates[web] {
+		t.Error("web/deployer only reads config maps; it took the escalation of ci/deployer")
 	}
 }

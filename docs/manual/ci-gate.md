@@ -142,6 +142,13 @@ so a change that publishes a Service fails the check the same way a vulnerable d
 and one that re-renders every manifest unchanged passes. That matters because manifests are how
 most routes actually open.
 
+If the estate holds more than one cluster, its dumps are sent with `?cluster=` (see
+[onboarding](onboarding.md#kubernetes-topology-auto-discovered-exposure)), and the gate must name
+the same cluster: `cluster: prod-eu` on the Action, `-cluster prod-eu` on the CLI. Kubernetes names
+repeat across clusters, so the cluster is part of every object's identity; a manifest sent under
+another name, or none, meets nothing in the estate and passes as clean. The Action stops with an
+error when `cluster` is set and the gate binary is older than 1.28.0, rather than drop it.
+
 **It has three outcomes, and the third is the point.** Every two-state gate gives a pipeline
 whose scanner output never arrived the same green tick as one that is genuinely clean. Here
 that is `unknown`, and it fails the build by default:

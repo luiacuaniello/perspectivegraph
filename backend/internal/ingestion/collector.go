@@ -32,6 +32,13 @@ type Options struct {
 	// Empty keeps the pre-multi-account behaviour, so an estate that ingests from a
 	// single account is unaffected by this existing at all.
 	Account string
+
+	// Cluster is the Kubernetes cluster a dump describes. Names in a cluster are unique only
+	// within it - every cluster has a prod namespace, a default ServiceAccount and a
+	// cluster-admin - so dumps of two clusters sent without it describe one imaginary
+	// cluster, and a route can start in one and end in the other. Empty keeps the ids a
+	// single-cluster estate always had.
+	Cluster string
 }
 
 // PRProps returns the PR-context node properties carried by these options, or

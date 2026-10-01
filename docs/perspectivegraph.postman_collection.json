@@ -408,14 +408,14 @@
 						},
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"provider\": \"aws\",\n  \"account_id\": \"123456789012\",\n  \"policies\": [\n    {\n      \"policy\": \"elb-internet-facing\",\n      \"resource\": \"aws.elbv2\",\n      \"resources\": [\n        { \"LoadBalancerName\": \"public-alb\", \"Scheme\": \"internet-facing\", \"Targets\": [\"i-0web1\"] }\n      ]\n    },\n    {\n      \"policy\": \"ec2-with-instance-profile\",\n      \"resource\": \"aws.ec2\",\n      \"resources\": [\n        {\n          \"InstanceId\": \"i-0web1\",\n          \"PublicIpAddress\": \"203.0.113.10\",\n          \"IamInstanceProfile\": { \"Arn\": \"arn:aws:iam::123456789012:instance-profile/web-admin\" },\n          \"Tags\": [{ \"Key\": \"Name\", \"Value\": \"web-frontend\" }]\n        }\n      ]\n    },\n    {\n      \"policy\": \"iam-admin-roles\",\n      \"resource\": \"aws.iam-role\",\n      \"resources\": [\n        {\n          \"RoleName\": \"web-admin\",\n          \"Arn\": \"arn:aws:iam::123456789012:role/web-admin\",\n          \"AdminAccess\": true,\n          \"CanAccess\": [{ \"type\": \"bucket\", \"name\": \"customer-exports\" }]\n        }\n      ]\n    },\n    {\n      \"policy\": \"s3-sensitive-data\",\n      \"resource\": \"aws.s3\",\n      \"resources\": [\n        { \"Name\": \"customer-exports\", \"Public\": false, \"Sensitive\": true }\n      ]\n    }\n  ]\n}",
+							"raw": "{\n  \"provider\": \"aws\",\n  \"account_id\": \"123456789012\",\n  \"policies\": [\n    {\n      \"policy\": \"elb-internet-facing\",\n      \"resource\": \"aws.elbv2\",\n      \"resources\": [\n        { \"LoadBalancerName\": \"public-alb\", \"Scheme\": \"internet-facing\", \"Targets\": [\"i-0web1\"] }\n      ]\n    },\n    {\n      \"policy\": \"ec2-with-instance-profile\",\n      \"resource\": \"aws.ec2\",\n      \"resources\": [\n        {\n          \"InstanceId\": \"i-0web1\",\n          \"PublicIpAddress\": \"203.0.113.10\",\n          \"IamInstanceProfile\": { \"Arn\": \"arn:aws:iam::123456789012:instance-profile/web-admin\" },\n          \"Tags\": [{ \"Key\": \"Name\", \"Value\": \"web-frontend\" }]\n        }\n      ]\n    },\n    {\n      \"policy\": \"iam-instance-profiles\",\n      \"resource\": \"aws.iam-profile\",\n      \"resources\": [\n        {\n          \"InstanceProfileName\": \"web-admin\",\n          \"Arn\": \"arn:aws:iam::123456789012:instance-profile/web-admin\",\n          \"Roles\": [{ \"RoleName\": \"web-admin\", \"Arn\": \"arn:aws:iam::123456789012:role/web-admin\" }]\n        }\n      ]\n    },\n    {\n      \"policy\": \"iam-admin-roles\",\n      \"resource\": \"aws.iam-role\",\n      \"resources\": [\n        {\n          \"RoleName\": \"web-admin\",\n          \"Arn\": \"arn:aws:iam::123456789012:role/web-admin\",\n          \"AdminAccess\": true,\n          \"CanAccess\": [{ \"type\": \"bucket\", \"name\": \"customer-exports\" }]\n        }\n      ]\n    },\n    {\n      \"policy\": \"s3-sensitive-data\",\n      \"resource\": \"aws.s3\",\n      \"resources\": [\n        { \"Name\": \"customer-exports\", \"Public\": false, \"Sensitive\": true }\n      ]\n    }\n  ]\n}",
 							"options": {
 								"raw": {
 									"language": "json"
 								}
 							}
 						},
-						"description": "Cloud inventory/identity export: ALB, EC2, IAM role, S3 - adds the cloud attack surface."
+						"description": "Cloud inventory/identity export: ALB, EC2, the instance profile that names the EC2 role (aws.iam-profile), IAM role, S3 - adds the cloud attack surface. Without the profile, the instance-to-role join is guessed from the profile name and marked as inferred."
 					}
 				},
 				{
@@ -516,6 +516,12 @@
 									"key": "snapshot",
 									"value": "cluster:prod",
 									"description": "Optional, and never with slug/sha. Declares this dump the COMPLETE state of the named scope: once it lands, whatever an earlier complete dump of the same scope listed and this one does not - a deleted pod, a removed binding - leaves the graph (GRAPH_SWEEP). Name only what you really sent in full; a partial dump under a cluster-wide scope removes everything it left out.",
+									"disabled": true
+								},
+								{
+									"key": "cluster",
+									"value": "prod-eu",
+									"description": "Optional. The cluster this dump describes, for an estate of more than one: every object is keyed with it, so two clusters' prod/web-sa stay two service accounts and a route cannot cross from one cluster into another's cluster-admin. Give the merge gate the same name (-cluster / the Action's cluster input). Leave it off for one cluster: the ids stay as they were.",
 									"disabled": true
 								}
 							]

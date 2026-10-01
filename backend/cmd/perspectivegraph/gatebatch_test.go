@@ -26,7 +26,7 @@ func TestPostGateReportReturnsTheBatch(t *testing.T) {
 				_, _ = io.WriteString(w, tc.body)
 			}))
 			defer srv.Close()
-			got, err := postGateReport(srv.Client(), srv.URL, "trivy", "s", "c", "", 0, "", "", []byte("{}"))
+			got, err := postGateReport(srv.Client(), srv.URL, "trivy", "s", "c", "", "", 0, "", "", []byte("{}"))
 			if err != nil || got != tc.want {
 				t.Fatalf("batch = %q, err %v; want %q", got, err, tc.want)
 			}
@@ -95,7 +95,7 @@ func TestTheGateSignsV2AsTheEngineVerifies(t *testing.T) {
 		_, _ = io.WriteString(w, `{}`)
 	})))
 	defer srv.Close()
-	if _, err := postGateReport(srv.Client(), srv.URL, "trivy", "acme/payments", "abc123", "acme/payments", 42, "", secret, []byte(`{"Results":[]}`)); err != nil {
+	if _, err := postGateReport(srv.Client(), srv.URL, "trivy", "acme/payments", "abc123", "acme/payments", "", 42, "", secret, []byte(`{"Results":[]}`)); err != nil {
 		t.Fatalf("an engine refusing v1 rejected the gate: %v", err)
 	}
 	if !accepted {

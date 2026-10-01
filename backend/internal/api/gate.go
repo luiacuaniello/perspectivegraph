@@ -98,7 +98,7 @@ func (a *API) handleGateImpact(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "slug and sha are required: they identify the change the report belongs to")
 		return
 	}
-	opts := ingestion.Options{Repository: q.Get("repo"), RepoSlug: slug, CommitSHA: sha, Account: q.Get("account")}
+	opts := ingestion.Options{Repository: q.Get("repo"), RepoSlug: slug, CommitSHA: sha, Account: q.Get("account"), Cluster: q.Get("cluster")}
 	if n, err := strconv.Atoi(q.Get("pr")); err == nil {
 		opts.PRNumber = n
 	}

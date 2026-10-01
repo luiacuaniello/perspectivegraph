@@ -112,6 +112,11 @@ arrived yet are retried), but this is the logical flow:
 > reports paths running through a machine that does not exist. Identities need no flag
 > (an ARN already carries its account). Leave it off for a single-account estate and
 > every id stays exactly as it is today.
+>
+> **More than one Kubernetes cluster?** Add `?cluster=<name>` to each cluster's dump, and give
+> the merge gate the same name. Every cluster has a `prod` namespace, a `default` service
+> account and a `cluster-admin`, so without it two clusters describe one imaginary cluster, and
+> a route can enter one and end in the other's cluster-admin. One cluster needs no flag.
 
 > **Complete snapshots: `?snapshot=`.** An ingest that describes a scope *in full* lets
 > the engine forget what that scope no longer contains - see
@@ -228,11 +233,17 @@ curl -sS -X POST "$INGEST_URL/ingest/custodian" -H 'Content-Type: application/js
     ]},
     { "policy": "ec2", "resource": "aws.ec2", "resources": [
       { "InstanceId": "i-0abc", "PublicIpAddress": "203.0.113.10",
-        "IamInstanceProfile": {"Arn": "arn:aws:iam::123456789012:instance-profile/payments-role"},
+        "IamInstanceProfile": {"Arn": "arn:aws:iam::123456789012:instance-profile/payments-profile"},
         "Tags": [{"Key":"Name","Value":"payments-vm"},{"Key":"app","Value":"payments"}] }
     ]},
+    { "policy": "instance-profiles", "resource": "aws.iam-profile", "resources": [
+      { "InstanceProfileName": "payments-profile",
+        "Arn": "arn:aws:iam::123456789012:instance-profile/payments-profile",
+        "Roles": [{"RoleName": "payments-role", "Arn": "arn:aws:iam::123456789012:role/payments-role"}] }
+    ]},
     { "policy": "iam-admin", "resource": "aws.iam-role", "resources": [
-      { "RoleName": "payments-role", "AttachedManagedPolicies": [
+      { "RoleName": "payments-role", "Arn": "arn:aws:iam::123456789012:role/payments-role",
+        "AttachedManagedPolicies": [
         {"PolicyName":"AdministratorAccess","PolicyArn":"arn:aws:iam::aws:policy/AdministratorAccess"} ] }
     ]},
     { "policy": "s3-classified", "resource": "aws.s3", "resources": [
@@ -241,6 +252,13 @@ curl -sS -X POST "$INGEST_URL/ingest/custodian" -H 'Content-Type: application/js
   ]
 }'
 ```
+
+**Include the `aws.iam-profile` policy.** EC2 reports an instance's *profile*, not its role, and
+a profile is often named differently from the role inside it - Terraform and CloudFormation
+name them separately. With the profiles in the bundle the instance reaches its real role; without
+them the role is guessed to share the profile's name, and that join is marked as inferred and
+weighs half. Roles are keyed on their `Arn`, as the IAM and network feeds key them, so the same
+role is one node whichever source reported it.
 
 ### Falco (runtime confirmation)
 
@@ -274,6 +292,11 @@ kubectl get ingress,service,pod,serviceaccount,role,clusterrole,rolebinding,clus
   -A -o json > cluster.json
 curl -sS -X POST "$INGEST_URL/ingest/k8s" -H 'Content-Type: application/json' --data-binary @cluster.json
 ```
+
+Include `role` in that list: a Role belongs to its namespace, and the engine keys it with the
+namespace, so a `deployer` in one namespace and a `deployer` in another keep their own rules.
+With more than one cluster, name each dump's cluster - `?cluster=prod-eu` - so that two clusters'
+`prod/web-sa` stay two service accounts.
 
 **From a pull request, send what the pull request renders.** A change to a manifest is
 how most routes actually open - publish a Service, widen an RBAC rule - and until the

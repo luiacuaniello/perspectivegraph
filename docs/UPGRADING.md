@@ -17,6 +17,52 @@ digest, take the backup, stage it.
 
 ---
 
+## 1.28.0
+
+### The same role, instance and cluster object is one node, and two that share a name are two
+
+**Affects you if** you ingest Cloud Custodian bundles, Kubernetes dumps with namespaced Roles,
+or Kubernetes dumps from more than one cluster.
+
+Five identity errors produced wrong routes, three of them routes that do not exist:
+
+- **Custodian keyed roles on their name**; the IAM, network and SSO feeds key them on their ARN.
+  The same role was two nodes, and an escalation found by the IAM feed was out of reach of the
+  instance Custodian found. Worse, an AWS role named like a Kubernetes ClusterRole - `admin`,
+  `edit`, `view` - merged with it, and a namespace admin appeared to reach the account's S3 data.
+  Roles are now keyed on their ARN.
+- **Custodian read an instance's profile name as its role's name.** A profile named differently
+  from its role - common with Terraform and CloudFormation - led the instance to a role nobody
+  had defined, and its routes disappeared. The role now comes from `aws.iam-profile` resources
+  in the bundle; without them it is guessed to share the profile's name, and that join is marked
+  as inferred and weighs half (0.4 instead of 0.8).
+- **Custodian keyed an instance without its account**, the network feed with it: the same
+  instance was two nodes when both ran. It now takes the bundle's `account_id`.
+- **A namespaced Role was keyed on its name.** A harmless `deployer` in one namespace became
+  the `deployer` that can create pods in another, and inherited its route to cluster-admin.
+  Roles are now keyed `namespace/name`; ClusterRoles keep their name.
+- **Kubernetes ids carried no cluster.** Two clusters' `prod/web-sa` were one node, so a route
+  could enter one cluster and end in another's cluster-admin. A dump sent with `?cluster=` is
+  now keyed with it; one sent without keeps the ids it always had.
+
+What to do:
+
+1. **Add an `aws.iam-profile` policy to your Custodian bundle** (see
+   [onboarding](manual/onboarding.md#cloud-custodian-cloud-inventory--iam)), or the joins from
+   instances to roles are marked as inferred.
+2. **More than one cluster: send each dump with `?cluster=<name>`,** and give the merge gate the
+   same name - `cluster:` on the Action, `-cluster` on the CLI. A manifest sent under no name, or
+   another one, meets nothing in the estate and passes as clean.
+3. **Clear the nodes keyed the old way.** Custodian bundles and most Kubernetes dumps are partial
+   observations, which nothing retracts by omission, so the old role, instance and service
+   account nodes stay - with the wrong routes through them - until staleness pruning removes
+   them. Set `GRAPH_TTL` to a few feed cycles (it removes what no source has reported within
+   it), or start from an empty graph and ingest again.
+4. **Routes through these nodes get new ids**, because a route's id is built from its nodes.
+   Suppressions and tickets recorded on the old ids no longer match; triage those routes again.
+
+---
+
 ## 1.27.2
 
 ### One CVE counts once in the risk figure
