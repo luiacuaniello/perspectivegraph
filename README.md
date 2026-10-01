@@ -197,7 +197,8 @@ client configuration are in the [manual](docs/manual/ai-and-mcp.md#letting-an-ag
 calibrated.** Nobody has run this over a real estate, tested the paths it surfaced and fed the
 verdicts back: the machinery for that loop is built and tested, the loop is not closed. So read a
 score as what the model believes and how sure it says it is, not as a measured frequency. Use it
-to find and cut routes; don't put its percentage in front of a board.
+to find and cut routes; don't put its percentage in front of a board. If you run it over yours,
+[tell us how it went](https://github.com/luiacuaniello/perspectivegraph/discussions/286).
 [Positioning](docs/POSITIONING.md) spells out what is and isn't claimed.
 
 **What is measured today, as of v1.27.2.** <!-- x-release-please-version -->

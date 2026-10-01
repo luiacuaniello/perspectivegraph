@@ -24,6 +24,6 @@ Rules, so that nobody has to think about them:
   than for the engineer who liked the tool.
 - **Remove yourself any time**, by pull request or by asking - no explanation needed.
 
-If you would rather not be listed but are willing to say what worked and what did not, an
-issue or a private note is worth as much. What this project most needs is not a logo wall:
+If you would rather not be listed but are willing to say what worked and what did not,
+[the feedback thread](https://github.com/luiacuaniello/perspectivegraph/discussions/286), an issue or a private note is worth as much. What this project most needs is not a logo wall:
 it is [a real environment's verdict on the paths it surfaced](CONTRIBUTING.md).
