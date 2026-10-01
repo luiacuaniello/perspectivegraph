@@ -41,7 +41,7 @@ The service name depends on the release name, which is why the command looks it 
 
 A new install starts empty: the graph fills up as scanner output reaches the ingest
 endpoint. The
-[manual](https://github.com/luiacuaniello/perspectivegraph/blob/main/docs/manual/onboarding.md#1-the-order-that-builds-a-correct-graph)
+[manual](https://docs.a3thinker.it/manual/onboarding/#1-the-order-that-builds-a-correct-graph)
 shows what to send, and in which order.
 
 ## Requirements
@@ -113,16 +113,16 @@ each with a comment explaining it.
   images are signed.
 - The audit log is a hash chain, so any edit to past records shows.
 
-The [threat model](https://github.com/luiacuaniello/perspectivegraph/blob/main/docs/THREAT-MODEL.md)
+The [threat model](https://docs.a3thinker.it/threat-model/)
 explains what isn't covered and what's left to you as the operator.
 
 ## Documentation
 
-- [Operations runbook](https://github.com/luiacuaniello/perspectivegraph/blob/main/docs/OPERATIONS.md): where to get PostgreSQL+AGE, backups and restores, upgrades, the production checklist
-- [Manual](https://github.com/luiacuaniello/perspectivegraph/blob/main/docs/MANUAL.md): architecture, scoring, what to send and how
-- [Scale](https://github.com/luiacuaniello/perspectivegraph/blob/main/docs/SCALE.md): measured sizing, and how to measure your own graph
-- [Upgrade notes](https://github.com/luiacuaniello/perspectivegraph/blob/main/docs/UPGRADING.md): the releases that need something from you
-- [Support policy](https://github.com/luiacuaniello/perspectivegraph/blob/main/SUPPORT.md): which versions get fixes, and how quickly
+- [Operations runbook](https://docs.a3thinker.it/operations/): where to get PostgreSQL+AGE, backups and restores, upgrades, the production checklist
+- [Documentation](https://docs.a3thinker.it/): architecture, scoring, what to send and how, with search
+- [Scale](https://docs.a3thinker.it/scale/): measured sizing, and how to measure your own graph
+- [Upgrade notes](https://docs.a3thinker.it/upgrading/): the releases that need something from you
+- [Support policy](https://docs.a3thinker.it/support/): which versions get fixes, and how quickly
 
 Apache-2.0. Issues and pull requests are welcome on
 [GitHub](https://github.com/luiacuaniello/perspectivegraph).

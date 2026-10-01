@@ -29,7 +29,8 @@ keywords:
   - attack-path
   - kubernetes
   - graph
-home: https://github.com/luiacuaniello/perspectivegraph
+# The documentation site is the front door; the repository stays the source.
+home: https://docs.a3thinker.it
 sources:
   - https://github.com/luiacuaniello/perspectivegraph
 maintainers:
@@ -65,12 +66,12 @@ annotations:
       image: busybox:1.37@sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028
   artifacthub.io/links: |
     - name: Documentation
-      url: https://github.com/luiacuaniello/perspectivegraph/blob/main/docs/MANUAL.md
+      url: https://docs.a3thinker.it/
     - name: Threat model
-      url: https://github.com/luiacuaniello/perspectivegraph/blob/main/docs/THREAT-MODEL.md
+      url: https://docs.a3thinker.it/threat-model/
     - name: Operations runbook
-      url: https://github.com/luiacuaniello/perspectivegraph/blob/main/docs/OPERATIONS.md
+      url: https://docs.a3thinker.it/operations/
     - name: Support policy
-      url: https://github.com/luiacuaniello/perspectivegraph/blob/main/SUPPORT.md
+      url: https://docs.a3thinker.it/support/
     - name: Upgrade notes
-      url: https://github.com/luiacuaniello/perspectivegraph/blob/main/docs/UPGRADING.md
+      url: https://docs.a3thinker.it/upgrading/
