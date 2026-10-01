@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.28.1](https://github.com/luiacuaniello/perspectivegraph/compare/v1.28.0...v1.28.1) (2026-10-01)
+
+
+### Bug Fixes
+
+* **ingestion:** roles no longer escalate through user techniques, and a guess never replaces a fact ([#291](https://github.com/luiacuaniello/perspectivegraph/issues/291)) ([9d75b92](https://github.com/luiacuaniello/perspectivegraph/commit/9d75b92124aba8fd0cf79959c33d922c468f218b))
+
 ## [1.28.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.27.2...v1.28.0) (2026-10-01)
 
 
