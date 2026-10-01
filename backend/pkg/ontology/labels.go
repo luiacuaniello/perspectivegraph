@@ -266,7 +266,9 @@ const (
 	// risk Monte Carlo couples them with one draw per cause (P(all) = min p, the
 	// Fréchet bound), instead of the independent sampling that overstates redundancy
 	// across paths that all rest on the same weakness. Absent ⇒ the edge is its own
-	// independent cause. A collector should stamp the CVE/credential id when known.
+	// independent cause - except an AFFECTS edge into a CVE, whose cause the analyzer
+	// takes to be that CVE (analyzer.weightCauseOf). A feed that knows any other shared
+	// cause - a leaked credential, a misconfiguration - stamps it, and a stamped cause wins.
 	PropWeightCause = "weight_cause"
 )
 

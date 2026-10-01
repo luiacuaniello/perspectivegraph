@@ -1093,7 +1093,7 @@
 								"variables": ""
 							}
 						},
-						"description": "Per-trial edge realization -> P(crown jewel compromised) with a 95% Wilson CI, plus P(at least one compromised) and the expected count. Captures path multiplicity that the per-path product cannot. Edges sharing a weight_cause (same CVE/credential) are coupled comonotonically - one draw per cause per trial, so routes resting on the same weakness fail together instead of counting as independent redundancy (P3); mixtureCompromiseProbability additionally marginalizes over the attacker profiles. Reproducible per seed."
+						"description": "Per-trial edge realization -> P(crown jewel compromised) with a 95% Wilson CI, plus P(at least one compromised) and the expected count. Captures path multiplicity that the per-path product cannot. Edges sharing a weight_cause (declared by the feed, or - for every edge into a CVE - that CVE) are coupled comonotonically - one draw per cause per trial, so routes resting on the same weakness fail together instead of counting as independent redundancy (P3); mixtureCompromiseProbability additionally marginalizes over the attacker profiles. Reproducible per seed."
 					},
 					"response": []
 				},

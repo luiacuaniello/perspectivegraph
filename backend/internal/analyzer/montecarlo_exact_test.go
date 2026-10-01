@@ -69,7 +69,7 @@ func exactRisk(snap graph.Snapshot, prob []float64) (anyP float64, perJewel map[
 	var keys []uint64
 	for i, e := range snap.Edges {
 		k := edgeKey(e)
-		if name, _ := e.Properties[ontology.PropWeightCause].(string); name != "" {
+		if name := weightCauseOf(e, nodes[e.To]); name != "" {
 			k = causeKey(name)
 		}
 		if _, ok := groups[k]; !ok {

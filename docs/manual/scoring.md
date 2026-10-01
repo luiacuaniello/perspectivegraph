@@ -28,7 +28,11 @@ a `correlatedHops` flag (set when ≥2 hops rest on the same weight basis, or de
 `weight_cause`) - the true exploitability lies in `[score, scoreUpperBound]`, and a wide band says
 the independence assumption is doing the work. Hops that declare the same `weight_cause` - one CVE,
 one leaked credential - are not independent at all: they stand or fall together, so the score counts
-that cause once, at its weakest hop, exactly as the risk simulation samples it.
+that cause once, at its weakest hop, exactly as the risk simulation samples it. The engine supplies
+the cause itself for every edge into a CVE, whose probability is the CVE's own (KEV, EPSS or a
+severity) rather than the edge's: a CVE a scanner reports on two packages of one image - Debian's
+`libssl3` and `openssl` - is one weakness, not two chances at it. A feed can declare any other
+cause, and a cause it declares wins.
 
 A second, orthogonal uncertainty is *epistemic*: how well is each `p` known at all? Each edge is
 modelled as a **Beta(α,β) posterior** with mean `p` and concentration κ scaled by the weight basis's
@@ -114,7 +118,7 @@ The per-path product answers "how exploitable is *this* route". Three analyses g
 - **K-shortest paths (Yen's algorithm).** The top-K highest-probability loopless routes to a
   sensitive asset, so cutting the single best edge doesn't hide the near-best alternates.
 - **Monte Carlo risk quantification.** Each trial realizes every edge independently (present
-  with probability `p`; edges declaring the same `weight_cause` together), then checks
+  with probability `p`; edges sharing a `weight_cause` - declared, or the CVE they lead into - together), then checks
   sensitive-asset reachability. Every draw is a function of the trial and the edge itself, not of
   its position, so two graphs that share an edge share its fate in every trial. The fraction of trials where a
   sensitive asset is reachable is an unbiased estimate of its **compromise probability** - accounting for

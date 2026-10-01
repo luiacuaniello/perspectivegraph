@@ -17,6 +17,29 @@ digest, take the backup, stage it.
 
 ---
 
+## 1.27.2
+
+### One CVE counts once in the risk figure
+
+**Affects you if** you track the risk figures - a sensitive asset's compromise probability,
+the chance that any is reached, the risk a what-if or a fix removes - or alert on them.
+
+A CVE that a scanner reports on several packages of one image - Debian ships OpenSSL as
+`libssl3` and `openssl`, glibc as `libc6` and `libc-bin` - was reached over several edges, and
+the risk simulation drew each of them independently: two packages gave an attacker two chances
+at one vulnerability, so a CVE at 50% counted as 75%. Every edge into a CVE now carries that
+CVE as its shared cause (`weight_cause`), as a feed could always declare, and those edges hold
+or fail together.
+
+- Compromise probabilities, and with them the risk a fix removes, fall where one CVE spans
+  several packages. Elsewhere they can move within their sampling noise: an edge into a CVE
+  now draws from the CVE's random stream rather than its own.
+- Path scores and priorities do not move: a route enters a CVE once. Each hop into a CVE now
+  names it as its cause, and alternative routes carry the same.
+- A `weight_cause` your feed sends still wins over the one inferred.
+
+---
+
 ## 1.25.0
 
 ### P1 means "act now", and red-team verdicts move a route

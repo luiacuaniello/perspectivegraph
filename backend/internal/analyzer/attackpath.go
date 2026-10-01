@@ -348,7 +348,7 @@ func attackPathFromRaw(rp graph.RawPath) (AttackPath, bool) {
 		p := clampProb(e.ExploitProbability)
 		method, conf := resolutionOf(e.Properties)
 		basis, basisConf, evid := weightBasisOf(e, rp.Nodes[i], rp.Nodes[i+1])
-		steps = append(steps, Step{EdgeType: e.Type, From: e.From, To: e.To, Probability: p, ResolutionMethod: method, ResolutionConfidence: conf, WeightBasis: basis, WeightConfidence: basisConf, EvidenceCount: evid, WeightCause: weightCauseOf(e)})
+		steps = append(steps, Step{EdgeType: e.Type, From: e.From, To: e.To, Probability: p, ResolutionMethod: method, ResolutionConfidence: conf, WeightBasis: basis, WeightConfidence: basisConf, EvidenceCount: evid, WeightCause: weightCauseOf(e, rp.Nodes[i+1])})
 	}
 	return assembleAttackPath(rp.Nodes, steps), true
 }
@@ -537,10 +537,31 @@ type outEdge struct {
 	cause     string  // shared cause behind `prob` (weight_cause), "" when its own
 }
 
-// weightCauseOf reads an edge's shared weight cause (ontology.PropWeightCause).
-func weightCauseOf(e ontology.Edge) string {
-	c, _ := e.Properties[ontology.PropWeightCause].(string)
-	return c
+// weightCauseOf is an edge's shared weight cause (ontology.PropWeightCause): the one
+// weakness its probability rests on, so that every edge resting on it holds or fails with
+// it. A cause the feed declares wins.
+//
+// Otherwise an AFFECTS edge into a CVE takes that CVE as its cause, because its probability
+// is a property of the vulnerability - KEV, EPSS or a severity - and not of the edge. No
+// built-in source stamped a cause, so this coupling never ran on their data: a CVE that Trivy
+// reports on two packages of one image (libssl3 and openssl, libc6 and libc-bin, the way
+// Debian splits a library) reached the CVE over two edges drawn independently, as if the
+// attacker had two separate chances at one weakness. The CVE id is upper-cased so that it
+// matches the cause a feed would stamp for it.
+//
+// The edge out of a CVE (EXPLOITS: what exploiting it reaches) is a different event - given
+// that the exploit works, does it lead there - and keeps its own draw.
+func weightCauseOf(e ontology.Edge, to ontology.Node) string {
+	if c, _ := e.Properties[ontology.PropWeightCause].(string); c != "" {
+		return c
+	}
+	if e.Type == ontology.EdgeAffects && to.Label == ontology.LabelCVE {
+		if name := strings.ToUpper(strings.TrimSpace(to.Name)); name != "" {
+			return name
+		}
+		return to.ID
+	}
+	return ""
 }
 
 // weightBasisOf classifies where an edge's exploit probability came from and how
@@ -654,7 +675,7 @@ func buildAdjacency(edges []ontology.Edge, nodes map[string]ontology.Node) map[s
 			basis:     basis,
 			basisConf: basisConf,
 			evid:      evid,
-			cause:     weightCauseOf(e),
+			cause:     weightCauseOf(e, nodes[e.To]),
 		})
 	}
 	return adj

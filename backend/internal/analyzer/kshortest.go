@@ -40,7 +40,7 @@ func newWGraph(snap graph.Snapshot) *wgraph {
 		method, conf := resolutionOf(e.Properties)
 		basis, basisConf, evid := weightBasisOf(e, g.nodes[e.From], g.nodes[e.To])
 		oe := outEdge{to: e.To, typ: e.Type, weight: -math.Log(p), prob: p, resMethod: method, resConf: conf,
-			basis: basis, basisConf: basisConf, evid: evid, cause: weightCauseOf(e)}
+			basis: basis, basisConf: basisConf, evid: evid, cause: weightCauseOf(e, g.nodes[e.To])}
 		m := g.adj[e.From]
 		if m == nil {
 			m = map[string]outEdge{}

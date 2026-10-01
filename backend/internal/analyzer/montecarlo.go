@@ -220,7 +220,7 @@ func compileGraph(snap graph.Snapshot) *mcGraph {
 		// for the per-profile mixture - both shared with the per-path scoring.
 		basis, conf, evid := weightBasisOf(e, g.nodes[e.From], g.nodes[e.To])
 		k := edgeKey(e)
-		if name, _ := e.Properties[ontology.PropWeightCause].(string); name != "" {
+		if name := weightCauseOf(e, g.nodes[e.To]); name != "" {
 			k = causeKey(name)
 		}
 		eid := int32(len(g.to)) // #nosec G115 -- edge count is far below 2^31
