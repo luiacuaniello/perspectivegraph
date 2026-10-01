@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.27.2](https://github.com/luiacuaniello/perspectivegraph/compare/v1.27.1...v1.27.2) (2026-10-01)
+
+
+### Bug Fixes
+
+* **analyzer:** count one CVE once in the risk figure, wherever a scanner reports it ([#282](https://github.com/luiacuaniello/perspectivegraph/issues/282)) ([c1aa78e](https://github.com/luiacuaniello/perspectivegraph/commit/c1aa78ea37c69ac8ee3e7926e62271667a23e1e4))
+
 ## [1.27.1](https://github.com/luiacuaniello/perspectivegraph/compare/v1.27.0...v1.27.1) (2026-09-30)
 
 
