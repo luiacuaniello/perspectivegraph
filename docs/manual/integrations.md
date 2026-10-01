@@ -71,7 +71,8 @@ the identity half: without it, *"the internet reaches this box"* and *"this role
 account"* sit in disconnected components and the canonical AWS path - internet → instance →
 IMDS → role → privilege escalation (the Capital One shape) - cannot form. The hop is priced
 on the instance's real IMDS posture: `HttpTokens=required` (IMDSv2) makes a blind SSRF
-insufficient, while IMDSv1 hands the credentials to a single GET.
+insufficient, while IMDSv1 hands the credentials to a single GET. Cloud Custodian prices the
+same hop from the same field, so the two feeds agree on it.
 
 ## Topology discovery (no hand-stitched IDs)
 
@@ -98,7 +99,8 @@ the exposure/reachability topology no scanner produces:
   VPC peering, surfacing e.g. *internet → web tier → PII database*.
 - **IAM privesc graph** ("BloodHound for cloud") → flattens each principal's
   effective permissions, matches them against known escalation primitives
-  (`iam:PassRole`+compute, `iam:AttachUserPolicy`, `iam:CreatePolicyVersion`, …)
+  (`iam:PassRole`+compute, `iam:AttachUserPolicy`, `iam:CreatePolicyVersion`, …;
+  those acting on the principal's own user or groups only for users)
   and draws `CAN_ESCALATE_TO` edges to a synthetic **account-admin** sensitive asset.
   A role trusting `"Principal":"*"` is flagged internet-exposed, surfacing
   *internet → publicly-assumable role → CAN_ESCALATE_TO → account compromise*.
@@ -149,7 +151,9 @@ resting on a shaky correlation scores below one built on a hard identity. The
 provenance rides on the node (`resolutionMethod` / `resolutionConfidence` /
 `resolutionAlias`) and surfaces in the kill chain as a **"⚠ heuristic join · N%"**
 badge - so an analyst can *see, and distrust,* a heuristic correlation instead
-of mistaking it for ground truth.
+of mistaking it for ground truth. A guess never replaces a fact: when one source
+states a link another inferred, the stated one stays whichever arrives first, and
+an inferred write only confirms it is still there.
 
 ## Threat-intel: KEV + EPSS (optional)
 

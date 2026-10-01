@@ -122,7 +122,8 @@ IaC/cloud misconfiguration; `Secret` is an exposed credential.
 through its effective permissions, gain another's privileges (the "BloodHound
 for cloud" question). The IAM collector flattens each principal's allowed
 actions and matches them against known escalation primitives (e.g. `iam:PassRole`
-+ a compute action, `iam:AttachUserPolicy`, `iam:CreatePolicyVersion`), drawing
++ a compute action, `iam:AttachUserPolicy`, `iam:CreatePolicyVersion`; the ones
+acting on the principal's own user or groups count only for users), drawing
 the edge toward a synthetic account-admin sensitive asset. A role whose trust policy
 admits `"Principal":"*"` is marked `internet_exposed` - publicly assumable, the
 seed of a full internet→admin path.

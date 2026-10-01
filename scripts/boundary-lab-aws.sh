@@ -154,6 +154,8 @@ for role in "$UNBOUNDED" "$BOUNDED"; do
     --policy-name privesc --policy-document "$PRIVESC_POLICY" >/dev/null
 done
 say "  both roles granted the SAME policy: iam:AttachUserPolicy, iam:PutUserPolicy, iam:CreateAccessKey on *"
+# The first two are user techniques a role cannot turn on itself, so neither side counts them
+# for a role; the control escalates through iam:CreateAccessKey.
 
 # IAM is eventually consistent; a simulation run immediately after creation can still
 # read the pre-creation state and would report a misleading answer.
@@ -163,7 +165,7 @@ sleep 12
 
 say ""
 say "── ENGINE vs AWS ────────────────────────────────────────────"
-say "  Both roles hold iam:AttachUserPolicy on * - a textbook privesc primitive - and"
+say "  Both roles hold iam:CreateAccessKey on * - a textbook privesc primitive - and"
 say "  differ only in the boundary. The engine is run over this very account (live"
 say "  connector, read-only) and AWS is asked with SimulatePrincipalPolicy; the two"
 say "  verdicts go side by side. Before the boundary fix the engine called BOTH roles"

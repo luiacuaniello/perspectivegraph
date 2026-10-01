@@ -155,8 +155,17 @@ func (o *AWSOracle) checkAction(ctx context.Context, a Assertion) (Result, error
 // ask whether the permission is held at all. A permission held only on harmless
 // resources is therefore reported allowed by both, and the engine already grades that
 // case down separately (resource_scoped).
+//
+// Only the techniques that can work for this principal are asked about, as in the
+// engine: a role allowed iam:AttachUserPolicy really is allowed it, but it cannot turn
+// that on itself, and counting it would confirm an escalation that does not exist.
 func (o *AWSOracle) checkEscalation(ctx context.Context, a Assertion) (Result, error) {
-	prims := pgiam.PrivescPrimitives()
+	var prims []pgiam.PrivescPrimitive
+	for _, p := range pgiam.PrivescPrimitives() {
+		if p.AppliesTo(a.Principal) {
+			prims = append(prims, p)
+		}
+	}
 
 	seen := map[string]bool{}
 	var actions []string

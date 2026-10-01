@@ -302,7 +302,7 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 		effective := capByBoundary(allowedActions(docs), u.PermissionsBoundary, managed, props)
 
 		g.upsert(ontology.Node{ID: id, Label: ontology.LabelUser, Name: u.UserName, Properties: props})
-		g.escalation(id, effective, adminID)
+		g.escalation(id, effective, adminID, asUser)
 	}
 
 	// Roles.
@@ -343,7 +343,7 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 		effective := capByBoundary(allowedActions(docs), ro.PermissionsBoundary, managed, props)
 
 		g.upsert(ontology.Node{ID: id, Label: ontology.LabelIAMRole, Name: ro.RoleName, Properties: props})
-		g.escalation(id, effective, adminID)
+		g.escalation(id, effective, adminID, asRole)
 	}
 
 	// Second pass: role chaining - a principal the trust policy names can assume
@@ -495,7 +495,7 @@ const (
 
 // escalation draws the principal's edge to account-admin, if any: a direct edge
 // when it is already admin, or one labelled with the matched privesc primitives.
-func (b *builder) escalation(principalID string, actions actionSet, adminID string) {
+func (b *builder) escalation(principalID string, actions actionSet, adminID string, kind principalKind) {
 	if principalID == adminID {
 		return
 	}
@@ -505,7 +505,7 @@ func (b *builder) escalation(principalID string, actions actionSet, adminID stri
 		b.edgeWith(ontology.EdgeCanEscalateTo, principalID, adminID, prob, props)
 		return
 	}
-	matches := detectPrivesc(actions)
+	matches := detectPrivesc(actions, kind)
 	if len(matches) == 0 {
 		return
 	}

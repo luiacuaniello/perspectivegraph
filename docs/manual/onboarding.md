@@ -258,7 +258,10 @@ a profile is often named differently from the role inside it - Terraform and Clo
 name them separately. With the profiles in the bundle the instance reaches its real role; without
 them the role is guessed to share the profile's name, and that join is marked as inferred and
 weighs half. Roles are keyed on their `Arn`, as the IAM and network feeds key them, so the same
-role is one node whichever source reported it.
+role is one node whichever source reported it. The step from instance to role is priced from the
+instance's `MetadataOptions.HttpTokens`, as the network feed prices it, so the two feeds agree on
+it; and when the network feed states a join Custodian could only guess, the stated one stays,
+whichever arrives first.
 
 ### Falco (runtime confirmation)
 
@@ -344,7 +347,9 @@ cloud" view: it flattens each principal's **effective** allowed actions (managed
 against known escalation primitives - `iam:PassRole` paired with a compute action
 (`lambda:CreateFunction`, `ec2:RunInstances`, …), `iam:AttachUserPolicy`,
 `iam:PutRolePolicy`, `iam:CreatePolicyVersion`, `iam:UpdateAssumeRolePolicy`, and
-more. Each match draws a `CAN_ESCALATE_TO` edge to a synthetic **account-admin**
+more. The five that act on the principal's own user or groups (`iam:AttachUserPolicy`,
+`iam:PutUserPolicy`, `iam:AddUserToGroup`, `iam:AttachGroupPolicy`, `iam:PutGroupPolicy`)
+count only for users: a role has neither. Each match draws a `CAN_ESCALATE_TO` edge to a synthetic **account-admin**
 sensitive asset. A role whose trust policy admits `"Principal":"*"` is marked
 `internet_exposed` (publicly assumable) - the seed of a full internet→admin path.
 

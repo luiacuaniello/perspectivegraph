@@ -106,11 +106,11 @@ func TestMatchActionWildcards(t *testing.T) {
 func TestDetectPrivescPassRoleNeedsCompute(t *testing.T) {
 	// iam:PassRole alone is not escalation; pairing it with a compute action is.
 	passOnly := actionSet{}.add("iam:PassRole")
-	if got := detectPrivesc(passOnly); len(got) != 0 {
+	if got := detectPrivesc(passOnly, asUser); len(got) != 0 {
 		t.Errorf("iam:PassRole alone should not escalate, got %v", got)
 	}
 	passLambda := actionSet{}.add("iam:PassRole").add("lambda:CreateFunction")
-	if got := detectPrivesc(passLambda); len(got) == 0 {
+	if got := detectPrivesc(passLambda, asUser); len(got) == 0 {
 		t.Error("iam:PassRole + lambda:CreateFunction should be detected")
 	}
 }

@@ -126,6 +126,73 @@ func TestCustodianAndTheAWSFeedDescribeOneInstance(t *testing.T) {
 	}
 }
 
+// Once Custodian and the AWS network feed met on one instance and one role, they wrote the
+// same instance --ASSUMES--> role step with different probabilities, and the last one
+// written won: 0.6 or 0.8 for an instance requiring IMDSv2, and 0.4 or 0.9 when Custodian
+// had to guess the role and the feed stated it. Both now score the step from the
+// instance's IMDS setting, and a guess never replaces a fact, so the order is irrelevant.
+func TestTheAWSSourcesAgreeOnTheInstanceRoleStep(t *testing.T) {
+	const profile = `"IamInstanceProfile":{"Arn":"arn:aws:iam::123456789012:instance-profile/app"}`
+	network := func(tokens string) string {
+		return `{"provider":"aws","security_groups":[],
+		 "instances":[{"InstanceId":"i-web",` + profile + `,"MetadataOptions":{"HttpTokens":"` + tokens + `"}}],
+		 "instance_profiles":[{"Arn":"arn:aws:iam::123456789012:instance-profile/app",
+		   "Roles":[{"Arn":"arn:aws:iam::123456789012:role/app","RoleName":"app"}]}]}`
+	}
+	custodianExport := func(tokens string, listsProfiles bool) string {
+		body := `{"account_id":"123456789012","policies":[
+		 {"resource":"aws.ec2","resources":[{"InstanceId":"i-web",` + profile + `,"MetadataOptions":{"HttpTokens":"` + tokens + `"}}]}`
+		if listsProfiles {
+			body += `,{"resource":"aws.iam-profile","resources":[{"InstanceProfileName":"app",
+			  "Arn":"arn:aws:iam::123456789012:instance-profile/app",
+			  "Roles":[{"RoleName":"app","Arn":"arn:aws:iam::123456789012:role/app"}]}]}`
+		}
+		return body + `]}`
+	}
+	cases := []struct {
+		name          string
+		tokens        string
+		listsProfiles bool
+		want          float64
+	}{
+		{"both state it, IMDSv2 required", "required", true, 0.6},
+		{"Custodian guesses, the feed states it", "optional", false, 0.9},
+	}
+	for _, c := range cases {
+		for _, custodianLast := range []bool{false, true} {
+			ctx := context.Background()
+			store := memory.New()
+			writeNetwork := func() {
+				applyBody(t, ctx, store, cloudnet.New(), network(c.tokens), ingestion.Options{Account: "123456789012"})
+			}
+			writeCustodian := func() {
+				applyBody(t, ctx, store, custodian.New(), custodianExport(c.tokens, c.listsProfiles), ingestion.Options{})
+			}
+			if custodianLast {
+				writeNetwork()
+				writeCustodian()
+			} else {
+				writeCustodian()
+				writeNetwork()
+			}
+			snap, err := store.Snapshot(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var steps []ontology.Edge
+			for _, e := range snap.Edges {
+				if e.Type == ontology.EdgeAssumes {
+					steps = append(steps, e)
+				}
+			}
+			if len(steps) != 1 || steps[0].ExploitProbability != c.want || graph.Inferred(steps[0]) {
+				t.Errorf("%s, Custodian last=%v: steps %+v, want one stated step at p=%.1f",
+					c.name, custodianLast, steps, c.want)
+			}
+		}
+	}
+}
+
 // Every cluster has a prod namespace and a cluster-admin. Without the cluster in the ids,
 // an exposed workload in one cluster reached the cluster-admin of another, through a
 // service account that only shared its name.

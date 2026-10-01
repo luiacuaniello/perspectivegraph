@@ -184,32 +184,44 @@ func matchAction(pattern, action string) bool {
 type primitive struct {
 	name    string
 	actions []string
+	// userOnly marks a technique that works on the principal's own user or its groups.
+	// A role is no user and belongs to no group, so a role holding only these actions
+	// can grant power to users it cannot act as - not to itself.
+	userOnly bool
 }
+
+// principalKind is what kind of principal a technique is checked for.
+type principalKind int
+
+const (
+	asUser principalKind = iota
+	asRole
+)
 
 // primitives is the detection table (a curated subset of the well-known AWS IAM
 // privesc paths - Rhino Security Labs / PMapper). Each, if matched, means the
 // principal can grant itself or assume admin-equivalent privileges.
 var primitives = []primitive{
-	{"iam:AttachRolePolicy (attach AdministratorAccess to a role)", []string{"iam:AttachRolePolicy"}},
-	{"iam:AttachUserPolicy (attach AdministratorAccess to self)", []string{"iam:AttachUserPolicy"}},
-	{"iam:PutRolePolicy (inline an admin policy on a role)", []string{"iam:PutRolePolicy"}},
-	{"iam:PutUserPolicy (inline an admin policy on self)", []string{"iam:PutUserPolicy"}},
-	{"iam:CreatePolicyVersion (rewrite an attached policy)", []string{"iam:CreatePolicyVersion"}},
-	{"iam:SetDefaultPolicyVersion (roll back to a permissive version)", []string{"iam:SetDefaultPolicyVersion"}},
-	{"iam:UpdateAssumeRolePolicy (make an admin role assumable)", []string{"iam:UpdateAssumeRolePolicy"}},
-	{"iam:CreateAccessKey (mint keys for a privileged user)", []string{"iam:CreateAccessKey"}},
-	{"iam:CreateLoginProfile (set a console password on a user)", []string{"iam:CreateLoginProfile"}},
-	{"iam:PassRole + lambda:CreateFunction (run code as a passed role)", []string{"iam:PassRole", "lambda:CreateFunction"}},
-	{"iam:PassRole + ec2:RunInstances (launch an instance with a passed role)", []string{"iam:PassRole", "ec2:RunInstances"}},
-	{"iam:PassRole + cloudformation:CreateStack", []string{"iam:PassRole", "cloudformation:CreateStack"}},
-	{"iam:PassRole + glue:CreateDevEndpoint", []string{"iam:PassRole", "glue:CreateDevEndpoint"}},
-	{"iam:PassRole + sagemaker:CreateNotebookInstance", []string{"iam:PassRole", "sagemaker:CreateNotebookInstance"}},
-	{"iam:PassRole + datapipeline:CreatePipeline", []string{"iam:PassRole", "datapipeline:CreatePipeline"}},
-	{"iam:PassRole + codebuild:CreateProject", []string{"iam:PassRole", "codebuild:CreateProject"}},
-	{"iam:AddUserToGroup (add self to a privileged group)", []string{"iam:AddUserToGroup"}},
-	{"iam:AttachGroupPolicy (attach AdministratorAccess to your group)", []string{"iam:AttachGroupPolicy"}},
-	{"iam:PutGroupPolicy (inline an admin policy on your group)", []string{"iam:PutGroupPolicy"}},
-	{"iam:UpdateLoginProfile (reset a privileged user's console password)", []string{"iam:UpdateLoginProfile"}},
+	{name: "iam:AttachRolePolicy (attach AdministratorAccess to a role)", actions: []string{"iam:AttachRolePolicy"}},
+	{name: "iam:AttachUserPolicy (attach AdministratorAccess to self)", actions: []string{"iam:AttachUserPolicy"}, userOnly: true},
+	{name: "iam:PutRolePolicy (inline an admin policy on a role)", actions: []string{"iam:PutRolePolicy"}},
+	{name: "iam:PutUserPolicy (inline an admin policy on self)", actions: []string{"iam:PutUserPolicy"}, userOnly: true},
+	{name: "iam:CreatePolicyVersion (rewrite an attached policy)", actions: []string{"iam:CreatePolicyVersion"}},
+	{name: "iam:SetDefaultPolicyVersion (roll back to a permissive version)", actions: []string{"iam:SetDefaultPolicyVersion"}},
+	{name: "iam:UpdateAssumeRolePolicy (make an admin role assumable)", actions: []string{"iam:UpdateAssumeRolePolicy"}},
+	{name: "iam:CreateAccessKey (mint keys for a privileged user)", actions: []string{"iam:CreateAccessKey"}},
+	{name: "iam:CreateLoginProfile (set a console password on a user)", actions: []string{"iam:CreateLoginProfile"}},
+	{name: "iam:PassRole + lambda:CreateFunction (run code as a passed role)", actions: []string{"iam:PassRole", "lambda:CreateFunction"}},
+	{name: "iam:PassRole + ec2:RunInstances (launch an instance with a passed role)", actions: []string{"iam:PassRole", "ec2:RunInstances"}},
+	{name: "iam:PassRole + cloudformation:CreateStack", actions: []string{"iam:PassRole", "cloudformation:CreateStack"}},
+	{name: "iam:PassRole + glue:CreateDevEndpoint", actions: []string{"iam:PassRole", "glue:CreateDevEndpoint"}},
+	{name: "iam:PassRole + sagemaker:CreateNotebookInstance", actions: []string{"iam:PassRole", "sagemaker:CreateNotebookInstance"}},
+	{name: "iam:PassRole + datapipeline:CreatePipeline", actions: []string{"iam:PassRole", "datapipeline:CreatePipeline"}},
+	{name: "iam:PassRole + codebuild:CreateProject", actions: []string{"iam:PassRole", "codebuild:CreateProject"}},
+	{name: "iam:AddUserToGroup (add self to a privileged group)", actions: []string{"iam:AddUserToGroup"}, userOnly: true},
+	{name: "iam:AttachGroupPolicy (attach AdministratorAccess to your group)", actions: []string{"iam:AttachGroupPolicy"}, userOnly: true},
+	{name: "iam:PutGroupPolicy (inline an admin policy on your group)", actions: []string{"iam:PutGroupPolicy"}, userOnly: true},
+	{name: "iam:UpdateLoginProfile (reset a privileged user's console password)", actions: []string{"iam:UpdateLoginProfile"}},
 }
 
 // privescMatch is one matched escalation primitive and how it was granted.
@@ -232,23 +244,36 @@ type PrivescPrimitive struct {
 	// Actions are ALL required: a principal holds this primitive only if every one
 	// of them is permitted.
 	Actions []string
+	// UserOnly marks a technique that only a user can turn on itself (see AppliesTo).
+	UserOnly bool
+}
+
+// AppliesTo reports whether the technique can work for the principal with this ARN. The
+// user-only ones cannot work for a role, and checking them there would confirm an
+// escalation the engine does not claim.
+func (p PrivescPrimitive) AppliesTo(principalARN string) bool {
+	return !p.UserOnly || !strings.Contains(principalARN, ":role/")
 }
 
 // PrivescPrimitives returns the detection table as data.
 func PrivescPrimitives() []PrivescPrimitive {
 	out := make([]PrivescPrimitive, 0, len(primitives))
 	for _, p := range primitives {
-		out = append(out, PrivescPrimitive{Name: p.name, Actions: append([]string(nil), p.actions...)})
+		out = append(out, PrivescPrimitive{Name: p.name, Actions: append([]string(nil), p.actions...), UserOnly: p.userOnly})
 	}
 	return out
 }
 
 // detectPrivesc returns every privesc primitive the principal's permissions
 // enable. A primitive matches when ALL its actions are allowed (explicit Deny
-// already applied by actionSet.Allows).
-func detectPrivesc(a actionSet) []privescMatch {
+// already applied by actionSet.Allows), and when it can work for this kind of
+// principal at all.
+func detectPrivesc(a actionSet, kind principalKind) []privescMatch {
 	var found []privescMatch
 	for _, p := range primitives {
+		if p.userOnly && kind == asRole {
+			continue
+		}
 		allowed, broad := true, true
 		for _, act := range p.actions {
 			if !a.Allows(act) {

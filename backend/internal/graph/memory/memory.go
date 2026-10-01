@@ -240,8 +240,23 @@ func (s *Store) landLocked(e ontology.Edge) bool {
 	if !fromOK || !toOK {
 		return false
 	}
-	s.edges[edgeKey{e.Type, e.From, e.To}] = e
+	s.putEdgeLocked(e)
 	return true
+}
+
+// putEdgeLocked stores an edge whose endpoints are in the graph. A guess never replaces a
+// fact (graph.Supersedes): an inferred edge landing on a stated one only refreshes when
+// it was last seen.
+func (s *Store) putEdgeLocked(e ontology.Edge) {
+	k := edgeKey{e.Type, e.From, e.To}
+	if old, ok := s.edges[k]; ok && !graph.Supersedes(e, old) {
+		if ls, ok := graph.LastSeen(e.Properties); ok {
+			old.Properties = graph.MergeProps(old.Properties, map[string]any{ontology.PropLastSeen: ls})
+			s.edges[k] = old
+		}
+		return
+	}
+	s.edges[k] = e
 }
 
 func (s *Store) parkLocked(e ontology.Edge, at time.Time) {
@@ -305,7 +320,7 @@ func (s *Store) UpsertEdge(_ context.Context, e ontology.Edge) error {
 	if !fromOK || !toOK {
 		return fmt.Errorf("upsert edge %s %s->%s: %w", e.Type, e.From, e.To, graph.ErrEndpointsMissing)
 	}
-	s.edges[edgeKey{e.Type, e.From, e.To}] = e
+	s.putEdgeLocked(e)
 	return nil
 }
 

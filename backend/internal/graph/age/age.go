@@ -253,7 +253,7 @@ func (s *Store) upsertBatch(ctx context.Context, nodes []ontology.Node, edges []
 		nodeQs = append(nodeQs, q)
 		labels[n.Label] = true
 	}
-	edgeQs := make([]string, 0, len(edges))
+	edgeQs := make([]edgeStmts, 0, len(edges))
 	for _, e := range edges {
 		q, err := s.edgeSQL(e)
 		if err != nil {
@@ -311,7 +311,7 @@ func (s *Store) upsertBatch(ctx context.Context, nodes []ontology.Node, edges []
 			}
 		}
 		for i, q := range edgeQs {
-			landed, err := execReturnsRow(ctx, tx, q)
+			landed, err := landEdge(ctx, tx, q)
 			if err != nil {
 				return err
 			}
@@ -380,12 +380,32 @@ func (s *Store) nodeSQL(n ontology.Node) (nodeStmts, error) {
 	return nodeStmts{update: update, create: create}, nil
 }
 
+// edgeStmts is the upsert of one relationship. keep, set only for an inferred edge, runs
+// first and returns a row when a stated edge is already there: a guess never replaces a
+// fact (graph.Supersedes), so it only refreshes the stamp and the upsert is skipped.
+type edgeStmts struct{ keep, upsert string }
+
+// landEdge runs one edge's statements and reports whether the edge is in the graph:
+// written, or kept because a stated one was already there.
+func landEdge(ctx context.Context, tx *sql.Tx, q edgeStmts) (bool, error) {
+	if q.keep != "" {
+		if kept, err := execReturnsRow(ctx, tx, q.keep); err != nil || kept {
+			return kept, err
+		}
+	}
+	return execReturnsRow(ctx, tx, q.upsert)
+}
+
 // edgeSQL renders the upsert of one relationship. It RETURNs a row only when both
 // endpoints matched, which is how the caller tells a landed edge from a waiting one.
 // Endpoints are matched with WHERE for the same reason as in nodeSQL.
-func (s *Store) edgeSQL(e ontology.Edge) (string, error) {
+//
+// `SET e +=` merges properties, so a stated edge also REMOVEs the labels an earlier
+// guess on the same edge left: without that, a fact written over a guess kept saying
+// it was one.
+func (s *Store) edgeSQL(e ontology.Edge) (edgeStmts, error) {
 	if !ontology.IsValidEdgeType(e.Type) {
-		return "", fmt.Errorf("refusing to upsert edge with unknown type %q", e.Type)
+		return edgeStmts{}, fmt.Errorf("refusing to upsert edge with unknown type %q", e.Type)
 	}
 	// Native agtype edge properties, consistent with nodes: `p` (clamped) plus any
 	// edge attributes, so they're queryable too (e.g. the privesc `primitives`).
@@ -394,10 +414,30 @@ func (s *Store) edgeSQL(e ontology.Edge) (string, error) {
 		props[k] = v
 	}
 	props["p"] = clampProb(e.ExploitProbability)
-	inner := fmt.Sprintf(
-		`MATCH (a), (b) WHERE a.id = %s AND b.id = %s MERGE (a)-[e:%s]->(b) SET e += %s RETURN 1`,
-		cypherQuote(e.From), cypherQuote(e.To), e.Type, cypherMap(props))
-	return s.cypherSQL(inner, `v agtype`)
+	var q edgeStmts
+	clearGuess := fmt.Sprintf(` REMOVE e.%s, e.%s`, ontology.PropResolutionMethod, ontology.PropResolutionConfidence)
+	if graph.Inferred(e) {
+		clearGuess = ""
+		stamp := ""
+		if ls, ok := graph.LastSeen(e.Properties); ok {
+			stamp = fmt.Sprintf(` SET e.%s = %d`, ontology.PropLastSeen, ls)
+		}
+		keep, err := s.cypherSQL(fmt.Sprintf(
+			`MATCH (a)-[e:%s]->(b) WHERE a.id = %s AND b.id = %s AND e.%s IS NULL%s RETURN 1`,
+			e.Type, cypherQuote(e.From), cypherQuote(e.To), ontology.PropResolutionMethod, stamp), `v agtype`)
+		if err != nil {
+			return edgeStmts{}, err
+		}
+		q.keep = keep
+	}
+	upsert, err := s.cypherSQL(fmt.Sprintf(
+		`MATCH (a), (b) WHERE a.id = %s AND b.id = %s MERGE (a)-[e:%s]->(b) SET e += %s%s RETURN 1`,
+		cypherQuote(e.From), cypherQuote(e.To), e.Type, cypherMap(props), clearGuess), `v agtype`)
+	if err != nil {
+		return edgeStmts{}, err
+	}
+	q.upsert = upsert
+	return q, nil
 }
 
 // execReturnsRow runs q and reports whether it produced at least one row.
@@ -536,7 +576,7 @@ func (s *Store) landParked(ctx context.Context, tx *sql.Tx, nodes []ontology.Nod
 		if err != nil {
 			continue // only valid edges are ever parked; nothing to retry otherwise
 		}
-		landed, err := execReturnsRow(ctx, tx, q)
+		landed, err := landEdge(ctx, tx, q)
 		if err != nil {
 			return err
 		}

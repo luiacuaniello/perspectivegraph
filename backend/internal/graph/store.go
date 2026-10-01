@@ -204,7 +204,9 @@ type Store interface {
 	// UpsertNode creates or updates a vertex by its ID, merging properties
 	// with previous observations (see MergeProps).
 	UpsertNode(ctx context.Context, n ontology.Node) error
-	// UpsertEdge creates or updates a directed relationship between two nodes.
+	// UpsertEdge creates or updates a directed relationship between two nodes. A
+	// write replaces the edge with the same type and endpoints, except that a guess
+	// never replaces a fact (see Supersedes).
 	// It returns an error wrapping ErrEndpointsMissing when either endpoint is not
 	// in the graph yet: the broker redelivers the event with backoff, so the edge
 	// lands once its nodes arrive (eventual consistency instead of dangling edges).
@@ -215,6 +217,26 @@ type Store interface {
 	Ping(ctx context.Context) error
 	// Close releases resources.
 	Close() error
+}
+
+// Inferred reports whether an edge is a join a source guessed rather than one a tool
+// stated: a guessed join records how it was resolved (ontology.PropResolutionMethod).
+func Inferred(e ontology.Edge) bool {
+	_, ok := e.Properties[ontology.PropResolutionMethod]
+	return ok
+}
+
+// Supersedes is the Store contract's rule for two writes of the same edge: the later
+// replaces the earlier, except that a guess never replaces a fact.
+//
+// Two sources can describe one step - Custodian and the network feed both draw
+// instance --ASSUMES--> role - and when only one of them had to guess, letting the last
+// write win made the step depend on arrival order: a guess at 0.45 overwrote a stated
+// 0.9. An inferred edge that lands on a stated one only refreshes its last-seen stamp;
+// a stated edge replaces an inferred one, and the labels that said it was a guess go
+// with it. Every implementation must apply it wherever an edge lands.
+func Supersedes(incoming, stored ontology.Edge) bool {
+	return !Inferred(incoming) || Inferred(stored)
 }
 
 // MergeProps overlays b onto a without mutating either map. It is the Store

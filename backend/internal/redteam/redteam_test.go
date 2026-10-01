@@ -19,7 +19,10 @@ import (
 
 var clock = time.Date(2026, 7, 26, 0, 0, 0, 0, time.UTC)
 
-const roleARN = "arn:aws:iam::111111111111:role/ec2-role"
+const (
+	roleARN = "arn:aws:iam::111111111111:role/ec2-role"
+	userARN = "arn:aws:iam::111111111111:user/dev"
+)
 
 func ssrfPath() analyzer.AttackPath { return ssrfPathFor(roleARN) }
 
@@ -132,7 +135,7 @@ func TestUntestableHopIsNotConfirmable(t *testing.T) {
 // denied and be recorded as a REFUTED verdict. That is a false outcome fed straight
 // into the calibration dataset - worse than having no oracle at all.
 func TestEscalationNeverAsksForWildcardIAM(t *testing.T) {
-	f := allow("iam:AttachUserPolicy")
+	f := allow("iam:AttachRolePolicy")
 	res, err := NewAWSOracle(f).Check(context.Background(), assertionsFor(ssrfPath())[1])
 	if err != nil {
 		t.Fatal(err)
@@ -143,9 +146,9 @@ func TestEscalationNeverAsksForWildcardIAM(t *testing.T) {
 		}
 	}
 	if res.Decision != Allowed {
-		t.Errorf("a principal holding iam:AttachUserPolicy escalates; got %s (%s)", res.Decision, res.Evidence)
+		t.Errorf("a principal holding iam:AttachRolePolicy escalates; got %s (%s)", res.Decision, res.Evidence)
 	}
-	if !strings.Contains(res.Evidence, "AttachUserPolicy") {
+	if !strings.Contains(res.Evidence, "AttachRolePolicy") {
 		t.Errorf("evidence should name the primitive that held, got %q", res.Evidence)
 	}
 }
@@ -211,7 +214,7 @@ func conditionGated(key string, actions ...string) *fakeIAM {
 // the condition were an aws:SourceIp the attacker actually matches, the engine's claim
 // would have been right and the oracle would have recorded it as wrong.
 func TestConditionGatedEscalationIsNotARefutation(t *testing.T) {
-	f := conditionGated("aws:MultiFactorAuthPresent", "iam:AttachUserPolicy")
+	f := conditionGated("aws:MultiFactorAuthPresent", "iam:AttachRolePolicy")
 	res, err := NewAWSOracle(f).Check(context.Background(), assertionsFor(ssrfPath())[1])
 	if err != nil {
 		t.Fatal(err)
@@ -243,7 +246,7 @@ func TestScopedClaimSendsTheResourceToAWS(t *testing.T) {
 	const target = "arn:aws:iam::111111111111:user/target-user"
 	f := &recordingIAM{fakeIAM: *allow("iam:AttachUserPolicy")}
 
-	res, err := NewAWSOracle(f).Check(context.Background(), EscalationClaimOn(roleARN, target))
+	res, err := NewAWSOracle(f).Check(context.Background(), EscalationClaimOn(userARN, target))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,6 +258,39 @@ func TestScopedClaimSendsTheResourceToAWS(t *testing.T) {
 	}
 	if !strings.Contains(res.Evidence, target) {
 		t.Errorf("evidence should say the permit is over that resource, got %q", res.Evidence)
+	}
+}
+
+// Five techniques work only on the principal's own user or groups. A role allowed them
+// really is allowed them - AWS says so - but it cannot turn them on itself, so asking
+// AWS about them for a role confirmed escalations that do not exist, and agreed with an
+// engine that made the same mistake. A user holding the same permissions still escalates.
+func TestUserTechniquesDoNotMakeARoleEscalate(t *testing.T) {
+	userOnly := []string{"iam:AttachUserPolicy", "iam:PutUserPolicy", "iam:AddUserToGroup",
+		"iam:AttachGroupPolicy", "iam:PutGroupPolicy"}
+
+	f := allow(userOnly...)
+	res, err := NewAWSOracle(f).Check(context.Background(), EscalationClaim(roleARN))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Decision != Denied {
+		t.Errorf("a role holding only user techniques cannot escalate; got %s (%s)", res.Decision, res.Evidence)
+	}
+	for _, act := range f.asked {
+		for _, u := range userOnly {
+			if act == u {
+				t.Errorf("asked AWS about %s for a role, which cannot use it", act)
+			}
+		}
+	}
+
+	res, err = NewAWSOracle(allow(userOnly...)).Check(context.Background(), EscalationClaim(userARN))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Decision != Allowed {
+		t.Errorf("a user holding them escalates; got %s (%s)", res.Decision, res.Evidence)
 	}
 }
 
@@ -280,7 +316,7 @@ func TestAccountWideDenialNamesItsOwnLimit(t *testing.T) {
 // A non-ARN resource (the synthetic account-admin target the path assembler produces)
 // must leave the question account-wide rather than being sent to AWS as a resource.
 func TestSyntheticTargetIsNotSentAsAResource(t *testing.T) {
-	f := &recordingIAM{fakeIAM: *allow("iam:AttachUserPolicy")}
+	f := &recordingIAM{fakeIAM: *allow("iam:AttachRolePolicy")}
 	if _, err := NewAWSOracle(f).Check(context.Background(), assertionsFor(ssrfPath())[1]); err != nil {
 		t.Fatal(err)
 	}
@@ -304,8 +340,8 @@ func (r *recordingIAM) SimulatePrincipalPolicy(ctx context.Context, in *iam.Simu
 // missing context even when other statements on the same principal carry Conditions, so
 // a real escalation is still confirmed rather than lost to caution.
 func TestUnconditionalGrantStillConfirmsAlongsideConditionalOnes(t *testing.T) {
-	f := allow("iam:PutUserPolicy")
-	f.missing = map[string][]string{"iam:AttachUserPolicy": {"aws:MultiFactorAuthPresent"}}
+	f := allow("iam:PutRolePolicy")
+	f.missing = map[string][]string{"iam:AttachRolePolicy": {"aws:MultiFactorAuthPresent"}}
 	res, err := NewAWSOracle(f).Check(context.Background(), assertionsFor(ssrfPath())[1])
 	if err != nil {
 		t.Fatal(err)
@@ -331,8 +367,8 @@ func TestPlainDenialIsStillARefutation(t *testing.T) {
 // could not be evaluated would read that way, and treating it as allowed would confirm
 // a path reality might block.
 func TestAllowedWithMissingContextIsNotAPermit(t *testing.T) {
-	f := allow("iam:AttachUserPolicy")
-	f.missing = map[string][]string{"iam:AttachUserPolicy": {"aws:SourceIp"}}
+	f := allow("iam:AttachRolePolicy")
+	f.missing = map[string][]string{"iam:AttachRolePolicy": {"aws:SourceIp"}}
 	res, err := NewAWSOracle(f).Check(context.Background(), assertionsFor(ssrfPath())[1])
 	if err != nil {
 		t.Fatal(err)
@@ -346,7 +382,7 @@ func TestAllowedWithMissingContextIsNotAPermit(t *testing.T) {
 // calibration dataset, so the engine is not graded on a question the oracle failed to
 // ask. Without the fix this path scored a refutation - the label 0.
 func TestConditionGatedVerdictStaysOutOfCalibration(t *testing.T) {
-	f := conditionGated("aws:SourceIp", "iam:AttachUserPolicy")
+	f := conditionGated("aws:SourceIp", "iam:AttachRolePolicy")
 	rec, err := Attempt(context.Background(), NewAWSOracle(f), ssrfPath(), "t1", clock)
 	if err != nil {
 		t.Fatal(err)

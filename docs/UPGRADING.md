@@ -17,6 +17,36 @@ digest, take the backup, stage it.
 
 ---
 
+## 1.28.1
+
+### Roles no longer escalate through techniques only a user can use
+
+**Affects you if** you ingest IAM data with roles that hold `iam:AttachUserPolicy`,
+`iam:PutUserPolicy`, `iam:AddUserToGroup`, `iam:AttachGroupPolicy` or `iam:PutGroupPolicy`.
+
+Those five act on the caller's own user or groups. A role has neither, so holding them lets it
+grant power to users it cannot act as - it does not escalate. The engine drew `CAN_ESCALATE_TO`
+account-admin at 0.9 for such roles, and `redteam` agreed with it, since AWS does allow the
+actions. Both now skip those techniques for roles. A role that can also act as a user - by
+minting its keys or setting its password - still escalates, through that technique.
+
+What to do: the AWS connector's IAM pull is a complete snapshot and retracts the old edges at its
+next run. An IAM dump you upload is a partial observation unless sent with `?snapshot=<scope>`,
+so its old edges stay until `GRAPH_TTL` prunes them; re-send it with `?snapshot=` or start from
+an empty graph.
+
+### A guess never replaces a fact, and Custodian prices the instance → role step like the network feed
+
+Since 1.28.0 Custodian and the network feed meet on the same instance and role, and both write
+the `ASSUMES` step between them. Custodian used a flat 0.8 (0.4 when guessed); the network feed
+prices it from `HttpTokens` (0.6 with IMDSv2 required, 0.9 otherwise). The last write won, so the
+step depended on arrival order, and a Custodian guess could overwrite the network feed's stated
+join at half its probability. Custodian now reads `MetadataOptions.HttpTokens` and prices the
+step the same way (a guess at half of that), and every store keeps a stated edge when an
+inferred one lands on it. Nothing to do: the next ingest of either feed rewrites the step.
+
+---
+
 ## 1.28.0
 
 ### The same role, instance and cluster object is one node, and two that share a name are two

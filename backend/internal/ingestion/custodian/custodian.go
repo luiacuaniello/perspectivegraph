@@ -125,6 +125,9 @@ type builder struct {
 // profile's role to be known.
 type instanceLink struct {
 	vm, profileARN, profileName string
+	// httpTokens is the instance's IMDS setting, which decides how cheaply a foothold
+	// on it becomes the role's credentials.
+	httpTokens string
 }
 
 func (b *builder) upsert(n ontology.Node) {
@@ -207,7 +210,9 @@ func (b *builder) ec2(r map[string]any) {
 	b.vms = append(b.vms, nodeID)
 
 	if arn, name := instanceProfile(r); name != "" {
-		b.pending = append(b.pending, instanceLink{vm: nodeID, profileARN: arn, profileName: name})
+		tokens, _ := r["MetadataOptions"].(map[string]any)
+		b.pending = append(b.pending, instanceLink{vm: nodeID, profileARN: arn, profileName: name,
+			httpTokens: str(tokens["HttpTokens"])})
 	}
 }
 
@@ -218,18 +223,20 @@ const profileNameConfidence = 0.5
 
 // linkInstanceRoles joins each instance to the role its profile carries: the role the
 // export names when it has the profile, otherwise the role that shares the profile's name,
-// marked as an inferred join at half the probability.
+// marked as an inferred join at half the probability. The probability is the one the
+// network source gives the same step, from the same IMDS setting.
 func (b *builder) linkInstanceRoles() {
 	for _, l := range b.pending {
+		p := ingestion.IMDSAssumeProb(l.httpTokens)
 		if arn := first(b.profileRole[l.profileARN], b.profileRole[l.profileName]); arn != "" {
-			b.edge(ontology.EdgeAssumes, l.vm, b.roleNode(arn, ""), 0.8)
+			b.edge(ontology.EdgeAssumes, l.vm, b.roleNode(arn, ""), p)
 			continue
 		}
 		account := first(ingestion.AccountFromARN(l.profileARN), b.account)
 		roleID := b.roleNode(roleARN(account, l.profileName), l.profileName)
 		b.edges = append(b.edges, ontology.Edge{
 			Type: ontology.EdgeAssumes, From: l.vm, To: roleID,
-			ExploitProbability: 0.8 * profileNameConfidence,
+			ExploitProbability: p * profileNameConfidence,
 			Properties: map[string]any{
 				ontology.PropResolutionMethod:     "instance-profile-name",
 				ontology.PropResolutionConfidence: profileNameConfidence,

@@ -129,17 +129,6 @@ type bundle struct {
 // iam collector, which ids roles by ARN) and the name labels it.
 type roleRef struct{ arn, name string }
 
-// imdsAssumeProb is how likely a foothold on an instance becomes credentials for its
-// role. With IMDSv2 enforced (HttpTokens=required) a blind SSRF cannot mint the token, so
-// the attacker needs code execution first; with IMDSv1 still answering, one GET is enough.
-// Driven by the instance's real metadata configuration rather than a guessed constant.
-func imdsAssumeProb(httpTokens string) float64 {
-	if strings.EqualFold(httpTokens, "required") {
-		return 0.6
-	}
-	return 0.9
-}
-
 type Collector struct{}
 
 func New() *Collector             { return &Collector{} }
@@ -293,7 +282,7 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 				if inst.MetadataOptions != nil {
 					tokens = inst.MetadataOptions.HTTPTokens
 				}
-				g.edge(ontology.EdgeAssumes, id, roleID, imdsAssumeProb(tokens))
+				g.edge(ontology.EdgeAssumes, id, roleID, ingestion.IMDSAssumeProb(tokens))
 			}
 		}
 	}

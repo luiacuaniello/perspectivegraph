@@ -138,7 +138,7 @@ func TestAnInstanceAssumesTheRoleItsProfileCarries(t *testing.T) {
 	if len(edges) != 1 || edges[0].To != want {
 		t.Fatalf("instance assumes %+v, want web-role by its ARN", edges)
 	}
-	if edges[0].ExploitProbability != 0.8 || edges[0].Properties[ontology.PropResolutionMethod] != nil {
+	if edges[0].ExploitProbability != ingestion.IMDSAssumeProb("") || edges[0].Properties[ontology.PropResolutionMethod] != nil {
 		t.Errorf("a join the export states is not a guess: %+v", edges[0])
 	}
 }
@@ -156,8 +156,26 @@ func TestAProfileWithoutItsRoleIsAnInferredJoin(t *testing.T) {
 	if e.To != ontology.NewID(ontology.LabelIAMRole, "arn:aws:iam::"+account+":role/app") {
 		t.Errorf("guessed role id = %s, want the ARN of a role named like the profile", e.To)
 	}
-	if e.Properties[ontology.PropResolutionMethod] != "instance-profile-name" || e.ExploitProbability >= 0.8 {
+	if e.Properties[ontology.PropResolutionMethod] != "instance-profile-name" || e.ExploitProbability >= ingestion.IMDSAssumeProb("") {
 		t.Errorf("the guess must be marked and weigh less than a stated join: %+v", e)
+	}
+}
+
+// The step from an instance to its role is scored from the instance's IMDS setting, as
+// the network source scores the same step. Custodian used a flat 0.8, so once the two
+// sources met on one edge its probability depended on which of them was written last:
+// 0.6 or 0.8 for an instance that requires IMDSv2.
+func TestTheInstanceRoleStepFollowsIMDS(t *testing.T) {
+	for tokens, want := range map[string]float64{"required": 0.6, "optional": 0.9} {
+		ev := parseBundle(t, `{"account_id":"`+account+`","policies":[
+		 {"resource":"aws.ec2","resources":[{"InstanceId":"i-1","MetadataOptions":{"HttpTokens":"`+tokens+`"},
+		   "IamInstanceProfile":{"Arn":"arn:aws:iam::`+account+`:instance-profile/app"}}]},
+		 {"resource":"aws.iam-profile","resources":[{"InstanceProfileName":"app","Arn":"arn:aws:iam::`+account+`:instance-profile/app",
+		   "Roles":[{"RoleName":"app","Arn":"arn:aws:iam::`+account+`:role/app"}]}]}]}`)
+		edges := assumes(ev, ontology.ScopedID(ontology.LabelVirtualMachine, account, "i-1"))
+		if len(edges) != 1 || edges[0].ExploitProbability != want {
+			t.Errorf("HttpTokens=%s: instance assumes %+v, want p=%.1f", tokens, edges, want)
+		}
 	}
 }
 

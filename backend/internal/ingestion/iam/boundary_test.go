@@ -18,6 +18,9 @@ import (
 // This is the shape `make boundary-lab-aws` builds on a live account, where AWS's own
 // SimulatePrincipalPolicy allows the unbounded role and denies the bounded one. Keeping
 // it here means the regression is caught by `make test`, not only by an account.
+//
+// Two of the three actions are user techniques a role cannot turn on itself; the
+// unbounded role escalates through the third, iam:CreateAccessKey.
 const boundaryLabBundle = `{
   "RoleDetailList": [
     {
@@ -79,7 +82,7 @@ func TestPermissionsBoundaryCapsEscalation(t *testing.T) {
 	nodes, edges := parseRoles(t, boundaryLabBundle)
 
 	if _, ok := edges["unbounded"]; !ok {
-		t.Error("the unbounded role holds iam:AttachUserPolicy on * and must still escalate")
+		t.Error("the unbounded role holds iam:CreateAccessKey on * and must still escalate")
 	}
 	if e, ok := edges["bounded"]; ok {
 		t.Errorf("the boundary permits no iam: action, so the intersection cannot escalate; got an edge at p=%.2f (%v)",
@@ -108,7 +111,7 @@ func TestBoundaryDoesNotGrant(t *testing.T) {
 	if empty.Allows("iam:AttachUserPolicy") {
 		t.Error("a boundary must not grant an action the identity policy never allowed")
 	}
-	if len(detectPrivesc(empty)) != 0 {
+	if len(detectPrivesc(empty, asUser)) != 0 {
 		t.Error("a boundary alone must yield no privesc primitive")
 	}
 	if empty.IsAdmin() {
@@ -136,7 +139,7 @@ func TestBoundaryIntersectionSemantics(t *testing.T) {
 		if !a.Allows("iam:AttachUserPolicy") {
 			t.Error("an admin-equivalent boundary caps nothing and must leave the primitive intact")
 		}
-		if len(detectPrivesc(a)) == 0 {
+		if len(detectPrivesc(a, asUser)) == 0 {
 			t.Error("a no-op boundary must not suppress the escalation")
 		}
 	})
@@ -172,7 +175,7 @@ func TestBoundaryIntersectionSemantics(t *testing.T) {
 		if a.BroadlyAllows("iam:AttachUserPolicy") {
 			t.Error("a boundary that permits the action only on specific resources must not read as account-wide")
 		}
-		matches := detectPrivesc(a)
+		matches := detectPrivesc(a, asUser)
 		if len(matches) == 0 {
 			t.Fatal("a boundary-narrowed grant is still a real primitive, not a miss")
 		}

@@ -106,6 +106,16 @@ over-report. The unit test in
 [`boundary_test.go`](../../backend/internal/ingestion/iam/boundary_test.go) pins the same fixture under
 `make test`, so the regression is caught without an AWS account at all.
 
+**What the oracle could not see in its own lab.** Two of the three permissions the lab grants,
+`iam:AttachUserPolicy` and `iam:PutUserPolicy`, act on the caller's own *user*. A role is no user and
+belongs to no group, so they let a role grant power to users it cannot act as - not escalate. The engine
+credited roles with them anyway, and with `iam:AddUserToGroup`, `iam:AttachGroupPolicy` and
+`iam:PutGroupPolicy`, at 0.9; the oracle agreed, because it asks whether each action is allowed, and it
+is. Found by re-reading this lab, not by any check. Both sides now skip those five techniques for a role,
+from the same table, so they cannot drift apart. The lab's verdicts stand - the control still escalates
+through `iam:CreateAccessKey`, which lets a role mint an administrator user's keys - but it now names one
+primitive, not three. An outside check covers only the question asked of it.
+
 All of it at zero cost, with nothing exploitable standing up anywhere. The lab creates only IAM entities -
 free on every account, not merely free-tier - and an `EXIT` trap tears it down even if the script dies.
 

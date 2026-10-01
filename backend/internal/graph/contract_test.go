@@ -27,6 +27,7 @@ import (
 func TestMemoryStoreContract(t *testing.T) {
 	runStoreContract(t, memory.New())
 	assertSweepContract(t, memory.New())
+	assertAGuessNeverReplacesAFact(t, memory.New())
 }
 
 func TestAGEStoreContract(t *testing.T) {
@@ -91,6 +92,7 @@ func TestAGEStoreContract(t *testing.T) {
 	defer store.Close()
 
 	assertElementsBeforeProvenanceAreNeverSwept(t, store)
+	assertAGuessNeverReplacesAFact(t, store) // early: it needs an edge type the graph has never seen
 	runStoreContract(t, store)
 	assertPathfinderEquivalence(t, store)
 	assertConcurrentWritersDoNotDuplicate(t, store)
