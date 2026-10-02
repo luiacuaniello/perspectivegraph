@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.29.1](https://github.com/luiacuaniello/perspectivegraph/compare/v1.29.0...v1.29.1) (2026-10-02)
+
+
+### Bug Fixes
+
+* **ingestion:** judge bucket and function policies the way AWS does, checked on a real account ([#300](https://github.com/luiacuaniello/perspectivegraph/issues/300)) ([3e6a458](https://github.com/luiacuaniello/perspectivegraph/commit/3e6a458fb99ba6ec367fdaaf97c34db6a06a3f78))
+
 ## [1.29.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.28.3...v1.29.0) (2026-10-02)
 
 
