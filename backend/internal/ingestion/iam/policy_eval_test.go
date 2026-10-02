@@ -164,3 +164,58 @@ func TestPolicyEvaluationEndToEnd(t *testing.T) {
 		}
 	})
 }
+
+// The policy reader said it erred toward reporting too much. Two shapes made it report
+// too little: an Allow written with NotAction was not read at all, and a Deny under a
+// condition was applied as if it always held. Each case below is one policy shape, with
+// what the engine must say about a role holding it.
+func TestPolicyShapesTheReaderUsedToMisread(t *testing.T) {
+	role := func(stmts string) string {
+		return `{"RoleDetailList":[{"RoleName":"r","Arn":"arn:aws:iam::1:role/r",
+		  "RolePolicyList":[{"PolicyName":"p","PolicyDocument":{"Statement":[` + stmts + `]}}]}]}`
+	}
+	const attach = `{"Effect":"Allow","Action":"iam:AttachRolePolicy","Resource":"*"}`
+	const withoutMFA = `"Condition":{"BoolIfExists":{"aws:MultiFactorAuthPresent":"false"}}`
+	for _, c := range []struct {
+		name        string
+		stmts       string
+		escalates   bool
+		prob        float64
+		conditional bool
+	}{
+		{"an Allow of everything but one action grants the rest",
+			`{"Effect":"Allow","NotAction":"iam:DeleteUser","Resource":"*"}`, true, privescProb, false},
+		{"an Allow of everything but IAM grants no IAM technique",
+			`{"Effect":"Allow","NotAction":["iam:*","organizations:*"],"Resource":"*"}`, false, 0, false},
+		{"a Deny only without MFA leaves the escalation, unverified",
+			attach + `,{"Effect":"Deny","Action":"iam:*","Resource":"*",` + withoutMFA + `}`, true, conditionalDenyProb, true},
+		{"an unconditional Deny still removes it",
+			attach + `,{"Effect":"Deny","Action":"iam:*","Resource":"*"}`, false, 0, false},
+		{"a conditional Deny on one technique leaves another at full weight",
+			attach + `,{"Effect":"Allow","Action":["iam:PassRole","lambda:CreateFunction"],"Resource":"*"}` +
+				`,{"Effect":"Deny","Action":"iam:AttachRolePolicy","Resource":"*",` + withoutMFA + `}`, true, privescProb, false},
+		{"a Deny on all but some resources is not account-wide",
+			attach + `,{"Effect":"Deny","Action":"iam:*","NotResource":"arn:aws:iam::1:role/sandbox-*"}`, true, privescProb, false},
+		{"a Deny of everything but S3 is not applied",
+			attach + `,{"Effect":"Deny","NotAction":"s3:*","Resource":"*"}`, true, privescProb, false},
+		{"an administrator under a conditional Deny of everything is unverified",
+			`{"Effect":"Allow","Action":"*","Resource":"*"},{"Effect":"Deny","Action":"*","Resource":"*",` + withoutMFA + `}`,
+			true, conditionalDenyProb, true},
+	} {
+		_, edges := parseRoles(t, role(c.stmts))
+		e, ok := edges["r"]
+		if ok != c.escalates {
+			t.Errorf("%s: escalates = %v, want %v (%v)", c.name, ok, c.escalates, e.Properties["primitives"])
+			continue
+		}
+		if !ok {
+			continue
+		}
+		if e.ExploitProbability != c.prob {
+			t.Errorf("%s: p = %.2f, want %.2f", c.name, e.ExploitProbability, c.prob)
+		}
+		if got, _ := e.Properties[propDenyConditional].(bool); got != c.conditional {
+			t.Errorf("%s: %s = %v, want %v", c.name, propDenyConditional, got, c.conditional)
+		}
+	}
+}

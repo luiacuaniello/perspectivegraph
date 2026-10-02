@@ -255,6 +255,13 @@ curl -sS -X POST "$INGEST_URL/ingest/custodian" -H 'Content-Type: application/js
 }'
 ```
 
+**Keep the resources' own fields.** A load balancer's name and an RDS identifier are unique only
+within one account and Region: the collector keys them with the bundle's `account_id` and the
+Region in their `LoadBalancerArn` / `DBInstanceArn` (or a top-level `"region"` when the bundle is
+one Region's export), and links a load balancer only to instances in its own Region, read from
+their `Placement`. Custodian's output carries all of these; a bundle assembled by hand without
+them keys by account alone.
+
 **Include the `aws.iam-profile` policy.** EC2 reports an instance's *profile*, not its role, and
 a profile is often named differently from the role inside it - Terraform and CloudFormation
 name them separately. With the profiles in the bundle the instance reaches its real role; without
@@ -377,10 +384,13 @@ curl -sS -X POST "$INGEST_URL/ingest/iam?account=123456789012" \
 > lab](accuracy.md#the-engines-first-demonstrated-false-positive---found-then-closed)), and a
 > primitive held only on **specific literal resources** yields a lower-probability
 > edge (`resource_scoped`), since it lands only if those targets are themselves
-> privileged. Still not evaluated, by design: Condition keys,
-> `NotAction`/`NotResource`, SCPs, and a Deny confined to specific resources - so it
-> still **over-reports rather than misses**. Treat its findings as "worth
-> confirming". See `backend/testdata/iam-sample.json` for the shape, and `make
+> privileged. An `Allow` written with `NotAction` grants everything but what it
+> names. Still not evaluated, by design: Condition keys and SCPs. An `Allow` under a
+> condition counts as granted; a `Deny` under one, a `Deny` confined to specific
+> resources (by `Resource` or `NotResource`) and a `Deny` written with `NotAction` are
+> not applied - and an escalation that only a conditional `Deny` might block is
+> reported at `0.5`, marked `deny_condition_unevaluated`. Each errs toward reporting
+> rather than missing. Treat its findings as "worth confirming". See `backend/testdata/iam-sample.json` for the shape, and `make
 > bench-cloudgoat` for the precision regressions that pin this.
 
 ### SSO / IdP federation (Okta → cloud - the modern front door)
@@ -442,8 +452,9 @@ node id*. The collectors compute it as:
 
 The key is what makes the asset unique in the system that owns it, its parts joined
 with `|`: an image by its ref, a role by its ARN, a pod by `namespace/pod`, a package by
-the name Trivy reports and its version, and an instance, load balancer or database by its
-account as well. Use this helper to compute an id when you reference a node by hand:
+the name Trivy reports and its version, an instance by its account as well, and a load
+balancer or database by its account and, when the export says it, its Region
+(`account=…|region=…|name`). Use this helper to compute an id when you reference a node by hand:
 
 ```bash
 pgid() { printf '%s' "$2" | tr 'A-Z' 'a-z' | shasum | cut -c1-16 | sed "s|^|$1:|"; }
@@ -470,7 +481,8 @@ Practical rules:
   to the pod it came from, `namespace/pod` in that cluster, and lands on the pod the dump
   describes.
 - Give a classification of a **database** its `account` (per record, or `?account=` for
-  the report): a database name is unique only within an account. Buckets need none.
+  the report) and its `region`: a database name is unique only within one account and
+  Region. Buckets need neither.
 - Prefer setting markers through the native source (Custodian tags) so you don't
   have to hand-compute ids at all.
 

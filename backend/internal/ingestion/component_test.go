@@ -26,3 +26,27 @@ func TestScannerNameReadsThePURLAsTrivyNamesThePackage(t *testing.T) {
 		}
 	}
 }
+
+// The Region of a resource is read from what the export carries: its ARN, or the
+// availability zone an instance runs in. A global resource has none.
+func TestRegionOfAResource(t *testing.T) {
+	for arn, want := range map[string]string{
+		"arn:aws:rds:eu-west-1:111111111111:db:prod-db":                                         "eu-west-1",
+		"arn:aws:elasticloadbalancing:us-east-1:111111111111:loadbalancer/app/web-alb/0123abcd": "us-east-1",
+		"arn:aws-us-gov:rds:us-gov-west-1:111111111111:db:x":                                    "us-gov-west-1",
+		"arn:aws:iam::111111111111:role/ops":                                                    "",
+		"arn:aws:s3:::customer-exports":                                                         "",
+		"prod-db":                                                                               "",
+	} {
+		if got := RegionFromARN(arn); got != want {
+			t.Errorf("RegionFromARN(%q) = %q, want %q", arn, got, want)
+		}
+	}
+	for zone, want := range map[string]string{
+		"eu-west-1a": "eu-west-1", "us-gov-west-1b": "us-gov-west-1", "us-west-2-lax-1a": "us-west-2-lax-1", "": "", "eu-west-1": "",
+	} {
+		if got := RegionFromZone(zone); got != want {
+			t.Errorf("RegionFromZone(%q) = %q, want %q", zone, got, want)
+		}
+	}
+}

@@ -200,6 +200,92 @@ func TestCustodianKeepsTwoAccountsApart(t *testing.T) {
 	}
 }
 
+// An RDS identifier and a load balancer's name are unique per account AND Region, and
+// 1.28.2 scoped them by account only: prod-db in eu-west-1 and in us-east-1 of one account
+// were still one database. And within one export, a load balancer was linked to every
+// instance sharing its app tag, in any Region, though a load balancer only routes inside
+// its own: an internet-facing ALB in eu-west-1 led into an instance in us-east-1. The
+// Region comes from the resources themselves - an ARN, an availability zone.
+func TestCustodianKeepsTwoRegionsApart(t *testing.T) {
+	const acct = "111111111111"
+	instance := func(id, zone string) string {
+		return `{"InstanceId":"` + id + `","Placement":{"AvailabilityZone":"` + zone + `"},
+		  "Tags":[{"Key":"app","Value":"web"},{"Key":"Name","Value":"` + id + `"}],
+		  "IamInstanceProfile":{"Arn":"arn:aws:iam::` + acct + `:instance-profile/ops"}}`
+	}
+	db := func(region string) string {
+		return `{"DBInstanceIdentifier":"prod-db","DBInstanceArn":"arn:aws:rds:` + region + `:` + acct + `:db:prod-db",
+		  "Tags":[{"Key":"classification","Value":"pii"}]}`
+	}
+	lb := func(region, scheme string) string {
+		return `{"LoadBalancerName":"web-alb","Scheme":"` + scheme + `","Tags":[{"Key":"app","Value":"web"}],
+		  "LoadBalancerArn":"arn:aws:elasticloadbalancing:` + region + `:` + acct + `:loadbalancer/app/web-alb/0123456789abcdef"}`
+	}
+	ctx := context.Background()
+	store := memory.New()
+	applyBody(t, ctx, store, custodian.New(), `{"account_id":"`+acct+`","policies":[
+	 {"resource":"aws.elbv2","resources":[`+lb("eu-west-1", "internet-facing")+`,`+lb("us-east-1", "internal")+`]},
+	 {"resource":"aws.ec2","resources":[`+instance("i-eu", "eu-west-1a")+`,`+instance("i-us", "us-east-1b")+`]},
+	 {"resource":"aws.iam-profile","resources":[{"InstanceProfileName":"ops","Arn":"arn:aws:iam::`+acct+`:instance-profile/ops",
+	   "Roles":[{"RoleName":"ops","Arn":"arn:aws:iam::`+acct+`:role/ops"}]}]},
+	 {"resource":"aws.iam-role","resources":[{"RoleName":"ops","Arn":"arn:aws:iam::`+acct+`:role/ops",
+	   "AttachedManagedPolicies":[{"PolicyName":"AdministratorAccess","PolicyArn":"arn:aws:iam::aws:policy/AdministratorAccess"}]}]},
+	 {"resource":"aws.rds","resources":[`+db("eu-west-1")+`,`+db("us-east-1")+`]}]}`, ingestion.Options{})
+
+	if n := nodesNamed(t, ctx, store, ontology.LabelDatabase, "prod-db"); n != 2 {
+		t.Errorf("prod-db in two Regions is %d nodes, want two", n)
+	}
+	if n := nodesNamed(t, ctx, store, ontology.LabelLoadBalancer, "web-alb"); n != 2 {
+		t.Errorf("web-alb in two Regions is %d nodes, want two", n)
+	}
+	snap, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The path finder keeps the best route per entry and target, so a route through i-us
+	// would hide behind the one through i-eu: check the links themselves.
+	byID := snap.NodeByID()
+	zoneOf := map[string]string{"i-eu": "eu-west-1", "i-us": "us-east-1"}
+	for _, e := range snap.Edges {
+		if e.Type != ontology.EdgeRoutesTo {
+			continue
+		}
+		lb, vm := byID[e.From], byID[e.To]
+		if lb.Properties["region"] != zoneOf[vm.Name] {
+			t.Errorf("the load balancer in %v routes to %s, in %s", lb.Properties["region"], vm.Name, zoneOf[vm.Name])
+		}
+	}
+	throughEU := false
+	for _, p := range analyzer.FindCriticalPaths(snap) {
+		for _, n := range p.Nodes {
+			switch n.Name {
+			case "i-us":
+				t.Errorf("a route entered us-east-1, whose load balancer is internal: %v", routeNames([]analyzer.AttackPath{p}))
+			case "i-eu":
+				throughEU = true
+			}
+		}
+	}
+	if !throughEU {
+		t.Error("the internet-facing load balancer in eu-west-1 must still lead to its own instance")
+	}
+
+	applyBody(t, ctx, store, dataclass.New(), `{"source":"classifier","records":[
+	 {"asset":"prod-db","label":"Database","kind":"phi","account":"`+acct+`","region":"us-east-1"}]}`, ingestion.Options{})
+	snap, err = store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range snap.Nodes {
+		if n.Label == ontology.LabelDatabase {
+			classified := n.Properties[ontology.PropClassification] == "phi"
+			if region := n.Properties["region"]; classified != (region == "us-east-1") {
+				t.Errorf("database in %v classified=%v: the finding names us-east-1", region, classified)
+			}
+		}
+	}
+}
+
 // Falco keyed a container by its own name; the Kubernetes dump keys the pod it runs in as
 // namespace/pod. The alert sat on a node of its own and no route through the pod was ever
 // marked runtime-confirmed - with a real cluster dump. The demo hid it: its topology was

@@ -17,6 +17,47 @@ digest, take the backup, stage it.
 
 ---
 
+## 1.28.3
+
+### The IAM reader reads NotAction, and no longer lets a conditional Deny hide an escalation
+
+**Affects you if** your IAM policies use `NotAction`, `NotResource`, or a `Deny` with a
+`Condition`.
+
+The reader said it erred toward reporting too much; three shapes made it report too little. An
+`Allow` written with `NotAction` ("everything except…") was not read at all, so every escalation
+it grants was missed. A `Deny` with a `Condition` - "unless MFA", "unless from this network" - was
+applied as if it always held, hiding an escalation that is real whenever the condition is not
+met. A `Deny` with `NotResource` was applied to the whole account.
+
+Now a `NotAction` `Allow` grants everything but what it names, a `NotResource` `Deny` is not
+applied (like any `Deny` confined to specific resources), and a conditional `Deny` is not applied
+either: an escalation that only it might block is reported at `0.5` and marked
+`deny_condition_unevaluated`, the way an unreadable permissions boundary is. `redteam -compare`
+grades such a claim `unsettled (conditional)` when AWS refuses it, since AWS answered for one
+request context.
+
+What to do: nothing. New escalation edges appear at the next IAM pull or upload; none that was
+reported before goes away.
+
+### Load balancers and databases from Custodian are keyed by Region too
+
+**Affects you if** your Custodian bundles carry resource ARNs (real exports do) or a `region`.
+
+A load balancer's name and an RDS identifier are unique per account *and* Region; 1.28.2 added
+the account only, so `prod-db` in two Regions of one account was still one database. The Region
+now comes from the resource's ARN (`LoadBalancerArn`, `DBInstanceArn`), else from an optional
+`region` field on the bundle. And a load balancer is linked by its `app` tag only to instances
+in its own Region - read from their `Placement.AvailabilityZone` - since it cannot route anywhere
+else; an internet-facing ALB in one Region used to lead into instances of another.
+
+What to do: a data classification of a database names its `region` as well as its `account`.
+Load balancer and database nodes from exports that carry a Region get new ids; the old ones stay
+until `GRAPH_TTL` prunes them, or start from an empty graph. An export without ARNs or `region`
+keeps the ids it had.
+
+---
+
 ## 1.28.2
 
 ### An SBOM component and the library Trivy reports are one node
@@ -57,8 +98,9 @@ alert nodes stay until `GRAPH_TTL` prunes them, or start from an empty graph.
 
 **Affects you if** you ingest Custodian bundles from more than one AWS account.
 
-An RDS identifier and a load balancer's name are unique only within an account, and Custodian
-keyed both without it, as it keyed instances before 1.28.0. Two accounts' `web-alb` were one
+An RDS identifier and a load balancer's name are unique only within one account and Region, and
+Custodian keyed both by name alone, as it keyed instances before 1.28.0. This release adds the
+account; 1.28.3 adds the Region. Two accounts' `web-alb` were one
 node: an internet-facing one in account A and an internal one in account B made a public load
 balancer that led into B. Both now carry the bundle's `account_id`; buckets stay unscoped,
 since their names are unique across AWS.

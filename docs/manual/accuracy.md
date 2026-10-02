@@ -155,6 +155,15 @@ The engine treats an `Allow` as unconditional - `Condition` is documented as del
 detection errs toward over-reporting. That means it claims escalations that in reality only apply under
 `aws:SourceIp`, or with MFA present.
 
+A `Deny` under a condition is the mirror case, and until 1.28.3 the engine got it wrong: it applied the
+`Deny` as if it always held, and so missed an escalation that is real whenever the condition is not met.
+It now does not apply it, and reports what it might block at `0.5`, marked `deny_condition_unevaluated` -
+unverified, the same way an unreadable permissions boundary is. `redteam -compare` grades such a claim
+`unsettled (conditional)` when AWS refuses it, because AWS answered for one request context: with a
+`BoolIfExists` condition and no MFA key supplied, the `Deny` applies, which is the case the engine already
+named. (In the same release an `Allow` written with `NotAction` - "everything except…" - started being
+read at all; before, it granted nothing, and every escalation in it was missed.)
+
 Asking AWS about one is subtler than it looks, and getting it wrong quietly corrupts the calibration set.
 Measured against the real API, a grant carrying an unevaluated `Condition` comes back as:
 

@@ -137,7 +137,7 @@ func compareEngineToAWS(ctx context.Context, oracle *redteam.AWSOracle, region, 
 		// is the one this needs, so a network-feed failure must not stop the comparison.
 		fmt.Fprintf(os.Stderr, "redteam: partial collect: %v\n", err)
 	}
-	escalates, scoped, collected := engineEscalations(events)
+	claims := engineEscalations(events)
 
 	fmt.Printf("\n  %-42s %-12s %-12s\n", "principal", "engine", "AWS")
 	fmt.Printf("  %s\n", strings.Repeat("-", 74))
@@ -148,37 +148,21 @@ func compareEngineToAWS(ctx context.Context, oracle *redteam.AWSOracle, region, 
 		if err != nil {
 			return fmt.Errorf("check %s: %w", arn, err)
 		}
-		engineSays, awsSays := verdict(escalates[arn]), "unsettled"
+		awsSays := "unsettled"
 		switch res.Decision {
 		case redteam.Allowed:
 			awsSays = "ESCALATES"
 		case redteam.Denied:
 			awsSays = "no privesc"
 		}
-
-		mark := ""
-		switch {
-		case !collected[arn]:
-			// The engine never saw this principal, so it made no claim to grade. Saying
-			// "agree" here would credit the engine for a question it was not asked.
-			unsettled++
-			engineSays, mark = "not collected", "unsettled"
-		case res.Decision == redteam.Inconclusive:
-			unsettled++
-			mark = "unsettled"
-		case scoped[arn] && res.Decision == redteam.Denied:
-			// The engine qualified this claim as resource-scoped and the oracle asked
-			// the account-wide question, so the two are not answering the same thing.
-			// Calling it a disagreement would fail the engine for a question nobody
-			// asked it; settling it means re-running with -resource <arn>.
-			unsettled++
-			engineSays, mark = "scoped", "unsettled (scoped)"
-		case escalates[arn] == (res.Decision == redteam.Allowed):
+		engineSays, mark, outcome := grade(claims[arn], res.Decision)
+		switch outcome {
+		case outcomeAgree:
 			agree++
-			mark = "agree"
-		default:
+		case outcomeDisagree:
 			disagree++
-			mark = "DISAGREE"
+		default:
+			unsettled++
 		}
 		fmt.Printf("  %-42s %-12s %-12s %s\n", shortARN(arn), engineSays, awsSays, mark)
 	}
@@ -206,14 +190,21 @@ func compareEngineToAWS(ctx context.Context, oracle *redteam.AWSOracle, region, 
 // the comparison, because the oracle's unscoped question is account-wide - AWS evaluates
 // an unnamed resource as `*` - so a scoped grant answers implicitDeny there. Grading
 // that as a disagreement would fail the engine for a question nobody asked it.
-func engineEscalations(events []ontology.Event) (escalates, scoped, collected map[string]bool) {
-	escalates, scoped, collected = map[string]bool{}, map[string]bool{}, map[string]bool{}
+//
+// `conditional` marks the claims the engine reported unverified because a Deny it cannot
+// evaluate might block them (deny_condition_unevaluated). The oracle answers for one
+// request context - with an IfExists condition and no MFA key supplied, the Deny applies -
+// so its "no" settles only that context, not the claim.
+func engineEscalations(events []ontology.Event) map[string]claim {
+	claims := map[string]claim{}
 	arnByID := map[string]string{}
 	for _, ev := range events {
 		for _, n := range ev.Nodes {
 			if arn, ok := n.Properties[ontology.PropARN].(string); ok && arn != "" {
 				arnByID[n.ID] = arn
-				collected[arn] = true
+				c := claims[arn]
+				c.collected = true
+				claims[arn] = c
 			}
 		}
 	}
@@ -226,17 +217,53 @@ func engineEscalations(events []ontology.Event) (escalates, scoped, collected ma
 			if arn == "" {
 				continue
 			}
-			escalates[arn] = true
-			if s, ok := e.Properties["resource_scoped"].(bool); ok && s {
-				scoped[arn] = true
-			} else {
-				// An account-wide claim on the same principal outranks a scoped one:
-				// that one IS comparable to what the oracle asked.
-				scoped[arn] = false
-			}
+			c := claims[arn]
+			c.escalates = true
+			// The engine draws one escalation edge per principal, and its qualifiers are the
+			// claim's: resource-scoped, or blocked under a condition it cannot evaluate.
+			c.scoped, _ = e.Properties["resource_scoped"].(bool)
+			c.conditional, _ = e.Properties["deny_condition_unevaluated"].(bool)
+			claims[arn] = c
 		}
 	}
-	return escalates, scoped, collected
+	return claims
+}
+
+// claim is what the engine said about one principal.
+type claim struct{ collected, escalates, scoped, conditional bool }
+
+const (
+	outcomeAgree = iota
+	outcomeDisagree
+	outcomeUnsettled
+)
+
+// grade puts the engine's claim about one principal next to AWS's answer.
+func grade(c claim, d redteam.Decision) (engineSays, mark string, outcome int) {
+	engineSays = verdict(c.escalates)
+	switch {
+	case !c.collected:
+		// The engine never saw this principal, so it made no claim to grade. Saying
+		// "agree" here would credit the engine for a question it was not asked.
+		return "not collected", "unsettled", outcomeUnsettled
+	case d == redteam.Inconclusive:
+		return engineSays, "unsettled", outcomeUnsettled
+	case c.scoped && d == redteam.Denied:
+		// The engine qualified this claim as resource-scoped and the oracle asked
+		// the account-wide question, so the two are not answering the same thing.
+		// Calling it a disagreement would fail the engine for a question nobody
+		// asked it; settling it means re-running with -resource <arn>.
+		return "scoped", "unsettled (scoped)", outcomeUnsettled
+	case c.conditional && d == redteam.Denied:
+		// The engine said the escalation holds only when a condition does not, and the
+		// oracle evaluated the one request context it was given. Its "no" is the case
+		// the engine already named, not a refutation.
+		return "conditional", "unsettled (conditional)", outcomeUnsettled
+	case c.escalates == (d == redteam.Allowed):
+		return engineSays, "agree", outcomeAgree
+	default:
+		return engineSays, "DISAGREE", outcomeDisagree
+	}
 }
 
 func verdict(escalates bool) string {

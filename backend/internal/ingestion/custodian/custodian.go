@@ -58,7 +58,10 @@ import (
 type bundle struct {
 	Provider  string `json:"provider"`
 	AccountID string `json:"account_id"`
-	Policies  []struct {
+	// Region is the Region the bundle was exported from, when it is one Region's
+	// export. A resource's own ARN takes precedence.
+	Region   string `json:"region"`
+	Policies []struct {
 		Policy    string           `json:"policy"`
 		Resource  string           `json:"resource"` // e.g. "aws.ec2", "aws.iam-role"
 		Resources []map[string]any `json:"resources"`
@@ -76,7 +79,8 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 		return nil, fmt.Errorf("decode custodian bundle: %w", err)
 	}
 
-	g := &builder{nodes: map[string]ontology.Node{}, appOf: map[string]string{}, account: b.AccountID, profileRole: map[string]string{}}
+	g := &builder{nodes: map[string]ontology.Node{}, appOf: map[string]string{}, regionOf: map[string]string{},
+		account: b.AccountID, region: b.Region, profileRole: map[string]string{}}
 	for _, pol := range b.Policies {
 		for _, res := range pol.Resources {
 			switch strings.ToLower(pol.Resource) {
@@ -112,11 +116,15 @@ type builder struct {
 	nodes map[string]ontology.Node
 	edges []ontology.Edge
 	appOf map[string]string // node id -> `app` tag, for LB→EC2 inference
-	lbs   []string          // load-balancer node ids
-	vms   []string          // EC2 node ids
-	admin []string          // admin-role node ids
+	// regionOf is the Region of a load balancer or instance when the export says it:
+	// a load balancer only routes to instances in its own Region.
+	regionOf map[string]string
+	lbs      []string // load-balancer node ids
+	vms      []string // EC2 node ids
+	admin    []string // admin-role node ids
 
 	account     string            // the bundle's account_id, "" when it has none
+	region      string            // the bundle's region, "" when it has none
 	profileRole map[string]string // instance-profile ARN (and name) -> role ARN
 	pending     []instanceLink    // instances whose role is resolved once every policy is read
 }
@@ -169,7 +177,7 @@ func (b *builder) inferEdges() {
 			continue
 		}
 		for _, vm := range b.vms {
-			if strings.EqualFold(b.appOf[vm], app) {
+			if strings.EqualFold(b.appOf[vm], app) && sameRegion(b.regionOf[lb], b.regionOf[vm]) {
 				b.edge(ontology.EdgeRoutesTo, lb, vm, 0.9)
 			}
 		}
@@ -208,6 +216,10 @@ func (b *builder) ec2(r map[string]any) {
 	ingestion.MarkCrownJewelFromTags(props, tg)
 	b.upsert(ontology.Node{ID: nodeID, Label: ontology.LabelVirtualMachine, Name: nameFrom(tg, id), Properties: props})
 	b.vms = append(b.vms, nodeID)
+	placement, _ := r["Placement"].(map[string]any)
+	if region := first(ingestion.RegionFromZone(str(placement["AvailabilityZone"])), b.region); region != "" {
+		b.regionOf[nodeID] = region
+	}
 
 	if arn, name := instanceProfile(r); name != "" {
 		tokens, _ := r["MetadataOptions"].(map[string]any)
@@ -359,6 +371,10 @@ func (b *builder) database(r map[string]any) {
 	if b.account != "" {
 		props[ontology.PropAccount] = b.account
 	}
+	region := first(ingestion.RegionFromARN(str(r["DBInstanceArn"])), b.region)
+	if region != "" {
+		props["region"] = region
+	}
 	if boolish(r["PubliclyAccessible"]) { // real RDS field
 		props[ontology.PropInternetExposed] = true
 	}
@@ -366,11 +382,12 @@ func (b *builder) database(r map[string]any) {
 		props["app"] = app
 	}
 	ingestion.MarkCrownJewelFromTags(props, tg)
-	// An RDS identifier, like a load balancer's name, is unique only within an account:
-	// prod-db in two accounts is two databases, and keyed without the account they were
-	// one, with each other's exposure, classification and routes. Buckets stay unscoped,
-	// since their names are unique across AWS.
-	b.upsert(ontology.Node{ID: ontology.ScopedID(ontology.LabelDatabase, b.account, id), Label: ontology.LabelDatabase, Name: id, Properties: props})
+	// An RDS identifier, like a load balancer's name, is unique only within one account
+	// and Region: prod-db in two accounts, or in two Regions of one account, is two
+	// databases, and keyed by name they were one, with each other's exposure,
+	// classification and routes. The Region comes from the resource's ARN, else from
+	// the bundle; buckets stay unscoped, since their names are unique across AWS.
+	b.upsert(ontology.Node{ID: ingestion.RegionalID(ontology.LabelDatabase, b.account, region, id), Label: ontology.LabelDatabase, Name: id, Properties: props})
 }
 
 func (b *builder) loadBalancer(r map[string]any) {
@@ -379,10 +396,15 @@ func (b *builder) loadBalancer(r map[string]any) {
 		return
 	}
 	tg := tags(r)
-	nodeID := ontology.ScopedID(ontology.LabelLoadBalancer, b.account, name) // unique per account, see database
+	region := first(ingestion.RegionFromARN(str(r["LoadBalancerArn"])), b.region)
+	nodeID := ingestion.RegionalID(ontology.LabelLoadBalancer, b.account, region, name) // unique per account and Region, see database
 	props := map[string]any{}
 	if b.account != "" {
 		props[ontology.PropAccount] = b.account
+	}
+	if region != "" {
+		props["region"] = region
+		b.regionOf[nodeID] = region
 	}
 	if strings.EqualFold(str(r["Scheme"]), "internet-facing") {
 		props[ontology.PropInternetExposed] = true
@@ -500,4 +522,11 @@ func first(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// sameRegion reports whether a load balancer and an instance can be in one Region. An
+// unknown Region matches anything, as before Regions were read; a Local Zone or
+// Wavelength zone (us-west-2-lax-1) belongs to its parent Region.
+func sameRegion(a, b string) bool {
+	return a == "" || b == "" || a == b || strings.HasPrefix(a, b+"-") || strings.HasPrefix(b, a+"-")
 }

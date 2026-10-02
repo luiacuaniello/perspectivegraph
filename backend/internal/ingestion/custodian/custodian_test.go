@@ -202,3 +202,20 @@ func TestIdentitiesAreKeyedLikeTheOtherAWSSources(t *testing.T) {
 		t.Error("a role keyed on its bare name merges with the Kubernetes ClusterRole of that name")
 	}
 }
+
+// A load balancer routes only inside its Region; a Local Zone belongs to its parent, and
+// an unknown Region matches anything, as it did before Regions were read.
+func TestSameRegion(t *testing.T) {
+	for _, c := range []struct {
+		a, b string
+		want bool
+	}{
+		{"eu-west-1", "eu-west-1", true}, {"eu-west-1", "us-east-1", false},
+		{"us-west-2", "us-west-2-lax-1", true}, {"", "us-east-1", true}, {"us-east-1", "us-east-1-wl1-bos-wlz-1", true},
+		{"us-east-1", "us-east-2", false},
+	} {
+		if got := sameRegion(c.a, c.b); got != c.want {
+			t.Errorf("sameRegion(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+}

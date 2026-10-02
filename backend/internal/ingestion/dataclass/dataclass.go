@@ -28,11 +28,12 @@ type record struct {
 	Label  string `json:"label"`  // ontology label: Bucket (default) | Database
 	Kind   string `json:"kind"`   // classification: pii | phi | pci | financial | secret | …
 	Source string `json:"source"` // optional per-record source override
-	// Account is the cloud account a Database lives in (?account= sets it for the whole
-	// report). A database name is unique only within an account, so the cloud feeds key
-	// databases with it, and a classification without it cannot find its database.
-	// Buckets ignore it: their names are unique across AWS.
+	// Account and Region locate a Database (?account= sets the account for the whole
+	// report). A database name is unique only within one account and Region, so the
+	// cloud feeds key databases with both, and a classification without them cannot
+	// find its database. Buckets ignore them: their names are unique across AWS.
 	Account string `json:"account"`
+	Region  string `json:"region"`
 }
 
 type Collector struct{}
@@ -61,7 +62,7 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 		// Same id the cloud feed used → this merges onto the existing asset.
 		id := ontology.NewID(label, asset)
 		if label == ontology.LabelDatabase {
-			id = ontology.ScopedID(label, firstNonEmpty(rec.Account, opts.Account), asset)
+			id = ingestion.RegionalID(label, firstNonEmpty(rec.Account, opts.Account), rec.Region, asset)
 		}
 		nodes = append(nodes, ontology.Node{
 			ID:    id,
