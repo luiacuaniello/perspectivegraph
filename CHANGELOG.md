@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.28.3](https://github.com/luiacuaniello/perspectivegraph/compare/v1.28.2...v1.28.3) (2026-10-02)
+
+
+### Bug Fixes
+
+* **ingestion:** read NotAction, never let a conditional Deny hide an escalation, and key Custodian stores by Region ([#296](https://github.com/luiacuaniello/perspectivegraph/issues/296)) ([8250cdf](https://github.com/luiacuaniello/perspectivegraph/commit/8250cdf99b29b0f3a0b59d7337c18149cca12a6a))
+
 ## [1.28.2](https://github.com/luiacuaniello/perspectivegraph/compare/v1.28.1...v1.28.2) (2026-10-02)
 
 
