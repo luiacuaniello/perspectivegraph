@@ -68,9 +68,11 @@ func TestStampsTrustAndSBOM(t *testing.T) {
 	if builtFrom != 1 {
 		t.Errorf("want 1 BUILT_FROM edge, got %d", builtFrom)
 	}
-	// The SBOM library must converge with the same id Trivy uses for it.
-	if want := ontology.NewID(ontology.LabelLibrary, "log4j-core:2.14.1"); !hasNode(ev.Nodes, want) {
-		t.Errorf("library node id should key on name:version (%s)", want)
+	// The SBOM library must converge with the id Trivy gives it: name and version as two
+	// parts. This assertion used to compute its expectation the SBOM's own way, "name:version",
+	// so it passed while the two feeds never met; identity_test.go runs them together.
+	if want := ontology.NewID(ontology.LabelLibrary, "log4j-core", "2.14.1"); !hasNode(ev.Nodes, want) {
+		t.Errorf("library node id should key as Trivy keys it (%s)", want)
 	}
 }
 

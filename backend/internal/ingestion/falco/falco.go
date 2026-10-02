@@ -37,7 +37,7 @@ type Collector struct{}
 func New() *Collector             { return &Collector{} }
 func (*Collector) Source() string { return "falco" }
 
-func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, error) {
+func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event, error) {
 	alerts, err := decode(r)
 	if err != nil {
 		return nil, err
@@ -50,16 +50,27 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 		if name == "" {
 			name = fieldStr(a.OutputFields, "container.id")
 		}
-		if name == "" {
+		pod, ns := fieldStr(a.OutputFields, "k8s.pod.name"), fieldStr(a.OutputFields, "k8s.ns.name")
+		if name == "" && pod == "" {
 			continue // not a container-scoped alert
 		}
-		id := ontology.NewID(ontology.LabelContainer, name)
+		// In Kubernetes the alert belongs to the pod, keyed as the cluster dump keys it -
+		// namespace/pod, in the cluster named with ?cluster= - so it lands on the workload
+		// the dump describes and marks the routes through it. It used to be keyed by the
+		// container's own name, which the dump never uses: the alert sat on a node of its
+		// own and no route through the pod was ever runtime-confirmed. Outside Kubernetes
+		// the container's name is all there is.
+		id, nodeName := ontology.NewID(ontology.LabelContainer, name), name
+		if pod != "" && ns != "" {
+			id, nodeName = ingestion.KubeID(ontology.LabelContainer, opts.Cluster, ns+"/"+pod), pod
+		}
 
 		incoming := ontology.Node{
 			ID:    id,
 			Label: ontology.LabelContainer,
-			Name:  name,
+			Name:  nodeName,
 			Properties: map[string]any{
+				"container_name":             name,
 				ontology.PropRuntimeAlert:    true,
 				ontology.PropRuntimeRule:     a.Rule,
 				ontology.PropRuntimePriority: a.Priority,

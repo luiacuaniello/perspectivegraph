@@ -1,5 +1,5 @@
 {
-  "_comment": "Simulates what the Cloud (Custodian) + Runtime (Falco) collectors contribute: the infra/identity subgraph. Ids for the image (Image:98b06dcdd2c1656f), CVE (CVE:6c58f4a6711be1a5), repository (Repository:818ecf749bd26593) and the Semgrep command-injection weakness (Weakness:681467edeb629421) match what the Trivy and Semgrep collectors generate from their sample reports. The payments container declares only its image_ref (no hand-stitched HOSTS edge): the resolver INFERS the Container->Image join from that ref and stamps it with confidence (tag match = 0.85), so the kill chain shows a 'heuristic join' badge on that hop. Posting all three correlates them into TWO attack paths to TWO crown jewels: (A) Trivy/Log4Shell -> admin IAM role, and (B) Semgrep/command-injection -> customers PII database.",
+  "_comment": "Simulates what the Cloud (Custodian) + Runtime (Falco) collectors contribute: the infra/identity subgraph. Ids for the image (Image:98b06dcdd2c1656f), CVE (CVE:6c58f4a6711be1a5), repository (Repository:818ecf749bd26593) and the Semgrep command-injection weakness (Weakness:681467edeb629421) match what the Trivy and Semgrep collectors generate from their sample reports. The payments pod is keyed as the Kubernetes collector keys it (namespace/pod: prod/payments-7d9c8f), which is also how the Falco collector keys the pod an alert came from, so the sample alerts land on it. It declares only its image_ref (no hand-stitched HOSTS edge): the resolver INFERS the Container->Image join from that ref and stamps it with confidence (tag match = 0.85), so the kill chain shows a 'heuristic join' badge on that hop. Posting all three correlates them into TWO attack paths to TWO crown jewels: (A) Trivy/Log4Shell -> admin IAM role, and (B) Semgrep/command-injection -> customers PII database.",
   "source": "context",
   "kind": "relationship",
   "observed_at": "2026-06-08T12:00:00Z",
@@ -11,9 +11,9 @@
       "properties": { "internet_exposed": true }
     },
     {
-      "id": "Container:40c4770202821f32",
+      "id": "Container:ba8322df0e416b02",
       "label": "Container",
-      "name": "payments (ns: prod)",
+      "name": "payments-7d9c8f",
       "properties": { "image_ref": "payments-api:1.4.2" }
     },
     {
@@ -53,7 +53,7 @@
     {
       "type": "EXPOSES",
       "from": "LoadBalancer:edge-alb",
-      "to": "Container:40c4770202821f32",
+      "to": "Container:ba8322df0e416b02",
       "exploit_probability": 0.9
     },
     {

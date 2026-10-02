@@ -17,6 +17,59 @@ digest, take the backup, stage it.
 
 ---
 
+## 1.28.2
+
+### An SBOM component and the library Trivy reports are one node
+
+**Affects you if** you send SBOMs to `/ingest/supplychain` and Trivy reports for the same
+images.
+
+The SBOM keyed a component `name:version`, while Trivy keys name and version apart, and it
+named a Maven package by its artifact where Trivy says `groupId:artifactId`. Every component
+both feeds report was two nodes, and the SBOM's never carried the CVE Trivy found on it. No
+route was invented or lost - Trivy's node carried the CVE - but inventories and counts saw
+those components twice. The SBOM now keys a component as Trivy does, reading Trivy's name for
+it from its `purl`, and both write `DEPENDS_ON` at the same probability, so the converged edge
+does not depend on which arrived last.
+
+What to do: SBOM component nodes get new ids. An SBOM upload is a partial observation unless
+sent with `?snapshot=<scope>`, so the old nodes stay until `GRAPH_TTL` prunes them; re-send
+with `?snapshot=` or start from an empty graph. A plain component list without `purl` keeps
+each `name` as given: write Maven components as `groupId:artifactId` there, or add the `purl`.
+
+### A Falco alert lands on the pod the Kubernetes dump describes
+
+**Affects you if** you send Falco alerts and Kubernetes dumps.
+
+Falco keyed an alert's container by its own name (`payments`); the Kubernetes dump keys the
+pod it runs in as `namespace/pod`. The alert sat on a node of its own, and no route through
+the pod was ever marked runtime-confirmed - so the runtime factor never raised a discovered
+route's priority. An alert carrying `k8s.pod.name` and `k8s.ns.name` is now keyed as the dump
+keys the pod; one without them keeps the container's name.
+
+What to do: with more than one cluster, send Falco to `/ingest/falco?cluster=<name>`, the
+name that cluster's dump is sent with. A topology written by hand that keyed a container as
+Falco used to must key the pod as `namespace/pod` (see
+[onboarding](manual/onboarding.md#4-identifier-correlation-the-make-or-break-detail)). The old
+alert nodes stay until `GRAPH_TTL` prunes them, or start from an empty graph.
+
+### Load balancers and databases from Custodian are keyed with their account
+
+**Affects you if** you ingest Custodian bundles from more than one AWS account.
+
+An RDS identifier and a load balancer's name are unique only within an account, and Custodian
+keyed both without it, as it keyed instances before 1.28.0. Two accounts' `web-alb` were one
+node: an internet-facing one in account A and an internal one in account B made a public load
+balancer that led into B. Both now carry the bundle's `account_id`; buckets stay unscoped,
+since their names are unique across AWS.
+
+What to do: a data classification of a database must now name its account - `account` on the
+record, or `?account=` for the whole report - or it no longer finds its database. Load
+balancer and database nodes get new ids; the old ones stay until `GRAPH_TTL` prunes them, or
+start from an empty graph.
+
+---
+
 ## 1.28.1
 
 ### Roles no longer escalate through techniques only a user can use

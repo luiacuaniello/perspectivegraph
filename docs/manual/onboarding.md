@@ -198,7 +198,9 @@ curl -sS -X POST "$INGEST_URL/ingest/supplychain" -H 'Content-Type: application/
 
 `sbom` accepts the raw CycloneDX document above **or** a plain
 `[{"name","version","type","purl"}]` list. Each component becomes a
-`Library`/`Package` the image `DEPENDS_ON`. Set `signed:false` for an image whose
+`Library`/`Package` the image `DEPENDS_ON`. Include each component's `purl`: it gives
+a Maven or npm component the name Trivy uses (`org.apache.logging.log4j:log4j-core`,
+`@babel/traverse`), so it meets the CVE Trivy found on it instead of standing beside it. Set `signed:false` for an image whose
 signature you couldn't verify - if it's reachable from the internet, the
 `no-internet-to-unsigned-image` invariant fires (Violations view), and the kill
 chain marks it **⚠ unsigned**. Omit `signed` entirely for "not assessed" (no
@@ -268,7 +270,10 @@ whichever arrives first.
 Point **falcosidekick**'s webhook output at the endpoint, or POST raw Falco JSON
 (`-o json_output=true`). Each alert needs `output_fields["container.name"]`
 (or `container.id`); include `container.image` so the runtime container links to
-the scanned image (its ref must match Trivy's, after registry strip).
+the scanned image (its ref must match Trivy's, after registry strip). In Kubernetes,
+keep Falco's `k8s.pod.name` and `k8s.ns.name`: the alert then lands on the pod the
+cluster dump describes, and marks its routes runtime-confirmed. With more than one
+cluster, post to `/ingest/falco?cluster=<name>`, the name you give that cluster's dump.
 
 ```bash
 curl -sS -X POST "$INGEST_URL/ingest/falco" -H 'Content-Type: application/json' -d '{
@@ -432,18 +437,25 @@ A path forms only when every source names the *same real asset* with the *same
 node id*. The collectors compute it as:
 
 ```
-<Label>:<first 16 hex of sha1( lowercase(name) )>
+<Label>:<first 16 hex of sha1( lowercase(key) )>
 ```
 
-Use this helper to compute an id when you reference a node by hand:
+The key is what makes the asset unique in the system that owns it, its parts joined
+with `|`: an image by its ref, a role by its ARN, a pod by `namespace/pod`, a package by
+the name Trivy reports and its version, and an instance, load balancer or database by its
+account as well. Use this helper to compute an id when you reference a node by hand:
 
 ```bash
 pgid() { printf '%s' "$2" | tr 'A-Z' 'a-z' | shasum | cut -c1-16 | sed "s|^|$1:|"; }
 
-pgid Image     "payments-api:1.4.2"   # → Image:98b06dcdd2c1656f
-pgid Container "payments"
-pgid IAM_Role  "web-admin"
+pgid Image          "payments-api:1.4.2"                          # → Image:98b06dcdd2c1656f
+pgid Container      "prod/payments-7d9c8f"                        # → Container:ba8322df0e416b02
+pgid IAM_Role       "arn:aws:iam::123456789012:role/web-admin"    # → IAM_Role:519edff85bafd335
+pgid Library        "org.apache.logging.log4j:log4j-core|2.14.1"  # → Library:df15149df9910e54
+pgid VirtualMachine "account=123456789012|i-0web1"                # → VirtualMachine:ba33f006eb9f2f35
 ```
+
+A Kubernetes object sent with `?cluster=<name>` is keyed `cluster=<name>|<key>`.
 
 Practical rules:
 
@@ -451,7 +463,14 @@ Practical rules:
   prefixes are stripped automatically (`registry/…/payments-api:1.4.2` ≡
   `payments-api:1.4.2`), and Docker Hub `library/` is normalized - but anything
   more exotic must match exactly.
-- Keep Semgrep `repo` == build provenance `repository`.
+- Keep Semgrep `repo` == build provenance `repository` == supply-chain `source_repo`. A
+  repository is keyed by that name alone, so two repositories with the same name under
+  different owners are one node: if your estate has them, use `owner/name` in all three.
+- Send Falco alerts with the **same `?cluster=`** as that cluster's dump: an alert is keyed
+  to the pod it came from, `namespace/pod` in that cluster, and lands on the pod the dump
+  describes.
+- Give a classification of a **database** its `account` (per record, or `?account=` for
+  the report): a database name is unique only within an account. Buckets need none.
 - Prefer setting markers through the native source (Custodian tags) so you don't
   have to hand-compute ids at all.
 

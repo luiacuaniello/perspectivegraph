@@ -7,6 +7,7 @@ package ingestion_test
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 
@@ -16,8 +17,12 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/cloudnet"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/custodian"
+	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/dataclass"
+	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/falco"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/iam"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/k8s"
+	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/supplychain"
+	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/trivy"
 	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
 )
 
@@ -123,6 +128,191 @@ func TestCustodianAndTheAWSFeedDescribeOneInstance(t *testing.T) {
 
 	if n := nodesNamed(t, ctx, store, ontology.LabelVirtualMachine, "web-tier"); n != 1 {
 		t.Errorf("instance i-web is %d nodes, want one", n)
+	}
+}
+
+// An RDS identifier and a load balancer's name are unique only within an account, and
+// Custodian keyed both without it, as it once keyed instances. With c7n-org exporting two
+// accounts, account A's internet-facing web-alb and account B's internal one were a single
+// public load balancer, and it led from the internet into B's instance, its administrator
+// role and B's customer database. Each is now its own node, in its own account.
+func TestCustodianKeepsTwoAccountsApart(t *testing.T) {
+	bundle := func(account, scheme string) string {
+		return `{"account_id":"` + account + `","policies":[
+		 {"resource":"aws.elbv2","resources":[{"LoadBalancerName":"web-alb","Scheme":"` + scheme + `",
+		   "Tags":[{"Key":"app","Value":"web"}]}]},
+		 {"resource":"aws.ec2","resources":[{"InstanceId":"i-web","Tags":[{"Key":"app","Value":"web"}],
+		   "IamInstanceProfile":{"Arn":"arn:aws:iam::` + account + `:instance-profile/ops"}}]},
+		 {"resource":"aws.iam-profile","resources":[{"InstanceProfileName":"ops",
+		   "Arn":"arn:aws:iam::` + account + `:instance-profile/ops",
+		   "Roles":[{"RoleName":"ops","Arn":"arn:aws:iam::` + account + `:role/ops"}]}]},
+		 {"resource":"aws.iam-role","resources":[{"RoleName":"ops","Arn":"arn:aws:iam::` + account + `:role/ops",
+		   "AttachedManagedPolicies":[{"PolicyName":"AdministratorAccess",
+		     "PolicyArn":"arn:aws:iam::aws:policy/AdministratorAccess"}]}]},
+		 {"resource":"aws.rds","resources":[{"DBInstanceIdentifier":"prod-db",
+		   "Tags":[{"Key":"classification","Value":"pii"}]}]}]}`
+	}
+	ctx := context.Background()
+	store := memory.New()
+	applyBody(t, ctx, store, custodian.New(), bundle("111111111111", "internet-facing"), ingestion.Options{})
+	applyBody(t, ctx, store, custodian.New(), bundle("222222222222", "internal"), ingestion.Options{})
+
+	if n := nodesNamed(t, ctx, store, ontology.LabelLoadBalancer, "web-alb"); n != 2 {
+		t.Errorf("web-alb in two accounts is %d nodes, want two", n)
+	}
+	if n := nodesNamed(t, ctx, store, ontology.LabelDatabase, "prod-db"); n != 2 {
+		t.Errorf("prod-db in two accounts is %d nodes, want two", n)
+	}
+	snap, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reached := map[string]bool{}
+	for _, p := range analyzer.FindCriticalPaths(snap) {
+		for _, n := range p.Nodes {
+			if acct, _ := n.Properties[ontology.PropAccount].(string); acct != "" {
+				reached[acct] = true
+			}
+		}
+	}
+	if !reached["111111111111"] {
+		t.Error("account A's public load balancer must still lead to its own database")
+	}
+	if reached["222222222222"] {
+		t.Error("a route from the internet entered account B, whose load balancer is internal")
+	}
+
+	// A classification names its database's account, and lands on that one only.
+	applyBody(t, ctx, store, dataclass.New(), `{"source":"macie","records":[
+	 {"asset":"prod-db","label":"Database","kind":"phi","account":"222222222222"}]}`, ingestion.Options{})
+	snap, err = store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range snap.Nodes {
+		if n.Label != ontology.LabelDatabase {
+			continue
+		}
+		classified := n.Properties[ontology.PropClassification] == "phi"
+		if acct := n.Properties[ontology.PropAccount]; classified != (acct == "222222222222") {
+			t.Errorf("database in account %v classified=%v: the finding names account 222222222222", acct, classified)
+		}
+	}
+}
+
+// Falco keyed a container by its own name; the Kubernetes dump keys the pod it runs in as
+// namespace/pod. The alert sat on a node of its own and no route through the pod was ever
+// marked runtime-confirmed - with a real cluster dump. The demo hid it: its topology was
+// written by hand with Falco's key. In a named cluster, both carry the cluster.
+func TestFalcoAlertsLandOnTheKubernetesPod(t *testing.T) {
+	dump, err := os.ReadFile("../../testdata/k8s-sample.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const alert = `[{"rule":"Terminal shell in container","priority":"Critical","output":"shell",
+	 "output_fields":{"container.name":"payments","k8s.pod.name":"payments-7d9f","k8s.ns.name":"prod"}}]`
+	for _, cluster := range []string{"", "prod-eu"} {
+		ctx := context.Background()
+		store := memory.New()
+		applyBody(t, ctx, store, k8s.New(), string(dump), ingestion.Options{Cluster: cluster})
+		applyBody(t, ctx, store, falco.New(), alert, ingestion.Options{Cluster: cluster})
+		snap, err := store.Snapshot(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pods := 0
+		for _, n := range snap.Nodes {
+			if n.Label == ontology.LabelContainer && strings.HasPrefix(n.Name, "payments") {
+				pods++
+			}
+		}
+		if pods != 1 {
+			t.Errorf("cluster %q: the alerted pod is %d nodes, want one", cluster, pods)
+		}
+		confirmed := 0
+		for _, p := range analyzer.FindCriticalPaths(snap) {
+			through := false
+			for _, n := range p.Nodes {
+				through = through || n.Name == "payments-7d9f"
+			}
+			if through && !p.RuntimeConfirmed {
+				t.Errorf("cluster %q: a route through the alerted pod is not runtime-confirmed: %v",
+					cluster, routeNames([]analyzer.AttackPath{p}))
+			}
+			if through {
+				confirmed++
+			}
+		}
+		if confirmed == 0 {
+			t.Errorf("cluster %q: no route through the alerted pod", cluster)
+		}
+	}
+}
+
+// Trivy and an SBOM both list what an image ships, and the SBOM was meant to converge
+// with Trivy's nodes and complete the bill with the components that have no CVE. It never
+// did: it keyed "name:version" where Trivy keys name and version apart, and named a Maven
+// package by its artifact where Trivy says groupId:artifactId. Log4j was two nodes, and the
+// SBOM's never met the CVE Trivy found on it. The shapes below are the tools' own: Trivy's
+// report and a CycloneDX document as syft writes it.
+func TestTrivyAndTheSBOMDescribeOneLibrary(t *testing.T) {
+	const scan = `{"ArtifactName":"payments-api:1.4.2","ArtifactType":"container_image","Results":[
+	 {"Target":"Java","Class":"lang-pkgs","Type":"jar","Vulnerabilities":[
+	  {"VulnerabilityID":"CVE-2021-44228","PkgName":"org.apache.logging.log4j:log4j-core",
+	   "InstalledVersion":"2.14.1","Severity":"CRITICAL"}]}]}`
+	const sbom = `{"image":"payments-api:1.4.2","sbom":{"bomFormat":"CycloneDX","components":[
+	 {"type":"library","group":"org.apache.logging.log4j","name":"log4j-core","version":"2.14.1",
+	  "purl":"pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1"},
+	 {"type":"library","group":"org.slf4j","name":"slf4j-api","version":"1.7.36",
+	  "purl":"pkg:maven/org.slf4j/slf4j-api@1.7.36"}]}}`
+	for _, sbomLast := range []bool{false, true} {
+		ctx := context.Background()
+		store := memory.New()
+		writeScan := func() { applyBody(t, ctx, store, trivy.New(), scan, ingestion.Options{}) }
+		writeSBOM := func() { applyBody(t, ctx, store, supplychain.New(), sbom, ingestion.Options{}) }
+		if sbomLast {
+			writeScan()
+			writeSBOM()
+		} else {
+			writeSBOM()
+			writeScan()
+		}
+		snap, err := store.Snapshot(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var log4j []ontology.Node
+		slf4j := 0
+		for _, n := range snap.Nodes {
+			switch {
+			case n.Label == ontology.LabelLibrary && strings.Contains(n.Name, "log4j-core"):
+				log4j = append(log4j, n)
+			case n.Label == ontology.LabelLibrary && strings.Contains(n.Name, "slf4j-api"):
+				slf4j++
+			}
+		}
+		if len(log4j) != 1 {
+			t.Fatalf("SBOM last=%v: log4j-core is %d nodes, want one: %+v", sbomLast, len(log4j), log4j)
+		}
+		if slf4j != 1 {
+			t.Errorf("SBOM last=%v: the component with no CVE must still complete the bill", sbomLast)
+		}
+		var affects, depends []ontology.Edge
+		for _, e := range snap.Edges {
+			switch {
+			case e.Type == ontology.EdgeAffects && e.From == log4j[0].ID:
+				affects = append(affects, e)
+			case e.Type == ontology.EdgeDependsOn && e.To == log4j[0].ID:
+				depends = append(depends, e)
+			}
+		}
+		if len(affects) != 1 {
+			t.Errorf("SBOM last=%v: the library both feeds describe must carry the CVE, got %d AFFECTS", sbomLast, len(affects))
+		}
+		if len(depends) != 1 || depends[0].ExploitProbability != ingestion.DependsOnProb {
+			t.Errorf("SBOM last=%v: image --DEPENDS_ON--> log4j-core = %+v, want one edge at %.2f whichever feed came last",
+				sbomLast, depends, ingestion.DependsOnProb)
+		}
 	}
 }
 

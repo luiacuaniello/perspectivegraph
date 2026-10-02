@@ -131,7 +131,10 @@ curl -X POST "$INGEST/ingest/supplychain" -d "{\"image\":\"$IMG\",\"signed\":$SI
 
 The image gets `signed` / `slsaLevel` / `sbomComponents`, and every SBOM
 component becomes a `Library`/`Package` the image **DEPENDS_ON** (the full bill,
-not just the vulnerable parts Trivy flags). Crucially, an **unsigned image is
+not just the vulnerable parts Trivy flags). A component Trivy also reports is the
+same node, carrying the CVE Trivy found: it is keyed by the name Trivy gives the
+package - read from its `purl`, so a Maven component is `groupId:artifactId` - and
+its version. Crucially, an **unsigned image is
 treated as a tampering vector**: the built-in invariant
 **`no-internet-to-unsigned-image`** fires when one is reachable from the internet,
 and the kill chain flags the image **⚠ unsigned** - so "this prod image isn't

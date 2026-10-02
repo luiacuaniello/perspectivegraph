@@ -95,9 +95,12 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 			ID: imgID, Label: ontology.LabelImage, Name: a.Image, Properties: imgProps,
 		})
 
-		// SBOM inventory: each component is a Library/Package the image DEPENDS_ON.
-		// MERGE-keyed by name:version, so it converges with the same nodes Trivy
-		// reports - SBOM adds the components that have no CVE, completing the bill.
+		// SBOM inventory: each component is a Library/Package the image DEPENDS_ON,
+		// keyed as Trivy keys the packages it reports (ingestion.ComponentID), so the two
+		// converge on one node and the SBOM adds the components with no CVE, completing
+		// the bill. It used to key "name:version" while Trivy keyed name and version
+		// apart, and named a Maven package by its artifact alone: the same library was
+		// two nodes, and the SBOM's never met the CVE Trivy found on it.
 		for _, comp := range comps {
 			if comp.Name == "" {
 				continue
@@ -106,14 +109,14 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 			if comp.Type != "" && !strings.EqualFold(comp.Type, "library") {
 				label = ontology.LabelPackage
 			}
-			key := comp.Name
-			if comp.Version != "" {
-				key = comp.Name + ":" + comp.Version
+			pkg := comp.Name
+			if scanned := ingestion.ScannerName(comp.PURL); scanned != "" {
+				pkg = scanned
 			}
-			compID := ontology.NewID(label, key)
-			name := comp.Name
+			compID := ingestion.ComponentID(label, pkg, comp.Version)
+			name := pkg
 			if comp.Version != "" {
-				name = comp.Name + "@" + comp.Version
+				name = pkg + "@" + comp.Version
 			}
 			cprops := map[string]any{}
 			if comp.PURL != "" {
@@ -121,7 +124,7 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 			}
 			nodes = append(nodes, ontology.Node{ID: compID, Label: label, Name: name, Properties: cprops})
 			edges = append(edges, ontology.Edge{
-				Type: ontology.EdgeDependsOn, From: imgID, To: compID, ExploitProbability: 0.9,
+				Type: ontology.EdgeDependsOn, From: imgID, To: compID, ExploitProbability: ingestion.DependsOnProb,
 			})
 		}
 

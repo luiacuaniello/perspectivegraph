@@ -418,10 +418,7 @@ type builder struct {
 // it always was, so an estate of one cluster keeps its nodes - and its route ids - as they
 // were.
 func (b *builder) id(label ontology.Label, key string) string {
-	if b.cluster == "" {
-		return ontology.NewID(label, key)
-	}
-	return ontology.NewID(label, "cluster="+b.cluster, key)
+	return ingestion.KubeID(label, b.cluster, key)
 }
 
 // own records a node this dump actually contains, stamped with the pull request that

@@ -83,7 +83,7 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 				continue
 			}
 
-			libID := ontology.NewID(ontology.LabelLibrary, v.PkgName, v.InstalledVersion)
+			libID := ingestion.ComponentID(ontology.LabelLibrary, v.PkgName, v.InstalledVersion)
 			if !seenLib[libID] {
 				seenLib[libID] = true
 				nodes = append(nodes, ontology.Node{
@@ -100,7 +100,7 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 					Type:               ontology.EdgeDependsOn,
 					From:               imageID,
 					To:                 libID,
-					ExploitProbability: 0.95,
+					ExploitProbability: ingestion.DependsOnProb,
 				})
 			}
 

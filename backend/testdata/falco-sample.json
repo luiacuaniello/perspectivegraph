@@ -23,6 +23,8 @@
     "output": "Outbound connection to suspicious endpoint (container=payments dest=198.51.100.7:443)",
     "output_fields": {
       "container.name": "payments",
+      "k8s.pod.name": "payments-7d9c8f",
+      "k8s.ns.name": "prod",
       "fd.name": "198.51.100.7:443"
     },
     "source": "syscall",

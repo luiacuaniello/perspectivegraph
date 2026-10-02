@@ -15,3 +15,13 @@ public issue - as described in [SECURITY.md](SECURITY.md).
 
 Interested in helping carry it? [GOVERNANCE.md](GOVERNANCE.md#becoming-a-maintainer) says
 what earns commit rights.
+
+## Contributors
+
+Thank you to everyone whose work is in this repository:
+
+- [@PandaHUN777](https://github.com/PandaHUN777) - the first contributions from outside:
+  tests for the calibration panel
+  ([#290](https://github.com/luiacuaniello/perspectivegraph/pull/290)) and for the ranked
+  attack-path list ([#293](https://github.com/luiacuaniello/perspectivegraph/pull/293)),
+  which also found that the runtime indicator was hidden from screen readers.

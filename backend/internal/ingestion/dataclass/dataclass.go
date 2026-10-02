@@ -28,6 +28,11 @@ type record struct {
 	Label  string `json:"label"`  // ontology label: Bucket (default) | Database
 	Kind   string `json:"kind"`   // classification: pii | phi | pci | financial | secret | …
 	Source string `json:"source"` // optional per-record source override
+	// Account is the cloud account a Database lives in (?account= sets it for the whole
+	// report). A database name is unique only within an account, so the cloud feeds key
+	// databases with it, and a classification without it cannot find its database.
+	// Buckets ignore it: their names are unique across AWS.
+	Account string `json:"account"`
 }
 
 type Collector struct{}
@@ -35,7 +40,7 @@ type Collector struct{}
 func New() *Collector             { return &Collector{} }
 func (*Collector) Source() string { return "dataclass" }
 
-func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, error) {
+func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event, error) {
 	var rep report
 	if err := json.NewDecoder(r).Decode(&rep); err != nil {
 		return nil, fmt.Errorf("decode dataclass report: %w", err)
@@ -53,9 +58,13 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 			label = ontology.LabelDatabase
 		}
 		src := firstNonEmpty(rec.Source, rep.Source, "classifier")
+		// Same id the cloud feed used → this merges onto the existing asset.
+		id := ontology.NewID(label, asset)
+		if label == ontology.LabelDatabase {
+			id = ontology.ScopedID(label, firstNonEmpty(rec.Account, opts.Account), asset)
+		}
 		nodes = append(nodes, ontology.Node{
-			// Same id the cloud/k8s feed used → this merges onto the existing asset.
-			ID:    ontology.NewID(label, asset),
+			ID:    id,
 			Label: label,
 			Name:  asset,
 			Properties: map[string]any{

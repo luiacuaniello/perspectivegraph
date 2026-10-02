@@ -41,10 +41,28 @@ func TestParseAlerts(t *testing.T) {
 		t.Errorf("rule = %v, want the shell rule", got)
 	}
 
-	// Its id must match the canonical container id so the runtime alert lands
-	// on the same node other collectors describe.
-	if want := ontology.NewID(ontology.LabelContainer, "payments"); n.ID != want {
+	// Its id must be the one the Kubernetes dump gives the pod, namespace/pod, so the
+	// runtime alert lands on the node the dump describes. This used to expect the
+	// container's own name - an id no other collector produces - and passed while no
+	// alert ever reached a discovered workload; identity_test.go runs the two together.
+	if want := ontology.NewID(ontology.LabelContainer, "prod/payments-7d9c8f"); n.ID != want {
 		t.Errorf("container id = %s, want %s", n.ID, want)
+	}
+	if n.Name != "payments-7d9c8f" || n.Properties["container_name"] != "payments" {
+		t.Errorf("node named %q (container %v), want the pod's name with the container kept as a property",
+			n.Name, n.Properties["container_name"])
+	}
+}
+
+// Outside Kubernetes there is no pod to key on, and the container's name is the id.
+func TestAContainerOutsideKubernetesKeepsItsName(t *testing.T) {
+	events, err := New().Parse(strings.NewReader(
+		`{"rule":"r","priority":"Warning","output_fields":{"container.name":"web"}}`), ingestion.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := events[0].Nodes[0]; n.ID != ontology.NewID(ontology.LabelContainer, "web") || n.Name != "web" {
+		t.Errorf("node = %s %q, want the container's own name", n.ID, n.Name)
 	}
 }
 

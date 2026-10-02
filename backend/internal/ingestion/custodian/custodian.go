@@ -356,6 +356,9 @@ func (b *builder) database(r map[string]any) {
 	}
 	tg := tags(r)
 	props := map[string]any{}
+	if b.account != "" {
+		props[ontology.PropAccount] = b.account
+	}
 	if boolish(r["PubliclyAccessible"]) { // real RDS field
 		props[ontology.PropInternetExposed] = true
 	}
@@ -363,7 +366,11 @@ func (b *builder) database(r map[string]any) {
 		props["app"] = app
 	}
 	ingestion.MarkCrownJewelFromTags(props, tg)
-	b.upsert(ontology.Node{ID: ontology.NewID(ontology.LabelDatabase, id), Label: ontology.LabelDatabase, Name: id, Properties: props})
+	// An RDS identifier, like a load balancer's name, is unique only within an account:
+	// prod-db in two accounts is two databases, and keyed without the account they were
+	// one, with each other's exposure, classification and routes. Buckets stay unscoped,
+	// since their names are unique across AWS.
+	b.upsert(ontology.Node{ID: ontology.ScopedID(ontology.LabelDatabase, b.account, id), Label: ontology.LabelDatabase, Name: id, Properties: props})
 }
 
 func (b *builder) loadBalancer(r map[string]any) {
@@ -372,8 +379,11 @@ func (b *builder) loadBalancer(r map[string]any) {
 		return
 	}
 	tg := tags(r)
-	nodeID := ontology.NewID(ontology.LabelLoadBalancer, name)
+	nodeID := ontology.ScopedID(ontology.LabelLoadBalancer, b.account, name) // unique per account, see database
 	props := map[string]any{}
+	if b.account != "" {
+		props[ontology.PropAccount] = b.account
+	}
 	if strings.EqualFold(str(r["Scheme"]), "internet-facing") {
 		props[ontology.PropInternetExposed] = true
 	}
