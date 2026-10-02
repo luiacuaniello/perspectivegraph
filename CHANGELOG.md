@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.29.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.28.3...v1.29.0) (2026-10-02)
+
+
+### Features
+
+* **ingestion:** add GitHub OIDC trusts, port-aware exposure, the EKS-to-AWS bridge, and S3, Lambda and ECS entry points ([#298](https://github.com/luiacuaniello/perspectivegraph/issues/298)) ([9f90934](https://github.com/luiacuaniello/perspectivegraph/commit/9f909340e7a22c475a5654c32146d93ea6beff3c))
+
 ## [1.28.3](https://github.com/luiacuaniello/perspectivegraph/compare/v1.28.2...v1.28.3) (2026-10-02)
 
 
