@@ -167,9 +167,9 @@ technique is read in the route's context: initial access is credited to the hop 
 access is gained (the exploit when the route has one, the exposure otherwise), and an
 exploit after the attacker is already inside is lateral movement (T1210). Facts about
 software - an image that ships a library, a library that has a CVE - carry none, and IAM
-privilege escalation is T1098.003 (additional cloud roles). The path also carries `confidence` + a `confidenceLabel`
-(**high / medium / low**)
-- the mean trustworthiness of its hops. So *"58%, **low confidence** - rests
+privilege escalation is T1098.003 (additional cloud roles). The path also carries
+`confidence` + a `confidenceLabel` (**high / medium / low**) - the mean trustworthiness
+of its hops. So *"58%, **low confidence** - rests
 mostly on severity heuristics, here are the assumed hops to validate"* replaces a
 falsely-precise number. A path resting on a KEV CVE and a runtime alert reads as
 **high confidence** even at the same score as an all-heuristic one. The score

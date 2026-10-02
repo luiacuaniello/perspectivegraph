@@ -373,11 +373,23 @@ func TestALambdaFunctionAnyoneCanInvokeIsAnEntryPoint(t *testing.T) {
 	  "Condition":{"StringEquals":{"lambda:FunctionUrlAuthType":"NONE"}}}]}`
 	const publicInvoke = `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"lambda:InvokeFunction"}]}`
 	const oneAccount = `{"Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::999999999999:root"},"Action":"lambda:InvokeFunctionUrl"}]}`
+	// What the console writes for a URL without authentication since October 2025.
+	const bothGrants = `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"lambda:InvokeFunctionUrl",
+	  "Condition":{"StringEquals":{"lambda:FunctionUrlAuthType":"NONE"}}},
+	  {"Effect":"Allow","Principal":"*","Action":"lambda:InvokeFunction","Condition":{"Bool":{"lambda:InvokedViaFunctionUrl":"true"}}}]}`
+	created := func(s, when string) string {
+		return strings.Replace(s, `"FunctionUrl":`, `"CreationTime":"`+when+`","FunctionUrl":`, 1)
+	}
 	bundle := `{"functions":[` + strings.Join([]string{
 		fn("orders-api", "NONE", publicURL), // open URL
 		fn("reports", "AWS_IAM", ""),        // the URL asks for IAM credentials
 		fn("billing", "", publicInvoke),     // any AWS principal may invoke it
 		fn("internal", "NONE", oneAccount),  // URL without auth, but the policy names one account
+		// A URL created in 2026 with the URL grant alone answers 403: the real-account lab saw it.
+		created(fn("new-url-grant-only", "NONE", publicURL), "2026-10-02T15:04:05.000+0000"),
+		created(fn("new-both-grants", "NONE", bothGrants), "2026-10-02T15:04:05.000+0000"),
+		created(fn("old-url-grant-only", "NONE", publicURL), "2024-03-01T09:00:00.000+0000"),
+		fn("both-grants-no-url", "", bothGrants), // the URL is gone; the grants hold for no direct call
 	}, ",") + `]}`
 
 	ctx := context.Background()
@@ -394,7 +406,8 @@ func TestALambdaFunctionAnyoneCanInvokeIsAnEntryPoint(t *testing.T) {
 			exposed[n.Name] = n.InternetExposed()
 		}
 	}
-	for name, want := range map[string]bool{"orders-api": true, "reports": false, "billing": true, "internal": false} {
+	for name, want := range map[string]bool{"orders-api": true, "reports": false, "billing": true, "internal": false,
+		"new-url-grant-only": false, "new-both-grants": true, "old-url-grant-only": true, "both-grants-no-url": false} {
 		if exposed[name] != want {
 			t.Errorf("%s exposed = %v, want %v", name, exposed[name], want)
 		}

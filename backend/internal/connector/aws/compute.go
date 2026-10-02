@@ -44,8 +44,9 @@ type lambdaFunction struct {
 }
 
 type lambdaURL struct {
-	AuthType    string `json:"AuthType"`
-	FunctionURL string `json:"FunctionUrl"`
+	AuthType     string `json:"AuthType"`
+	FunctionURL  string `json:"FunctionUrl"`
+	CreationTime string `json:"CreationTime,omitempty"`
 }
 
 // noPolicy is the policy of a function that has none: read, and empty - which is not the
@@ -72,7 +73,8 @@ func (t *sdkTransport) fetchLambda(ctx context.Context) ([]byte, error) {
 			url, err := t.lambda.GetFunctionUrlConfig(ctx, &lambda.GetFunctionUrlConfigInput{FunctionName: fn.FunctionArn})
 			switch {
 			case err == nil:
-				f.URL = &lambdaURL{AuthType: string(url.AuthType), FunctionURL: aws.ToString(url.FunctionUrl)}
+				f.URL = &lambdaURL{AuthType: string(url.AuthType), FunctionURL: aws.ToString(url.FunctionUrl),
+					CreationTime: aws.ToString(url.CreationTime)}
 			case !notFound(err):
 				return nil, fmt.Errorf("function url of %s: %w", f.FunctionName, err)
 			}

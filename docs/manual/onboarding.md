@@ -277,9 +277,15 @@ whichever arrives first.
 **Keep each bucket's `Policy`.** A bucket is made public through its policy today - ACLs are
 disabled by default on buckets created since April 2023 - and Custodian's `aws.s3` resources
 carry the policy as AWS returns it. A statement that allows `s3:GetObject` to `"Principal":"*"`
-with no condition narrowing who (a source IP or VPC endpoint, an organization, an account)
-makes the bucket public and its data disclosed; one that allows only `s3:PutObject` makes it
-exposed without disclosing it. The node says which (`public_via`: `bucket policy` or `acl`).
+makes the bucket public and its data disclosed, and one that allows only `s3:PutObject` makes
+it exposed without disclosing it - unless a condition confines the statement to fixed values
+of the keys AWS lists for this: the caller's account, organization or ARN (`aws:PrincipalAccount`,
+`aws:PrincipalOrgID`, `aws:PrincipalArn`), its network (`aws:SourceIp` no wider than `/8`,
+`aws:SourceVpc`, `aws:SourceVpce`), the resource calling (`aws:SourceArn`, `aws:SourceAccount`).
+That is S3 Block Public Access's own definition of public. Any other condition - a `Referer`, a
+user agent, TLS - is one a stranger can meet, and a wildcard or a negated operator confines no
+one. A `Deny` closes what an `Allow` opens only when it has no condition: "deny unless over TLS"
+does not stop an attacker who uses TLS. The node says which (`public_via`: `bucket policy` or `acl`).
 The bucket's Block Public Access settings, when the bundle carries them (the
 `check-public-block` filter annotates them as `c7n:PublicAccessBlock`), close what they close:
 `IgnorePublicAcls` the ACL grant, `RestrictPublicBuckets` the policy; the account-level
@@ -375,8 +381,8 @@ port, so the path shows *internet-exposed · tcp/443*, and a shell or database a
 the internet (SSH, RDP, the Kubernetes API, PostgreSQL…) gets a warning of its own. A
 rule without a protocol counts as all traffic, as before. For **reachability
 precision**, also include the instances' addresses (`PrivateIpAddress`,
-`PublicIpAddress`, as `describe-instances` returns them) and `subnets` + `route_tables`
-+ `network_acls`: an instance is then internet-exposed only on the ports that have a
+`PublicIpAddress`, as `describe-instances` returns them) and `subnets` +
+`route_tables` + `network_acls`: an instance is then internet-exposed only on the ports that have a
 public address to arrive at, a route to an internet gateway for their family and a NACL
 that lets them through, first match by rule number - so an open SG on a private-subnet
 instance, on one with no public IP, or behind an ACL that allows only 443 is no longer a
@@ -404,8 +410,8 @@ curl -sS -X POST "$INGEST_URL/ingest/cloudnet?account=123456789012" \
 ### IAM privilege-escalation graph (auto-discovered)
 
 Post the account's IAM reality and PerspectiveGraph builds the "BloodHound for
-cloud" view: it flattens each principal's **effective** allowed actions (managed
-+ inline + group policies, resolving the default policy version) and matches them
+cloud" view: it flattens each principal's **effective** allowed actions
+(managed + inline + group policies, resolving the default policy version) and matches them
 against known escalation primitives - `iam:PassRole` paired with a compute action
 (`lambda:CreateFunction`, `ec2:RunInstances`, …), `iam:AttachUserPolicy`,
 `iam:PutRolePolicy`, `iam:CreatePolicyVersion`, `iam:UpdateAssumeRolePolicy`, and
@@ -462,8 +468,11 @@ whoever runs code in it holds the role. The collector draws each function as a `
 node that `ASSUMES` its role, keyed by ARN as the IAM feed keys it, so a route continues into
 the role's escalations. The function is an entry point when anyone can invoke it:
 
-- a **function URL** with `AuthType: NONE` whose policy lets every principal invoke the URL
-  (the console adds that statement; a URL whose policy is not in the bundle counts as open);
+- a **function URL** with `AuthType: NONE` whose policy lets every principal invoke the URL -
+  and, for a URL created since October 2025, invoke the function too: Lambda asks for both
+  `lambda:InvokeFunctionUrl` and `lambda:InvokeFunction` and answers 403 without the second.
+  The console writes both. A URL whose policy is not in the bundle, or whose `CreationTime` is
+  not, counts as open;
 - a **function policy** that lets `"Principal":"*"` call `lambda:InvokeFunction` with no
   condition narrowing who - anyone with an AWS account, which an attacker has.
 

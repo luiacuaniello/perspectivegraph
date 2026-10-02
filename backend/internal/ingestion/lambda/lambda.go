@@ -38,8 +38,26 @@ type bundle struct {
 
 // functionURL is a function's URL configuration, as get-function-url-config returns it.
 type functionURL struct {
-	AuthType    string `json:"AuthType"` // NONE | AWS_IAM
-	FunctionURL string `json:"FunctionUrl"`
+	AuthType     string `json:"AuthType"` // NONE | AWS_IAM
+	FunctionURL  string `json:"FunctionUrl"`
+	CreationTime string `json:"CreationTime"`
+}
+
+// invokeGrantSince is when function URLs began needing lambda:InvokeFunction on top of
+// lambda:InvokeFunctionUrl: Lambda applies it to URLs created from October 2025, and a URL
+// without both answers 403 even with AuthType NONE. A URL created before November 2025, or
+// one whose creation time the input does not carry, is held to the older rule - the URL
+// grant alone - erring toward reporting.
+var invokeGrantSince = time.Date(2025, time.November, 1, 0, 0, 0, 0, time.UTC)
+
+// needsInvokeGrant reports whether the URL is new enough to need both grants.
+func (u *functionURL) needsInvokeGrant() bool {
+	for _, layout := range []string{time.RFC3339Nano, "2006-01-02T15:04:05.999999999-0700"} {
+		if t, err := time.Parse(layout, u.CreationTime); err == nil {
+			return !t.Before(invokeGrantSince)
+		}
+	}
+	return false
 }
 
 // roleProb is code running in the function becoming its role: the credentials are in the
@@ -122,20 +140,29 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 }
 
 // exposure decides whether anyone can invoke the function, and says how. A function URL
-// with AuthType NONE needs the function policy to let every principal invoke the URL too;
-// when the policy is not in the input, the URL alone is taken as the answer, erring toward
-// reporting. A policy letting every principal invoke the function opens it to anyone with
-// an AWS account, which an attacker has.
+// with AuthType NONE still needs the function policy to let every principal through it:
+// lambda:InvokeFunctionUrl, and for a URL created since October 2025 lambda:InvokeFunction
+// as well - without it Lambda answers 403, which scripts/entrypoints-lab-aws.sh observed on a
+// real account. When the policy is not in the input, the URL alone is taken as the answer,
+// erring toward reporting. A policy letting every principal call the function directly
+// opens it to anyone with an AWS account, which an attacker has.
 func exposure(url *functionURL, policyKnown bool, policy ingestion.ResourcePolicy) (bool, string) {
+	direct := policy.Public("lambda:InvokeFunction")
 	if url != nil && strings.EqualFold(url.AuthType, "NONE") {
-		if !policyKnown || policy.Public("lambda:InvokeFunctionUrl") {
+		switch {
+		case !policyKnown:
 			return true, "function URL without authentication"
-		}
-		if !policy.Public("lambda:InvokeFunction") {
-			return false, "function URL without authentication, but the function policy lets no one invoke it"
+		case !policy.PublicThroughURL("NONE", "lambda:InvokeFunctionUrl"):
+			if !direct {
+				return false, "function URL without authentication, but the function policy lets no one invoke it"
+			}
+		case !url.needsInvokeGrant() || policy.PublicThroughURL("NONE", "lambda:InvokeFunction"):
+			return true, "function URL without authentication"
+		case !direct:
+			return false, "function URL without authentication, but its policy lacks the lambda:InvokeFunction grant a URL created since October 2025 also needs"
 		}
 	}
-	if policy.Public("lambda:InvokeFunction") {
+	if direct {
 		return true, "function policy lets any AWS principal invoke it"
 	}
 	return false, "invocable only by principals it names"

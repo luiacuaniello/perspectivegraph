@@ -1,0 +1,432 @@
+#!/usr/bin/env bash
+#
+# entrypoints-lab-aws.sh - the 1.29.0 entry points, checked on a REAL AWS account, with
+# AWS as the referee wherever AWS will give an answer.
+#
+# Each feature gets resources built to sit on either side of its rule, and a verdict that
+# does not come from the engine:
+#
+#   S3 bucket policies  AWS's own judgement, GetBucketPolicyStatus.IsPublic, against the
+#                       engine's reading of the same policy. Ten policies, public and not.
+#   Lambda              an unauthenticated request to each function URL: 403 means AWS
+#                       refuses strangers, anything else means it let the request through.
+#                       Every function has reserved concurrency 0, so nothing ever runs.
+#                       Then the open function's URL is deleted and the engine must retract.
+#   ECS + ports         Fargate services with desiredCount 0 - no task, no address, no cost -
+#                       in a routed, an unrouted and an ACL-filtered subnet. No oracle here:
+#                       the expectations are AWS's documented routing rules.
+#   GitHub OIDC         a role pinned to one repository (an identity provider that is no
+#                       entry point), and an attempt at a role open to every repository,
+#                       which AWS is documented to refuse.
+#
+# The engine reads the account through the live connector as PerspectiveGraphReadOnly,
+# whose only policy is SecurityAudit - so the run also proves the new feeds need nothing
+# more. S3 is Custodian's to report: the bundle is assembled from the same API answers
+# Custodian records (`Policy`, `c7n:PublicAccessBlock`) and parsed by the custodian
+# collector in an opt-in Go test.
+#
+# Cost: nothing. VPCs, subnets, route tables, NACLs, security groups, an internet gateway,
+# IAM roles, an OIDC provider, empty buckets, an ECS cluster with idle services and Lambda
+# functions that are never invoked are all free. No instance, no NAT gateway, no public
+# address. Every public-looking bucket policy sits behind RestrictPublicBuckets, so no
+# stranger can use it, and every bucket is empty. An EXIT trap tears it all down.
+#
+#   PROFILE=pg-admin REGION=eu-north-1 ./scripts/entrypoints-lab-aws.sh
+#   KEEP=1 ... ./scripts/entrypoints-lab-aws.sh    # leave the lab up to inspect it
+#   ./scripts/entrypoints-lab-aws.sh --teardown    # clean a leaked lab
+
+set -euo pipefail
+
+PROFILE="${PROFILE:-pg-admin}"
+REGION="${REGION:-eu-north-1}"
+PREFIX="${PREFIX:-pg-entry-lab}"
+KEEP="${KEEP:-0}"
+READONLY_ROLE="${READONLY_ROLE:-PerspectiveGraphReadOnly}"
+
+export AWS_PROFILE="$PROFILE" AWS_REGION="$REGION" AWS_PAGER=""
+say() { printf '%s\n' "$*" >&2; }
+
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+WORK=""
+ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+GH_HOST="token.actions.githubusercontent.com"
+GH_PROVIDER="arn:aws:iam::${ACCOUNT}:oidc-provider/${GH_HOST}"
+ROLES=(task fn grantee gh-pinned gh-open)
+FUNCTIONS=(open urlonly iam private)
+
+tag_filter() { echo "Name=tag:pg-lab,Values=entrypoints"; }
+
+# ── Teardown ────────────────────────────────────────────────────────────────
+# Everything the build makes carries the prefix or the pg-lab=entrypoints tag, so teardown
+# finds it without a state file, and every step tolerates "already gone".
+teardown() {
+  set +e
+  say ""
+  say "── tearing down ──────────────────────────────────────────────"
+  if aws ecs describe-clusters --clusters "$PREFIX" --query 'clusters[?status==`ACTIVE`]' --output text | grep -q .; then
+    for s in $(aws ecs list-services --cluster "$PREFIX" --query 'serviceArns[]' --output text); do
+      aws ecs delete-service --cluster "$PREFIX" --service "$s" --force >/dev/null
+    done
+    for _ in $(seq 1 30); do
+      [ -z "$(aws ecs list-services --cluster "$PREFIX" --query 'serviceArns[]' --output text)" ] && break
+      sleep 5
+    done
+    aws ecs delete-cluster --cluster "$PREFIX" >/dev/null && say "  deleted ECS cluster and services"
+  fi
+  for td in $(aws ecs list-task-definitions --family-prefix "$PREFIX" --query 'taskDefinitionArns[]' --output text); do
+    aws ecs deregister-task-definition --task-definition "$td" >/dev/null
+    aws ecs delete-task-definitions --task-definitions "$td" >/dev/null 2>&1
+  done
+  for f in "${FUNCTIONS[@]}"; do
+    aws lambda delete-function --function-name "${PREFIX}-${f}" >/dev/null 2>&1 && say "  deleted function ${PREFIX}-${f}"
+  done
+  for b in $(aws s3api list-buckets --query "Buckets[?starts_with(Name, '${PREFIX}-')].Name" --output text); do
+    aws s3api delete-bucket-policy --bucket "$b" >/dev/null 2>&1
+    aws s3api delete-bucket --bucket "$b" >/dev/null && say "  deleted bucket $b"
+  done
+  for r in "${ROLES[@]}"; do
+    aws iam delete-role --role-name "${PREFIX}-${r}" >/dev/null 2>&1 && say "  deleted role ${PREFIX}-${r}"
+  done
+  if aws iam list-open-id-connect-provider-tags --open-id-connect-provider-arn "$GH_PROVIDER" \
+       --query "Tags[?Key=='pg-lab'].Value" --output text 2>/dev/null | grep -q entrypoints; then
+    aws iam delete-open-id-connect-provider --open-id-connect-provider-arn "$GH_PROVIDER" && say "  deleted the GitHub OIDC provider"
+  fi
+  vpc=$(aws ec2 describe-vpcs --filters "$(tag_filter)" --query 'Vpcs[0].VpcId' --output text)
+  if [ "$vpc" != "None" ] && [ -n "$vpc" ]; then
+    # Idle Fargate services leave no interfaces, but a deleted one can take a moment to let go.
+    for _ in $(seq 1 24); do
+      [ -z "$(aws ec2 describe-network-interfaces --filters Name=vpc-id,Values="$vpc" --query 'NetworkInterfaces[].NetworkInterfaceId' --output text)" ] && break
+      sleep 5
+    done
+    for sn in $(aws ec2 describe-subnets --filters Name=vpc-id,Values="$vpc" --query 'Subnets[].SubnetId' --output text); do
+      aws ec2 delete-subnet --subnet-id "$sn"
+    done
+    for rt in $(aws ec2 describe-route-tables --filters Name=vpc-id,Values="$vpc" --query 'RouteTables[?Associations[0].Main!=`true`].RouteTableId' --output text); do
+      aws ec2 delete-route-table --route-table-id "$rt"
+    done
+    for acl in $(aws ec2 describe-network-acls --filters Name=vpc-id,Values="$vpc" Name=default,Values=false --query 'NetworkAcls[].NetworkAclId' --output text); do
+      aws ec2 delete-network-acl --network-acl-id "$acl"
+    done
+    for sg in $(aws ec2 describe-security-groups --filters Name=vpc-id,Values="$vpc" --query "SecurityGroups[?GroupName!='default'].GroupId" --output text); do
+      aws ec2 delete-security-group --group-id "$sg" >/dev/null
+    done
+    for igw in $(aws ec2 describe-internet-gateways --filters Name=attachment.vpc-id,Values="$vpc" --query 'InternetGateways[].InternetGatewayId' --output text); do
+      aws ec2 detach-internet-gateway --internet-gateway-id "$igw" --vpc-id "$vpc"
+      aws ec2 delete-internet-gateway --internet-gateway-id "$igw"
+    done
+    aws ec2 delete-vpc --vpc-id "$vpc" && say "  deleted the lab VPC"
+  fi
+  # The first ECS cluster in an account creates ECS's service-linked role; leave the account
+  # as the lab found it.
+  if [ "${SLR_BEFORE:-yes}" = "no" ]; then
+    aws iam delete-service-linked-role --role-name AWSServiceRoleForECS >/dev/null 2>&1 && say "  deleted ECS's service-linked role, which the lab created"
+  fi
+  [ -n "$WORK" ] && rm -rf "$WORK"
+  say "  done"
+  set -e
+}
+
+if [ "${1:-}" = "--teardown" ]; then
+  teardown
+  exit 0
+fi
+if [ "$KEEP" != "1" ]; then
+  trap teardown EXIT
+fi
+teardown >/dev/null 2>&1 || true
+WORK=$(mktemp -d) # after the clean slate, which removes the previous run's
+
+retry() { # retry <attempts> <command...>: IAM is eventually consistent, so new roles fail at first
+  local n="$1"; shift
+  for _ in $(seq 1 "$n"); do
+    if "$@" 2>"$WORK/retry.err"; then return 0; fi
+    sleep 5
+  done
+  cat "$WORK/retry.err" >&2
+  return 1
+}
+
+say "── building the entry-points lab in ${REGION} ──────────────────"
+
+# ── IAM ─────────────────────────────────────────────────────────────────────
+trust() { printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"%s"},"Action":"sts:AssumeRole"}]}' "$1"; }
+aws iam create-role --role-name "${PREFIX}-task" --assume-role-policy-document "$(trust ecs-tasks.amazonaws.com)" --tags Key=pg-lab,Value=entrypoints >/dev/null
+aws iam create-role --role-name "${PREFIX}-fn" --assume-role-policy-document "$(trust lambda.amazonaws.com)" --tags Key=pg-lab,Value=entrypoints >/dev/null
+aws iam create-role --role-name "${PREFIX}-grantee" --assume-role-policy-document "$(trust ec2.amazonaws.com)" --tags Key=pg-lab,Value=entrypoints >/dev/null
+TASK_ROLE="arn:aws:iam::${ACCOUNT}:role/${PREFIX}-task"
+FN_ROLE="arn:aws:iam::${ACCOUNT}:role/${PREFIX}-fn"
+GRANTEE="arn:aws:iam::${ACCOUNT}:role/${PREFIX}-grantee"
+say "  roles: task, function execution, bucket grantee"
+
+if ! aws iam get-open-id-connect-provider --open-id-connect-provider-arn "$GH_PROVIDER" >/dev/null 2>&1; then
+  aws iam create-open-id-connect-provider --url "https://${GH_HOST}" --client-id-list sts.amazonaws.com \
+    --tags Key=pg-lab,Value=entrypoints >/dev/null
+  say "  GitHub Actions OIDC provider (created for the lab)"
+fi
+gh_trust() { # gh_trust <condition JSON>
+  printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Federated":"%s"},"Action":"sts:AssumeRoleWithWebIdentity","Condition":%s}]}' "$GH_PROVIDER" "$1"
+}
+# JSON lives in single-quoted variables, and assignments from $(...) go unquoted: macOS's
+# bash 3.2 mangles quotes nested inside a double-quoted "$(...)".
+PINNED='{"StringEquals":{"token.actions.githubusercontent.com:aud":"sts.amazonaws.com"},"StringLike":{"token.actions.githubusercontent.com:sub":"repo:pg-lab-example/demo:*"}}'
+OPEN='{"StringEquals":{"token.actions.githubusercontent.com:aud":"sts.amazonaws.com"}}'
+PINNED_DOC=$(gh_trust "$PINNED")
+OPEN_DOC=$(gh_trust "$OPEN")
+aws iam create-role --role-name "${PREFIX}-gh-pinned" --tags Key=pg-lab,Value=entrypoints \
+  --assume-role-policy-document "$PINNED_DOC" >/dev/null
+say "  role gh-pinned: trusts GitHub Actions for repo:pg-lab-example/demo only"
+GH_OPEN="refused"
+if aws iam create-role --role-name "${PREFIX}-gh-open" --tags Key=pg-lab,Value=entrypoints \
+     --assume-role-policy-document "$OPEN_DOC" \
+     >/dev/null 2>"$WORK/gh-open.err"; then
+  GH_OPEN="accepted"
+  say "  role gh-open: AWS ACCEPTED a trust open to every repository (it carries no permissions)"
+else
+  say "  role gh-open: AWS refused a trust open to every repository - $(head -c 160 "$WORK/gh-open.err" | tr '\n' ' ')"
+fi
+
+# ── Network ─────────────────────────────────────────────────────────────────
+tags() { echo "ResourceType=$1,Tags=[{Key=pg-lab,Value=entrypoints},{Key=Name,Value=${PREFIX}-$2}]"; }
+AZ="${REGION}a"
+VPC=$(aws ec2 create-vpc --cidr-block 10.42.0.0/16 --tag-specifications "$(tags vpc vpc)" --query Vpc.VpcId --output text)
+IGW=$(aws ec2 create-internet-gateway --tag-specifications "$(tags internet-gateway igw)" --query InternetGateway.InternetGatewayId --output text)
+aws ec2 attach-internet-gateway --internet-gateway-id "$IGW" --vpc-id "$VPC"
+subnet() { aws ec2 create-subnet --vpc-id "$VPC" --cidr-block "$1" --availability-zone "$AZ" --tag-specifications "$(tags subnet "$2")" --query Subnet.SubnetId --output text; }
+SN_PUBLIC=$(subnet 10.42.1.0/24 public)
+SN_PRIVATE=$(subnet 10.42.2.0/24 private)
+SN_ACL=$(subnet 10.42.3.0/24 acl)
+RT_PUBLIC=$(aws ec2 create-route-table --vpc-id "$VPC" --tag-specifications "$(tags route-table public)" --query RouteTable.RouteTableId --output text)
+aws ec2 create-route --route-table-id "$RT_PUBLIC" --destination-cidr-block 0.0.0.0/0 --gateway-id "$IGW" >/dev/null
+aws ec2 associate-route-table --route-table-id "$RT_PUBLIC" --subnet-id "$SN_PUBLIC" >/dev/null
+aws ec2 associate-route-table --route-table-id "$RT_PUBLIC" --subnet-id "$SN_ACL" >/dev/null
+RT_PRIVATE=$(aws ec2 create-route-table --vpc-id "$VPC" --tag-specifications "$(tags route-table private)" --query RouteTable.RouteTableId --output text)
+aws ec2 associate-route-table --route-table-id "$RT_PRIVATE" --subnet-id "$SN_PRIVATE" >/dev/null
+# The ACL subnet lets in 443 and nothing else: rule 100 allows it, the default * entry denies the rest.
+ACL=$(aws ec2 create-network-acl --vpc-id "$VPC" --tag-specifications "$(tags network-acl acl)" --query NetworkAcl.NetworkAclId --output text)
+aws ec2 create-network-acl-entry --network-acl-id "$ACL" --ingress --rule-number 100 --protocol tcp --port-range From=443,To=443 --cidr-block 0.0.0.0/0 --rule-action allow
+aws ec2 create-network-acl-entry --network-acl-id "$ACL" --egress --rule-number 100 --protocol -1 --cidr-block 0.0.0.0/0 --rule-action allow
+ASSOC=$(aws ec2 describe-network-acls --filters Name=association.subnet-id,Values="$SN_ACL" --query "NetworkAcls[0].Associations[?SubnetId=='${SN_ACL}'].NetworkAclAssociationId" --output text)
+aws ec2 replace-network-acl-association --association-id "$ASSOC" --network-acl-id "$ACL" >/dev/null
+sg() { # sg <name> <ip-permissions JSON>
+  local id; id=$(aws ec2 create-security-group --vpc-id "$VPC" --group-name "${PREFIX}-$1" --description "PerspectiveGraph entry-points lab" --tag-specifications "$(tags security-group "$1")" --query GroupId --output text)
+  aws ec2 authorize-security-group-ingress --group-id "$id" --ip-permissions "$2" >/dev/null
+  echo "$id"
+}
+WEB='[{"IpProtocol":"tcp","FromPort":443,"ToPort":443,"IpRanges":[{"CidrIp":"0.0.0.0/0"}]}]'
+SSHWEB='[{"IpProtocol":"tcp","FromPort":22,"ToPort":22,"IpRanges":[{"CidrIp":"0.0.0.0/0"}]},{"IpProtocol":"tcp","FromPort":443,"ToPort":443,"IpRanges":[{"CidrIp":"0.0.0.0/0"}]}]'
+ICMP='[{"IpProtocol":"icmp","FromPort":-1,"ToPort":-1,"IpRanges":[{"CidrIp":"0.0.0.0/0"}]}]'
+SG_WEB=$(sg web "$WEB")
+SG_SSHWEB=$(sg ssh-web "$SSHWEB")
+SG_ICMP=$(sg icmp "$ICMP")
+say "  VPC with a routed, an unrouted and an ACL-filtered (443 only) subnet; security groups for 443, 22+443, ICMP"
+
+# ── ECS ─────────────────────────────────────────────────────────────────────
+SLR_BEFORE=$(aws iam get-role --role-name AWSServiceRoleForECS >/dev/null 2>&1 && echo yes || echo no)
+aws ecs create-cluster --cluster-name "$PREFIX" --tags key=pg-lab,value=entrypoints >/dev/null
+TD=$(retry 12 aws ecs register-task-definition --family "$PREFIX" --network-mode awsvpc --requires-compatibilities FARGATE \
+  --cpu 256 --memory 512 --task-role-arn "$TASK_ROLE" \
+  --container-definitions '[{"name":"app","image":"public.ecr.aws/docker/library/busybox:latest","essential":true}]' \
+  --query taskDefinition.taskDefinitionArn --output text)
+service() { # service <name> <subnet> <sg> <ENABLED|DISABLED>
+  retry 12 aws ecs create-service --cluster "$PREFIX" --service-name "$1" --task-definition "$TD" --desired-count 0 \
+    --launch-type FARGATE --network-configuration "awsvpcConfiguration={subnets=[$2],securityGroups=[$3],assignPublicIp=$4}" >/dev/null
+}
+service web-public "$SN_PUBLIC" "$SG_WEB" ENABLED
+service web-private "$SN_PRIVATE" "$SG_WEB" ENABLED
+service web-noip "$SN_PUBLIC" "$SG_WEB" DISABLED
+service icmp-only "$SN_PUBLIC" "$SG_ICMP" ENABLED
+service acl-ssh "$SN_ACL" "$SG_SSHWEB" ENABLED
+say "  ECS services (desiredCount 0): web-public, web-private, web-noip, icmp-only, acl-ssh"
+
+# ── Lambda ──────────────────────────────────────────────────────────────────
+python3 - "$WORK/fn.zip" <<'PY'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w") as z:
+    z.writestr("index.py", "def handler(event, context):\n    return {'statusCode': 200, 'body': 'pg lab'}\n")
+PY
+for f in "${FUNCTIONS[@]}"; do
+  retry 12 aws lambda create-function --function-name "${PREFIX}-${f}" --runtime python3.13 --handler index.handler \
+    --role "$FN_ROLE" --zip-file "fileb://$WORK/fn.zip" --tags pg-lab=entrypoints >/dev/null
+  aws lambda wait function-active-v2 --function-name "${PREFIX}-${f}"
+  # Reserved concurrency 0: whatever the URL lets through, the function never runs.
+  aws lambda put-function-concurrency --function-name "${PREFIX}-${f}" --reserved-concurrent-executions 0 >/dev/null
+done
+url_permission() { aws lambda add-permission --function-name "${PREFIX}-$1" --statement-id url --action lambda:InvokeFunctionUrl --principal '*' --function-url-auth-type NONE >/dev/null; }
+invoke_permission() { aws lambda add-permission --function-name "${PREFIX}-$1" --statement-id invoke --action lambda:InvokeFunction --principal '*' --invoked-via-function-url >/dev/null; }
+aws lambda create-function-url-config --function-name "${PREFIX}-open" --auth-type NONE >/dev/null
+url_permission open
+invoke_permission open
+aws lambda create-function-url-config --function-name "${PREFIX}-urlonly" --auth-type NONE >/dev/null
+url_permission urlonly
+aws lambda create-function-url-config --function-name "${PREFIX}-iam" --auth-type AWS_IAM >/dev/null
+say "  functions: open (URL NONE, both grants AWS asks for), urlonly (URL NONE, the URL grant only),"
+say "             iam (URL AWS_IAM), private (no URL); all at reserved concurrency 0"
+
+# ── S3 ──────────────────────────────────────────────────────────────────────
+SUFFIX=$(python3 -c 'import secrets; print(secrets.token_hex(3))')
+BUCKETS=()
+bucket() { # bucket <case> <statement JSON without Resource>...
+  local name="${PREFIX}-${SUFFIX}-$1"
+  aws s3api create-bucket --bucket "$name" --create-bucket-configuration LocationConstraint="$REGION" >/dev/null
+  aws s3api put-bucket-tagging --bucket "$name" --tagging 'TagSet=[{Key=pg-lab,Value=entrypoints}]'
+  # Policies may be public; RestrictPublicBuckets keeps any stranger out all the same.
+  aws s3api put-public-access-block --bucket "$name" --public-access-block-configuration \
+    BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=false,RestrictPublicBuckets=true
+  local policy
+  policy=$(python3 -c 'import json,sys; ss=[json.loads(a) for a in sys.argv[2:]]; [s.update(Resource=["arn:aws:s3:::"+sys.argv[1], "arn:aws:s3:::"+sys.argv[1]+"/*"] if s["Action"]=="s3:*" else "arn:aws:s3:::"+sys.argv[1]+"/*") for s in ss]; print(json.dumps({"Version":"2012-10-17","Statement":ss}))' "$name" "${@:2}")
+  retry 12 aws s3api put-bucket-policy --bucket "$name" --policy "$policy"
+  BUCKETS+=("$name")
+}
+GET='"Effect":"Allow","Principal":"*","Action":"s3:GetObject"'
+bucket open     "{${GET},\"Condition\":{\"Bool\":{\"aws:SecureTransport\":\"true\"}}}"
+bucket referer  "{${GET},\"Condition\":{\"StringLike\":{\"aws:Referer\":\"https://example.com/*\"}}}"
+bucket vpcwild  "{${GET},\"Condition\":{\"StringLike\":{\"aws:SourceVpc\":\"vpc-*\"}}}"
+bucket ipfixed  "{${GET},\"Condition\":{\"IpAddress\":{\"aws:SourceIp\":\"192.0.2.0/24\"}}}"
+bucket ipbroad  "{${GET},\"Condition\":{\"IpAddress\":{\"aws:SourceIp\":\"0.0.0.0/1\"}}}"
+bucket vpce     "{${GET},\"Condition\":{\"StringEquals\":{\"aws:SourceVpce\":\"vpce-0123456789abcdef0\"}}}"
+bucket account  "{${GET},\"Condition\":{\"StringEquals\":{\"aws:PrincipalAccount\":\"${ACCOUNT}\"}}}"
+bucket grantee  "{\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"${GRANTEE}\"},\"Action\":\"s3:GetObject\"}"
+bucket putonly  "{\"Effect\":\"Allow\",\"Principal\":\"*\",\"Action\":\"s3:PutObject\"}"
+# The commonest policy there is: open, and "denied" to anyone not using TLS - which an attacker does.
+bucket tlsdeny  "{${GET}}" "{\"Effect\":\"Deny\",\"Principal\":\"*\",\"Action\":\"s3:*\",\"Condition\":{\"Bool\":{\"aws:SecureTransport\":\"false\"}}}"
+say "  ${#BUCKETS[@]} empty buckets, each with one policy statement, all behind RestrictPublicBuckets"
+
+say ""
+say "  waiting for IAM and Lambda permissions to settle…"
+sleep 15
+
+# ── Referees ────────────────────────────────────────────────────────────────
+python3 - "$WORK/buckets.json" "$ACCOUNT" "${BUCKETS[@]}" <<'PY'
+import json, subprocess, sys
+out, account, names = sys.argv[1], sys.argv[2], sys.argv[3:]
+def aws(*a):
+    return json.loads(subprocess.run(["aws", *a, "--output", "json"], check=True, capture_output=True, text=True).stdout)
+buckets = []
+for n in names:
+    buckets.append({
+        "name": n,
+        "policy": aws("s3api", "get-bucket-policy", "--bucket", n)["Policy"],
+        "bpa": aws("s3api", "get-public-access-block", "--bucket", n)["PublicAccessBlockConfiguration"],
+        "aws_public": aws("s3api", "get-bucket-policy-status", "--bucket", n)["PolicyStatus"]["IsPublic"],
+    })
+json.dump({"account": account, "buckets": buckets}, open(out, "w"), indent=2)
+PY
+: >"$WORK/urls.txt"
+for f in open urlonly iam; do
+  url=$(aws lambda get-function-url-config --function-name "${PREFIX}-${f}" --query FunctionUrl --output text)
+  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$url" || true)
+  echo "${PREFIX}-${f} $code" >>"$WORK/urls.txt"
+done
+
+# ── The engine ──────────────────────────────────────────────────────────────
+collect() {
+  (cd "$ROOT/backend" && CGO_ENABLED=0 go run ./cmd/perspectivegraph awscollect -region "$REGION" \
+    -role "arn:aws:iam::${ACCOUNT}:role/${READONLY_ROLE}" -json) >"$1" 2>"$1.err" || { cat "$1.err" >&2; return 1; }
+  if grep -q "partial collect" "$1.err"; then cat "$1.err" >&2; fi
+}
+say ""
+say "── the engine reads the account as ${READONLY_ROLE} (SecurityAudit only) ──"
+collect "$WORK/events.json"
+
+# Retraction: take the open function's URL away, keep its policy, read again.
+aws lambda delete-function-url-config --function-name "${PREFIX}-open"
+sleep 5
+collect "$WORK/events-after.json"
+
+status=0
+python3 - "$WORK" "$PREFIX" "$GH_OPEN" <<'PY' || status=$?
+import json, sys
+work, prefix, gh_open = sys.argv[1:4]
+def load(p):
+    nodes, edges = {}, []
+    for ev in json.load(open(p)):
+        for n in ev.get("nodes") or []:
+            nodes.setdefault(n["id"], {"label": n["label"], "name": n["name"], "props": {}})["props"].update(n.get("properties") or {})
+        edges += ev.get("edges") or []
+    return nodes, edges
+nodes, edges = load(f"{work}/events.json")
+after, _ = load(f"{work}/events-after.json")
+by_name = lambda ns, label, name: next((n for n in ns.values() if n["label"] == label and n["name"] == name), None)
+rows, bad = [], 0
+def check(what, expected, got, why):
+    global bad
+    ok = expected == got
+    bad += not ok
+    rows.append((("PASS" if ok else "FAIL"), what, str(expected), str(got), why))
+
+def exposed(n):
+    p = n["props"]
+    return bool(p.get("network_exposed", p.get("internet_exposed", False)))
+
+# ECS services and ports
+ecs = {
+    "web-public":  (True,  "tcp/443", "", "public address, routed subnet, 443 open"),
+    "web-private": (False, "", "",        "no route to the internet gateway"),
+    "web-noip":    (False, "", "",        "no public address assigned"),
+    "icmp-only":   (False, "", "",        "only ICMP open: nothing to talk to"),
+    "acl-ssh":     (True,  "tcp/443", "", "SG opens 22 and 443, the NACL lets in 443 only"),
+}
+for svc, (exp, ports, mgmt, why) in ecs.items():
+    n = by_name(nodes, "Container", svc)
+    if n is None:
+        check(f"ECS {svc}", "read", "missing", why); continue
+    check(f"ECS {svc} exposed", exp, exposed(n), why)
+    if exp:
+        check(f"ECS {svc} ports", ports, n["props"].get("exposed_ports", ""), why)
+        check(f"ECS {svc} management ports", mgmt or "none", n["props"].get("exposed_management_ports", "") or "none", why)
+task = next((i for i, n in nodes.items() if n["label"] == "IAM_Role" and n["name"] == f"{prefix}-task"), None)
+web = next((i for i, n in nodes.items() if n["label"] == "Container" and n["name"] == "web-public"), None)
+check("ECS web-public -> task role", True, any(e["type"] == "ASSUMES" and e["from"] == web and e["to"] == task for e in edges), "the task role every container can fetch")
+
+# Lambda, against what the function URL actually answered
+codes = dict(l.split() for l in open(f"{work}/urls.txt"))
+for fn in ("open", "urlonly", "iam", "private"):
+    name = f"{prefix}-{fn}"
+    n = by_name(nodes, "Function", name)
+    if n is None:
+        check(f"Lambda {fn}", "read", "missing", ""); continue
+    code = codes.get(name)
+    aws_open = code is not None and code != "403"
+    why = f"unauthenticated request answered {code}" if code else "no function URL"
+    check(f"Lambda {fn} exposed (AWS: {'open' if aws_open else 'closed'})", aws_open, exposed(n), why + "; " + n["props"].get("exposure", ""))
+fn_role = next((i for i, n in nodes.items() if n["label"] == "IAM_Role" and n["name"] == f"{prefix}-fn"), None)
+fn_open = next((i for i, n in nodes.items() if n["label"] == "Function" and n["name"] == f"{prefix}-open"), None)
+check("Lambda open -> execution role", True, any(e["type"] == "ASSUMES" and e["from"] == fn_open and e["to"] == fn_role for e in edges), "")
+n = by_name(after, "Function", f"{prefix}-open")
+check("Lambda open, URL deleted: retracted", False, exposed(n) if n else "missing", "the policy stays, the URL is gone" + ("; " + n["props"].get("exposure", "") if n else ""))
+
+# GitHub OIDC
+idps = [n for n in nodes.values() if n["label"] == "IdentityProvider" and n["props"].get("oidc_issuer") == "token.actions.githubusercontent.com"]
+pinned = [n for n in idps if "pg-lab-example/demo" in n["props"].get("oidc_subjects", "")]
+check("GitHub pinned trust drawn", True, bool(pinned), "repo:pg-lab-example/demo:*")
+check("GitHub pinned trust is no entry point", False, any(n["props"].get("internet_exposed") for n in pinned), "pinned to one repository")
+if gh_open == "accepted":
+    check("GitHub open trust (AWS accepted it) is an entry point", True, any(n["props"].get("internet_exposed") for n in idps), "any repository")
+else:
+    rows.append(("INFO", "GitHub open trust", "-", "-", "AWS refused to create it, as the docs say"))
+
+w = max(len(r[1]) for r in rows)
+for r in rows:
+    print(f"  {r[0]:4}  {r[1]:{w}}  expected {r[2]:<8} engine {r[3]:<8}  {r[4]}")
+sys.exit(1 if bad else 0)
+PY
+
+say ""
+say "── S3: the custodian collector against GetBucketPolicyStatus ──"
+(cd "$ROOT/backend" && PG_LAB_BUCKETS="$WORK/buckets.json" go test ./internal/ingestion/custodian/ \
+  -run TestBucketVerdictsAgreeWithAWS -count=1 -v) >"$WORK/s3.out" 2>&1 || status=1
+grep -E 'lab_test.go|^(--- |ok|FAIL)' "$WORK/s3.out" | sed 's/^ *lab_test.go:[0-9]*: /  /' >&2
+
+say ""
+say "─────────────────────────────────────────────────────────────"
+if [ "$status" -eq 0 ]; then
+  say "  PASS: on a real account, the engine agrees with AWS on every bucket policy and"
+  say "  function URL, and exposes, suppresses and retracts as the routing rules say."
+else
+  say "  FAIL: the engine and AWS (or the routing rules) disagree above. Each FAIL is a"
+  say "  false positive or a miss, found on real infrastructure."
+fi
+if [ "$KEEP" = "1" ]; then
+  say "  KEEP=1: the lab is still up. Tear it down with: ./scripts/entrypoints-lab-aws.sh --teardown"
+fi
+exit "$status"

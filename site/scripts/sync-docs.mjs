@@ -67,6 +67,19 @@ if (untriggered.length) {
 
 const IMAGE = /\.(png|svg|gif|jpe?g|webp)$/i;
 
+// A sentence that wraps just before a "+" or a "-" - "subnets + route_tables", "the mean - the
+// median" - starts its next line with what Markdown reads as a list marker, and the rest of the
+// sentence renders as a bullet. GitHub and the site both do it, so neither preview shows it as a
+// mistake. Five had shipped before this check: a list item straight after a line of prose, with no
+// blank line and no colon to introduce it, is almost always one.
+const LIST_ITEM = /^\s*([-+*]|\d+[.)])\s/;
+const strays = [];
+function strayListItem(file, prev, line) {
+  if (!/^[-+*] \S/.test(line) || !prev.trim()) return;
+  if (LIST_ITEM.test(prev) || /^(\s|\||#|>|<)/.test(prev) || prev.trimEnd().endsWith(":")) return;
+  strays.push(`${file}: "${prev.trim().slice(-50)}" / "${line.slice(0, 50)}"`);
+}
+
 function route(slug, frag) {
   const path = slug === "index" ? "/" : `/${slug}/`;
   return frag ? `${path}#${frag}` : path;
@@ -109,12 +122,16 @@ function convert(file) {
   }
   const out = [];
   let inFence = false;
+  let prev = "";
   for (const line of text.split("\n")) {
     if (line.startsWith("```")) inFence = !inFence;
     if (inFence || line.startsWith("```")) {
       out.push(line);
+      prev = "";
       continue;
     }
+    strayListItem(file, prev, line);
+    prev = line;
     out.push(
       line
         .replace(/\]\(([^)\s]+)\)/g, (_, t) => `](${rewriteTarget(t, file)})`)
@@ -181,6 +198,11 @@ function lastCommit(file) {
 rmSync(OUT, { recursive: true, force: true });
 rmSync(IMG, { recursive: true, force: true });
 for (const file of Object.keys(PAGES)) convert(file);
+if (strays.length) {
+  throw new Error(
+    `a wrapped line starts with a list marker, so the rest of its sentence renders as a bullet - rewrap it, or put a blank line or a colon before a real list:\n  ${strays.join("\n  ")}`,
+  );
+}
 copyFileSync(join(SITE, "landing", "index.mdx"), join(OUT, "index.mdx"));
 mkdirSync(join(SITE, "src", "assets"), { recursive: true });
 copyFileSync(join(REPO, "docs", "logo.svg"), join(SITE, "src", "assets", "logo.svg"));

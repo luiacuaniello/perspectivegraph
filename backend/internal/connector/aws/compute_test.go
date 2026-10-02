@@ -13,8 +13,9 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
 )
 
-// fakeLambda has three functions: one with an open URL and the policy that opens it, one
-// whose URL asks for IAM credentials, and one with a URL without auth but no policy at all.
+// fakeLambda has four functions: one with an open URL and the policy that opens it, one
+// whose URL asks for IAM credentials, one with a URL without auth but no policy at all, and
+// one whose URL was created in 2026 with the URL grant alone, which Lambda refuses.
 type fakeLambda struct{}
 
 const fnArn = "arn:aws:lambda:eu-west-1:123456789012:function:"
@@ -24,7 +25,7 @@ func (fakeLambda) ListFunctions(context.Context, *lambda.ListFunctionsInput, ...
 		return lambdatypes.FunctionConfiguration{FunctionName: aws.String(name), FunctionArn: aws.String(fnArn + name),
 			Role: aws.String("arn:aws:iam::123456789012:role/" + name + "-exec")}
 	}
-	return &lambda.ListFunctionsOutput{Functions: []lambdatypes.FunctionConfiguration{fn("open"), fn("iam-only"), fn("no-policy")}}, nil
+	return &lambda.ListFunctionsOutput{Functions: []lambdatypes.FunctionConfiguration{fn("open"), fn("iam-only"), fn("no-policy"), fn("new-url-only")}}, nil
 }
 
 func (fakeLambda) GetFunctionUrlConfig(_ context.Context, in *lambda.GetFunctionUrlConfigInput, _ ...func(*lambda.Options)) (*lambda.GetFunctionUrlConfigOutput, error) {
@@ -32,7 +33,12 @@ func (fakeLambda) GetFunctionUrlConfig(_ context.Context, in *lambda.GetFunction
 	if aws.ToString(in.FunctionName) == fnArn+"iam-only" {
 		auth = lambdatypes.FunctionUrlAuthTypeAwsIam
 	}
-	return &lambda.GetFunctionUrlConfigOutput{AuthType: auth, FunctionUrl: aws.String("https://x.lambda-url.eu-west-1.on.aws/")}, nil
+	created := "2024-03-01T09:00:00.000+0000"
+	if aws.ToString(in.FunctionName) == fnArn+"new-url-only" {
+		created = "2026-10-02T15:04:05.000+0000"
+	}
+	return &lambda.GetFunctionUrlConfigOutput{AuthType: auth, FunctionUrl: aws.String("https://x.lambda-url.eu-west-1.on.aws/"),
+		CreationTime: aws.String(created)}, nil
 }
 
 func (fakeLambda) GetPolicy(_ context.Context, in *lambda.GetPolicyInput, _ ...func(*lambda.Options)) (*lambda.GetPolicyOutput, error) {
@@ -99,7 +105,7 @@ func TestSDKReadsLambdaAndECS(t *testing.T) {
 			}
 		}
 	}
-	for name, want := range map[string]bool{"open": true, "iam-only": false, "no-policy": false, "api": true, "worker": false} {
+	for name, want := range map[string]bool{"open": true, "iam-only": false, "no-policy": false, "new-url-only": false, "api": true, "worker": false} {
 		if got := byName[name].InternetExposed(); got != want {
 			t.Errorf("%s exposed = %v, want %v (%v)", name, got, want, byName[name].Properties["exposure"])
 		}

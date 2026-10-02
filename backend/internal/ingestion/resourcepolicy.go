@@ -3,6 +3,7 @@ package ingestion
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"strings"
 )
 
@@ -10,6 +11,13 @@ import (
 // policy: who it lets do what to the resource it is attached to. Only what decides access
 // from outside is read: the effect, the principals, the actions and whether a condition
 // narrows who.
+//
+// What counts as public is AWS's definition, the one S3 Block Public Access applies and
+// GetBucketPolicyStatus reports: a statement open to every principal is public unless a
+// condition confines it to fixed values of a short list of keys - who the caller is, the
+// network it comes from, the resource calling. Any other condition, a Referer or a user
+// agent, is one a stranger can meet. Checked against GetBucketPolicyStatus on a real
+// account by scripts/entrypoints-lab-aws.sh.
 type ResourcePolicy struct {
 	Statements []ResourceStatement
 }
@@ -22,17 +30,28 @@ type ResourceStatement struct {
 	// Services are the AWS services it names (apigateway.amazonaws.com…).
 	Services []string
 	Actions  []string
-	// Narrowed means a condition limits who the statement applies to - a source IP or
-	// VPC endpoint, an organization, a source account or ARN. A condition only on the
-	// transport or on a Lambda function URL's auth type narrows nothing: it lets anyone in
-	// who asks the right way.
+	// Narrowed means a condition confines the statement to callers AWS does not count as
+	// the public: fixed values of one of narrowingKeys.
 	Narrowed bool
+	// Conditional means the statement has a condition of any kind. A Deny that carries one
+	// may not apply to the request an attacker makes - "deny unless over TLS" does not stop
+	// one who uses TLS - so only an unconditional Deny closes what an Allow opens.
+	Conditional bool
+	// URLOnly means the statement holds only for calls through a Lambda function URL: a
+	// condition on lambda:InvokedViaFunctionUrl or lambda:FunctionUrlAuthType is met by no
+	// other call. URLAuthType is the auth type the latter requires.
+	URLOnly     bool
+	URLAuthType string
 }
 
-// conditionKeysThatNarrowNothing are condition keys that leave a statement open to anyone.
-var conditionKeysThatNarrowNothing = map[string]bool{
-	"aws:securetransport":        true,
-	"lambda:functionurlauthtype": true,
+// narrowingKeys are the condition keys whose fixed values make a statement non-public, as
+// S3 Block Public Access lists them: the caller's account, organization or identity, its
+// source network, the resource or account calling on its behalf, an access point.
+var narrowingKeys = map[string]bool{
+	"aws:principalorgid": true, "aws:principalaccount": true, "aws:principalarn": true,
+	"aws:sourceip": true, "aws:sourcevpc": true, "aws:sourcevpce": true,
+	"aws:sourcearn": true, "aws:sourceaccount": true, "aws:sourceowner": true,
+	"aws:userid": true, "s3:dataaccesspointarn": true, "s3:dataaccesspointaccount": true,
 }
 
 // ParseResourcePolicy reads a policy given as a JSON document or as the string the AWS
@@ -86,10 +105,21 @@ func ParseResourcePolicy(raw any) (ResourcePolicy, error) {
 			s.Services = strs(pr["Service"])
 		}
 		if cond, ok := st["Condition"].(map[string]any); ok {
-			for _, block := range cond {
+			for op, block := range cond {
 				keys, _ := block.(map[string]any)
-				for k := range keys {
-					if !conditionKeysThatNarrowNothing[strings.ToLower(k)] {
+				for k, v := range keys {
+					key, vals := strings.ToLower(k), condValues(v)
+					s.Conditional = true
+					switch key {
+					case "lambda:invokedviafunctionurl":
+						s.URLOnly = s.URLOnly || (len(vals) == 1 && strings.EqualFold(vals[0], "true"))
+					case "lambda:functionurlauthtype":
+						s.URLOnly = true
+						if len(vals) == 1 {
+							s.URLAuthType = strings.ToUpper(vals[0])
+						}
+					}
+					if narrowingOperator(op) && narrowingKeys[key] && allFixed(key, vals) {
 						s.Narrowed = true
 					}
 				}
@@ -100,16 +130,30 @@ func ParseResourcePolicy(raw any) (ResourcePolicy, error) {
 	return out, nil
 }
 
-// Public reports whether the policy lets anyone perform one of the actions: an Allow
-// naming every principal, not narrowed by a condition, and no unconditional Deny of every
-// principal over that action.
-func (p ResourcePolicy) Public(actions ...string) bool {
+// Public reports whether the policy lets anyone perform one of the actions in a call made
+// directly, not through a Lambda function URL: an Allow naming every principal, not
+// narrowed by a condition, and no unconditional Deny of every principal over that action.
+func (p ResourcePolicy) Public(actions ...string) bool { return p.public(false, "", actions) }
+
+// PublicThroughURL is Public for a call through a Lambda function URL of the given auth
+// type: statements confined to such calls count too, unless they require another type.
+func (p ResourcePolicy) PublicThroughURL(authType string, actions ...string) bool {
+	return p.public(true, authType, actions)
+}
+
+func (p ResourcePolicy) public(viaURL bool, authType string, actions []string) bool {
 	allowed := false
 	for _, s := range p.Statements {
 		if !s.anyone() || !s.covers(actions) || s.Narrowed {
 			continue
 		}
+		if s.URLOnly && (!viaURL || (s.URLAuthType != "" && !strings.EqualFold(s.URLAuthType, authType))) {
+			continue
+		}
 		if !s.Allow {
+			if s.Conditional {
+				continue
+			}
 			return false
 		}
 		allowed = true
@@ -155,6 +199,79 @@ func (s ResourceStatement) covers(actions []string) bool {
 		}
 	}
 	return false
+}
+
+// narrowingOperator reports whether a condition operator confines a key to its values. The
+// negated operators confine nothing a stranger cannot avoid; an ...IfExists operator, and
+// ForAllValues, also hold when the key is absent from the request.
+func narrowingOperator(op string) bool {
+	switch strings.TrimPrefix(strings.ToLower(op), "foranyvalue:") {
+	case "stringequals", "stringequalsignorecase", "stringlike", "arnequals", "arnlike", "ipaddress":
+		return true
+	}
+	return false
+}
+
+// allFixed reports whether every value of a condition is a fixed one: no wildcard, no
+// policy variable, and for a source IP no range wider than /8 (IPv4) or /32 (IPv6), which
+// AWS counts as everyone.
+func allFixed(key string, vals []string) bool {
+	if len(vals) == 0 {
+		return false
+	}
+	for _, v := range vals {
+		if !fixedValue(key, v) {
+			return false
+		}
+	}
+	return true
+}
+
+func fixedValue(key, v string) bool {
+	if v == "" || strings.Contains(v, "${") {
+		return false
+	}
+	switch key {
+	case "aws:sourceip":
+		if !strings.Contains(v, "/") {
+			return net.ParseIP(v) != nil
+		}
+		ip, n, err := net.ParseCIDR(v)
+		if err != nil {
+			return false
+		}
+		ones, _ := n.Mask.Size()
+		if ip.To4() != nil {
+			return ones >= 8
+		}
+		return ones >= 32
+	case "aws:userid":
+		// Every session of one role, "AROA…:*", is still that role.
+		if id, rest, ok := strings.Cut(v, ":"); ok && rest == "*" && id != "" && !strings.ContainsAny(id, "*?") {
+			return true
+		}
+	case "s3:dataaccesspointarn":
+		// Any access point of one account: the name may be a wildcard, the account may not.
+		if i := strings.Index(v, ":accesspoint/"); i >= 0 {
+			return !strings.ContainsAny(v[:i], "*?")
+		}
+	}
+	return !strings.ContainsAny(v, "*?")
+}
+
+// condValues reads a condition's values: a string, a list, or a JSON bool or number.
+func condValues(v any) []string {
+	switch x := v.(type) {
+	case []any:
+		out := make([]string, 0, len(x))
+		for _, e := range x {
+			out = append(out, fmt.Sprint(e))
+		}
+		return out
+	case nil:
+		return nil
+	}
+	return []string{fmt.Sprint(v)}
 }
 
 // globMatch matches an IAM action pattern, where '*' stands for any run of characters.

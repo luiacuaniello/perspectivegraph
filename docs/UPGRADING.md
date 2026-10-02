@@ -17,6 +17,32 @@ digest, take the backup, stage it.
 
 ---
 
+## 1.29.1
+
+### Public means what AWS means by it, for bucket and function policies
+
+**Affects you if** you send S3 buckets through Custodian, or read Lambda functions.
+
+1.29.0 read a statement open to every principal as narrowed by any condition except TLS. AWS
+does the opposite: a statement is public unless a condition confines it to fixed values of a
+short list of keys - the caller's account, organization or ARN, its source network
+(`aws:SourceIp` no wider than `/8`), the resource or account calling. Checked against AWS's
+own verdict (`GetBucketPolicyStatus`) on a real account, three bucket policies 1.29.0 called
+private are public: a condition on `aws:Referer`, `aws:SourceVpc` set to `vpc-*`, and
+`aws:SourceIp` set to `0.0.0.0/1`. A conditional `Deny` - the common "deny unless over TLS" - no
+longer cancels a public `Allow`.
+
+A function URL without authentication created since October 2025 also needs
+`lambda:InvokeFunction` granted to everyone; without it Lambda answers 403, and 1.29.0 called
+such a function open. The connector now reads the URL's `CreationTime` to tell; a URL older than
+November 2025, or one whose bundle lacks `CreationTime`, is judged by the older rule.
+
+What to do: nothing. Expect more public buckets, among them any whose only restriction is a
+`Referer`, and fewer open functions. `make entrypoints-lab-aws` reruns the comparison on your
+own account.
+
+---
+
 ## 1.29.0
 
 ### Routes cross between an EKS cluster and its AWS account

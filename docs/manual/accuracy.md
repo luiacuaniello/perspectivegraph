@@ -149,6 +149,34 @@ API answers. [`deploy/redteam-lab`](../../deploy/redteam-lab) specifies that env
 specification, not runnable Terraform. That remains the one piece of engineering that can move the scores
 from *directionally honest* to *empirically grounded*, and it needs real exploits, not more model code.
 
+### Entry points, refereed by AWS
+
+`make entrypoints-lab-aws` does for exposure what the boundary lab does for escalation. It builds
+resources on both sides of each 1.29.0 rule, has the engine read them through the live connector as a
+`SecurityAudit`-only role, and takes the verdict from AWS wherever AWS gives one: ten bucket policies
+judged by `GetBucketPolicyStatus`, and three function URLs judged by an unauthenticated request - 403 is
+closed, anything else got past authorization. Nothing runs and nothing is reachable: the functions have
+reserved concurrency 0, the buckets are empty and behind `RestrictPublicBuckets`, the ECS services have
+no tasks. It costs nothing and tears itself down.
+
+Its first run on a real account caught four errors, all now fixed:
+
+| | AWS | engine, before the fix |
+|---|---|---|
+| bucket open to `*` on condition of an `aws:Referer` | public | private |
+| bucket open to `*` from `aws:SourceVpc` `vpc-*` | public | private |
+| bucket open to `*` from `aws:SourceIp` `0.0.0.0/1` | public | private |
+| function URL without authentication, created now, granted `lambda:InvokeFunctionUrl` only | 403 | open |
+
+The three buckets share one cause. The reader treated every condition as narrowing who may call, except
+TLS; AWS starts from the other end - public, unless a condition confines the statement to fixed values
+of a short list of keys - and the reader now does too. The function is a rule Lambda added in October
+2025: a new URL needs `lambda:InvokeFunction` as well. Twenty-three other checks agreed from the first
+run, among them the ECS services (exposed only with a public address, a route and an open port, on the
+ports the network ACL lets through), the retraction of a function whose URL is deleted, and a GitHub OIDC
+trust pinned to one repository. AWS refused to create a trust open to every repository, as documented, so
+that case stays a unit test.
+
 ### Condition keys, and why they are not refutations
 
 The engine treats an `Allow` as unconditional - `Condition` is documented as deliberately out of scope, so

@@ -133,8 +133,8 @@ ingress-nginx and F5 NGINX annotations; one you set yourself wins). Any other pr
 same.
 
 Both modes run the same comparison (package `impact`), the same normalizer, the same pathfinder
-and the same triage priority. Under `attribution: commit` they return the same per-commit verdict
-- a test asserts they agree path-for-path on identical input.
+and the same triage priority. Under `attribution: commit` they return the same per-commit
+verdict - a test asserts they agree path-for-path on identical input.
 
 The scan is not the only thing a pull request can send: a rendered manifest set
 (`helm template`, `kustomize build`) as the report with `source: k8s` is compared the same way,

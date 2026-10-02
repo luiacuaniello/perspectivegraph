@@ -217,7 +217,9 @@ regression gate rather than a measure of accuracy on your estate. On real AWS,
 `make reachability-lab-aws` checks exposure the same way for free, and `make redteam-aws` grades
 the engine's escalation claims against AWS's own policy evaluator. That grading has already
 caught one false positive, a permissions boundary the engine ignored; it is fixed, and
-`make boundary-lab-aws` fails whenever the engine and AWS disagree.
+`make boundary-lab-aws` fails whenever the engine and AWS disagree. `make entrypoints-lab-aws`
+puts bucket policies and function URLs to AWS the same way; its first run caught four errors,
+also fixed.
 
 - **Clouds.** AWS is live and verified against a real account, cross-account `AssumeRole`
   included. Azure is fixtures only, and there is no GCP connector.

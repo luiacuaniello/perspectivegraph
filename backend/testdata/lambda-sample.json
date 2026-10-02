@@ -4,8 +4,8 @@
       "FunctionName": "orders-webhook",
       "FunctionArn": "arn:aws:lambda:eu-west-1:123456789012:function:orders-webhook",
       "Role": "arn:aws:iam::123456789012:role/orders-webhook-exec",
-      "Url": { "AuthType": "NONE", "FunctionUrl": "https://abc123.lambda-url.eu-west-1.on.aws/" },
-      "Policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":\"*\",\"Action\":\"lambda:InvokeFunctionUrl\",\"Resource\":\"arn:aws:lambda:eu-west-1:123456789012:function:orders-webhook\",\"Condition\":{\"StringEquals\":{\"lambda:FunctionUrlAuthType\":\"NONE\"}}}]}",
+      "Url": { "AuthType": "NONE", "FunctionUrl": "https://abc123.lambda-url.eu-west-1.on.aws/", "CreationTime": "2026-03-12T09:41:27.512+0000" },
+      "Policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":\"*\",\"Action\":\"lambda:InvokeFunctionUrl\",\"Resource\":\"arn:aws:lambda:eu-west-1:123456789012:function:orders-webhook\",\"Condition\":{\"StringEquals\":{\"lambda:FunctionUrlAuthType\":\"NONE\"}}},{\"Effect\":\"Allow\",\"Principal\":\"*\",\"Action\":\"lambda:InvokeFunction\",\"Resource\":\"arn:aws:lambda:eu-west-1:123456789012:function:orders-webhook\",\"Condition\":{\"Bool\":{\"lambda:InvokedViaFunctionUrl\":\"true\"}}}]}",
       "Tags": { "app": "orders" }
     },
     {
