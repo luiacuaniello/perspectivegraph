@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.28.2](https://github.com/luiacuaniello/perspectivegraph/compare/v1.28.1...v1.28.2) (2026-10-02)
+
+
+### Bug Fixes
+
+* **ingestion:** key SBOM packages, Falco alerts and Custodian load balancers like the other sources ([#294](https://github.com/luiacuaniello/perspectivegraph/issues/294)) ([b84b3e1](https://github.com/luiacuaniello/perspectivegraph/commit/b84b3e15cf051dabd36db728de718340f6fbfc68))
+
 ## [1.28.1](https://github.com/luiacuaniello/perspectivegraph/compare/v1.28.0...v1.28.1) (2026-10-01)
 
 
