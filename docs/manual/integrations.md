@@ -35,8 +35,13 @@ curl -s localhost:8081/connectors | jq   # per-connector health: last run, last 
 CONNECTORS_ENABLED=aws AWS_CONNECTOR_MODE=sdk AWS_REGION=us-east-1 \
   AWS_ROLE_ARN=arn:aws:iam::<account>:role/perspectivegraph-readonly
 # grant only: ec2:Describe*, iam:GetAccountAuthorizationDetails, iam:ListInstanceProfiles,
-# iam:GetPolicy + iam:GetPolicyVersion (to resolve permissions-boundary documents)
-# (all covered by the AWS-managed SecurityAudit policy - verified against a live account)
+# iam:GetPolicy + iam:GetPolicyVersion (to resolve permissions-boundary documents),
+# eks:ListClusters, eks:ListAccessEntries, eks:ListAssociatedAccessPolicies,
+# lambda:ListFunctions, lambda:GetFunctionUrlConfig, lambda:GetPolicy, lambda:ListTags,
+# ecs:ListClusters, ecs:ListServices, ecs:DescribeServices, ecs:DescribeTaskDefinition
+# (all covered by the AWS-managed SecurityAudit policy)
+# plus, for EKS Pod Identity, which SecurityAudit does not cover:
+# eks:ListPodIdentityAssociations, eks:DescribePodIdentityAssociation
 
 # Multi-account: one role per account, comma-separated, pulled in a single pass.
 CONNECTORS_ENABLED=aws AWS_CONNECTOR_MODE=sdk AWS_REGION=us-east-1 \
@@ -57,13 +62,32 @@ has expired costs that account's assets for the pass and nothing more - the othe
 still collected, and `GET /connectors` reports the error. No AWS Organization is needed:
 a role in each account trusting the one the engine runs as is enough.
 
+**EKS.** The connector also reads each EKS cluster's **Pod Identity** associations (which
+IAM role a service account's pods get) and **access entries** (which IAM principals get into
+the cluster, with which access policy): `AmazonEKSClusterAdminPolicy` reaches the cluster's
+cluster-admin outright, `AmazonEKSAdminPolicy` and `AmazonEKSEditPolicy` read secrets, a way
+there. Neither shows in the cluster's own objects. Without the two Pod Identity permissions
+the connector logs a warning and still reads the access entries. For these to meet the
+cluster's dump, send the dump with `?cluster=<the EKS cluster name>`.
+
+**Lambda and ECS.** The connector reads each Lambda function's URL, resource policy, role and
+tags, so a function anyone can invoke is an entry point leading into its execution role, and
+the network pull reads ECS services in awsvpc mode - their security groups, subnets, public
+address and task role - so a service is exposed and reaches its role the way an instance does.
+A Region without Lambda or ECS costs nothing; an ECS read that fails is logged and the rest of
+the network pull goes on.
+
 Connectors are **leader-only** (replicas don't multiply API calls), interval-driven
 (`CONNECTOR_INTERVAL`), and observable via `GET /connectors` plus
 `perspectivegraph_connector_*` Prometheus metrics. SDK mode uses the standard AWS
 credential chain (env / shared profile / IRSA / instance role). The network pull also
-reads route tables, NACLs and subnets, so an SG open to `0.0.0.0/0` on an instance in a
-**private** subnet (NAT / transit-gateway egress, or a denying NACL) is *not* reported as
-internet-exposed - the classic false positive that inflates attack-surface counts.
+reads route tables, NACLs, subnets and each instance's addresses, so an SG open to
+`0.0.0.0/0` on an instance in a **private** subnet (NAT / transit-gateway egress), with no
+public IP, or behind a NACL that blocks the port is *not* reported as internet-exposed -
+the classic false positives that inflate attack-surface counts. Exposure is decided port
+by port and per address family, and the path names the ports (*tcp/22*, *tcp/443*). The
+Azure network feed applies an NSG the way Azure does: rules by priority, first match
+deciding, a `Deny` closing what a later `Allow` opens.
 
 It also resolves each instance's **IAM instance profile** to the role behind it and draws
 `instance --ASSUMES--> IAM_Role`. That edge is what joins the network half of the graph to
@@ -104,6 +128,8 @@ the exposure/reachability topology no scanner produces:
   and draws `CAN_ESCALATE_TO` edges to a synthetic **account-admin** sensitive asset.
   A role trusting `"Principal":"*"` is flagged internet-exposed, surfacing
   *internet → publicly-assumable role → CAN_ESCALATE_TO → account compromise*.
+  So is a role trusting GitHub Actions without a `sub` condition that names an
+  owner: *GitHub Actions (any repository) → role → …*.
 
 This is what turns "demo that works because the IDs line up by hand" into
 "discovery on real infrastructure".

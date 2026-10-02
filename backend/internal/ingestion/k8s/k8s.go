@@ -6,10 +6,20 @@
 //	Pod ──ASSUMES──▶ ServiceAccount ──ASSUMES──▶ Role   (crown jewel if admin)
 //	Pod ──HOSTS──▶ Image   (inferred from the image ref by the normalizer)
 //
+// and, on EKS, the edges between the cluster and the AWS account around it (OWASP
+// Kubernetes Top 10, K08 cluster-to-cloud lateral movement):
+//
+//	ServiceAccount ──ASSUMES──▶ IAM role         (IRSA: eks.amazonaws.com/role-arn)
+//	Pod ──ESCAPES_TO──▶ its node's EC2 instance   (whose instance role is one IMDS call away)
+//	IAM role/user ──ASSUMES──▶ cluster role       (kube-system/aws-auth mapRoles/mapUsers)
+//
 // Input is the JSON of `kubectl get ingress,service,pod,serviceaccount,role,
-// clusterrole,rolebinding,clusterrolebinding -A -o json` - a List whose items
+// clusterrole,rolebinding,clusterrolebinding,node -A -o json` plus, on EKS,
+// `kubectl get configmap aws-auth -n kube-system -o json` - a List whose items
 // the collector walks by kind. This turns a real cluster into discoverable
-// attack surface without hand-stitched ids.
+// attack surface without hand-stitched ids. The AWS objects are keyed as the AWS
+// feeds key them - roles and users by ARN, instances by account (send the dump with
+// ?account=) and instance ID - so the cluster's routes continue into the account's.
 //
 // Names in Kubernetes are unique only within their scope, and the ids follow it. A Role
 // belongs to a namespace, so it is keyed with its namespace: keyed on its name alone, a
@@ -26,8 +36,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
+
+	"go.yaml.in/yaml/v3"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion"
 	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
@@ -41,15 +54,17 @@ func (*Collector) Source() string { return "k8s" }
 // ── minimal typed views of the resources we consume ─────────────────
 
 type meta struct {
-	Name      string            `json:"name"`
-	Namespace string            `json:"namespace"`
-	Labels    map[string]string `json:"labels"`
+	Name        string            `json:"name"`
+	Namespace   string            `json:"namespace"`
+	Labels      map[string]string `json:"labels"`
+	Annotations map[string]string `json:"annotations"`
 }
 
 type item struct {
-	Kind     string          `json:"kind"`
-	Metadata meta            `json:"metadata"`
-	Spec     json.RawMessage `json:"spec"`
+	Kind     string            `json:"kind"`
+	Metadata meta              `json:"metadata"`
+	Spec     json.RawMessage   `json:"spec"`
+	Data     map[string]string `json:"data"` // a ConfigMap's: aws-auth's mapRoles and mapUsers
 	Subjects []struct {
 		Kind      string `json:"kind"`
 		Name      string `json:"name"`
@@ -76,6 +91,8 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 	// CONTAINS - see builder.stamp for why not onto the ones it merely mentions.
 	g := &builder{nodes: map[string]ontology.Node{}, stamp: opts.PRProps(), cluster: opts.Cluster}
 	var pods, services, ingresses, sas, bindings []item
+	var awsAuth *item
+	nodeInstance := map[string]string{}    // Kubernetes node name -> the EC2 instance it runs on
 	adminRoles := map[string]bool{}        // role name -> wildcard-admin
 	escalationRoles := map[string]string{} // role name -> escalation primitive it grants
 	// Roles the dump DEFINES, as opposed to the ones its bindings merely name. Only the
@@ -96,6 +113,20 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 			sas = append(sas, it)
 		case "rolebinding", "clusterrolebinding":
 			bindings = append(bindings, it)
+		case "node":
+			var spec struct {
+				ProviderID string `json:"providerID"`
+			}
+			if err := decodeSpec("Node", it.Metadata, it.Spec, &spec); err != nil {
+				return nil, err
+			}
+			if id := ec2InstanceID(spec.ProviderID); id != "" {
+				nodeInstance[it.Metadata.Name] = id
+			}
+		case "configmap":
+			if it.Metadata.Name == "aws-auth" && it.Metadata.Namespace == "kube-system" {
+				awsAuth = &it
+			}
 		case "role", "clusterrole":
 			key := roleKey(it.Kind, it.Metadata.Namespace, it.Metadata.Name)
 			definedRoles[key] = true
@@ -137,8 +168,17 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 
 		// A host-breaking pod can escape its container to the node - and from the
 		// node, the cluster (ATT&CK T1611). Model it as a direct route to cluster-admin.
+		// On EKS the node is an EC2 instance, and the role it runs with is one IMDS call
+		// away from whoever holds it: the escape continues into the account, through the
+		// instance node the AWS feeds draw (and its ASSUMES edge to that role).
 		if escape != "" {
 			g.edge(ontology.EdgeEscapesTo, id, clusterAdmin(g), 0.95)
+			if instance := nodeInstance[spec.NodeName]; instance != "" {
+				vm := ontology.ScopedID(ontology.LabelVirtualMachine, opts.Account, instance)
+				g.cloud(ontology.Node{ID: vm, Label: ontology.LabelVirtualMachine, Name: instance,
+					Properties: map[string]any{"k8s_node": spec.NodeName}})
+				g.edge(ontology.EdgeEscapesTo, id, vm, 0.95)
+			}
 		}
 
 		// Pod assumes its ServiceAccount.
@@ -210,14 +250,28 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 	for _, sa := range sas {
 		ns := nsOf(sa.Metadata)
 		saID := g.id(ontology.LabelServiceAccount, ns+"/"+sa.Metadata.Name)
+		saProps := map[string]any{"k8s_ns": ns}
+		roleARN := strings.TrimSpace(sa.Metadata.Annotations[irsaAnnotation])
+		if roleARN != "" {
+			saProps["irsa_role"] = roleARN
+		}
 		g.own(ontology.Node{ID: saID,
 			Label: ontology.LabelServiceAccount, Name: ns + "/" + sa.Metadata.Name,
-			Properties: map[string]any{"k8s_ns": ns}})
+			Properties: saProps})
 		saByNS[ns] = append(saByNS[ns], saID)
 		allSAs = append(allSAs, saID)
+		// IRSA: a pod running as this ServiceAccount is handed a token it trades for the
+		// annotated IAM role - the cluster's identity continues into the account's.
+		if roleARN != "" {
+			g.edge(ontology.EdgeAssumes, saID, g.awsPrincipal(roleARN), irsaAssumeProb)
+		}
 	}
 
-	// Bindings: a ServiceAccount assumes a Role; admin roles are crown jewels.
+	// Bindings: a ServiceAccount assumes a Role; admin roles are crown jewels. The roles
+	// each group and user is bound to in THIS cluster are kept for aws-auth below: its
+	// mappings hold in this cluster only, while group and user nodes are shared across
+	// clusters on purpose.
+	groupRoles, userRoles := map[string][]string{}, map[string][]string{}
 	for _, b := range bindings {
 		roleName := b.RoleRef.Name
 		key := roleKey(b.RoleRef.Kind, b.Metadata.Namespace, roleName)
@@ -252,6 +306,7 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 				// Binding a group to a powerful role is a common, dangerous misconfig
 				// the ServiceAccount-only view used to miss entirely.
 				bindGroup(g, subj.Name, roleID, saByNS, allSAs)
+				groupRoles[subj.Name] = append(groupRoles[subj.Name], roleID)
 			case "user":
 				// A named user (e.g. an OIDC identity) has no cluster-visible workload
 				// to pin it to a pod, but record the grant so the privesc stays visible.
@@ -261,7 +316,14 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 				g.upsert(ontology.Node{ID: uid, Label: ontology.LabelUser, Name: "user:" + subj.Name,
 					Properties: map[string]any{"k8s_user": subj.Name}})
 				g.edge(ontology.EdgeAssumes, uid, roleID, 0.8)
+				userRoles[subj.Name] = append(userRoles[subj.Name], roleID)
 			}
+		}
+	}
+
+	if awsAuth != nil {
+		if err := mapAWSAuth(g, *awsAuth, groupRoles, userRoles); err != nil {
+			return nil, err
 		}
 	}
 
@@ -277,6 +339,7 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 // ── spec sub-views ──────────────────────────────────────────────────
 
 type podSpec struct {
+	NodeName           string `json:"nodeName"`
 	ServiceAccountName string `json:"serviceAccountName"`
 	ServiceAccount     string `json:"serviceAccount"`
 	HostPID            bool   `json:"hostPID"`
@@ -458,6 +521,35 @@ func (b *builder) upsert(n ontology.Node) {
 	b.nodes[n.ID] = n
 }
 
+// cloud records an AWS object the dump refers to - an IAM principal, an EC2 instance. It
+// belongs to the account, not the cluster: no cluster stamp, and keyed as the AWS feeds
+// key it, so the two meet.
+func (b *builder) cloud(n ontology.Node) {
+	if existing, ok := b.nodes[n.ID]; ok {
+		for k, v := range n.Properties {
+			if existing.Properties == nil {
+				existing.Properties = map[string]any{}
+			}
+			existing.Properties[k] = v
+		}
+		b.nodes[n.ID] = existing
+		return
+	}
+	b.nodes[n.ID] = n
+}
+
+// awsPrincipal is the node of the IAM role or user with this ARN, keyed by ARN as the iam
+// collector keys it.
+func (b *builder) awsPrincipal(arn string) string {
+	label, name := ontology.LabelIAMRole, arn[strings.LastIndex(arn, "/")+1:]
+	if strings.Contains(arn, ":user/") {
+		label = ontology.LabelUser
+	}
+	id := ontology.NewID(label, arn)
+	b.cloud(ontology.Node{ID: id, Label: label, Name: name, Properties: map[string]any{ontology.PropARN: arn}})
+	return id
+}
+
 func (b *builder) stub(label ontology.Label, name string) string {
 	id := b.id(label, name)
 	if _, ok := b.nodes[id]; !ok {
@@ -566,6 +658,11 @@ func escalateReason(it item) string {
 // see - so it is weighted well below the primitives that just work (escalate,
 // impersonate, secret/token theft). This gives the path score the resolution to
 // separate a real escalation from an over-reported one.
+// EscalationProb is how reliably an RBAC escalation primitive reaches cluster-admin, for
+// the sources that grant one outside RBAC objects - an EKS access policy, say - so they
+// weigh it as this collector does.
+func EscalationProb(reason string) float64 { return escalationProb(reason) }
+
 func escalationProb(reason string) float64 {
 	switch reason {
 	case "roles/escalate":
@@ -679,4 +776,93 @@ func first(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// irsaAnnotation is how a ServiceAccount names the IAM role its pods assume (IRSA).
+const irsaAnnotation = "eks.amazonaws.com/role-arn"
+
+// irsaAssumeProb is a pod's token traded for the role: the projected token is mounted in
+// the pod, and AssumeRoleWithWebIdentity is one call. The role's trust policy must admit
+// this ServiceAccount for it to work; the annotation is how the cluster says it does.
+const irsaAssumeProb = 0.9
+
+// awsAuthAssumeProb is an IAM identity mapped in aws-auth becoming its cluster identity:
+// `aws eks get-token` with its credentials, against an API endpoint that is public by
+// default.
+const awsAuthAssumeProb = 0.9
+
+// ec2InstanceID reads the EC2 instance a node runs on out of its providerID
+// (aws:///eu-west-1a/i-0abc…), or "" for a node elsewhere.
+func ec2InstanceID(providerID string) string {
+	if !strings.HasPrefix(providerID, "aws://") {
+		return ""
+	}
+	last := providerID[strings.LastIndex(providerID, "/")+1:]
+	if !strings.HasPrefix(last, "i-") {
+		return ""
+	}
+	return last
+}
+
+// awsAuthEntry is one mapping in aws-auth: an IAM role or user, and the cluster user and
+// groups it authenticates as.
+type awsAuthEntry struct {
+	RoleARN  string   `yaml:"rolearn"`
+	UserARN  string   `yaml:"userarn"`
+	Username string   `yaml:"username"`
+	Groups   []string `yaml:"groups"`
+}
+
+// mapAWSAuth draws the way from the AWS account into the cluster: each IAM role or user
+// aws-auth maps assumes the cluster roles its groups and username are bound to here, and
+// system:masters is cluster-admin outright. It links to the roles directly rather than
+// through the group nodes, which are shared across clusters: a mapping holds in the
+// cluster whose aws-auth says it, and through a shared group it would have reached the
+// bindings of every cluster.
+//
+// aws-auth names a role without its IAM path, so a role created under a path
+// (arn:aws:iam::1:role/team/deploy) is read here as role/deploy and does not meet the
+// node the iam collector draws for it.
+func mapAWSAuth(g *builder, cm item, groupRoles, userRoles map[string][]string) error {
+	var entries []awsAuthEntry
+	for _, key := range []string{"mapRoles", "mapUsers"} {
+		raw := strings.TrimSpace(cm.Data[key])
+		if raw == "" {
+			continue
+		}
+		var part []awsAuthEntry
+		if err := yaml.Unmarshal([]byte(raw), &part); err != nil {
+			return fmt.Errorf("decode kube-system/aws-auth %s: %w", key, err)
+		}
+		entries = append(entries, part...)
+	}
+	for _, e := range entries {
+		arn := first(e.RoleARN, e.UserARN)
+		if arn == "" {
+			continue
+		}
+		principal := g.awsPrincipal(arn)
+		targets := map[string]bool{}
+		for _, grp := range e.Groups {
+			if grp == "system:masters" {
+				targets[clusterAdmin(g)] = true
+				continue
+			}
+			for _, r := range groupRoles[grp] {
+				targets[r] = true
+			}
+		}
+		for _, r := range userRoles[e.Username] {
+			targets[r] = true
+		}
+		ids := make([]string, 0, len(targets))
+		for id := range targets {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		for _, id := range ids {
+			g.edge(ontology.EdgeAssumes, principal, id, awsAuthAssumeProb)
+		}
+	}
+	return nil
 }

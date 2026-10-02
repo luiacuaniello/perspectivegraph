@@ -219,3 +219,37 @@ func TestSameRegion(t *testing.T) {
 		}
 	}
 }
+
+// A bucket is public through its policy as much as through its ACL - and since ACLs are
+// off by default on new buckets, mostly through its policy. Block Public Access closes
+// either, and the roles a policy names reach the data whatever their own policies say.
+func TestBucketPolicyDecidesWhoReachesTheData(t *testing.T) {
+	const public = `"{\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":\"*\",\"Action\":\"s3:GetObject\",\"Resource\":\"arn:aws:s3:::b/*\"}]}"`
+	const crossAccount = `"{\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"arn:aws:iam::222222222222:role/analytics\"},\"Action\":[\"s3:GetObject\",\"s3:ListBucket\"],\"Resource\":\"*\"}]}"`
+	ev := parseBundle(t, `{"account_id":"`+account+`","policies":[{"resource":"aws.s3","resources":[
+	  {"Name":"open-by-policy","Policy":`+public+`,"Tags":[{"Key":"classification","Value":"pii"}]},
+	  {"Name":"blocked","Policy":`+public+`,"c7n:PublicAccessBlock":{"RestrictPublicBuckets":true,"BlockPublicPolicy":true}},
+	  {"Name":"shared","Policy":`+crossAccount+`}]}]}`)
+	byName := map[string]ontology.Node{}
+	for _, n := range ev.Nodes {
+		byName[n.Name] = n
+	}
+	if open := byName["open-by-policy"]; !open.Bool(ontology.PropPublicAccess) || open.Properties["public_via"] != "bucket policy" {
+		t.Errorf("a policy granting s3:GetObject to * makes the bucket readable by anyone: %+v", open.Properties)
+	}
+	if byName["blocked"].Bool(ontology.PropInternetExposed) {
+		t.Error("RestrictPublicBuckets keeps a public policy from taking effect")
+	}
+	if byName["shared"].Bool(ontology.PropInternetExposed) {
+		t.Error("a policy naming one role makes nothing public")
+	}
+	analytics := ontology.NewID(ontology.LabelIAMRole, "arn:aws:iam::222222222222:role/analytics")
+	granted := false
+	for _, e := range ev.Edges {
+		granted = granted || (e.Type == ontology.EdgeHasPermission && e.From == analytics &&
+			e.To == ontology.NewID(ontology.LabelBucket, "shared"))
+	}
+	if !granted {
+		t.Error("the role the bucket policy names in another account reaches the bucket")
+	}
+}

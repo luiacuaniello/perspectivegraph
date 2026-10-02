@@ -195,6 +195,10 @@ func assertPathfinderEquivalence(t *testing.T, store graph.Store) {
 		{ID: "pf-c", Label: ontology.LabelContainer, Name: "pf-c"},
 		{ID: "pf-v", Label: ontology.LabelCVE, Name: "pf-cve"},
 		{ID: "pf-j", Label: ontology.LabelIAMRole, Name: "pf-admin", Properties: map[string]any{ontology.PropCrownJewel: true}},
+		// A source claimed it exposed, and the network source found it is not: the network
+		// verdict decides, in the database's path finder as in the in-process one.
+		{ID: "pf-cleared", Label: ontology.LabelVirtualMachine, Name: "pf-cleared", Properties: map[string]any{
+			ontology.PropInternetExposed: true, ontology.PropNetworkExposed: false}},
 	} {
 		must(store.UpsertNode(ctx, n))
 	}
@@ -203,6 +207,7 @@ func assertPathfinderEquivalence(t *testing.T, store graph.Store) {
 		{Type: ontology.EdgeAffects, From: "pf-c", To: "pf-v", ExploitProbability: 0.5},
 		{Type: ontology.EdgeExploits, From: "pf-v", To: "pf-j", ExploitProbability: 0.8},
 		{Type: ontology.EdgeAssumes, From: "pf-c", To: "pf-j", ExploitProbability: 0.2},
+		{Type: ontology.EdgeConnectsTo, From: "pf-cleared", To: "pf-j", ExploitProbability: 0.9},
 	} {
 		must(store.UpsertEdge(ctx, e))
 	}
@@ -229,6 +234,9 @@ func assertPathfinderEquivalence(t *testing.T, store graph.Store) {
 		} else if dv < gv-1e-9 || dv > gv+1e-9 {
 			t.Errorf("path %s score differs: DB %.4f vs Dijkstra %.4f", k, dv, gv)
 		}
+	}
+	if _, ok := db["pf-cleared→pf-j"]; ok {
+		t.Error("the DB pathfinder started from an asset the network source found unexposed")
 	}
 	if got := db["pf-lb→pf-j"]; got < 0.36-1e-9 || got > 0.36+1e-9 {
 		t.Errorf("best path score = %.4f, want 0.36", got)

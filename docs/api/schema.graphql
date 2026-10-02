@@ -212,6 +212,8 @@ type Node {
   crownJewelBasis: String
   cvss: Float
   epss: Float
+  exposedManagementPorts: String
+  exposedPorts: String
   id: String!
   internetExposed: Boolean
   kev: Boolean

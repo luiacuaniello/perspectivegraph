@@ -8,6 +8,10 @@ export interface Node {
   label: string;
   name: string;
   internetExposed: boolean;
+  // What the internet reaches, port by port ("tcp/22, tcp/443"), and the part of it that
+  // is a remote shell, a control plane or a database. Absent when no source says.
+  exposedPorts?: string | null;
+  exposedManagementPorts?: string | null;
   crownJewel: boolean;
   crownJewelBasis?: string | null;
   classification?: string | null;
@@ -443,7 +447,7 @@ export interface WhatIfResult {
   after: { id: string }[];
 }
 
-const NODE_FIELDS = `id label name account internetExposed crownJewel crownJewelBasis classification secretsScrubbed runtimeAlert severity cvss kev epss resolutionMethod resolutionConfidence resolutionAlias signed slsaLevel sbomComponents`;
+const NODE_FIELDS = `id label name account internetExposed exposedPorts exposedManagementPorts crownJewel crownJewelBasis classification secretsScrubbed runtimeAlert severity cvss kev epss resolutionMethod resolutionConfidence resolutionAlias signed slsaLevel sbomComponents`;
 
 // PATH_LIMIT bounds how many attack paths the dashboard pulls per refresh. The
 // analyzer returns them priority-first, so this is the Top-N a human can actually

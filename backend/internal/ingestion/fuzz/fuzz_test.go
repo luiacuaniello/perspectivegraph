@@ -22,9 +22,11 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/cloudnet"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/custodian"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/dataclass"
+	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/eks"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/falco"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/iam"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/k8s"
+	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/lambda"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/semgrep"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/sso"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/supplychain"
@@ -63,3 +65,5 @@ func FuzzSupplychain(f *testing.F) {
 func FuzzSSO(f *testing.F)       { run(f, sso.New(), "../../../testdata/sso-sample.json") }
 func FuzzDataclass(f *testing.F) { run(f, dataclass.New(), "../../../testdata/dataclass-sample.json") }
 func FuzzBuild(f *testing.F)     { run(f, build.New(), "../../../testdata/build-sample.json") }
+func FuzzEKS(f *testing.F)       { run(f, eks.New(), "../../../testdata/eks-sample.json") }
+func FuzzLambda(f *testing.F)    { run(f, lambda.New(), "../../../testdata/lambda-sample.json") }

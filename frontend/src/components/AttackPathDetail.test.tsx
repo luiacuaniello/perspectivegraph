@@ -357,3 +357,30 @@ describe("AttackPathDetail in plain language", () => {
     expect(screen.getByText(/line 39/)).toBeInTheDocument();
   });
 });
+
+// Which ports the internet reaches is the first question about an exposed machine, and a
+// shell or a database answering it is a finding of its own.
+describe("AttackPathDetail exposure by port", () => {
+  const route = (exposedPorts: string | null, exposedManagementPorts: string | null) =>
+    path({
+      nodes: [
+        { id: "vm", label: "VirtualMachine", name: "bastion", internetExposed: true, exposedPorts, exposedManagementPorts,
+          crownJewel: false, runtimeAlert: false },
+        { id: "role", label: "IAM_Role", name: "admin-role", internetExposed: false, crownJewel: true, runtimeAlert: false },
+      ],
+      steps: [{ edgeType: "ASSUMES", from: "vm", to: "role", probability: 0.9 }],
+    });
+
+  it("names the ports the internet reaches", () => {
+    render(<AttackPathDetail path={route("tcp/22, tcp/443", "tcp/22")} />);
+    expect(screen.getByText("internet-exposed · tcp/22, tcp/443")).toBeInTheDocument();
+    expect(screen.getByText("management port open · tcp/22")).toBeInTheDocument();
+  });
+
+  it("keeps a long port list in the tooltip, and says nothing of management ports that are not open", () => {
+    render(<AttackPathDetail path={route("tcp/0-21, tcp/23-65535, udp/all", null)} />);
+    const badge = screen.getByText("internet-exposed");
+    expect(badge.closest("[title]")?.getAttribute("title")).toContain("tcp/0-21, tcp/23-65535, udp/all");
+    expect(screen.queryByText(/management port open/)).not.toBeInTheDocument();
+  });
+});

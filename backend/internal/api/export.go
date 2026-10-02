@@ -111,7 +111,7 @@ func buildEnrichment(tenant string, paths []analyzer.AttackPath) []enrichment {
 					Schema: "perspectivegraph.enrichment.v1", Tenant: tenant,
 					AssetID: n.ID, AssetName: n.Name, Label: string(n.Label),
 					OnCriticalPath:  true,
-					InternetExposed: n.Bool(ontology.PropInternetExposed),
+					InternetExposed: n.InternetExposed(),
 					CrownJewel:      n.Bool(ontology.PropCrownJewel),
 				}
 				byID[n.ID] = rec

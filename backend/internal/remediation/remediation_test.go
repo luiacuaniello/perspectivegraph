@@ -216,3 +216,50 @@ func TestOnlyAnOpenRoleGetsTheTrustHint(t *testing.T) {
 		t.Errorf("hints = %q, want one for the open role only", hints)
 	}
 }
+
+// A role any GitHub repository can assume is fixed in its trust policy: the condition on
+// the token's subject is what was missing, and the fix cuts the edge the route enters by.
+func TestAnOpenGitHubTrustGetsItsSubjectPinned(t *testing.T) {
+	p := analyzer.AttackPath{
+		Nodes: []ontology.Node{
+			{ID: "gh", Label: ontology.LabelIdentityProvider, Name: "GitHub Actions (any repository)",
+				Properties: map[string]any{ontology.PropInternetExposed: true, "oidc_issuer": "token.actions.githubusercontent.com"}},
+			{ID: "role", Label: ontology.LabelIAMRole, Name: "github-deploy",
+				Properties: map[string]any{ontology.PropAccount: "123456789012"}},
+			{ID: "admin", Label: ontology.LabelIAMRole, Name: "account-admin"},
+		},
+		Steps: []analyzer.Step{
+			{EdgeType: ontology.EdgeAuthenticates, From: "gh", To: "role"},
+			{EdgeType: ontology.EdgeCanEscalateTo, From: "role", To: "admin"},
+		},
+	}
+	var pin *Suggestion
+	for _, s := range Generate(p) {
+		if strings.HasPrefix(s.Filename, "pin-github-subject-") {
+			s := s
+			pin = &s
+		}
+	}
+	if pin == nil {
+		t.Fatalf("no subject-pinning fix among %+v", Generate(p))
+	}
+	for _, want := range []string{
+		"arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+		`variable = "token.actions.githubusercontent.com:sub"`, "sts:AssumeRoleWithWebIdentity",
+	} {
+		if !strings.Contains(pin.Content, want) {
+			t.Errorf("fix lacks %q:\n%s", want, pin.Content)
+		}
+	}
+	if pin.Cut != (CutEdge{From: "gh", To: "role", Type: string(ontology.EdgeAuthenticates)}) {
+		t.Errorf("fix cuts %+v, want the edge the route enters by", pin.Cut)
+	}
+
+	// A pinned trust is not an entry point, and gets no such fix.
+	p.Nodes[0].Properties[ontology.PropInternetExposed] = false
+	for _, s := range Generate(p) {
+		if strings.HasPrefix(s.Filename, "pin-github-subject-") {
+			t.Error("a pinned trust was offered a pinning fix")
+		}
+	}
+}

@@ -98,6 +98,17 @@ var Registry = []Rule{
 		Build: func(from, _ ontology.Node) Suggestion { return privescDeny(from) },
 	},
 	{
+		// A role open to every GitHub repository: pin the token's subject in its trust
+		// policy, so only the repositories that deploy with it can assume it.
+		Name: "pin-federated-subject",
+		Match: func(st analyzer.Step, from, to ontology.Node) bool {
+			issuer, _ := from.Properties["oidc_issuer"].(string)
+			return st.EdgeType == ontology.EdgeAuthenticates && from.Label == ontology.LabelIdentityProvider &&
+				from.InternetExposed() && issuer == githubIssuer && to.Label == ontology.LabelIAMRole
+		},
+		Build: func(_, to ontology.Node) Suggestion { return pinGitHubSubject(to) },
+	},
+	{
 		// Cloud lateral movement: cut the discovered reachability between two
 		// instances (SG-to-SG ingress) so the source can no longer reach the target.
 		Name: "segment-lateral-reachability",
@@ -465,7 +476,7 @@ func privescDeny(p ontology.Node) Suggestion {
 		resourceType, attr, kind = "aws_iam_user_policy", "user", "user"
 	}
 	trustNote := ""
-	if p.Bool(ontology.PropInternetExposed) {
+	if p.InternetExposed() {
 		trustNote = fmt.Sprintf(
 			"\n# NOTE: %q is publicly assumable (trust policy allows Principal \"*\").\n"+
 				"# Also restrict its AssumeRolePolicyDocument to the principals that truly need it.\n",
@@ -499,6 +510,55 @@ resource "%s" "perspective_block_privesc_%s" {
 		Filename:  "block-privesc-" + name + ".tf",
 		Content:   content,
 		Rationale: "Cuts the CAN_ESCALATE_TO edge by denying the IAM actions (PassRole, Attach*/Put* policy, CreatePolicyVersion…) that let this principal escalate to admin.",
+	}
+}
+
+// githubIssuer is GitHub Actions' OIDC issuer, as the IAM collector records it.
+const githubIssuer = "token.actions.githubusercontent.com"
+
+// pinGitHubSubject rewrites the trust of a role any GitHub repository can assume so that
+// only named repositories can. The repository is not known here - the trust never said
+// it, which is the bug - so the condition carries a placeholder to fill in.
+func pinGitHubSubject(role ontology.Node) Suggestion {
+	name := sanitize(role.Name)
+	account, _ := role.Properties[ontology.PropAccount].(string)
+	if account == "" {
+		account = "<ACCOUNT_ID>"
+	}
+	content := fmt.Sprintf(`# PerspectiveGraph auto-remediation - role %q trusts GitHub Actions without pinning
+# the token's subject, so a workflow in ANY repository on GitHub can assume it.
+# Name the repositories (and branches or environments) that deploy with it, then set
+#   assume_role_policy = data.aws_iam_policy_document.perspective_pin_github_%s.json
+# on the role.
+data "aws_iam_policy_document" "perspective_pin_github_%s" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    principals {
+      type        = "Federated"
+      identifiers = ["arn:aws:iam::%s:oidc-provider/%s"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "%s:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+    condition {
+      test     = "StringLike"
+      variable = "%s:sub"
+      values   = ["repo:<OWNER>/<REPO>:ref:refs/heads/main"] # replace with yours
+    }
+  }
+}
+`, role.Name, name, name, account, githubIssuer, githubIssuer, githubIssuer)
+
+	return Suggestion{
+		Title:    "Pin the GitHub repositories that can assume " + role.Name,
+		Kind:     "terraform",
+		Filename: "pin-github-subject-" + name + ".tf",
+		Content:  content,
+		Rationale: "Cuts the AUTHENTICATES edge from GitHub Actions: with the token's sub pinned to your " +
+			"repositories, a token minted for any other repository no longer matches the trust.",
 	}
 }
 

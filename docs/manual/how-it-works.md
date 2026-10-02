@@ -109,7 +109,7 @@ The common vocabulary every collector maps onto. Defined in
 
 | Category | Node labels (`V`) | Edge types (`E`) |
 | --- | --- | --- |
-| **Infrastructure** | `VirtualMachine`, `Container`, `VPC`, `LoadBalancer`, `Database`, `Bucket` | `HOSTS`, `CONNECTS_TO`, `EXPOSES`, `ROUTES_TO` |
+| **Infrastructure** | `VirtualMachine`, `Container`, `Function`, `VPC`, `LoadBalancer`, `Database`, `Bucket` | `HOSTS`, `CONNECTS_TO`, `EXPOSES`, `ROUTES_TO` |
 | **Code / App** | `Repository`, `Package`, `Library`, `Image` | `DEPENDS_ON`, `COMPILED_INTO`, `BUILT_FROM` |
 | **Identity** | `User`, `IAM_Role`, `ServiceAccount` | `ASSUMES`, `HAS_PERMISSION`, `CAN_ESCALATE_TO` |
 | **Security** | `CVE`, `Weakness`, `Misconfiguration`, `Secret` | `AFFECTS`, `EXPLOITS`, `MITIGATES` |
@@ -126,7 +126,10 @@ actions and matches them against known escalation primitives (e.g. `iam:PassRole
 acting on the principal's own user or groups count only for users), drawing
 the edge toward a synthetic account-admin sensitive asset. A role whose trust policy
 admits `"Principal":"*"` is marked `internet_exposed` - publicly assumable, the
-seed of a full internet→admin path.
+seed of a full internet→admin path. So is a role that trusts GitHub Actions' OIDC
+issuer without pinning the token's `sub` to an owner: any workflow in any repository
+can assume it, and the route starts at a *GitHub Actions (any repository)* identity
+provider.
 
 Two boolean node attributes drive analysis:
 

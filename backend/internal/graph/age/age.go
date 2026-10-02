@@ -851,7 +851,8 @@ func (s *Store) CriticalPaths(ctx context.Context, maxHops int) ([]graph.RawPath
 	}
 	inner := fmt.Sprintf(
 		`MATCH p=(a)-[*1..%d]->(b) `+
-			`WHERE (a.internet_exposed = true OR a.credential_exposed = true OR a.public_access = true) `+
+			// The network verdict, where there is one, decides exposure (ontology.Node.InternetExposed).
+			`WHERE (coalesce(a.network_exposed, a.internet_exposed) = true OR a.credential_exposed = true OR a.public_access = true) `+
 			`AND b.crown_jewel = true AND id(a) <> id(b) `+
 			`RETURN nodes(p), relationships(p) LIMIT %d`, maxHops, maxPathsReturned)
 	q, err := s.cypherSQL(inner, `ns agtype, rs agtype`)

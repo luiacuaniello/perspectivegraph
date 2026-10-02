@@ -608,7 +608,7 @@
 						},
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"_comment\": \"Real `aws iam get-account-authorization-details` shape. PerspectiveGraph flattens each principal's effective permissions and matches privesc primitives: public-deployer is publicly assumable (trust Principal:*) AND has iam:PassRole+lambda:CreateFunction, so internet \\u2192 public-deployer --CAN_ESCALATE_TO--> account-admin (crown jewel). ci-bot can iam:AttachUserPolicy (escalates) and is trusted to assume admin-role. app-readonly is benign and must NOT be flagged \\u2014 a precision check.\",\n  \"UserDetailList\": [\n    {\n      \"UserName\": \"ci-bot\",\n      \"Arn\": \"arn:aws:iam::123456789012:user/ci-bot\",\n      \"GroupList\": [],\n      \"AttachedManagedPolicies\": [],\n      \"UserPolicyList\": [\n        {\n          \"PolicyName\": \"self-service\",\n          \"PolicyDocument\": {\n            \"Version\": \"2012-10-17\",\n            \"Statement\": [\n              {\n                \"Effect\": \"Allow\",\n                \"Action\": \"iam:AttachUserPolicy\",\n                \"Resource\": \"*\"\n              },\n              {\n                \"Effect\": \"Allow\",\n                \"Action\": [\n                  \"s3:GetObject\",\n                  \"s3:PutObject\"\n                ],\n                \"Resource\": \"*\"\n              }\n            ]\n          }\n        }\n      ]\n    }\n  ],\n  \"GroupDetailList\": [],\n  \"RoleDetailList\": [\n    {\n      \"RoleName\": \"public-deployer\",\n      \"Arn\": \"arn:aws:iam::123456789012:role/public-deployer\",\n      \"AssumeRolePolicyDocument\": {\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n          {\n            \"Effect\": \"Allow\",\n            \"Principal\": \"*\",\n            \"Action\": \"sts:AssumeRole\"\n          }\n        ]\n      },\n      \"AttachedManagedPolicies\": [\n        {\n          \"PolicyName\": \"DeployAccess\",\n          \"PolicyArn\": \"arn:aws:iam::123456789012:policy/DeployAccess\"\n        }\n      ],\n      \"RolePolicyList\": [],\n      \"Tags\": []\n    },\n    {\n      \"RoleName\": \"admin-role\",\n      \"Arn\": \"arn:aws:iam::123456789012:role/admin-role\",\n      \"AssumeRolePolicyDocument\": {\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n          {\n            \"Effect\": \"Allow\",\n            \"Principal\": {\n              \"AWS\": \"arn:aws:iam::123456789012:user/ci-bot\"\n            },\n            \"Action\": \"sts:AssumeRole\"\n          }\n        ]\n      },\n      \"AttachedManagedPolicies\": [\n        {\n          \"PolicyName\": \"AdministratorAccess\",\n          \"PolicyArn\": \"arn:aws:iam::aws:policy/AdministratorAccess\"\n        }\n      ],\n      \"RolePolicyList\": [],\n      \"Tags\": []\n    },\n    {\n      \"RoleName\": \"app-readonly\",\n      \"Arn\": \"arn:aws:iam::123456789012:role/app-readonly\",\n      \"AssumeRolePolicyDocument\": {\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n          {\n            \"Effect\": \"Allow\",\n            \"Principal\": {\n              \"Service\": \"ec2.amazonaws.com\"\n            },\n            \"Action\": \"sts:AssumeRole\"\n          }\n        ]\n      },\n      \"AttachedManagedPolicies\": [],\n      \"RolePolicyList\": [\n        {\n          \"PolicyName\": \"read-only\",\n          \"PolicyDocument\": {\n            \"Version\": \"2012-10-17\",\n            \"Statement\": [\n              {\n                \"Effect\": \"Allow\",\n                \"Action\": [\n                  \"s3:GetObject\",\n                  \"dynamodb:GetItem\"\n                ],\n                \"Resource\": \"*\"\n              }\n            ]\n          }\n        }\n      ],\n      \"Tags\": []\n    }\n  ],\n  \"Policies\": [\n    {\n      \"PolicyName\": \"AdministratorAccess\",\n      \"Arn\": \"arn:aws:iam::aws:policy/AdministratorAccess\",\n      \"DefaultVersionId\": \"v1\",\n      \"PolicyVersionList\": [\n        {\n          \"VersionId\": \"v1\",\n          \"IsDefaultVersion\": true,\n          \"Document\": {\n            \"Version\": \"2012-10-17\",\n            \"Statement\": [\n              {\n                \"Effect\": \"Allow\",\n                \"Action\": \"*\",\n                \"Resource\": \"*\"\n              }\n            ]\n          }\n        }\n      ]\n    },\n    {\n      \"PolicyName\": \"DeployAccess\",\n      \"Arn\": \"arn:aws:iam::123456789012:policy/DeployAccess\",\n      \"DefaultVersionId\": \"v3\",\n      \"PolicyVersionList\": [\n        {\n          \"VersionId\": \"v1\",\n          \"IsDefaultVersion\": false,\n          \"Document\": {\n            \"Version\": \"2012-10-17\",\n            \"Statement\": [\n              {\n                \"Effect\": \"Allow\",\n                \"Action\": \"s3:GetObject\",\n                \"Resource\": \"*\"\n              }\n            ]\n          }\n        },\n        {\n          \"VersionId\": \"v3\",\n          \"IsDefaultVersion\": true,\n          \"Document\": {\n            \"Version\": \"2012-10-17\",\n            \"Statement\": [\n              {\n                \"Effect\": \"Allow\",\n                \"Action\": [\n                  \"iam:PassRole\",\n                  \"lambda:CreateFunction\",\n                  \"lambda:UpdateFunctionCode\"\n                ],\n                \"Resource\": \"*\"\n              },\n              {\n                \"Effect\": \"Allow\",\n                \"Action\": \"s3:GetObject\",\n                \"Resource\": \"*\"\n              }\n            ]\n          }\n        }\n      ]\n    }\n  ]\n}"
+							"raw": "{\n  \"_comment\": \"Real `aws iam get-account-authorization-details` shape. PerspectiveGraph flattens each principal's effective permissions and matches privesc primitives: public-deployer is publicly assumable (trust Principal:*) AND has iam:PassRole+lambda:CreateFunction, so internet \\u2192 public-deployer --CAN_ESCALATE_TO--> account-admin (crown jewel). ci-bot can iam:AttachUserPolicy (escalates) and is trusted to assume admin-role. app-readonly is benign and must NOT be flagged \\u2014 a precision check.\",\n  \"UserDetailList\": [\n    {\n      \"UserName\": \"ci-bot\",\n      \"Arn\": \"arn:aws:iam::123456789012:user/ci-bot\",\n      \"GroupList\": [],\n      \"AttachedManagedPolicies\": [],\n      \"UserPolicyList\": [\n        {\n          \"PolicyName\": \"self-service\",\n          \"PolicyDocument\": {\n            \"Version\": \"2012-10-17\",\n            \"Statement\": [\n              {\n                \"Effect\": \"Allow\",\n                \"Action\": \"iam:AttachUserPolicy\",\n                \"Resource\": \"*\"\n              },\n              {\n                \"Effect\": \"Allow\",\n                \"Action\": [\n                  \"s3:GetObject\",\n                  \"s3:PutObject\"\n                ],\n                \"Resource\": \"*\"\n              }\n            ]\n          }\n        }\n      ]\n    }\n  ],\n  \"GroupDetailList\": [],\n  \"RoleDetailList\": [\n    {\n      \"RoleName\": \"public-deployer\",\n      \"Arn\": \"arn:aws:iam::123456789012:role/public-deployer\",\n      \"AssumeRolePolicyDocument\": {\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n          {\n            \"Effect\": \"Allow\",\n            \"Principal\": \"*\",\n            \"Action\": \"sts:AssumeRole\"\n          }\n        ]\n      },\n      \"AttachedManagedPolicies\": [\n        {\n          \"PolicyName\": \"DeployAccess\",\n          \"PolicyArn\": \"arn:aws:iam::123456789012:policy/DeployAccess\"\n        }\n      ],\n      \"RolePolicyList\": [],\n      \"Tags\": []\n    },\n    {\n      \"RoleName\": \"admin-role\",\n      \"Arn\": \"arn:aws:iam::123456789012:role/admin-role\",\n      \"AssumeRolePolicyDocument\": {\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n          {\n            \"Effect\": \"Allow\",\n            \"Principal\": {\n              \"AWS\": \"arn:aws:iam::123456789012:user/ci-bot\"\n            },\n            \"Action\": \"sts:AssumeRole\"\n          }\n        ]\n      },\n      \"AttachedManagedPolicies\": [\n        {\n          \"PolicyName\": \"AdministratorAccess\",\n          \"PolicyArn\": \"arn:aws:iam::aws:policy/AdministratorAccess\"\n        }\n      ],\n      \"RolePolicyList\": [],\n      \"Tags\": []\n    },\n    {\n      \"RoleName\": \"app-readonly\",\n      \"Arn\": \"arn:aws:iam::123456789012:role/app-readonly\",\n      \"AssumeRolePolicyDocument\": {\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n          {\n            \"Effect\": \"Allow\",\n            \"Principal\": {\n              \"Service\": \"ec2.amazonaws.com\"\n            },\n            \"Action\": \"sts:AssumeRole\"\n          }\n        ]\n      },\n      \"AttachedManagedPolicies\": [],\n      \"RolePolicyList\": [\n        {\n          \"PolicyName\": \"read-only\",\n          \"PolicyDocument\": {\n            \"Version\": \"2012-10-17\",\n            \"Statement\": [\n              {\n                \"Effect\": \"Allow\",\n                \"Action\": [\n                  \"s3:GetObject\",\n                  \"dynamodb:GetItem\"\n                ],\n                \"Resource\": \"*\"\n              }\n            ]\n          }\n        }\n      ],\n      \"Tags\": []\n    },\n    {\n      \"RoleName\": \"github-deploy\",\n      \"Arn\": \"arn:aws:iam::123456789012:role/github-deploy\",\n      \"AssumeRolePolicyDocument\": {\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n          {\n            \"Effect\": \"Allow\",\n            \"Principal\": { \"Federated\": \"arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com\" },\n            \"Action\": \"sts:AssumeRoleWithWebIdentity\",\n            \"Condition\": { \"StringEquals\": { \"token.actions.githubusercontent.com:aud\": \"sts.amazonaws.com\" } }\n          }\n        ]\n      },\n      \"AttachedManagedPolicies\": [],\n      \"RolePolicyList\": [\n        {\n          \"PolicyName\": \"deploy-functions\",\n          \"PolicyDocument\": {\n            \"Version\": \"2012-10-17\",\n            \"Statement\": [\n              { \"Effect\": \"Allow\", \"Action\": [\"iam:PassRole\", \"lambda:CreateFunction\", \"lambda:UpdateFunctionCode\"], \"Resource\": \"*\" }\n            ]\n          }\n        }\n      ],\n      \"Tags\": []\n    }\n  ],\n  \"Policies\": [\n    {\n      \"PolicyName\": \"AdministratorAccess\",\n      \"Arn\": \"arn:aws:iam::aws:policy/AdministratorAccess\",\n      \"DefaultVersionId\": \"v1\",\n      \"PolicyVersionList\": [\n        {\n          \"VersionId\": \"v1\",\n          \"IsDefaultVersion\": true,\n          \"Document\": {\n            \"Version\": \"2012-10-17\",\n            \"Statement\": [\n              {\n                \"Effect\": \"Allow\",\n                \"Action\": \"*\",\n                \"Resource\": \"*\"\n              }\n            ]\n          }\n        }\n      ]\n    },\n    {\n      \"PolicyName\": \"DeployAccess\",\n      \"Arn\": \"arn:aws:iam::123456789012:policy/DeployAccess\",\n      \"DefaultVersionId\": \"v3\",\n      \"PolicyVersionList\": [\n        {\n          \"VersionId\": \"v1\",\n          \"IsDefaultVersion\": false,\n          \"Document\": {\n            \"Version\": \"2012-10-17\",\n            \"Statement\": [\n              {\n                \"Effect\": \"Allow\",\n                \"Action\": \"s3:GetObject\",\n                \"Resource\": \"*\"\n              }\n            ]\n          }\n        },\n        {\n          \"VersionId\": \"v3\",\n          \"IsDefaultVersion\": true,\n          \"Document\": {\n            \"Version\": \"2012-10-17\",\n            \"Statement\": [\n              {\n                \"Effect\": \"Allow\",\n                \"Action\": [\n                  \"iam:PassRole\",\n                  \"lambda:CreateFunction\",\n                  \"lambda:UpdateFunctionCode\"\n                ],\n                \"Resource\": \"*\"\n              },\n              {\n                \"Effect\": \"Allow\",\n                \"Action\": \"s3:GetObject\",\n                \"Resource\": \"*\"\n              }\n            ]\n          }\n        }\n      ]\n    }\n  ]\n}"
 						},
 						"description": "Posts the account's IAM reality. Emits CAN_ESCALATE_TO edges to a synthetic account-admin crown jewel; roles trusting Principal:* are marked internet_exposed. Read-only: needs only iam:GetAccountAuthorizationDetails."
 					},
@@ -710,6 +710,70 @@
 						"description": "A real classifier finding marks the asset a crown jewel (basis classified:<source>:<kind>). label defaults to Bucket; use Database for an RDS/SQL store."
 					},
 					"response": []
+				},
+				{
+					"name": "13. EKS access (Pod Identity, access entries)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"_comment\": \"Per EKS cluster, what the cluster's own objects do not show: which IAM role each service account's pods get (Pod Identity) and which IAM principals get into the cluster, with which access policy. The AWS connector assembles this from the EKS API; by hand, from aws eks describe-pod-identity-association and aws eks list-associated-access-policies. The cluster name must be the ?cluster= its Kubernetes dump is sent with, or the two will not meet. ci-deployer holds AmazonEKSClusterAdminPolicy: it reaches cluster-admin outright. developers holds AmazonEKSEditPolicy, which reads secrets: a way to cluster-admin.\",\n  \"clusters\": [\n    {\n      \"name\": \"prod-eu\",\n      \"podIdentityAssociations\": [\n        {\n          \"namespace\": \"prod\",\n          \"serviceAccount\": \"payments-sa\",\n          \"roleArn\": \"arn:aws:iam::123456789012:role/payments-pod-role\"\n        }\n      ],\n      \"accessEntries\": [\n        {\n          \"principalArn\": \"arn:aws:iam::123456789012:role/ci-deployer\",\n          \"accessPolicies\": [\n            {\n              \"policyArn\": \"arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy\",\n              \"accessScope\": {\n                \"type\": \"cluster\"\n              }\n            }\n          ]\n        },\n        {\n          \"principalArn\": \"arn:aws:iam::123456789012:role/developers\",\n          \"accessPolicies\": [\n            {\n              \"policyArn\": \"arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy\",\n              \"accessScope\": {\n                \"type\": \"namespace\"\n              }\n            }\n          ]\n        }\n      ]\n    }\n  ]\n}\n",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{ingestUrl}}/ingest/eks",
+							"host": [
+								"{{ingestUrl}}"
+							],
+							"path": [
+								"ingest",
+								"eks"
+							]
+						},
+						"description": "Identity-federation from an external IdP (Okta/Entra/…): IdentityProvider(internet) --AUTHENTICATES--> User --ASSUMES--> IAM_Role. Federated role ARNs converge with the IAM collector, so a no-MFA user federating into an admin/escalation role lights up the modern path internet → SSO → user → cloud admin. Assemble from the Okta/Entra admin API."
+					}
+				},
+				{
+					"name": "14. Lambda functions (serverless entry points)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"_comment\": \"Per Lambda function, what list-functions, get-function-url-config, get-policy and list-tags return, as the AWS connector assembles it. orders-webhook has a function URL without authentication AND a policy letting every principal invoke it: an entry point, and its execution role is one step on. nightly-report has no URL and an empty policy: invocable only by principals it names. The function's role is keyed by ARN, so a route continues into the role's escalations.\",\n  \"functions\": [\n    {\n      \"FunctionName\": \"orders-webhook\",\n      \"FunctionArn\": \"arn:aws:lambda:eu-west-1:123456789012:function:orders-webhook\",\n      \"Role\": \"arn:aws:iam::123456789012:role/orders-webhook-exec\",\n      \"Url\": {\n        \"AuthType\": \"NONE\",\n        \"FunctionUrl\": \"https://abc123.lambda-url.eu-west-1.on.aws/\"\n      },\n      \"Policy\": \"{\\\"Version\\\":\\\"2012-10-17\\\",\\\"Statement\\\":[{\\\"Effect\\\":\\\"Allow\\\",\\\"Principal\\\":\\\"*\\\",\\\"Action\\\":\\\"lambda:InvokeFunctionUrl\\\",\\\"Resource\\\":\\\"arn:aws:lambda:eu-west-1:123456789012:function:orders-webhook\\\",\\\"Condition\\\":{\\\"StringEquals\\\":{\\\"lambda:FunctionUrlAuthType\\\":\\\"NONE\\\"}}}]}\",\n      \"Tags\": {\n        \"app\": \"orders\"\n      }\n    },\n    {\n      \"FunctionName\": \"nightly-report\",\n      \"FunctionArn\": \"arn:aws:lambda:eu-west-1:123456789012:function:nightly-report\",\n      \"Role\": \"arn:aws:iam::123456789012:role/reporting-exec\",\n      \"Policy\": \"{\\\"Statement\\\":[]}\"\n    }\n  ]\n}\n",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{ingestUrl}}/ingest/lambda",
+							"host": [
+								"{{ingestUrl}}"
+							],
+							"path": [
+								"ingest",
+								"lambda"
+							]
+						},
+						"description": "Identity-federation from an external IdP (Okta/Entra/…): IdentityProvider(internet) --AUTHENTICATES--> User --ASSUMES--> IAM_Role. Federated role ARNs converge with the IAM collector, so a no-MFA user federating into an admin/escalation role lights up the modern path internet → SSO → user → cloud admin. Assemble from the Okta/Entra admin API."
+					}
 				}
 			]
 		},
@@ -1065,7 +1129,7 @@
 						"body": {
 							"mode": "graphql",
 							"graphql": {
-								"query": "{ attackPaths { id score steps { edgeType from to probability attack { id name tactic } } nodes { name label internetExposed crownJewel } } }",
+								"query": "{ attackPaths { id score steps { edgeType from to probability attack { id name tactic } } nodes { name label internetExposed exposedPorts crownJewel } } }",
 								"variables": ""
 							}
 						},
@@ -1330,7 +1394,7 @@
 						"body": {
 							"mode": "graphql",
 							"graphql": {
-								"query": "{ graph { nodes { id label name internetExposed crownJewel runtimeAlert severity cvss } edges { type from to probability attack { id tactic } } } }",
+								"query": "{ graph { nodes { id label name internetExposed exposedPorts exposedManagementPorts crownJewel runtimeAlert severity cvss } edges { type from to probability attack { id tactic } } } }",
 								"variables": ""
 							}
 						},

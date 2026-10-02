@@ -345,20 +345,79 @@ func (b *builder) bucket(r map[string]any) {
 	}
 	tg := tags(r)
 	props := map[string]any{}
-	if granted, readable := publicGrant(r); granted {
+	// A bucket is public through its ACL or through its policy. ACLs are disabled by
+	// default on buckets created since April 2023, so the policy is how a bucket is made
+	// public today - and it was not read: a bucket opened by policy looked private. The
+	// bucket's Block Public Access settings, when the export carries them, close either.
+	block := publicAccessBlock(r)
+	policy, err := ingestion.ParseResourcePolicy(r["Policy"])
+	if err != nil {
+		props["policy_note"] = "bucket policy not read: " + err.Error()
+	}
+	aclGranted, aclReadable := publicGrant(r)
+	if block["IgnorePublicAcls"] {
+		aclGranted, aclReadable = false, false
+	}
+	policyReadable := !block["RestrictPublicBuckets"] && policy.Public(bucketReadActions...)
+	policyWritable := !block["RestrictPublicBuckets"] && policy.Public(bucketWriteActions...)
+	if aclGranted || policyReadable || policyWritable {
 		props[ontology.PropInternetExposed] = true
 		// A public READ grant hands the data to anyone: the bucket is not a door into the
 		// estate but already open, and a crown jewel that is open is compromised as it
 		// stands. A write-only grant is exposure, not disclosure.
-		if readable {
+		if aclReadable || policyReadable {
 			props[ontology.PropPublicAccess] = true
+		}
+		switch {
+		case policyReadable || policyWritable:
+			props["public_via"] = "bucket policy"
+		default:
+			props["public_via"] = "acl"
 		}
 	}
 	if app := tg["app"]; app != "" {
 		props["app"] = app
 	}
 	ingestion.MarkCrownJewelFromTags(props, tg)
-	b.upsert(ontology.Node{ID: ontology.NewID(ontology.LabelBucket, name), Label: ontology.LabelBucket, Name: name, Properties: props})
+	id := ontology.NewID(ontology.LabelBucket, name)
+	b.upsert(ontology.Node{ID: id, Label: ontology.LabelBucket, Name: name, Properties: props})
+
+	// The roles and users the policy names - often in other accounts - reach the data
+	// whatever their own policies say: the access lives on the bucket.
+	for _, arn := range policy.Grantees(append(append([]string(nil), bucketReadActions...), bucketWriteActions...)...) {
+		from := b.roleNode(arn, "")
+		if strings.Contains(arn, ":user/") {
+			from = ontology.NewID(ontology.LabelUser, arn)
+			b.upsert(ontology.Node{ID: from, Label: ontology.LabelUser, Name: arn[strings.LastIndex(arn, "/")+1:],
+				Properties: map[string]any{ontology.PropARN: arn}})
+		}
+		b.edge(ontology.EdgeHasPermission, from, id, bucketPolicyGrantProb)
+	}
+}
+
+// What reading and writing a bucket's objects take, as a policy names them.
+var (
+	bucketReadActions  = []string{"s3:GetObject"}
+	bucketWriteActions = []string{"s3:PutObject"}
+)
+
+// bucketPolicyGrantProb is a principal the bucket policy names using that access: one
+// call, with no exploit, so it scores as a granted permission does elsewhere.
+const bucketPolicyGrantProb = 0.7
+
+// publicAccessBlock reads a bucket's Block Public Access settings, as Custodian annotates
+// them (c7n:PublicAccessBlock) or as GetPublicAccessBlock returns them.
+func publicAccessBlock(r map[string]any) map[string]bool {
+	out := map[string]bool{}
+	for _, key := range []string{"c7n:PublicAccessBlock", "PublicAccessBlockConfiguration"} {
+		cfg, _ := r[key].(map[string]any)
+		for k, v := range cfg {
+			if on, ok := v.(bool); ok && on {
+				out[k] = true
+			}
+		}
+	}
+	return out
 }
 
 func (b *builder) database(r map[string]any) {

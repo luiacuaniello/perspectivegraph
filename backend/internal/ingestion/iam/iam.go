@@ -183,9 +183,10 @@ func (s *stringOrSlice) UnmarshalJSON(b []byte) error {
 // trustPrincipal models the "Principal" of a role trust statement: the literal
 // "*" (anyone), or an object with AWS/Service/Federated members.
 type trustPrincipal struct {
-	All     bool
-	AWS     stringOrSlice
-	Service stringOrSlice
+	All       bool
+	AWS       stringOrSlice
+	Service   stringOrSlice
+	Federated stringOrSlice // OIDC/SAML providers: an ARN, or a bare issuer
 }
 
 func (p *trustPrincipal) UnmarshalJSON(b []byte) error {
@@ -201,13 +202,14 @@ func (p *trustPrincipal) UnmarshalJSON(b []byte) error {
 		return nil
 	}
 	var obj struct {
-		AWS     stringOrSlice `json:"AWS"`
-		Service stringOrSlice `json:"Service"`
+		AWS       stringOrSlice `json:"AWS"`
+		Service   stringOrSlice `json:"Service"`
+		Federated stringOrSlice `json:"Federated"`
 	}
 	if err := json.Unmarshal(b, &obj); err != nil {
 		return err
 	}
-	p.AWS, p.Service = obj.AWS, obj.Service
+	p.AWS, p.Service, p.Federated = obj.AWS, obj.Service, obj.Federated
 	for _, a := range obj.AWS {
 		if a == "*" {
 			p.All = true
@@ -346,6 +348,17 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 			}
 		}
 		effective := capByBoundary(allowedActions(docs), ro.PermissionsBoundary, managed, props)
+
+		// A trust in a public OIDC issuer is a door from wherever that issuer's users are.
+		// Open - no subject pinned to an owner - it is a door from the internet.
+		for _, ft := range federatedTrusts(ro.AssumeRolePolicyDocument) {
+			idp := federatedNode(ft)
+			g.upsert(idp)
+			g.edge(ontology.EdgeAuthenticates, idp.ID, id, federatedAssumeProb)
+			if ft.open {
+				props["federated_trust_open"] = true
+			}
+		}
 
 		g.upsert(ontology.Node{ID: id, Label: ontology.LabelIAMRole, Name: ro.RoleName, Properties: props})
 		g.escalation(id, effective, adminID, asRole)
@@ -512,6 +525,9 @@ const (
 	// The claim is reported (an AdministratorAccess boundary is a common no-op, and
 	// dropping the edge would miss it) at a probability that says it is unverified.
 	unresolvedBoundaryProb = 0.5
+	// federatedAssumeProb is a workflow on the issuer trading its token for the role:
+	// one published API call, AssumeRoleWithWebIdentity, given the role's ARN.
+	federatedAssumeProb = 0.9
 	// adminProb is an already-admin principal: nothing has to be exploited at all.
 	adminProb = 0.99
 )

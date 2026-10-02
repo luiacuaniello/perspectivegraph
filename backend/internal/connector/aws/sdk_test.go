@@ -332,3 +332,110 @@ func TestSDKRouteNaclPrecision(t *testing.T) {
 		t.Error("a terminated instance must be dropped, not emitted as a node")
 	}
 }
+
+// portsEC2 is an account as DescribeInstances and friends really report it: rules with
+// protocols and ports, IPv6 sources under Ipv6Ranges, NACL entries with port ranges, and
+// instances with private addresses and, only some of them, public ones.
+type portsEC2 struct{ fakeEC2 }
+
+func (portsEC2) DescribeSecurityGroups(context.Context, *ec2.DescribeSecurityGroupsInput, ...func(*ec2.Options)) (*ec2.DescribeSecurityGroupsOutput, error) {
+	return &ec2.DescribeSecurityGroupsOutput{SecurityGroups: []ec2types.SecurityGroup{
+		{GroupId: aws.String("sg-mixed"), GroupName: aws.String("mixed"), IpPermissions: []ec2types.IpPermission{
+			{IpProtocol: aws.String("tcp"), FromPort: aws.Int32(22), ToPort: aws.Int32(22), IpRanges: []ec2types.IpRange{{CidrIp: aws.String("0.0.0.0/0")}}},
+			{IpProtocol: aws.String("tcp"), FromPort: aws.Int32(443), ToPort: aws.Int32(443), IpRanges: []ec2types.IpRange{{CidrIp: aws.String("0.0.0.0/0")}}},
+			{IpProtocol: aws.String("tcp"), FromPort: aws.Int32(8080), ToPort: aws.Int32(8080), Ipv6Ranges: []ec2types.Ipv6Range{{CidrIpv6: aws.String("::/0")}}},
+		}},
+	}}, nil
+}
+
+func (portsEC2) DescribeInstances(context.Context, *ec2.DescribeInstancesInput, ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
+	inst := func(id, subnet, public string, eip string) ec2types.Instance {
+		i := ec2types.Instance{InstanceId: aws.String(id), SubnetId: aws.String(subnet), PrivateIpAddress: aws.String("10.0.0.10"),
+			SecurityGroups: []ec2types.GroupIdentifier{{GroupId: aws.String("sg-mixed")}},
+			Tags:           []ec2types.Tag{{Key: aws.String("Name"), Value: aws.String(id)}}}
+		if public != "" {
+			i.PublicIpAddress = aws.String(public)
+		}
+		if eip != "" {
+			i.NetworkInterfaces = []ec2types.InstanceNetworkInterface{{Association: &ec2types.InstanceNetworkInterfaceAssociation{PublicIp: aws.String(eip)}}}
+		}
+		return i
+	}
+	return &ec2.DescribeInstancesOutput{Reservations: []ec2types.Reservation{{Instances: []ec2types.Instance{
+		inst("i-https-only", "subnet-pub", "203.0.113.5", ""), // the NACL lets 443 through, not 22
+		inst("i-no-public-ip", "subnet-pub", "", ""),          // open groups, public subnet, no address
+		inst("i-elastic-ip", "subnet-pub", "", "203.0.113.6"), // public only on a secondary interface
+		inst("i-all-open", "subnet-open", "203.0.113.7", ""),  // a NACL that allows everything
+	}}}}, nil
+}
+
+func (portsEC2) DescribeRouteTables(context.Context, *ec2.DescribeRouteTablesInput, ...func(*ec2.Options)) (*ec2.DescribeRouteTablesOutput, error) {
+	return &ec2.DescribeRouteTablesOutput{RouteTables: []ec2types.RouteTable{
+		{RouteTableId: aws.String("rt-pub"), VpcId: aws.String("vpc-1"),
+			Routes:       []ec2types.Route{{DestinationCidrBlock: aws.String("0.0.0.0/0"), GatewayId: aws.String("igw-1")}},
+			Associations: []ec2types.RouteTableAssociation{{SubnetId: aws.String("subnet-pub")}, {SubnetId: aws.String("subnet-open")}}},
+	}}, nil
+}
+
+func (portsEC2) DescribeNetworkAcls(context.Context, *ec2.DescribeNetworkAclsInput, ...func(*ec2.Options)) (*ec2.DescribeNetworkAclsOutput, error) {
+	return &ec2.DescribeNetworkAclsOutput{NetworkAcls: []ec2types.NetworkAcl{
+		{NetworkAclId: aws.String("acl-https"), Entries: []ec2types.NetworkAclEntry{
+			{RuleNumber: aws.Int32(100), Egress: aws.Bool(false), CidrBlock: aws.String("0.0.0.0/0"), RuleAction: ec2types.RuleActionAllow,
+				Protocol: aws.String("6"), PortRange: &ec2types.PortRange{From: aws.Int32(443), To: aws.Int32(443)}},
+			{RuleNumber: aws.Int32(32767), Egress: aws.Bool(false), CidrBlock: aws.String("0.0.0.0/0"), RuleAction: ec2types.RuleActionDeny, Protocol: aws.String("-1")},
+		}, Associations: []ec2types.NetworkAclAssociation{{SubnetId: aws.String("subnet-pub")}}},
+		{NetworkAclId: aws.String("acl-all"), Entries: []ec2types.NetworkAclEntry{
+			{RuleNumber: aws.Int32(100), Egress: aws.Bool(false), CidrBlock: aws.String("0.0.0.0/0"), RuleAction: ec2types.RuleActionAllow, Protocol: aws.String("-1")},
+		}, Associations: []ec2types.NetworkAclAssociation{{SubnetId: aws.String("subnet-open")}}},
+	}}, nil
+}
+
+func (portsEC2) DescribeSubnets(context.Context, *ec2.DescribeSubnetsInput, ...func(*ec2.Options)) (*ec2.DescribeSubnetsOutput, error) {
+	return &ec2.DescribeSubnetsOutput{Subnets: []ec2types.Subnet{
+		{SubnetId: aws.String("subnet-pub"), VpcId: aws.String("vpc-1")},
+		{SubnetId: aws.String("subnet-open"), VpcId: aws.String("vpc-1")},
+	}}, nil
+}
+
+// What the internet reaches of an instance is the ports its security groups open that
+// also have a public address to arrive at, a route out and a NACL that lets them through.
+// The connector used to drop protocols, ports, IPv6 sources and addresses on the way, so
+// every open group exposed every port of every instance behind it.
+func TestSDKExposureByPortAndAddress(t *testing.T) {
+	events, err := New(&sdkTransport{ec2: portsEC2{}, iam: fakeIAM{}}).Collect(context.Background())
+	if err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	byName := map[string]ontology.Node{}
+	for _, ev := range events {
+		for _, n := range ev.Nodes {
+			byName[n.Name] = n
+		}
+	}
+	prop := func(name, key string) string { s, _ := byName[name].Properties[key].(string); return s }
+	for _, c := range []struct {
+		name, ports, mgmt, note string
+	}{
+		{"i-https-only", "tcp/443", "", "network ACL blocks tcp/22"},
+		{"i-no-public-ip", "", "", "no public IPv4 address"},
+		{"i-elastic-ip", "tcp/443", "", ""},
+		{"i-all-open", "tcp/22, tcp/443", "tcp/22", ""},
+	} {
+		if got := prop(c.name, "exposed_ports"); got != c.ports {
+			t.Errorf("%s exposed on %q, want %q", c.name, got, c.ports)
+		}
+		if exposed := byName[c.name].Bool(ontology.PropInternetExposed); exposed != (c.ports != "") {
+			t.Errorf("%s internet_exposed = %v", c.name, exposed)
+		}
+		if got := prop(c.name, "exposed_management_ports"); got != c.mgmt {
+			t.Errorf("%s management ports %q, want %q", c.name, got, c.mgmt)
+		}
+		if c.note != "" && !strings.Contains(prop(c.name, "net_reachability"), c.note) {
+			t.Errorf("%s note %q, want it to say %q", c.name, prop(c.name, "net_reachability"), c.note)
+		}
+	}
+	// The IPv6 rule is read now, and goes nowhere here: no ::/0 route, no IPv6 address.
+	if strings.Contains(prop("i-all-open", "exposed_ports"), "8080") {
+		t.Error("tcp/8080 is open on IPv6 only, and the instance has neither an IPv6 address nor an IPv6 route")
+	}
+}

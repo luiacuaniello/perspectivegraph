@@ -81,6 +81,34 @@
         }
       ],
       "Tags": []
+    },
+    {
+      "RoleName": "github-deploy",
+      "Arn": "arn:aws:iam::123456789012:role/github-deploy",
+      "AssumeRolePolicyDocument": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": { "Federated": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com" },
+            "Action": "sts:AssumeRoleWithWebIdentity",
+            "Condition": { "StringEquals": { "token.actions.githubusercontent.com:aud": "sts.amazonaws.com" } }
+          }
+        ]
+      },
+      "AttachedManagedPolicies": [],
+      "RolePolicyList": [
+        {
+          "PolicyName": "deploy-functions",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              { "Effect": "Allow", "Action": ["iam:PassRole", "lambda:CreateFunction", "lambda:UpdateFunctionCode"], "Resource": "*" }
+            ]
+          }
+        }
+      ],
+      "Tags": []
     }
   ],
   "Policies": [

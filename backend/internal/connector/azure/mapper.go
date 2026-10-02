@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"sort"
 	"strings"
+
+	"github.com/luiacuaniello/perspectivegraph/internal/ingestion"
 )
 
 // azureNetwork is the normalized Azure network state a transport hands the mapper:
@@ -23,9 +25,15 @@ type azNSG struct {
 }
 
 type azRule struct {
-	Name                  string   `json:"name"`
-	Direction             string   `json:"direction"` // Inbound | Outbound
-	Access                string   `json:"access"`    // Allow | Deny
+	Name      string `json:"name"`
+	Direction string `json:"direction"` // Inbound | Outbound
+	Access    string `json:"access"`    // Allow | Deny
+	// Priority orders the rules: the lowest number that matches decides, as in Azure.
+	Priority int `json:"priority"`
+	// Protocol is Tcp | Udp | Icmp | * ; the destination ports are "*", "22", "80-443".
+	Protocol              string   `json:"protocol"`
+	DestinationPortRange  string   `json:"destinationPortRange"`
+	DestinationPortRanges []string `json:"destinationPortRanges"`
 	SourceAddressPrefix   string   `json:"sourceAddressPrefix"`
 	SourceAddressPrefixes []string `json:"sourceAddressPrefixes"`
 	// SourceApplicationSecurityGroups is Azure's east-west micro-segmentation: an
@@ -65,6 +73,9 @@ type cnSecurityGroup struct {
 }
 
 type cnIpPermission struct {
+	IpProtocol       string              `json:"IpProtocol,omitempty"`
+	FromPort         *int                `json:"FromPort,omitempty"`
+	ToPort           *int                `json:"ToPort,omitempty"`
 	IpRanges         []cnIpRange         `json:"IpRanges"`
 	UserIdGroupPairs []cnUserIdGroupPair `json:"UserIdGroupPairs,omitempty"`
 }
@@ -124,21 +135,48 @@ func mapNetworkToCloudnet(raw []byte) ([]byte, error) {
 
 	for _, nsg := range in.NetworkSecurityGroups {
 		sg := cnSecurityGroup{GroupID: nsg.Name, GroupName: nsg.Name}
-		for _, r := range nsg.SecurityRules {
+		// What the internet reaches through this NSG: its rules on internet sources, by
+		// priority, first match deciding port by port - a Deny on 22 at priority 100 beats
+		// an Allow on everything at 200, and what no rule allows meets DenyAllInBound. Only
+		// the Allow rules used to be read, so a Deny never closed anything.
+		rules := append([]azRule(nil), nsg.SecurityRules...)
+		sort.SliceStable(rules, func(i, j int) bool { return rules[i].Priority < rules[j].Priority })
+		var internet []ingestion.FirewallRule
+		for _, r := range rules {
+			if strings.EqualFold(r.Direction, "Inbound") && fromInternet(r) {
+				internet = append(internet, ingestion.FirewallRule{Ports: rulePorts(r), Allow: strings.EqualFold(r.Access, "Allow")})
+			}
+		}
+		for _, pr := range ingestion.FirstMatch(ingestion.AllPorts(), internet).Rules() {
+			from, to := pr.From, pr.To
+			sg.IpPermissions = append(sg.IpPermissions, cnIpPermission{IpProtocol: pr.Proto, FromPort: &from, ToPort: &to,
+				IpRanges: []cnIpRange{{CidrIp: "0.0.0.0/0"}}})
+		}
+		for _, r := range rules {
 			if !strings.EqualFold(r.Direction, "Inbound") || !strings.EqualFold(r.Access, "Allow") {
 				continue
 			}
-			perm := cnIpPermission{}
+			// The other sources - address ranges, and ASGs, which become the east-west
+			// edges - keep their ports, one permission per range the rule names.
+			var ranges []cnIpRange
 			for _, cidr := range sourceCidrs(r) {
-				perm.IpRanges = append(perm.IpRanges, cnIpRange{CidrIp: cidr})
-			}
-			for _, asg := range r.SourceApplicationSecurityGroups {
-				if asg != "" {
-					perm.UserIdGroupPairs = append(perm.UserIdGroupPairs, cnUserIdGroupPair{GroupID: asgGroupID(asg)})
+				if cidr != "0.0.0.0/0" { // the internet's share is the effective set above
+					ranges = append(ranges, cnIpRange{CidrIp: cidr})
 				}
 			}
-			if len(perm.IpRanges) > 0 || len(perm.UserIdGroupPairs) > 0 {
-				sg.IpPermissions = append(sg.IpPermissions, perm)
+			var pairs []cnUserIdGroupPair
+			for _, asg := range r.SourceApplicationSecurityGroups {
+				if asg != "" {
+					pairs = append(pairs, cnUserIdGroupPair{GroupID: asgGroupID(asg)})
+				}
+			}
+			if len(ranges) == 0 && len(pairs) == 0 {
+				continue
+			}
+			for _, pr := range rulePorts(r).Rules() {
+				from, to := pr.From, pr.To
+				sg.IpPermissions = append(sg.IpPermissions, cnIpPermission{IpProtocol: pr.Proto, FromPort: &from, ToPort: &to,
+					IpRanges: ranges, UserIdGroupPairs: pairs})
 			}
 		}
 		b.SecurityGroups = append(b.SecurityGroups, sg)
@@ -165,6 +203,25 @@ func mapNetworkToCloudnet(raw []byte) ([]byte, error) {
 		})
 	}
 	return json.Marshal(b)
+}
+
+// fromInternet reports whether a rule's source covers the whole internet.
+func fromInternet(r azRule) bool {
+	for _, c := range sourceCidrs(r) {
+		if c == "0.0.0.0/0" {
+			return true
+		}
+	}
+	return false
+}
+
+// rulePorts is the set of ports a rule covers.
+func rulePorts(r azRule) ingestion.PortSet {
+	specs := append([]string(nil), r.DestinationPortRanges...)
+	if r.DestinationPortRange != "" {
+		specs = append(specs, r.DestinationPortRange)
+	}
+	return ingestion.RulePortSpecs(r.Protocol, specs)
 }
 
 // sourceCidrs normalizes an inbound rule's source(s) to CIDRs, mapping Azure's

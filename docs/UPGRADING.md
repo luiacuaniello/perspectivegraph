@@ -17,6 +17,98 @@ digest, take the backup, stage it.
 
 ---
 
+## 1.29.0
+
+### Routes cross between an EKS cluster and its AWS account
+
+**Affects you if** you run EKS and send cluster dumps alongside AWS data.
+
+The cluster and the account were two graphs side by side: no route crossed from a pod into
+an IAM role, or from an IAM role into the cluster. Now:
+
+- a service account annotated for IRSA assumes its IAM role;
+- a pod that can escape its container reaches its node's EC2 instance, and so the
+  instance's role - for this, add `node` to the dump and send it with `?account=<id>`;
+- an IAM role or user mapped in `kube-system/aws-auth` assumes the cluster roles its groups
+  are bound to in that cluster, and `system:masters` is cluster-admin - add the ConfigMap to
+  the dump;
+- EKS Pod Identity associations and access entries, which only the EKS API holds, come from
+  the AWS connector (or `POST /ingest/eks`). Access entries are inside `SecurityAudit`; Pod
+  Identity needs `eks:ListPodIdentityAssociations` and `eks:DescribePodIdentityAssociation`,
+  and without them the connector logs a warning and reads the rest.
+
+What to do: send each cluster's dump with `?cluster=<its EKS name>` so the EKS data meets it.
+Expect new routes, many of them P1: an IAM role with cluster-admin through aws-auth or an
+access entry, reachable from wherever that role is reachable, is exactly the route that was
+missing.
+
+### Exposure is decided port by port, and closing a security group retracts it
+
+**Affects you if** you ingest cloud network data (the AWS connector, a cloudnet bundle, the
+Azure network feed).
+
+What the internet reaches of an instance is now the ports that pass every layer: its
+security groups (protocol and ports read, IPv6 sources read from `Ipv6Ranges` - before, an
+IPv6-open group was never seen), a public address (when the record carries addressing, as
+`describe-instances` does), a route to an internet gateway for that address family, and the
+NACL port by port, first match by rule number (before, the first internet entry decided for
+every port, so "allow 443, deny all" opened SSH too). ICMP alone is no longer an entry point.
+Azure NSGs are evaluated by priority with `Deny` rules applied; only `Allow` rules were read.
+The ports appear on the node (`exposedPorts`, `exposedManagementPorts` in GraphQL) and on
+`CONNECTS_TO` edges.
+
+Exposure is also retractable now. The network source wrote `internet_exposed` only when it
+was true, and properties accumulate, so an instance stayed exposed after its group was
+closed - and Custodian, which sees only a public address, could re-expose one the network
+source had cleared. The network source now writes its verdict either way
+(`network_exposed`), and where present it decides.
+
+What to do: nothing. Expect fewer exposed instances on the next network ingest, and some new
+ones open only on IPv6. An instance flagged before the upgrade keeps its flag until the
+network source describes it again.
+
+### A role open to every GitHub repository is an entry point
+
+**Affects you if** your IAM roles trust GitHub Actions' OIDC issuer.
+
+The IAM reader read the `AWS` and `Service` principals of a trust policy and ignored
+`Federated` ones. A role that trusts `token.actions.githubusercontent.com` without pinning
+the token's `sub` to an owner can be assumed by a workflow in any repository on GitHub - and
+the engine did not see it. It now draws a *GitHub Actions* identity provider into the role;
+when the trust is open, that node is an entry point and the routes from it appear, often as
+P1.
+
+What to do: nothing to upgrade. To close such a route, add a `StringEquals` (or
+`StringLike`) condition on `token.actions.githubusercontent.com:sub` naming your
+repositories, e.g. `repo:acme/payments:ref:refs/heads/main`.
+
+### Bucket policies, Lambda functions and ECS services are read
+
+**Affects you if** you send S3 buckets through Custodian, or run Lambda or ECS.
+
+- **S3.** A bucket was public only through an ACL grant; its policy was not read, and since
+  April 2023 a policy is how a bucket is made public. Now a statement allowing `s3:GetObject`
+  (or `s3:PutObject`) to every principal, with no condition narrowing who, makes the bucket
+  public, and the node says how (`public_via`). Block Public Access, when the export carries
+  it (`c7n:PublicAccessBlock`), closes what it closes. The roles and users a bucket policy
+  names get a `HAS_PERMISSION` edge to the bucket.
+- **Lambda.** New source, `POST /ingest/lambda`, and a new AWS connector feed, `lambda`: a
+  function anyone can invoke - a function URL without authentication, or a policy open to
+  every principal - is an entry point, and it assumes its execution role. Functions are a new
+  node label, `Function`.
+- **ECS.** The network feed (`ecs_services` in a cloudnet bundle, read by the connector)
+  draws each awsvpc service as a workload exposed by the same rules as an instance, assuming
+  its task role.
+
+What to do: keep `Policy` in the Custodian `aws.s3` output (it is there by default). The
+connector's reads are all inside `SecurityAudit`. A custom read-only role needs
+`lambda:ListFunctions`, `lambda:GetFunctionUrlConfig`, `lambda:GetPolicy`, `lambda:ListTags`,
+`ecs:ListClusters`, `ecs:ListServices`, `ecs:DescribeServices` and
+`ecs:DescribeTaskDefinition`; without them the connector reports the error for that feed and
+reads the rest. Expect new routes from public buckets and functions.
+
+---
+
 ## 1.28.3
 
 ### The IAM reader reads NotAction, and no longer lets a conditional Deny hide an escalation

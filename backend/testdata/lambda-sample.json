@@ -1,0 +1,18 @@
+{
+  "functions": [
+    {
+      "FunctionName": "orders-webhook",
+      "FunctionArn": "arn:aws:lambda:eu-west-1:123456789012:function:orders-webhook",
+      "Role": "arn:aws:iam::123456789012:role/orders-webhook-exec",
+      "Url": { "AuthType": "NONE", "FunctionUrl": "https://abc123.lambda-url.eu-west-1.on.aws/" },
+      "Policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":\"*\",\"Action\":\"lambda:InvokeFunctionUrl\",\"Resource\":\"arn:aws:lambda:eu-west-1:123456789012:function:orders-webhook\",\"Condition\":{\"StringEquals\":{\"lambda:FunctionUrlAuthType\":\"NONE\"}}}]}",
+      "Tags": { "app": "orders" }
+    },
+    {
+      "FunctionName": "nightly-report",
+      "FunctionArn": "arn:aws:lambda:eu-west-1:123456789012:function:nightly-report",
+      "Role": "arn:aws:iam::123456789012:role/reporting-exec",
+      "Policy": "{\"Statement\":[]}"
+    }
+  ]
+}

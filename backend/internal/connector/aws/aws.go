@@ -17,7 +17,9 @@ import (
 
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/cloudnet"
+	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/eks"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/iam"
+	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/lambda"
 	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
 )
 
@@ -30,6 +32,11 @@ const (
 	FeedNetwork Feed = "cloudnet"
 	// FeedIAM is iam get-account-authorization-details.
 	FeedIAM Feed = "iam"
+	// FeedEKS is each EKS cluster's Pod Identity associations and access entries: the
+	// ways between a cluster and the account that the cluster's own objects do not show.
+	FeedEKS Feed = "eks"
+	// FeedLambda is each Lambda function with its URL, resource policy and tags.
+	FeedLambda Feed = "lambda"
 )
 
 // transport acquires the raw describe-* JSON the existing collectors parse.
@@ -68,6 +75,8 @@ func New(t transport) *Connector {
 		feeds: []feedBinding{
 			{FeedNetwork, cloudnet.New()},
 			{FeedIAM, iam.New()},
+			{FeedEKS, eks.New()},
+			{FeedLambda, lambda.New()},
 		},
 	}
 }
@@ -125,10 +134,18 @@ func (c *Connector) snapshotScope(feed Feed, account string) string {
 	switch feed {
 	case FeedIAM:
 		return "aws:" + account
-	case FeedNetwork:
+	case FeedNetwork, FeedEKS, FeedLambda:
 		r, ok := c.t.(interface{ Region() string })
 		if !ok || r.Region() == "" {
 			return ""
+		}
+		// EKS clusters and Lambda functions are regional: a deleted association, access
+		// entry or function is retracted with the next pull of its region.
+		switch feed {
+		case FeedEKS:
+			return "aws:" + account + "/" + r.Region() + "/eks"
+		case FeedLambda:
+			return "aws:" + account + "/" + r.Region() + "/lambda"
 		}
 		return "aws:" + account + "/" + r.Region()
 	}

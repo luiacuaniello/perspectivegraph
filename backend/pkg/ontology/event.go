@@ -183,7 +183,17 @@ func (n Node) Bool(key string) bool {
 // disagree about it again: the credential-origin seeds were once honoured by the path
 // search alone.
 func (n Node) IsSeed() bool {
-	return n.Bool(PropInternetExposed) || n.Bool(PropCredentialExposed) || n.Bool(PropPublicAccess)
+	return n.InternetExposed() || n.Bool(PropCredentialExposed) || n.Bool(PropPublicAccess)
+}
+
+// InternetExposed reports whether the internet reaches n: the network source's
+// evaluation when there is one (PropNetworkExposed), otherwise what any source claimed
+// (PropInternetExposed). Every reader asks here, so none of them can disagree.
+func (n Node) InternetExposed() bool {
+	if v, ok := n.Properties[PropNetworkExposed].(bool); ok {
+		return v
+	}
+	return n.Bool(PropInternetExposed)
 }
 
 // HeldByAttacker reports whether an attacker holds n without crossing a single edge:

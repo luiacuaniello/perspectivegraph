@@ -363,3 +363,134 @@ func TestWithoutAnAccountTheIdsAreUnchanged(t *testing.T) {
 		t.Fatal("no machine parsed")
 	}
 }
+
+// Exposure is decided port by port and per address family: IPv6 sources are read from
+// Ipv6Ranges, where AWS puts them; ICMP alone is no way in; lateral edges carry the ports
+// they open; and a bundle that names no protocol keeps meaning "all traffic".
+func TestExposureByPortAndFamily(t *testing.T) {
+	const bundle = `{
+	  "provider": "aws",
+	  "security_groups": [
+	    { "GroupId": "sg-v6", "IpPermissions": [
+	        { "IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "Ipv6Ranges": [ { "CidrIpv6": "::/0" } ] } ] },
+	    { "GroupId": "sg-ping", "IpPermissions": [
+	        { "IpProtocol": "icmp", "FromPort": 8, "ToPort": -1, "IpRanges": [ { "CidrIp": "0.0.0.0/0" } ] } ] },
+	    { "GroupId": "sg-legacy", "IpPermissions": [ { "IpRanges": [ { "CidrIp": "0.0.0.0/0" } ] } ] },
+	    { "GroupId": "sg-db", "IpPermissions": [
+	        { "IpProtocol": "tcp", "FromPort": 5432, "ToPort": 5432, "UserIdGroupPairs": [ { "GroupId": "sg-legacy" } ] },
+	        { "IpProtocol": "icmp", "UserIdGroupPairs": [ { "GroupId": "sg-ping" } ] } ] }
+	  ],
+	  "instances": [
+	    { "InstanceId": "i-v6",     "SubnetId": "subnet-v6", "SecurityGroups": [ { "GroupId": "sg-v6" } ] },
+	    { "InstanceId": "i-v6-v4route", "SubnetId": "subnet-v4", "SecurityGroups": [ { "GroupId": "sg-v6" } ] },
+	    { "InstanceId": "i-ping",   "SecurityGroups": [ { "GroupId": "sg-ping" } ] },
+	    { "InstanceId": "i-legacy", "SecurityGroups": [ { "GroupId": "sg-legacy" } ] },
+	    { "InstanceId": "i-db",     "SecurityGroups": [ { "GroupId": "sg-db" } ] }
+	  ],
+	  "subnets": [ { "SubnetId": "subnet-v6", "RouteTableId": "rt-v6" }, { "SubnetId": "subnet-v4", "RouteTableId": "rt-v4" } ],
+	  "route_tables": [
+	    { "RouteTableId": "rt-v6", "Routes": [ { "DestinationIpv6CidrBlock": "::/0", "GatewayId": "igw-1" } ] },
+	    { "RouteTableId": "rt-v4", "Routes": [ { "DestinationCidrBlock": "0.0.0.0/0", "GatewayId": "igw-1" } ] }
+	  ]
+	}`
+	events, err := New().Parse(strings.NewReader(bundle), ingestion.Options{})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	byID := map[string]ontology.Node{}
+	for _, n := range events[0].Nodes {
+		byID[n.ID] = n
+	}
+	node := func(name string) ontology.Node { return byID[ontology.NewID(ontology.LabelVirtualMachine, name)] }
+	ports := func(name string) string { s, _ := node(name).Properties["exposed_ports"].(string); return s }
+
+	if ports("i-v6") != "tcp/443" || !node("i-v6").Bool(ontology.PropInternetExposed) {
+		t.Errorf("i-v6 opens 443 on ::/0 under an IPv6 route to an internet gateway; exposed on %q", ports("i-v6"))
+	}
+	if node("i-v6-v4route").Bool(ontology.PropInternetExposed) {
+		t.Error("i-v6-v4route opens 443 on IPv6 only, and its subnet routes only IPv4 to the internet gateway")
+	}
+	if node("i-ping").Bool(ontology.PropInternetExposed) {
+		t.Error("i-ping answers ICMP and nothing else; there is no service to attack")
+	}
+	if note, _ := node("i-ping").Properties["net_reachability"].(string); !strings.Contains(note, "only icmp") {
+		t.Errorf("i-ping note %q, want it to say only ICMP reaches it", note)
+	}
+	if ports("i-legacy") != "tcp/all, udp/all, icmp, icmpv6" {
+		t.Errorf("a rule with no protocol means all traffic, as it did; i-legacy exposed on %q", ports("i-legacy"))
+	}
+	if mgmt, _ := node("i-legacy").Properties["exposed_management_ports"].(string); !strings.Contains(mgmt, "tcp/22") {
+		t.Errorf("all of TCP open to the internet includes SSH; management ports %q", mgmt)
+	}
+
+	lateral := map[string]string{}
+	for _, e := range events[0].Edges {
+		if e.Type == ontology.EdgeConnectsTo {
+			p, _ := e.Properties["ports"].(string)
+			lateral[byID[e.From].Name+"->"+byID[e.To].Name] = p
+		}
+	}
+	if lateral["i-legacy->i-db"] != "tcp/5432" {
+		t.Errorf("i-legacy reaches i-db on %q, want tcp/5432", lateral["i-legacy->i-db"])
+	}
+	if _, ok := lateral["i-ping->i-db"]; ok {
+		t.Error("a group that admits only ICMP from another is a ping, not a lateral route")
+	}
+}
+
+// An ECS service is a workload with security groups, subnets and maybe a public address:
+// exposed by the same rules as an instance, holding its task role, and a source of lateral
+// routes like any member of its groups.
+func TestECSServicesAreWorkloads(t *testing.T) {
+	const bundle = `{
+	  "provider": "aws",
+	  "security_groups": [
+	    { "GroupId": "sg-web", "IpPermissions": [
+	        { "IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "IpRanges": [ { "CidrIp": "0.0.0.0/0" } ] } ] },
+	    { "GroupId": "sg-db", "IpPermissions": [
+	        { "IpProtocol": "tcp", "FromPort": 5432, "ToPort": 5432, "UserIdGroupPairs": [ { "GroupId": "sg-web" } ] } ] }
+	  ],
+	  "instances": [ { "InstanceId": "i-db", "SecurityGroups": [ { "GroupId": "sg-db" } ], "Tags": [ { "Key": "Name", "Value": "orders-db" } ] } ],
+	  "ecs_services": [
+	    { "serviceArn": "arn:aws:ecs:eu-west-1:123456789012:service/prod/api", "serviceName": "api",
+	      "clusterArn": "arn:aws:ecs:eu-west-1:123456789012:cluster/prod", "taskRoleArn": "arn:aws:iam::123456789012:role/api-task",
+	      "assignPublicIp": "ENABLED", "securityGroups": [ "sg-web" ], "subnets": [ "subnet-pub" ] },
+	    { "serviceArn": "arn:aws:ecs:eu-west-1:123456789012:service/prod/worker", "serviceName": "worker",
+	      "clusterArn": "arn:aws:ecs:eu-west-1:123456789012:cluster/prod",
+	      "assignPublicIp": "DISABLED", "securityGroups": [ "sg-web" ], "subnets": [ "subnet-pub" ] }
+	  ],
+	  "subnets": [ { "SubnetId": "subnet-pub", "RouteTableId": "rt-pub" } ],
+	  "route_tables": [ { "RouteTableId": "rt-pub", "Routes": [ { "DestinationCidrBlock": "0.0.0.0/0", "GatewayId": "igw-1" } ] } ]
+	}`
+	events, err := New().Parse(strings.NewReader(bundle), ingestion.Options{Account: "123456789012"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	byName := map[string]ontology.Node{}
+	for _, n := range events[0].Nodes {
+		byName[n.Name] = n
+	}
+	api, worker := byName["api"], byName["worker"]
+	if !api.InternetExposed() || api.Properties["exposed_ports"] != "tcp/443" {
+		t.Errorf("api has a public address in a public subnet with 443 open: exposed=%v on %v", api.InternetExposed(), api.Properties["exposed_ports"])
+	}
+	if worker.InternetExposed() {
+		t.Error("worker assigns no public address: the open group reaches nothing")
+	}
+	if note, _ := worker.Properties["net_reachability"].(string); !strings.Contains(note, "no public IPv4") {
+		t.Errorf("worker note %q, want it to say there is no public address", note)
+	}
+	var role, lateral bool
+	for _, e := range events[0].Edges {
+		role = role || (e.Type == ontology.EdgeAssumes && e.From == api.ID &&
+			e.To == ontology.NewID(ontology.LabelIAMRole, "arn:aws:iam::123456789012:role/api-task"))
+		lateral = lateral || (e.Type == ontology.EdgeConnectsTo && e.From == api.ID && e.To == byName["orders-db"].ID &&
+			e.Properties["ports"] == "tcp/5432")
+	}
+	if !role {
+		t.Error("the api service holds its task role")
+	}
+	if !lateral {
+		t.Error("the api service is in sg-web, which the database admits on 5432")
+	}
+}

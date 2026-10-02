@@ -66,7 +66,7 @@ func connector(i int) string {
 
 func badges(n ontology.Node) string {
 	var out string
-	if n.Bool(ontology.PropInternetExposed) {
+	if n.InternetExposed() {
 		out += "  🌐 internet-exposed"
 	}
 	if n.Bool(ontology.PropCrownJewel) {

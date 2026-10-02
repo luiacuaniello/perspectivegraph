@@ -9,6 +9,7 @@ type Label string
 const (
 	// Infrastructure
 	LabelVirtualMachine Label = "VirtualMachine"
+	LabelFunction       Label = "Function" // serverless code with an identity (Lambda)
 	LabelContainer      Label = "Container"
 	LabelVPC            Label = "VPC"
 	LabelLoadBalancer   Label = "LoadBalancer"
@@ -77,7 +78,7 @@ const (
 // first - a defense-in-depth allowlist so a future bug that lets external data
 // reach a label/edge type can never become Cypher injection.
 var validLabels = map[Label]bool{
-	LabelVirtualMachine: true, LabelContainer: true, LabelVPC: true,
+	LabelVirtualMachine: true, LabelContainer: true, LabelFunction: true, LabelVPC: true,
 	LabelLoadBalancer: true, LabelDatabase: true, LabelBucket: true,
 	LabelRepository: true, LabelImage: true, LabelPackage: true, LabelLibrary: true,
 	LabelUser: true, LabelIAMRole: true, LabelServiceAccount: true, LabelIdentityProvider: true,
@@ -139,8 +140,16 @@ func Truncate(s string) string {
 // Well-known node property keys that drive analysis. Keeping them as constants
 // avoids stringly-typed bugs across collectors and the analyzer.
 const (
-	// PropInternetExposed (bool) marks a node as a valid traversal *seed*.
+	// PropInternetExposed (bool) marks a node as a valid traversal *seed*. Read it through
+	// Node.InternetExposed, which lets a network evaluation decide (PropNetworkExposed).
 	PropInternetExposed = "internet_exposed"
+	// PropNetworkExposed (bool) is the network source's verdict on whether the internet
+	// reaches an asset, from its security groups, address, routes and ACLs - written
+	// true or false, every time it describes the asset. Where present it decides: a
+	// source that only saw a public address must not outlive that verdict, nor flip it
+	// back depending on which of the two arrived last. Properties accumulate across
+	// ingests, so a verdict written only when true could never be retracted.
+	PropNetworkExposed = "network_exposed"
 	// PropCredentialExposed (bool) marks a node as a traversal seed under the
 	// credential-origin threat model: an identity whose long-lived credentials could
 	// leak (phishing, keys in code). Distinct from internet_exposed so the two origins

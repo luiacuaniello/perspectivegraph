@@ -105,6 +105,8 @@ arrived yet are retried), but this is the logical flow:
 | 6 | Kubernetes dump | `POST /ingest/k8s` | **exposure topology**: Ingress→Service→Pod→SA→Role |
 | 7 | Cloud network | `POST /ingest/cloudnet` | **reachability**: internet-facing SGs, SG-to-SG, VPC peering |
 | 8 | IAM authorization | `POST /ingest/iam` | **privilege escalation**: `CAN_ESCALATE_TO` edges to account-admin, public-trust roles |
+| 9 | EKS access | `POST /ingest/eks` | **cluster ↔ account**: Pod Identity (service account → IAM role), access entries (IAM principal → cluster-admin) |
+| 10 | Lambda | `POST /ingest/lambda` | **serverless entry points**: functions anyone can invoke → their execution role |
 
 > **Ingesting more than one cloud account?** Add `?account=<id>` to the cloud sources.
 > Identifiers like `i-…` and `sg-…` are unique only *within* an account, so without it
@@ -272,6 +274,19 @@ instance's `MetadataOptions.HttpTokens`, as the network feed prices it, so the t
 it; and when the network feed states a join Custodian could only guess, the stated one stays,
 whichever arrives first.
 
+**Keep each bucket's `Policy`.** A bucket is made public through its policy today - ACLs are
+disabled by default on buckets created since April 2023 - and Custodian's `aws.s3` resources
+carry the policy as AWS returns it. A statement that allows `s3:GetObject` to `"Principal":"*"`
+with no condition narrowing who (a source IP or VPC endpoint, an organization, an account)
+makes the bucket public and its data disclosed; one that allows only `s3:PutObject` makes it
+exposed without disclosing it. The node says which (`public_via`: `bucket policy` or `acl`).
+The bucket's Block Public Access settings, when the bundle carries them (the
+`check-public-block` filter annotates them as `c7n:PublicAccessBlock`), close what they close:
+`IgnorePublicAcls` the ACL grant, `RestrictPublicBuckets` the policy; the account-level
+setting is not read. The roles and users a policy names - often in other accounts - get a
+`HAS_PERMISSION` edge to the bucket: the access is on the bucket, whatever their own policies
+say.
+
 ### Falco (runtime confirmation)
 
 Point **falcosidekick**'s webhook output at the endpoint, or POST raw Falco JSON
@@ -313,6 +328,25 @@ namespace, so a `deployer` in one namespace and a `deployer` in another keep the
 With more than one cluster, name each dump's cluster - `?cluster=prod-eu` - so that two clusters'
 `prod/web-sa` stay two service accounts.
 
+**On EKS, the routes continue into the AWS account, and back** (OWASP Kubernetes Top 10,
+K08 cluster-to-cloud lateral movement):
+
+- **IRSA.** A service account annotated `eks.amazonaws.com/role-arn` gets an `ASSUMES` edge
+  to that IAM role, keyed by ARN as the IAM feed keys it - so a pod's route continues into
+  the role's escalations.
+- **Escape to the node.** Add `node` to the `kubectl get` list and send the dump with
+  `?account=<id>`: a pod that can escape its container (privileged, host namespaces,
+  `hostPath`, dangerous capabilities) reaches its node's EC2 instance, read from the node's
+  `providerID`, and from there the instance's role through IMDS, as the network feed draws it.
+- **aws-auth.** Add `kubectl get configmap aws-auth -n kube-system -o json`: each IAM role or
+  user it maps assumes the cluster roles its groups and username are bound to in *this*
+  cluster, and `system:masters` is cluster-admin. aws-auth names a role without its IAM path,
+  so a role created under a path does not meet the IAM feed's node.
+- **Pod Identity and access entries** live in the EKS API, not in the cluster: the AWS
+  connector reads them, or post an EKS bundle to `/ingest/eks` (see
+  `backend/testdata/eks-sample.json`). Its cluster names must be the `?cluster=` the dumps are
+  sent with. An access entry's `kubernetesGroups` are not read yet.
+
 **From a pull request, send what the pull request renders.** A change to a manifest is
 how most routes actually open - publish a Service, widen an RBAC rule - and until the
 merge gate could attribute that change to a commit it stayed silent on exactly the kind of
@@ -334,12 +368,28 @@ live cluster, say - belongs to no commit and is stamped with nothing, exactly as
 ### Cloud network reachability (auto-discovered)
 
 Post security groups + instances + VPC peerings; PerspectiveGraph derives who can
-reach whom (`0.0.0.0/0 → internet_exposed`, SG-to-SG ingress → `CONNECTS_TO`). For
-**reachability precision**, also include `subnets` + `route_tables` + `network_acls`:
-an SG open to `0.0.0.0/0` then only marks an instance internet-exposed if its subnet
-actually routes to an internet gateway *and* its NACL admits it - so an open SG on a
-*private*-subnet instance is no longer a false positive. Omit them and the SG-only
-heuristic applies (backward-compatible).
+reach whom (`0.0.0.0/0` or `::/0 → internet_exposed`, SG-to-SG ingress → `CONNECTS_TO`,
+carrying the ports it opens). Keep each rule's `IpProtocol`, `FromPort` and `ToPort`, and
+the IPv6 sources under `Ipv6Ranges` where AWS puts them: exposure is decided port by
+port, so the path shows *internet-exposed · tcp/443*, and a shell or database answering
+the internet (SSH, RDP, the Kubernetes API, PostgreSQL…) gets a warning of its own. A
+rule without a protocol counts as all traffic, as before. For **reachability
+precision**, also include the instances' addresses (`PrivateIpAddress`,
+`PublicIpAddress`, as `describe-instances` returns them) and `subnets` + `route_tables`
++ `network_acls`: an instance is then internet-exposed only on the ports that have a
+public address to arrive at, a route to an internet gateway for their family and a NACL
+that lets them through, first match by rule number - so an open SG on a private-subnet
+instance, on one with no public IP, or behind an ACL that allows only 443 is no longer a
+false positive, and ICMP alone is never an entry point. Omit them and the SG alone
+decides (backward-compatible). The verdict is re-evaluated on every ingest: close a
+security group and the next ingest retracts the exposure.
+
+**ECS services** (awsvpc mode) are workloads too: add them as `ecs_services`, one per
+service with its `serviceArn`, `taskRoleArn`, `assignPublicIp` and the `securityGroups` and
+`subnets` of its network configuration (flattened from `describe-services` and
+`describe-task-definition`; the AWS connector does this). A service is exposed by the same
+rules as an instance - a public address only when it assigns one - takes part in SG-to-SG
+reachability, and assumes its task role, which any of its containers can fetch.
 
 ```bash
 # Assemble a bundle from: aws ec2 describe-security-groups / describe-instances /
@@ -364,6 +414,18 @@ more. The five that act on the principal's own user or groups (`iam:AttachUserPo
 count only for users: a role has neither. Each match draws a `CAN_ESCALATE_TO` edge to a synthetic **account-admin**
 sensitive asset. A role whose trust policy admits `"Principal":"*"` is marked
 `internet_exposed` (publicly assumable) - the seed of a full internet→admin path.
+
+**Federated trusts.** A role that trusts GitHub Actions' OIDC issuer
+(`token.actions.githubusercontent.com`) through `sts:AssumeRoleWithWebIdentity` gets an
+*identity provider* node and an `AUTHENTICATES` edge into it. When the trust does not pin
+`token.actions.githubusercontent.com:sub` to an owner - no `sub` condition, only the
+audience checked, `repo:*`, a negation, or an owner with a wildcard in it - any workflow
+in any repository on GitHub can assume the role: the node is marked `internet_exposed`,
+the role `federated_trust_open`, and the route starts there. A trust pinned to a
+repository (`repo:acme/payments:…`) or an owner (`repo:acme/*`) draws the node without
+making it an entry point. AWS no longer accepts new trust policies of the open kind; roles
+created before still have them. Other issuers - an EKS cluster's own, Cognito - are not
+read yet.
 
 ```bash
 # One call dumps every user, role, group and policy in the account.
@@ -392,6 +454,30 @@ curl -sS -X POST "$INGEST_URL/ingest/iam?account=123456789012" \
 > reported at `0.5`, marked `deny_condition_unevaluated`. Each errs toward reporting
 > rather than missing. Treat its findings as "worth confirming". See `backend/testdata/iam-sample.json` for the shape, and `make
 > bench-cloudgoat` for the precision regressions that pin this.
+
+### AWS Lambda (serverless entry points)
+
+A function runs with an execution role, and the role's credentials sit in its environment:
+whoever runs code in it holds the role. The collector draws each function as a `Function`
+node that `ASSUMES` its role, keyed by ARN as the IAM feed keys it, so a route continues into
+the role's escalations. The function is an entry point when anyone can invoke it:
+
+- a **function URL** with `AuthType: NONE` whose policy lets every principal invoke the URL
+  (the console adds that statement; a URL whose policy is not in the bundle counts as open);
+- a **function policy** that lets `"Principal":"*"` call `lambda:InvokeFunction` with no
+  condition narrowing who - anyone with an AWS account, which an attacker has.
+
+The verdict is written either way, so removing a public URL takes the function off the
+internet on the next pull. A function invoked through API Gateway is marked `invoked_by`
+but not made an entry point: whether the API asks for credentials lives in API Gateway,
+which is not read yet.
+
+```bash
+# Per function, what list-functions, get-function-url-config, get-policy and list-tags
+# return (see backend/testdata/lambda-sample.json). The AWS connector assembles it.
+curl -sS -X POST "$INGEST_URL/ingest/lambda" \
+  -H 'Content-Type: application/json' --data-binary @lambda.json
+```
 
 ### SSO / IdP federation (Okta → cloud - the modern front door)
 

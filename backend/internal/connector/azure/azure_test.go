@@ -1,11 +1,15 @@
 package azure
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
+	"github.com/luiacuaniello/perspectivegraph/internal/ingestion"
+	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/cloudnet"
 	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
 )
 
@@ -150,4 +154,46 @@ func instanceInGroup(b cloudnetBundle, instance, group string) bool {
 		}
 	}
 	return false
+}
+
+// An NSG is first-match by priority, port by port: a Deny on SSH from the internet at 100
+// closes 22 under an Allow-everything at 200, and an Allow on 443 at 200 under a Deny-all
+// at 100 opens nothing. The mapper used to read only the Allow rules.
+func TestNSGPriorityDenyAndPorts(t *testing.T) {
+	raw := []byte(`{
+	  "networkSecurityGroups": [
+	    { "name": "deny-ssh", "securityRules": [
+	        { "name": "no-ssh", "direction": "Inbound", "access": "Deny", "priority": 100, "protocol": "Tcp", "destinationPortRange": "22", "sourceAddressPrefix": "Internet" },
+	        { "name": "all", "direction": "Inbound", "access": "Allow", "priority": 200, "protocol": "Tcp", "destinationPortRange": "*", "sourceAddressPrefix": "*" } ] },
+	    { "name": "deny-all", "securityRules": [
+	        { "name": "https", "direction": "Inbound", "access": "Allow", "priority": 200, "protocol": "Tcp", "destinationPortRange": "443", "sourceAddressPrefix": "Internet" },
+	        { "name": "nothing", "direction": "Inbound", "access": "Deny", "priority": 100, "protocol": "*", "destinationPortRange": "*", "sourceAddressPrefix": "Internet" } ] }
+	  ],
+	  "virtualMachines": [
+	    { "name": "vm-open-but-ssh", "networkSecurityGroups": ["deny-ssh"] },
+	    { "name": "vm-closed", "networkSecurityGroups": ["deny-all"] }
+	  ]
+	}`)
+	bundle, err := mapNetworkToCloudnet(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := cloudnet.New().Parse(bytes.NewReader(bundle), ingestion.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]ontology.Node{}
+	for _, n := range events[0].Nodes {
+		byName[n.Name] = n
+	}
+	open := byName["vm-open-but-ssh"]
+	if ports, _ := open.Properties["exposed_ports"].(string); ports != "tcp/0-21, tcp/23-65535" {
+		t.Errorf("vm-open-but-ssh exposed on %q, want every TCP port but 22", ports)
+	}
+	if mgmt, _ := open.Properties["exposed_management_ports"].(string); strings.Contains(", "+mgmt+",", " tcp/22,") || !strings.Contains(mgmt, "tcp/3389") {
+		t.Errorf("management ports %q: SSH is denied first, RDP is not", mgmt)
+	}
+	if byName["vm-closed"].Bool(ontology.PropInternetExposed) {
+		t.Error("vm-closed: the Deny-all at priority 100 comes before the Allow on 443")
+	}
 }

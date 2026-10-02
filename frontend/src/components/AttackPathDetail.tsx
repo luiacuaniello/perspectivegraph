@@ -477,8 +477,24 @@ function NodeBadges({ node }: { node: Node }) {
   return (
     <span className="flex flex-wrap items-center gap-1.5">
       {node.internetExposed && (
-        <Badge tone="neutral" icon={<GlobeIcon className="h-3 w-3" />}>
-          internet-exposed
+        <Badge
+          tone="neutral"
+          icon={<GlobeIcon className="h-3 w-3" />}
+          title={
+            node.exposedPorts
+              ? `Reachable from the internet on ${node.exposedPorts}: what its security groups open, with an address to arrive at, a route out and a network ACL that lets it through.`
+              : "Reachable from the internet."
+          }
+        >
+          internet-exposed{node.exposedPorts && node.exposedPorts.length <= 24 ? ` · ${node.exposedPorts}` : ""}
+        </Badge>
+      )}
+      {node.exposedManagementPorts && (
+        <Badge
+          tone="warn"
+          title={`A remote shell, control plane or database answers the internet on ${node.exposedManagementPorts} - the first thing a scanner finds. Close it, or put it behind a VPN or a bastion.`}
+        >
+          management port open · {node.exposedManagementPorts}
         </Badge>
       )}
       {node.crownJewel && (

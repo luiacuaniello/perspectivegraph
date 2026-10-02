@@ -7,6 +7,7 @@ package ingestion_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -18,9 +19,11 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/cloudnet"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/custodian"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/dataclass"
+	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/eks"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/falco"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/iam"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/k8s"
+	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/lambda"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/supplychain"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/trivy"
 	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
@@ -197,6 +200,342 @@ func TestCustodianKeepsTwoAccountsApart(t *testing.T) {
 		if acct := n.Properties[ontology.PropAccount]; classified != (acct == "222222222222") {
 			t.Errorf("database in account %v classified=%v: the finding names account 222222222222", acct, classified)
 		}
+	}
+}
+
+// The cluster and the account around it are one estate to an attacker (OWASP Kubernetes
+// Top 10, K08): a pod's ServiceAccount assumes an IAM role (IRSA), a pod that escapes
+// holds its node's EC2 instance and the role it runs with, and an IAM identity mapped in
+// aws-auth is a cluster identity. The engine drew the two graphs side by side and no
+// route crossed between them.
+func TestRoutesCrossBetweenClusterAndAccount(t *testing.T) {
+	const acct = "123456789012"
+	escalating := func(name, extraTrust string) string {
+		return `{"RoleName":"` + name + `","Arn":"arn:aws:iam::` + acct + `:role/` + name + `",
+		  "AssumeRolePolicyDocument":{"Statement":[` + extraTrust + `]},
+		  "RolePolicyList":[{"PolicyName":"p","PolicyDocument":{"Statement":[
+		    {"Effect":"Allow","Action":"iam:AttachRolePolicy","Resource":"*"}]}}]}`
+	}
+	const openGitHub = `{"Effect":"Allow","Principal":{"Federated":"arn:aws:iam::` + acct + `:oidc-provider/token.actions.githubusercontent.com"},
+	  "Action":"sts:AssumeRoleWithWebIdentity"}`
+	iamBundle := `{"UserDetailList":[],"GroupDetailList":[],"Policies":[],"RoleDetailList":[` +
+		escalating("payments-irsa", "") + `,` + escalating("node-role", "") + `,` + escalating("ci-deployer", openGitHub) + `]}`
+	const network = `{"provider":"aws","security_groups":[],
+	  "instances":[{"InstanceId":"i-0node","IamInstanceProfile":{"Arn":"arn:aws:iam::` + acct + `:instance-profile/node"}}],
+	  "instance_profiles":[{"Arn":"arn:aws:iam::` + acct + `:instance-profile/node",
+	    "Roles":[{"Arn":"arn:aws:iam::` + acct + `:role/node-role","RoleName":"node-role"}]}]}`
+	dump := func(privileged bool) string {
+		return `{"kind":"List","items":[
+	  {"kind":"Ingress","metadata":{"name":"web","namespace":"prod"},
+	   "spec":{"rules":[{"http":{"paths":[{"backend":{"service":{"name":"web"}}}]}}]}},
+	  {"kind":"Service","metadata":{"name":"web","namespace":"prod"},"spec":{"selector":{"app":"web"}}},
+	  {"kind":"Pod","metadata":{"name":"web-1","namespace":"prod","labels":{"app":"web"}},
+	   "spec":{"nodeName":"ip-10-0-1-5","serviceAccountName":"payments",
+	     "containers":[{"name":"web","image":"web:1","securityContext":{"privileged":` + fmt.Sprint(privileged) + `}}]}},
+	  {"kind":"ServiceAccount","metadata":{"name":"payments","namespace":"prod",
+	   "annotations":{"eks.amazonaws.com/role-arn":"arn:aws:iam::` + acct + `:role/payments-irsa"}}},
+	  {"kind":"Node","metadata":{"name":"ip-10-0-1-5"},"spec":{"providerID":"aws:///eu-west-1a/i-0node"}},
+	  {"kind":"ConfigMap","metadata":{"name":"aws-auth","namespace":"kube-system"},"data":{
+	   "mapRoles":"- rolearn: arn:aws:iam::` + acct + `:role/ci-deployer\n  username: ci\n  groups:\n    - system:masters\n"}}
+	]}`
+	}
+
+	// The path finder keeps the best route per entry and target, so the escape (when the
+	// pod can escape) outranks IRSA to account-admin: each is checked where it is the best.
+	for _, c := range []struct {
+		privileged bool
+		want       []string
+	}{
+		{false, []string{
+			"web -> web -> web-1 -> prod/payments -> payments-irsa -> account-admin (effective)", // IRSA
+			"GitHub Actions (any repository) -> ci-deployer -> cluster-admin (effective)",        // aws-auth
+		}},
+		{true, []string{
+			"web -> web -> web-1 -> i-0node -> node-role -> account-admin (effective)", // escape to the node
+		}},
+	} {
+		ctx := context.Background()
+		store := memory.New()
+		applyBody(t, ctx, store, iam.New(), iamBundle, ingestion.Options{})
+		applyBody(t, ctx, store, cloudnet.New(), network, ingestion.Options{Account: acct})
+		applyBody(t, ctx, store, k8s.New(), dump(c.privileged), ingestion.Options{Account: acct})
+		snap, err := store.Snapshot(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		routes := map[string]bool{}
+		for _, r := range routeNames(analyzer.FindCriticalPaths(snap)) {
+			routes[r] = true
+		}
+		for _, want := range c.want {
+			if !routes[want] {
+				t.Errorf("privileged=%v: missing route %q among %v", c.privileged, want, routes)
+			}
+		}
+	}
+}
+
+// EKS Pod Identity and access entries live in the EKS API, not in the cluster's objects,
+// so a dump cannot show them: a pod got out to an IAM role, and an IAM principal got in as
+// cluster-admin, without either step on the graph. The eks collector draws them, keyed to
+// meet a dump sent with ?cluster=<the EKS name>.
+func TestEKSAccessJoinsClusterAndAccount(t *testing.T) {
+	const acct = "123456789012"
+	role := func(name, trust string) string {
+		return `{"RoleName":"` + name + `","Arn":"arn:aws:iam::` + acct + `:role/` + name + `",
+		  "AssumeRolePolicyDocument":{"Statement":[` + trust + `]},
+		  "RolePolicyList":[{"PolicyName":"p","PolicyDocument":{"Statement":[
+		    {"Effect":"Allow","Action":"iam:AttachRolePolicy","Resource":"*"}]}}]}`
+	}
+	const openGitHub = `{"Effect":"Allow","Principal":{"Federated":"arn:aws:iam::` + acct + `:oidc-provider/token.actions.githubusercontent.com"},
+	  "Action":"sts:AssumeRoleWithWebIdentity"}`
+	iamBundle := `{"UserDetailList":[],"GroupDetailList":[],"Policies":[],"RoleDetailList":[` +
+		role("payments-pi", "") + `,` + role("ci-deployer", openGitHub) + `,` + role("dev", "") + `]}`
+	const dump = `{"kind":"List","items":[
+	  {"kind":"Ingress","metadata":{"name":"web","namespace":"prod"},
+	   "spec":{"rules":[{"http":{"paths":[{"backend":{"service":{"name":"web"}}}]}}]}},
+	  {"kind":"Service","metadata":{"name":"web","namespace":"prod"},"spec":{"selector":{"app":"web"}}},
+	  {"kind":"Pod","metadata":{"name":"web-1","namespace":"prod","labels":{"app":"web"}},
+	   "spec":{"serviceAccountName":"payments","containers":[{"name":"web","image":"web:1"}]}},
+	  {"kind":"ServiceAccount","metadata":{"name":"payments","namespace":"prod"}}]}`
+	const access = `{"clusters":[{"name":"prod-eu",
+	  "podIdentityAssociations":[{"namespace":"prod","serviceAccount":"payments","roleArn":"arn:aws:iam::` + acct + `:role/payments-pi"}],
+	  "accessEntries":[
+	    {"principalArn":"arn:aws:iam::` + acct + `:role/ci-deployer","accessPolicies":[
+	      {"policyArn":"arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy","accessScope":{"type":"cluster"}}]},
+	    {"principalArn":"arn:aws:iam::` + acct + `:role/dev","accessPolicies":[
+	      {"policyArn":"arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy","accessScope":{"type":"namespace"}}]},
+	    {"principalArn":"arn:aws:iam::` + acct + `:role/viewer","accessPolicies":[
+	      {"policyArn":"arn:aws:eks::aws:cluster-access-policy/AmazonEKSViewPolicy","accessScope":{"type":"cluster"}}]}]}]}`
+
+	ctx := context.Background()
+	store := memory.New()
+	applyBody(t, ctx, store, iam.New(), iamBundle, ingestion.Options{})
+	applyBody(t, ctx, store, k8s.New(), dump, ingestion.Options{Cluster: "prod-eu"})
+	applyBody(t, ctx, store, eks.New(), access, ingestion.Options{})
+	snap, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes := map[string]bool{}
+	for _, r := range routeNames(analyzer.FindCriticalPaths(snap)) {
+		routes[r] = true
+	}
+	for _, want := range []string{
+		"web -> web -> web-1 -> prod/payments -> payments-pi -> account-admin (effective)",     // Pod Identity
+		"GitHub Actions (any repository) -> ci-deployer -> cluster-admin (effective, prod-eu)", // access entry
+	} {
+		if !routes[want] {
+			t.Errorf("missing route %q among %v", want, routes)
+		}
+	}
+	byID := snap.NodeByID()
+	dev := ontology.NewID(ontology.LabelIAMRole, "arn:aws:iam::"+acct+":role/dev")
+	viewer := ontology.NewID(ontology.LabelIAMRole, "arn:aws:iam::"+acct+":role/viewer")
+	escalates := false
+	for _, e := range snap.Edges {
+		if e.From == dev && e.Type == ontology.EdgeAssumes {
+			for _, e2 := range snap.Edges {
+				escalates = escalates || (e2.From == e.To && e2.Type == ontology.EdgeCanEscalateTo &&
+					strings.HasPrefix(byID[e2.To].Name, "cluster-admin"))
+			}
+		}
+		if e.From == viewer {
+			t.Errorf("a view-only access entry is no way anywhere, got %s to %s", e.Type, byID[e.To].Name)
+		}
+	}
+	if !escalates {
+		t.Error("an edit access entry reads secrets, a way to cluster-admin the k8s collector weighs")
+	}
+}
+
+// A Lambda function anyone can invoke is an entry point, and its execution role is in its
+// environment: the route continues into the role. The engine did not read Lambda at all.
+// The verdict is written either way, so removing the public URL retracts it.
+func TestALambdaFunctionAnyoneCanInvokeIsAnEntryPoint(t *testing.T) {
+	const acct = "123456789012"
+	iamBundle := `{"UserDetailList":[],"GroupDetailList":[],"Policies":[],"RoleDetailList":[
+	 {"RoleName":"orders-exec","Arn":"arn:aws:iam::` + acct + `:role/orders-exec","AssumeRolePolicyDocument":{"Statement":[]},
+	  "RolePolicyList":[{"PolicyName":"p","PolicyDocument":{"Statement":[{"Effect":"Allow","Action":"iam:PassRole","Resource":"*"},
+	   {"Effect":"Allow","Action":"lambda:CreateFunction","Resource":"*"}]}}]}]}`
+	fn := func(name, url, policy string) string {
+		s := `{"FunctionName":"` + name + `","FunctionArn":"arn:aws:lambda:eu-west-1:` + acct + `:function:` + name + `",
+		  "Role":"arn:aws:iam::` + acct + `:role/orders-exec"`
+		if url != "" {
+			s += `,"Url":{"AuthType":"` + url + `","FunctionUrl":"https://x.lambda-url.eu-west-1.on.aws/"}`
+		}
+		if policy != "" {
+			s += `,"Policy":` + policy
+		}
+		return s + `}`
+	}
+	const publicURL = `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"lambda:InvokeFunctionUrl",
+	  "Condition":{"StringEquals":{"lambda:FunctionUrlAuthType":"NONE"}}}]}`
+	const publicInvoke = `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"lambda:InvokeFunction"}]}`
+	const oneAccount = `{"Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::999999999999:root"},"Action":"lambda:InvokeFunctionUrl"}]}`
+	bundle := `{"functions":[` + strings.Join([]string{
+		fn("orders-api", "NONE", publicURL), // open URL
+		fn("reports", "AWS_IAM", ""),        // the URL asks for IAM credentials
+		fn("billing", "", publicInvoke),     // any AWS principal may invoke it
+		fn("internal", "NONE", oneAccount),  // URL without auth, but the policy names one account
+	}, ",") + `]}`
+
+	ctx := context.Background()
+	store := memory.New()
+	applyBody(t, ctx, store, iam.New(), iamBundle, ingestion.Options{})
+	applyBody(t, ctx, store, lambda.New(), bundle, ingestion.Options{})
+	snap, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exposed := map[string]bool{}
+	for _, n := range snap.Nodes {
+		if n.Label == ontology.LabelFunction {
+			exposed[n.Name] = n.InternetExposed()
+		}
+	}
+	for name, want := range map[string]bool{"orders-api": true, "reports": false, "billing": true, "internal": false} {
+		if exposed[name] != want {
+			t.Errorf("%s exposed = %v, want %v", name, exposed[name], want)
+		}
+	}
+	routes := map[string]bool{}
+	for _, r := range routeNames(analyzer.FindCriticalPaths(snap)) {
+		routes[r] = true
+	}
+	if !routes["orders-api -> orders-exec -> account-admin (effective)"] {
+		t.Errorf("the open function's route into its role's escalation is missing: %v", routes)
+	}
+
+	// The public URL is removed: the next pull takes the function off the internet.
+	applyBody(t, ctx, store, lambda.New(), `{"functions":[`+fn("orders-api", "", "")+`]}`, ingestion.Options{})
+	snap, err = store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range snap.Nodes {
+		if n.Name == "orders-api" && n.InternetExposed() {
+			t.Error("orders-api lost its public URL and is still exposed")
+		}
+	}
+}
+
+// aws-auth maps an IAM role into one cluster. Group nodes are shared across clusters on
+// purpose, so the mapping must not reach the bindings another cluster gives the same group.
+func TestAWSAuthHoldsInItsOwnCluster(t *testing.T) {
+	bindDevs := func(withAuth bool) string {
+		auth := ""
+		if withAuth {
+			auth = `,{"kind":"ConfigMap","metadata":{"name":"aws-auth","namespace":"kube-system"},"data":{
+			  "mapRoles":"- rolearn: arn:aws:iam::1:role/dev\n  username: dev\n  groups: [devs]\n"}}`
+		}
+		return `{"kind":"List","items":[
+		  {"kind":"ClusterRole","metadata":{"name":"team-admin"},"rules":[{"verbs":["*"],"resources":["*"],"apiGroups":["*"]}]},
+		  {"kind":"ClusterRoleBinding","metadata":{"name":"devs-admin"},"roleRef":{"kind":"ClusterRole","name":"team-admin"},
+		   "subjects":[{"kind":"Group","name":"devs"}]}` + auth + `]}`
+	}
+	ctx := context.Background()
+	store := memory.New()
+	applyBody(t, ctx, store, k8s.New(), bindDevs(true), ingestion.Options{Cluster: "a"})
+	applyBody(t, ctx, store, k8s.New(), bindDevs(false), ingestion.Options{Cluster: "b"})
+	snap, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := snap.NodeByID()
+	dev := ontology.NewID(ontology.LabelIAMRole, "arn:aws:iam::1:role/dev")
+	reached := map[string]bool{}
+	for _, e := range snap.Edges {
+		if e.From == dev {
+			reached[fmt.Sprint(byID[e.To].Properties["k8s_cluster"])] = true
+		}
+	}
+	if !reached["a"] || reached["b"] {
+		t.Errorf("the role mapped in cluster a reaches clusters %v, want only a", reached)
+	}
+}
+
+// Exposure must be retractable. Properties accumulate across ingests, and the network
+// source wrote internet_exposed only when it was true - so closing a security group left
+// the instance exposed for good, and Custodian, which sees only a public address, could
+// re-expose an instance the network source had just cleared. The network verdict is now
+// written either way and decides, in whatever order the two arrive.
+func TestExposureFollowsTheNetworkVerdict(t *testing.T) {
+	network := func(cidr string) string {
+		return `{"provider":"aws","security_groups":[{"GroupId":"sg-1","IpPermissions":[
+		  {"IpProtocol":"tcp","FromPort":22,"ToPort":22,"IpRanges":[{"CidrIp":"` + cidr + `"}]}]}],
+		  "instances":[{"InstanceId":"i-1","SecurityGroups":[{"GroupId":"sg-1"}],"Tags":[{"Key":"Name","Value":"box"}]}]}`
+	}
+	const publicIP = `{"account_id":"123456789012","policies":[{"resource":"aws.ec2","resources":[
+	  {"InstanceId":"i-1","PublicIpAddress":"203.0.113.9","Tags":[{"Key":"Name","Value":"box"}]}]}]}`
+	exposure := func(store *memory.Store) (bool, string) {
+		snap, err := store.Snapshot(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, n := range snap.Nodes {
+			if n.Label == ontology.LabelVirtualMachine {
+				ports, _ := n.Properties["exposed_ports"].(string)
+				return n.InternetExposed(), ports
+			}
+		}
+		t.Fatal("no instance")
+		return false, ""
+	}
+	acct := ingestion.Options{Account: "123456789012"}
+
+	ctx := context.Background()
+	store := memory.New()
+	applyBody(t, ctx, store, cloudnet.New(), network("0.0.0.0/0"), acct)
+	if exposed, ports := exposure(store); !exposed || ports != "tcp/22" {
+		t.Fatalf("open on 22: exposed=%v on %q", exposed, ports)
+	}
+	applyBody(t, ctx, store, cloudnet.New(), network("10.0.0.0/8"), acct)
+	if exposed, ports := exposure(store); exposed || ports != "" {
+		t.Errorf("the group was closed to the internet, and the instance is still exposed=%v on %q", exposed, ports)
+	}
+
+	for _, custodianLast := range []bool{false, true} {
+		store := memory.New()
+		if custodianLast {
+			applyBody(t, ctx, store, cloudnet.New(), network("10.0.0.0/8"), acct)
+			applyBody(t, ctx, store, custodian.New(), publicIP, ingestion.Options{})
+		} else {
+			applyBody(t, ctx, store, custodian.New(), publicIP, ingestion.Options{})
+			applyBody(t, ctx, store, cloudnet.New(), network("10.0.0.0/8"), acct)
+		}
+		if exposed, _ := exposure(store); exposed {
+			t.Errorf("Custodian last=%v: a public address does not expose an instance whose groups the network source found closed", custodianLast)
+		}
+	}
+}
+
+// A role that trusts GitHub Actions without pinning the subject to an owner can be assumed
+// by a workflow in any repository on GitHub - a door from the internet the engine did not
+// see, since it read only AWS and Service principals. The route now starts there.
+func TestAnOpenGitHubTrustIsAnEntryPoint(t *testing.T) {
+	ctx := context.Background()
+	store := memory.New()
+	applyBody(t, ctx, store, iam.New(), `{"UserDetailList":[],"GroupDetailList":[],"Policies":[],"RoleDetailList":[
+	 {"RoleName":"deploy","Arn":"arn:aws:iam::123456789012:role/deploy",
+	  "AssumeRolePolicyDocument":{"Statement":[{"Effect":"Allow",
+	    "Principal":{"Federated":"arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"},
+	    "Action":"sts:AssumeRoleWithWebIdentity",
+	    "Condition":{"StringEquals":{"token.actions.githubusercontent.com:aud":"sts.amazonaws.com"}}}]},
+	  "RolePolicyList":[{"PolicyName":"deploy","PolicyDocument":{"Statement":[
+	    {"Effect":"Allow","Action":"iam:AttachRolePolicy","Resource":"*"}]}}]}]}`, ingestion.Options{})
+	snap, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes := routeNames(analyzer.FindCriticalPaths(snap))
+	want := "GitHub Actions (any repository) -> deploy -> account-admin (effective)"
+	found := false
+	for _, r := range routes {
+		found = found || r == want
+	}
+	if !found {
+		t.Errorf("routes %v, want %q", routes, want)
 	}
 }
 

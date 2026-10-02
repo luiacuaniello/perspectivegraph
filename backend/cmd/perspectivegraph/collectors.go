@@ -6,9 +6,11 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/cloudnet"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/custodian"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/dataclass"
+	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/eks"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/falco"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/iam"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/k8s"
+	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/lambda"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/semgrep"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/sso"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/supplychain"
@@ -26,7 +28,7 @@ import (
 func allCollectors() []ingestion.Collector {
 	return []ingestion.Collector{
 		trivy.New(), semgrep.New(), custodian.New(), falco.New(), build.New(), k8s.New(),
-		cloudnet.New(), iam.New(), supplychain.New(), sso.New(), dataclass.New(),
+		cloudnet.New(), iam.New(), supplychain.New(), sso.New(), dataclass.New(), eks.New(), lambda.New(),
 	}
 }
 

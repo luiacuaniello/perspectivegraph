@@ -13,8 +13,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/aws-sdk-go-v2/service/ecs"
+	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
+	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
 
@@ -53,9 +56,12 @@ type iamAPI interface {
 // the cloudnet/iam collectors already parse, so the live path and the fixtures
 // path converge on identical downstream code.
 type sdkTransport struct {
-	ec2 ec2API
-	iam iamAPI
-	sts stsAPI
+	ec2    ec2API
+	iam    iamAPI
+	eks    eksAPI
+	lambda lambdaAPI
+	ecs    ecsAPI
+	sts    stsAPI
 	// region is the one region the EC2 client reads; IAM is global.
 	region string
 
@@ -92,6 +98,9 @@ func newSDK(ctx context.Context, cfg Config) (transport, error) {
 	return &sdkTransport{
 		ec2:    ec2.NewFromConfig(awsCfg),
 		iam:    iam.NewFromConfig(awsCfg),
+		eks:    eks.NewFromConfig(awsCfg),
+		lambda: lambda.NewFromConfig(awsCfg),
+		ecs:    ecs.NewFromConfig(awsCfg),
 		sts:    sts.NewFromConfig(awsCfg),
 		region: awsCfg.Region,
 	}, nil
@@ -133,6 +142,10 @@ func (t *sdkTransport) Fetch(ctx context.Context, feed Feed) ([]byte, error) {
 		return t.fetchNetwork(ctx)
 	case FeedIAM:
 		return t.fetchIAM(ctx)
+	case FeedEKS:
+		return t.fetchEKS(ctx)
+	case FeedLambda:
+		return t.fetchLambda(ctx)
 	default:
 		return nil, nil
 	}
@@ -152,9 +165,14 @@ func (t *sdkTransport) fetchNetwork(ctx context.Context) ([]byte, error) {
 		for _, sg := range out.SecurityGroups {
 			g := sgJSON{GroupID: aws.ToString(sg.GroupId), GroupName: aws.ToString(sg.GroupName)}
 			for _, perm := range sg.IpPermissions {
-				p := permJSON{}
+				// The protocol and ports decide what an open rule exposes: SSH to the world
+				// and HTTPS to the world are not the same finding.
+				p := permJSON{IPProtocol: aws.ToString(perm.IpProtocol), FromPort: perm.FromPort, ToPort: perm.ToPort}
 				for _, r := range perm.IpRanges {
 					p.IPRanges = append(p.IPRanges, ipRangeJSON{CidrIp: aws.ToString(r.CidrIp)})
+				}
+				for _, r := range perm.Ipv6Ranges {
+					p.IPv6Ranges = append(p.IPv6Ranges, ipv6RangeJSON{CidrIpv6: aws.ToString(r.CidrIpv6)})
 				}
 				for _, u := range perm.UserIdGroupPairs {
 					p.UserIDGroupPairs = append(p.UserIDGroupPairs, sgRefJSON{GroupID: aws.ToString(u.GroupId)})
@@ -183,7 +201,24 @@ func (t *sdkTransport) fetchNetwork(ctx context.Context) ([]byte, error) {
 				if st := inst.State; st != nil && (st.Name == ec2types.InstanceStateNameTerminated || st.Name == ec2types.InstanceStateNameShuttingDown) {
 					continue
 				}
-				i := instJSON{InstanceID: aws.ToString(inst.InstanceId), SubnetID: aws.ToString(inst.SubnetId)}
+				i := instJSON{InstanceID: aws.ToString(inst.InstanceId), SubnetID: aws.ToString(inst.SubnetId),
+					// An instance without a public address is not reachable from the internet,
+					// whatever its security groups say; the private one tells the collector the
+					// addressing was read.
+					PrivateIPAddress: aws.ToString(inst.PrivateIpAddress), PublicIPAddress: aws.ToString(inst.PublicIpAddress),
+					IPv6Address: aws.ToString(inst.Ipv6Address)}
+				for _, ni := range inst.NetworkInterfaces {
+					n := niJSON{}
+					if a := ni.Association; a != nil && aws.ToString(a.PublicIp) != "" {
+						n.Association = &niAssocJSON{PublicIP: aws.ToString(a.PublicIp)}
+					}
+					for _, v6 := range ni.Ipv6Addresses {
+						n.IPv6Addresses = append(n.IPv6Addresses, niIPv6JSON{IPv6Address: aws.ToString(v6.Ipv6Address)})
+					}
+					if n.Association != nil || len(n.IPv6Addresses) > 0 {
+						i.NetworkInterfaces = append(i.NetworkInterfaces, n)
+					}
+				}
 				// The instance profile is what an attacker with a foothold on the box turns
 				// into IAM credentials (via IMDS) - the hop that connects "internet reached
 				// this instance" to "and now it is an identity".
@@ -251,12 +286,13 @@ func (t *sdkTransport) fetchNetwork(ctx context.Context) ([]byte, error) {
 				// internet gateway - so the collector can tell "private egress" from
 				// "internet-exposed" instead of seeing a blank gateway.
 				r.Routes = append(r.Routes, routeJSON{
-					DestinationCidrBlock: aws.ToString(rte.DestinationCidrBlock),
-					GatewayID:            aws.ToString(rte.GatewayId),
-					NatGatewayID:         aws.ToString(rte.NatGatewayId),
-					TransitGatewayID:     aws.ToString(rte.TransitGatewayId),
-					VpcPeeringConnID:     aws.ToString(rte.VpcPeeringConnectionId),
-					EgressOnlyIGWID:      aws.ToString(rte.EgressOnlyInternetGatewayId),
+					DestinationCidrBlock:     aws.ToString(rte.DestinationCidrBlock),
+					DestinationIpv6CidrBlock: aws.ToString(rte.DestinationIpv6CidrBlock),
+					GatewayID:                aws.ToString(rte.GatewayId),
+					NatGatewayID:             aws.ToString(rte.NatGatewayId),
+					TransitGatewayID:         aws.ToString(rte.TransitGatewayId),
+					VpcPeeringConnID:         aws.ToString(rte.VpcPeeringConnectionId),
+					EgressOnlyIGWID:          aws.ToString(rte.EgressOnlyInternetGatewayId),
 				})
 			}
 			b.RouteTables = append(b.RouteTables, r)
@@ -286,12 +322,18 @@ func (t *sdkTransport) fetchNetwork(ctx context.Context) ([]byte, error) {
 			aclID := aws.ToString(acl.NetworkAclId)
 			n := naclJSON{NetworkACLID: aclID}
 			for _, e := range acl.Entries {
-				n.Entries = append(n.Entries, naclEntryJSON{
-					RuleNumber: int(aws.ToInt32(e.RuleNumber)),
-					Egress:     aws.ToBool(e.Egress),
-					CidrBlock:  aws.ToString(e.CidrBlock),
-					RuleAction: string(e.RuleAction),
-				})
+				entry := naclEntryJSON{
+					RuleNumber:    int(aws.ToInt32(e.RuleNumber)),
+					Egress:        aws.ToBool(e.Egress),
+					CidrBlock:     aws.ToString(e.CidrBlock),
+					Ipv6CidrBlock: aws.ToString(e.Ipv6CidrBlock),
+					RuleAction:    string(e.RuleAction),
+					Protocol:      aws.ToString(e.Protocol),
+				}
+				if pr := e.PortRange; pr != nil {
+					entry.PortRange = &portRangeJSON{From: pr.From, To: pr.To}
+				}
+				n.Entries = append(n.Entries, entry)
 			}
 			b.NetworkACLs = append(b.NetworkACLs, n)
 			for _, a := range acl.Associations {
@@ -353,6 +395,14 @@ func (t *sdkTransport) fetchNetwork(ctx context.Context) ([]byte, error) {
 		ipTok = out.Marker
 	}
 
+	// ECS services are workloads on the same network. A failure here costs the services,
+	// not the instances already read.
+	svcs, err := t.ecsServices(ctx)
+	if err != nil {
+		slog.Warn("aws connector: ECS services not read", "err", err)
+	}
+	b.ECSServices = svcs
+
 	return json.Marshal(b)
 }
 
@@ -365,6 +415,7 @@ type networkBundle struct {
 	RouteTables      []routeTableJSON      `json:"route_tables,omitempty"`
 	NetworkACLs      []naclJSON            `json:"network_acls,omitempty"`
 	InstanceProfiles []instanceProfileJSON `json:"instance_profiles,omitempty"`
+	ECSServices      []ecsServiceJSON      `json:"ecs_services,omitempty"`
 }
 
 // instanceProfileJSON mirrors iam list-instance-profiles: a profile and the role(s) it
@@ -398,12 +449,20 @@ type sgJSON struct {
 }
 
 type permJSON struct {
-	IPRanges         []ipRangeJSON `json:"IpRanges"`
-	UserIDGroupPairs []sgRefJSON   `json:"UserIdGroupPairs"`
+	IPProtocol       string          `json:"IpProtocol,omitempty"`
+	FromPort         *int32          `json:"FromPort,omitempty"`
+	ToPort           *int32          `json:"ToPort,omitempty"`
+	IPRanges         []ipRangeJSON   `json:"IpRanges"`
+	IPv6Ranges       []ipv6RangeJSON `json:"Ipv6Ranges,omitempty"`
+	UserIDGroupPairs []sgRefJSON     `json:"UserIdGroupPairs"`
 }
 
 type ipRangeJSON struct {
 	CidrIp string `json:"CidrIp"`
+}
+
+type ipv6RangeJSON struct {
+	CidrIpv6 string `json:"CidrIpv6"`
 }
 
 type sgRefJSON struct {
@@ -417,6 +476,23 @@ type instJSON struct {
 	Tags               []tagJSON         `json:"Tags"`
 	IamInstanceProfile *profileRefJSON   `json:"IamInstanceProfile,omitempty"`
 	MetadataOptions    *metadataOptsJSON `json:"MetadataOptions,omitempty"`
+	PrivateIPAddress   string            `json:"PrivateIpAddress,omitempty"`
+	PublicIPAddress    string            `json:"PublicIpAddress,omitempty"`
+	IPv6Address        string            `json:"Ipv6Address,omitempty"`
+	NetworkInterfaces  []niJSON          `json:"NetworkInterfaces,omitempty"`
+}
+
+type niJSON struct {
+	Association   *niAssocJSON `json:"Association,omitempty"`
+	IPv6Addresses []niIPv6JSON `json:"Ipv6Addresses,omitempty"`
+}
+
+type niAssocJSON struct {
+	PublicIP string `json:"PublicIp"`
+}
+
+type niIPv6JSON struct {
+	IPv6Address string `json:"Ipv6Address"`
 }
 
 type subnetJSON struct {
@@ -431,12 +507,13 @@ type routeTableJSON struct {
 }
 
 type routeJSON struct {
-	DestinationCidrBlock string `json:"DestinationCidrBlock"`
-	GatewayID            string `json:"GatewayId,omitempty"`
-	NatGatewayID         string `json:"NatGatewayId,omitempty"`
-	TransitGatewayID     string `json:"TransitGatewayId,omitempty"`
-	VpcPeeringConnID     string `json:"VpcPeeringConnectionId,omitempty"`
-	EgressOnlyIGWID      string `json:"EgressOnlyInternetGatewayId,omitempty"`
+	DestinationCidrBlock     string `json:"DestinationCidrBlock"`
+	DestinationIpv6CidrBlock string `json:"DestinationIpv6CidrBlock,omitempty"`
+	GatewayID                string `json:"GatewayId,omitempty"`
+	NatGatewayID             string `json:"NatGatewayId,omitempty"`
+	TransitGatewayID         string `json:"TransitGatewayId,omitempty"`
+	VpcPeeringConnID         string `json:"VpcPeeringConnectionId,omitempty"`
+	EgressOnlyIGWID          string `json:"EgressOnlyInternetGatewayId,omitempty"`
 }
 
 type naclJSON struct {
@@ -445,10 +522,18 @@ type naclJSON struct {
 }
 
 type naclEntryJSON struct {
-	RuleNumber int    `json:"RuleNumber"`
-	Egress     bool   `json:"Egress"`
-	CidrBlock  string `json:"CidrBlock,omitempty"`
-	RuleAction string `json:"RuleAction"`
+	RuleNumber    int            `json:"RuleNumber"`
+	Egress        bool           `json:"Egress"`
+	CidrBlock     string         `json:"CidrBlock,omitempty"`
+	Ipv6CidrBlock string         `json:"Ipv6CidrBlock,omitempty"`
+	RuleAction    string         `json:"RuleAction"`
+	Protocol      string         `json:"Protocol,omitempty"`
+	PortRange     *portRangeJSON `json:"PortRange,omitempty"`
+}
+
+type portRangeJSON struct {
+	From *int32 `json:"From,omitempty"`
+	To   *int32 `json:"To,omitempty"`
 }
 
 type tagJSON struct {
