@@ -154,10 +154,12 @@ from *directionally honest* to *empirically grounded*, and it needs real exploit
 `make entrypoints-lab-aws` does for exposure what the boundary lab does for escalation. It builds
 resources on both sides of each 1.29.0 rule, has the engine read them through the live connector as a
 `SecurityAudit`-only role, and takes the verdict from AWS wherever AWS gives one: ten bucket policies
-judged by `GetBucketPolicyStatus`, and three function URLs judged by an unauthenticated request - 403 is
-closed, anything else got past authorization. Nothing runs and nothing is reachable: the functions have
-reserved concurrency 0, the buckets are empty and behind `RestrictPublicBuckets`, the ECS services have
-no tasks. It costs nothing and tears itself down.
+judged by `GetBucketPolicyStatus`, three function URLs judged by an unauthenticated request - 403 is
+closed, anything else got past authorization - and two load balancers, an internet-facing one and an
+internal one, judged by a plain HTTP request to each DNS name. Nothing runs and nothing behind them is
+reachable: the functions have reserved concurrency 0, the buckets are empty and behind
+`RestrictPublicBuckets`, the ECS services have no tasks. The load balancers bill by the hour, so a run
+costs a few cents; it tears itself down.
 
 Its first run on a real account caught four errors, all now fixed:
 
@@ -176,6 +178,12 @@ run, among them the ECS services (exposed only with a public address, a route an
 ports the network ACL lets through), the retraction of a function whose URL is deleted, and a GitHub OIDC
 trust pinned to one repository. AWS refused to create a trust open to every repository, as documented, so
 that case stays a unit test.
+
+Load balancers joined the lab when 1.30.0 taught the network feed to read them. The internet-facing one
+answered the request (503: no task behind it) and the engine called it the entry point on `tcp/80`; the
+internal one never answered and the engine called it no way in. The engine drew the route from the public
+one to an ECS service in a private subnet - through the service's target group, with no task running - and
+to a Lambda function, and kept the service itself unexposed. All agreed on the first run.
 
 ### Condition keys, and why they are not refutations
 

@@ -494,3 +494,123 @@ func TestECSServicesAreWorkloads(t *testing.T) {
 		t.Error("the api service is in sg-web, which the database admits on 5432")
 	}
 }
+
+// The front door of most AWS estates: an internet-facing load balancer in public subnets,
+// the workloads behind it in private ones. Those workloads are rightly not exposed
+// themselves; the load balancer is, on the ports its listeners serve that its groups
+// admit, and it routes to its targets - an instance, an ECS service through its target
+// group, a Lambda function, another load balancer.
+func TestLoadBalancersAreTheFrontDoor(t *testing.T) {
+	const acct = "123456789012"
+	const arn = "arn:aws:elasticloadbalancing:eu-west-1:" + acct + ":"
+	const bundle = `{
+	  "security_groups": [
+	    { "GroupId": "sg-alb", "IpPermissions": [
+	        { "IpProtocol": "tcp", "FromPort": 80, "ToPort": 80, "IpRanges": [ { "CidrIp": "0.0.0.0/0" } ] },
+	        { "IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "IpRanges": [ { "CidrIp": "0.0.0.0/0" } ] } ] },
+	    { "GroupId": "sg-only-443", "IpPermissions": [
+	        { "IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "IpRanges": [ { "CidrIp": "0.0.0.0/0" } ] } ] },
+	    { "GroupId": "sg-app", "IpPermissions": [
+	        { "IpProtocol": "tcp", "FromPort": 8080, "ToPort": 8080, "UserIdGroupPairs": [ { "GroupId": "sg-alb" } ] } ] }
+	  ],
+	  "instances": [ { "InstanceId": "i-app", "SubnetId": "subnet-priv", "PrivateIpAddress": "10.0.2.10",
+	                   "SecurityGroups": [ { "GroupId": "sg-app" } ], "Tags": [ { "Key": "Name", "Value": "app" } ] },
+	                 { "InstanceId": "i-legacy", "SubnetId": "subnet-priv", "PrivateIpAddress": "10.0.2.20",
+	                   "SecurityGroups": [ { "GroupId": "sg-app" } ], "Tags": [ { "Key": "Name", "Value": "legacy" } ] } ],
+	  "ecs_services": [
+	    { "serviceArn": "arn:aws:ecs:eu-west-1:` + acct + `:service/prod/api", "serviceName": "api",
+	      "clusterArn": "arn:aws:ecs:eu-west-1:` + acct + `:cluster/prod", "assignPublicIp": "DISABLED",
+	      "securityGroups": [ "sg-app" ], "subnets": [ "subnet-priv" ], "targetGroups": [ "` + arn + `targetgroup/api/1" ] } ],
+	  "load_balancers": [
+	    { "LoadBalancerArn": "` + arn + `loadbalancer/app/web/1", "LoadBalancerName": "web", "Type": "application",
+	      "Scheme": "internet-facing", "IpAddressType": "ipv4", "SecurityGroups": [ "sg-alb" ],
+	      "AvailabilityZones": [ { "SubnetId": "subnet-pub-a" }, { "SubnetId": "subnet-pub-b" } ],
+	      "Listeners": [ { "Protocol": "HTTP", "Port": 80 }, { "Protocol": "HTTPS", "Port": 443 } ],
+	      "TargetGroups": [
+	        { "TargetGroupArn": "` + arn + `targetgroup/app/1", "TargetType": "instance", "Protocol": "HTTP", "Port": 8080,
+	          "Targets": [ { "Id": "i-app" } ] },
+	        { "TargetGroupArn": "` + arn + `targetgroup/api/1", "TargetType": "ip", "Protocol": "HTTP", "Port": 8080, "Targets": [] },
+	        { "TargetGroupArn": "` + arn + `targetgroup/legacy/1", "TargetType": "ip", "Protocol": "HTTP", "Port": 8080,
+	          "Targets": [ { "Id": "10.0.2.20", "Port": 9000 } ] },
+	        { "TargetGroupArn": "` + arn + `targetgroup/fn/1", "TargetType": "lambda",
+	          "Targets": [ { "Id": "arn:aws:lambda:eu-west-1:` + acct + `:function:thumbs:live" } ] } ] },
+	    { "LoadBalancerArn": "` + arn + `loadbalancer/app/admin/2", "LoadBalancerName": "admin", "Type": "application",
+	      "Scheme": "internal", "SecurityGroups": [ "sg-alb" ], "AvailabilityZones": [ { "SubnetId": "subnet-priv" } ],
+	      "Listeners": [ { "Protocol": "HTTP", "Port": 80 } ] },
+	    { "LoadBalancerArn": "` + arn + `loadbalancer/app/back-office/6", "LoadBalancerName": "back-office", "Type": "application",
+	      "Scheme": "internal", "SecurityGroups": [ "sg-alb" ], "AvailabilityZones": [ { "SubnetId": "subnet-pub-a" } ],
+	      "Listeners": [ { "Protocol": "HTTP", "Port": 80 } ] },
+	    { "LoadBalancerArn": "` + arn + `loadbalancer/app/tls-only/3", "LoadBalancerName": "tls-only", "Type": "application",
+	      "Scheme": "internet-facing", "SecurityGroups": [ "sg-only-443" ], "AvailabilityZones": [ { "SubnetId": "subnet-pub-a" } ],
+	      "Listeners": [ { "Protocol": "HTTP", "Port": 80 } ] },
+	    { "LoadBalancerArn": "` + arn + `loadbalancer/net/edge/4", "LoadBalancerName": "edge", "Type": "network",
+	      "Scheme": "internet-facing", "AvailabilityZones": [ { "SubnetId": "subnet-pub-a" } ],
+	      "Listeners": [ { "Protocol": "TCP", "Port": 22 }, { "Protocol": "TCP", "Port": 443 } ],
+	      "TargetGroups": [ { "TargetGroupArn": "` + arn + `targetgroup/to-alb/4", "TargetType": "alb", "Protocol": "TCP", "Port": 443,
+	          "Targets": [ { "Id": "` + arn + `loadbalancer/app/web/1" } ] } ] },
+	    { "LoadBalancerArn": "` + arn + `loadbalancer/net/stranded/5", "LoadBalancerName": "stranded", "Type": "network",
+	      "Scheme": "internet-facing", "AvailabilityZones": [ { "SubnetId": "subnet-priv" } ],
+	      "Listeners": [ { "Protocol": "TCP", "Port": 443 } ] }
+	  ],
+	  "subnets": [ { "SubnetId": "subnet-pub-a", "RouteTableId": "rt-pub" }, { "SubnetId": "subnet-pub-b", "RouteTableId": "rt-pub" },
+	               { "SubnetId": "subnet-priv", "RouteTableId": "rt-priv" } ],
+	  "route_tables": [ { "RouteTableId": "rt-pub", "Routes": [ { "DestinationCidrBlock": "0.0.0.0/0", "GatewayId": "igw-1" } ] },
+	                    { "RouteTableId": "rt-priv", "Routes": [ { "DestinationCidrBlock": "0.0.0.0/0", "NatGatewayId": "nat-1" } ] } ]
+	}`
+	events, err := New().Parse(strings.NewReader(bundle), ingestion.Options{Account: acct})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	byName := map[string]ontology.Node{}
+	for _, n := range events[0].Nodes {
+		byName[n.Name] = n
+	}
+	for name, want := range map[string]string{"web": "tcp/80, tcp/443", "edge": "tcp/22, tcp/443", "admin": "", "back-office": "", "tls-only": "", "stranded": ""} {
+		n, ok := byName[name]
+		if !ok {
+			t.Fatalf("load balancer %s not drawn", name)
+		}
+		if n.Label != ontology.LabelLoadBalancer || n.InternetExposed() != (want != "") || n.Properties["exposed_ports"] != want {
+			t.Errorf("%s: exposed=%v on %q, want %q (%v)", name, n.InternetExposed(), n.Properties["exposed_ports"], want, n.Properties["net_reachability"])
+		}
+		// Written either way, so a load balancer made internal, or closed, is retracted.
+		if v, ok := n.Properties[ontology.PropNetworkExposed]; !ok || v != (want != "") {
+			t.Errorf("%s: network_exposed = %v (present=%v), want %v", name, v, ok, want != "")
+		}
+	}
+	if byName["edge"].Properties["exposed_management_ports"] != "tcp/22" {
+		t.Errorf("a network load balancer with no groups admits what it listens on, SSH included: %v", byName["edge"].Properties)
+	}
+	if byName["app"].InternetExposed() || byName["api"].InternetExposed() {
+		t.Error("the workloads behind the load balancer sit in a private subnet: not exposed themselves")
+	}
+	// Keyed as the custodian collector keys a load balancer, so the two feeds meet.
+	if want := ingestion.RegionalID(ontology.LabelLoadBalancer, acct, "eu-west-1", "web"); byName["web"].ID != want {
+		t.Errorf("web id %s, want the custodian collector's %s", byName["web"].ID, want)
+	}
+	routes := map[string]string{}
+	for _, e := range events[0].Edges {
+		if e.Type == ontology.EdgeRoutesTo {
+			ports, _ := e.Properties["ports"].(string)
+			routes[e.From+">"+e.To] = ports
+		}
+	}
+	web, edge := byName["web"].ID, byName["edge"].ID
+	for to, ports := range map[string]string{
+		byName["app"].ID:    "tcp/8080",
+		byName["api"].ID:    "tcp/8080",
+		byName["legacy"].ID: "tcp/9000",
+		ontology.NewID(ontology.LabelFunction, "arn:aws:lambda:eu-west-1:"+acct+":function:thumbs"): "",
+	} {
+		got, ok := routes[web+">"+to]
+		if !ok || got != ports {
+			t.Errorf("web should route to %s on %q, got %q (present=%v)", to, ports, got, ok)
+		}
+	}
+	if _, ok := routes[edge+">"+web]; !ok {
+		t.Error("the network load balancer forwards to the application load balancer it targets")
+	}
+	if len(routes) != 5 {
+		t.Errorf("routes = %v, want the five above", routes)
+	}
+}

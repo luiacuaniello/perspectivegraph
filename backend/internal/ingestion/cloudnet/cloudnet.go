@@ -6,6 +6,7 @@
 //	SG-to-SG ingress rule → instances in the source SG ──CONNECTS_TO──▶ instances in the target SG
 //	VPC peering           → VPC ──CONNECTS_TO──▶ VPC
 //	IAM instance profile  → instance ──ASSUMES──▶ IAM_Role
+//	load balancer         → (internet) load balancer ──ROUTES_TO──▶ its targets
 //
 // That last edge is the IMDS hop, and it is what joins the network half of the graph to
 // the identity half: without it "the internet reaches this box" and "this role owns the
@@ -158,7 +159,40 @@ type bundle struct {
 		AssignPublicIP string   `json:"assignPublicIp"` // ENABLED | DISABLED
 		SecurityGroups []string `json:"securityGroups"`
 		Subnets        []string `json:"subnets"`
+		// TargetGroups are the load balancer target groups the service registers its tasks
+		// in. Task addresses change; the service's membership does not, so a load balancer
+		// reaches the service through these.
+		TargetGroups []string `json:"targetGroups"`
 	} `json:"ecs_services"`
+	// Optional: load balancers (elbv2 describe-load-balancers, with describe-listeners and
+	// describe-target-groups / describe-target-health flattened in). In most AWS estates the
+	// internet arrives at a load balancer and the workloads behind it sit in private subnets,
+	// which the rules above rightly call unexposed: without this the route was missing.
+	LoadBalancers []struct {
+		LoadBalancerArn   string   `json:"LoadBalancerArn"`
+		LoadBalancerName  string   `json:"LoadBalancerName"`
+		Type              string   `json:"Type"`          // application | network | gateway
+		Scheme            string   `json:"Scheme"`        // internet-facing | internal
+		IPAddressType     string   `json:"IpAddressType"` // ipv4 | dualstack | dualstack-without-public-ipv4
+		SecurityGroups    []string `json:"SecurityGroups"`
+		AvailabilityZones []struct {
+			SubnetID string `json:"SubnetId"`
+		} `json:"AvailabilityZones"`
+		Listeners []struct {
+			Protocol string `json:"Protocol"` // HTTP | HTTPS | TCP | TLS | UDP | TCP_UDP | GENEVE
+			Port     *int   `json:"Port"`
+		} `json:"Listeners"`
+		TargetGroups []struct {
+			TargetGroupArn string `json:"TargetGroupArn"`
+			TargetType     string `json:"TargetType"` // instance | ip | lambda | alb
+			Protocol       string `json:"Protocol"`
+			Port           *int   `json:"Port"`
+			Targets        []struct {
+				ID   string `json:"Id"`
+				Port *int   `json:"Port"`
+			} `json:"Targets"`
+		} `json:"TargetGroups"`
+	} `json:"load_balancers"`
 	// Optional (iam list-instance-profiles shape): resolves an instance's profile ARN to
 	// the role it carries. Absent → no instance --ASSUMES--> role edges.
 	InstanceProfiles []struct {
@@ -308,6 +342,8 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 
 	g := &builder{nodes: map[string]ontology.Node{}, account: opts.Account}
 	instancesBySG := map[string][]string{} // sg -> [instance node id…]
+	vmByIP := map[string]string{}          // private address -> instance node id, for IP targets
+	servicesByTG := map[string][]string{}  // target group ARN -> ECS service node ids
 
 	for _, inst := range b.Instances {
 		if inst.InstanceID == "" {
@@ -316,6 +352,9 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 		// Account-scoped: two accounts can hand out the same instance id, and merging
 		// them would invent a machine that spans both - and the paths through it.
 		id := ontology.ScopedID(ontology.LabelVirtualMachine, opts.Account, inst.InstanceID)
+		if inst.PrivateIPAddress != "" {
+			vmByIP[inst.PrivateIPAddress] = id
+		}
 		props := map[string]any{}
 		if opts.Account != "" {
 			props[ontology.PropAccount] = opts.Account
@@ -388,6 +427,9 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 		if acct := ingestion.AccountFromARN(svc.ServiceArn); acct != "" {
 			props[ontology.PropAccount] = acct
 		}
+		for _, tg := range svc.TargetGroups {
+			servicesByTG[tg] = append(servicesByTG[tg], id)
+		}
 		var open familyPorts
 		for _, sg := range svc.SecurityGroups {
 			instancesBySG[sg] = append(instancesBySG[sg], id)
@@ -428,6 +470,107 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 			roleID := ontology.NewID(ontology.LabelIAMRole, svc.TaskRoleArn)
 			g.upsert(ontology.Node{ID: roleID, Label: ontology.LabelIAMRole, Name: svc.TaskRoleArn[strings.LastIndex(svc.TaskRoleArn, "/")+1:]})
 			g.edge(ontology.EdgeAssumes, id, roleID, ecsTaskRoleProb)
+		}
+	}
+
+	// Load balancers: an internet-facing one is an entry point on the ports its listeners
+	// serve that its security groups admit - a network load balancer may have none, and
+	// then admits what it listens on - from subnets routed to an internet gateway, and it
+	// routes to the targets of its target groups: instances, ECS services (through the
+	// target groups the service registers in), Lambda functions, or another load balancer.
+	// It is keyed as Cloud Custodian keys it, so the two feeds describe one node. What the
+	// targets' own security groups admit from it is not checked: a target that refused the
+	// load balancer would fail its health checks, and the route is reported.
+	lbByArn := map[string]string{}
+	for _, lb := range b.LoadBalancers {
+		if lb.LoadBalancerArn != "" {
+			lbByArn[lb.LoadBalancerArn] = lbID(opts.Account, lb.LoadBalancerArn, lb.LoadBalancerName)
+		}
+	}
+	for _, lb := range b.LoadBalancers {
+		name := first(lb.LoadBalancerName, lbNameFromARN(lb.LoadBalancerArn))
+		if name == "" {
+			continue
+		}
+		id := lbID(opts.Account, lb.LoadBalancerArn, name)
+		props := map[string]any{"scheme": strings.ToLower(lb.Scheme)}
+		if lb.Type != "" {
+			props["lb_type"] = strings.ToLower(lb.Type)
+		}
+		if lb.LoadBalancerArn != "" {
+			props[ontology.PropARN] = lb.LoadBalancerArn
+		}
+		if acct := first(opts.Account, ingestion.AccountFromARN(lb.LoadBalancerArn)); acct != "" {
+			props[ontology.PropAccount] = acct
+		}
+		if region := ingestion.RegionFromARN(lb.LoadBalancerArn); region != "" {
+			props["region"] = region
+		}
+		subnets := make([]string, 0, len(lb.AvailabilityZones))
+		for _, az := range lb.AvailabilityZones {
+			subnets = append(subnets, az.SubnetID)
+		}
+		listened := ingestion.PortSet{}
+		for _, l := range lb.Listeners {
+			listened = listened.Union(listenerPorts(l.Protocol, l.Port))
+		}
+		exposed, note := lbExposure(lb.Scheme, lb.Type, lb.IPAddressType, lb.SecurityGroups, subnets, listened, sgInternet, net)
+		props[ontology.PropNetworkExposed] = exposed.Transport()
+		props[propExposedPorts], props[propExposedManagement] = "", ""
+		if exposed.Transport() {
+			props[ontology.PropInternetExposed] = true
+			props[propExposedPorts] = exposed.String()
+			props[propExposedManagement] = exposed.Management().String()
+		}
+		if note != "" {
+			props["net_reachability"] = note
+		}
+		g.upsert(ontology.Node{ID: id, Label: ontology.LabelLoadBalancer, Name: name, Properties: props})
+
+		routed := map[string]ingestion.PortSet{}
+		var order []string
+		route := func(to string, ports ingestion.PortSet) {
+			if to == "" || to == id {
+				return
+			}
+			if _, seen := routed[to]; !seen {
+				order = append(order, to)
+			}
+			routed[to] = routed[to].Union(ports)
+		}
+		for _, tg := range lb.TargetGroups {
+			switch strings.ToLower(tg.TargetType) {
+			case "instance":
+				for _, t := range tg.Targets {
+					route(ontology.ScopedID(ontology.LabelVirtualMachine, opts.Account, t.ID), targetPorts(tg.Protocol, tg.Port, t.Port))
+				}
+			case "ip":
+				for _, svc := range servicesByTG[tg.TargetGroupArn] {
+					route(svc, targetPorts(tg.Protocol, tg.Port, nil))
+				}
+				for _, t := range tg.Targets {
+					route(vmByIP[t.ID], targetPorts(tg.Protocol, tg.Port, t.Port))
+				}
+			case "lambda":
+				for _, t := range tg.Targets {
+					route(ontology.NewID(ontology.LabelFunction, unqualifiedFunctionARN(t.ID)), ingestion.PortSet{})
+				}
+			case "alb":
+				for _, t := range tg.Targets {
+					to := lbByArn[t.ID]
+					if to == "" {
+						to = lbID(opts.Account, t.ID, lbNameFromARN(t.ID))
+					}
+					route(to, targetPorts(tg.Protocol, tg.Port, t.Port))
+				}
+			}
+		}
+		for _, to := range order {
+			e := ontology.Edge{Type: ontology.EdgeRoutesTo, From: id, To: to, ExploitProbability: lbRoutesProb}
+			if ports := routed[to]; !ports.Empty() {
+				e.Properties = map[string]any{propPorts: ports.String()}
+			}
+			g.edges = append(g.edges, e)
 		}
 	}
 
@@ -486,6 +629,118 @@ func (c *Collector) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event
 // ecsTaskRoleProb is code running in a task becoming its task role: the credentials are
 // one request to the task metadata endpoint away, from any container in the task.
 const ecsTaskRoleProb = 0.9
+
+// lbRoutesProb is a load balancer handing a request to one of its targets: what it is
+// for. Cloud Custodian's feed prices the same edge the same way.
+const lbRoutesProb = 0.9
+
+// lbID keys a load balancer the way the custodian collector does - by name, account and
+// Region, which together are unique - so that both feeds describe one node.
+func lbID(account, arn, name string) string {
+	return ingestion.RegionalID(ontology.LabelLoadBalancer, first(account, ingestion.AccountFromARN(arn)),
+		ingestion.RegionFromARN(arn), name)
+}
+
+// lbNameFromARN reads a load balancer's name out of its ARN:
+// arn:aws:elasticloadbalancing:REGION:ACCOUNT:loadbalancer/app/NAME/ID.
+func lbNameFromARN(arn string) string {
+	_, rest, ok := strings.Cut(arn, ":loadbalancer/")
+	if !ok {
+		return ""
+	}
+	parts := strings.Split(rest, "/")
+	if len(parts) >= 3 {
+		return parts[1]
+	}
+	return parts[0]
+}
+
+// unqualifiedFunctionARN drops a version or alias from a Lambda function ARN, so a target
+// registered by alias joins the function the lambda collector keys by its plain ARN.
+func unqualifiedFunctionARN(arn string) string {
+	if parts := strings.Split(arn, ":"); len(parts) > 7 {
+		return strings.Join(parts[:7], ":")
+	}
+	return arn
+}
+
+// listenerPorts is what a load balancer listener serves. HTTP, HTTPS, TCP and TLS ride on
+// TCP; GENEVE is a gateway load balancer's encapsulation, which serves nothing.
+func listenerPorts(protocol string, port *int) ingestion.PortSet {
+	switch strings.ToUpper(protocol) {
+	case "HTTP", "HTTPS", "TCP", "TLS":
+		return ingestion.RulePorts(ingestion.ProtoTCP, port, port)
+	case "UDP":
+		return ingestion.RulePorts(ingestion.ProtoUDP, port, port)
+	case "TCP_UDP":
+		return ingestion.RulePorts(ingestion.ProtoTCP, port, port).Union(ingestion.RulePorts(ingestion.ProtoUDP, port, port))
+	}
+	return ingestion.PortSet{}
+}
+
+// targetPorts is the port a load balancer reaches a target on: the target's own when it
+// was registered with one, else its target group's.
+func targetPorts(protocol string, groupPort, targetPort *int) ingestion.PortSet {
+	port := groupPort
+	if targetPort != nil {
+		port = targetPort
+	}
+	if port == nil {
+		return ingestion.PortSet{}
+	}
+	return listenerPorts(protocol, port)
+}
+
+// lbExposure is what the internet reaches of a load balancer: nothing when it is internal
+// or a gateway load balancer; otherwise the ports its listeners serve that its security
+// groups open to the internet - all of them when it has no groups, as a network load
+// balancer may not - on the address families it has public addresses for, through the
+// route and network ACL of each of its subnets.
+func lbExposure(scheme, typ, ipType string, sgs, subnets []string, listened ingestion.PortSet,
+	sgInternet map[string]familyPorts, net netLayer) (ingestion.PortSet, string) {
+	switch {
+	case !strings.EqualFold(scheme, "internet-facing"):
+		return ingestion.PortSet{}, "internal load balancer: reachable only from inside the network"
+	case strings.EqualFold(typ, "gateway"):
+		return ingestion.PortSet{}, "gateway load balancer: it forwards traffic to appliances and serves none"
+	case listened.Empty():
+		return ingestion.PortSet{}, "internet-facing, but no listener serves a port"
+	}
+	ipType = strings.ToLower(ipType)
+	addr := addresses{known: true, v4: ipType != "dualstack-without-public-ipv4", v6: strings.HasPrefix(ipType, "dualstack")}
+	open := familyPorts{v4: listened}
+	if addr.v6 {
+		open.v6 = listened
+	}
+	if len(sgs) > 0 {
+		var admitted familyPorts
+		for _, sg := range sgs {
+			admitted.v4 = admitted.v4.Union(sgInternet[sg].v4)
+			admitted.v6 = admitted.v6.Union(sgInternet[sg].v6)
+		}
+		open.v4, open.v6 = open.v4.Intersect(admitted.v4), open.v6.Intersect(admitted.v6)
+		if open.v4.Empty() && open.v6.Empty() {
+			return ingestion.PortSet{}, "internet-facing, but its security groups admit none of what its listeners serve (" + listened.String() + ")"
+		}
+	}
+	if len(subnets) == 0 {
+		subnets = []string{""}
+	}
+	exposed, notes := ingestion.PortSet{}, map[string]bool{}
+	for _, subnet := range subnets {
+		e, note := internetExposure(open, subnet, addr, net)
+		exposed = exposed.Union(e)
+		if note != "" {
+			notes[note] = true
+		}
+	}
+	ns := make([]string, 0, len(notes))
+	for n := range notes {
+		ns = append(ns, n)
+	}
+	sort.Strings(ns)
+	return exposed, strings.Join(ns, "; ")
+}
 
 // first returns the first non-empty value.
 func first(vals ...string) string {

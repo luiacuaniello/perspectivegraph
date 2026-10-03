@@ -17,6 +17,32 @@ digest, take the backup, stage it.
 
 ---
 
+## 1.30.0
+
+### Load balancers are read, and the routes behind them appear
+
+**Affects you if** you use the AWS connector or send cloudnet bundles, and your workloads sit
+behind a load balancer - which is most AWS estates.
+
+The network feed read security groups, instances and subnets but no load balancer. An instance
+or ECS service in a private subnet behind an internet-facing load balancer was rightly called
+unexposed, and since nothing in the graph led to it, no route through it was found. The network
+pull now reads application and network load balancers with their listeners and target groups:
+an internet-facing one is an entry point on the ports its listeners serve that its security
+groups admit, and it routes to its targets - instances, ECS services through the target groups
+they register in, Lambda functions, other load balancers.
+
+The Cloud Custodian collector also read load balancers only under `aws.elb` and `aws.elbv2`.
+Custodian calls application and network load balancers `aws.app-elb`, so a real export's were
+dropped; they are read now, and keyed like the network feed's, so the two meet.
+
+What to do: nothing - the reads are inside `SecurityAudit`. A custom read-only role needs
+`elasticloadbalancing:DescribeLoadBalancers`, `DescribeListeners`, `DescribeTargetGroups` and
+`DescribeTargetHealth`; without them the connector logs a warning and reads the rest of the
+network. Expect new routes, many of them through load balancers you know well.
+
+---
+
 ## 1.29.1
 
 ### Public means what AWS means by it, for bucket and function policies

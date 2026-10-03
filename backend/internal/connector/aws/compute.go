@@ -116,6 +116,7 @@ type ecsServiceJSON struct {
 	AssignPublicIP string   `json:"assignPublicIp,omitempty"`
 	SecurityGroups []string `json:"securityGroups,omitempty"`
 	Subnets        []string `json:"subnets,omitempty"`
+	TargetGroups   []string `json:"targetGroups,omitempty"`
 }
 
 // ecsServices reads every ECS service in the region that runs in awsvpc mode - the mode
@@ -160,6 +161,11 @@ func (t *sdkTransport) ecsServices(ctx context.Context) ([]ecsServiceJSON, error
 					svc := ecsServiceJSON{ServiceArn: aws.ToString(s.ServiceArn), ServiceName: aws.ToString(s.ServiceName),
 						ClusterArn: cluster, AssignPublicIP: string(nc.AwsvpcConfiguration.AssignPublicIp),
 						SecurityGroups: nc.AwsvpcConfiguration.SecurityGroups, Subnets: nc.AwsvpcConfiguration.Subnets}
+					for _, lb := range s.LoadBalancers {
+						if tg := aws.ToString(lb.TargetGroupArn); tg != "" {
+							svc.TargetGroups = append(svc.TargetGroups, tg)
+						}
+					}
 					if td := aws.ToString(s.TaskDefinition); td != "" {
 						role, seen := taskRoles[td]
 						if !seen {

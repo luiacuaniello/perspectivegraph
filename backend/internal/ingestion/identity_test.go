@@ -872,3 +872,68 @@ func contains(s []string, v string) bool {
 	}
 	return false
 }
+
+// The commonest AWS shape: a public load balancer, the instance behind it in a private
+// subnet. The network feed rightly calls the instance unexposed, and before load balancers
+// were read the route stopped there - a false negative where routes are most common. The
+// load balancer is the way in, and Cloud Custodian's report of it lands on the same node.
+func TestALoadBalancerIsTheWayIn(t *testing.T) {
+	const acct = "123456789012"
+	const lbArn = "arn:aws:elasticloadbalancing:eu-west-1:" + acct + ":loadbalancer/app/web/1"
+	iamBundle := `{"UserDetailList":[],"GroupDetailList":[],"Policies":[],"RoleDetailList":[
+	 {"RoleName":"app-role","Arn":"arn:aws:iam::` + acct + `:role/app-role","AssumeRolePolicyDocument":{"Statement":[]},
+	  "RolePolicyList":[{"PolicyName":"p","PolicyDocument":{"Statement":[{"Effect":"Allow","Action":"iam:PassRole","Resource":"*"},
+	   {"Effect":"Allow","Action":"lambda:CreateFunction","Resource":"*"}]}}]}]}`
+	network := `{
+	  "security_groups": [
+	    { "GroupId": "sg-alb", "IpPermissions": [ { "IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "IpRanges": [ { "CidrIp": "0.0.0.0/0" } ] } ] },
+	    { "GroupId": "sg-app", "IpPermissions": [ { "IpProtocol": "tcp", "FromPort": 8080, "ToPort": 8080, "UserIdGroupPairs": [ { "GroupId": "sg-alb" } ] } ] } ],
+	  "instances": [ { "InstanceId": "i-app", "SubnetId": "subnet-priv", "PrivateIpAddress": "10.0.2.10",
+	    "SecurityGroups": [ { "GroupId": "sg-app" } ], "Tags": [ { "Key": "Name", "Value": "app" } ],
+	    "IamInstanceProfile": { "Arn": "arn:aws:iam::` + acct + `:instance-profile/app" }, "MetadataOptions": { "HttpTokens": "required" } } ],
+	  "instance_profiles": [ { "Arn": "arn:aws:iam::` + acct + `:instance-profile/app",
+	    "Roles": [ { "Arn": "arn:aws:iam::` + acct + `:role/app-role", "RoleName": "app-role" } ] } ],
+	  "load_balancers": [ { "LoadBalancerArn": "` + lbArn + `", "LoadBalancerName": "web", "Type": "application",
+	    "Scheme": "internet-facing", "SecurityGroups": [ "sg-alb" ], "AvailabilityZones": [ { "SubnetId": "subnet-pub" } ],
+	    "Listeners": [ { "Protocol": "HTTPS", "Port": 443 } ],
+	    "TargetGroups": [ { "TargetGroupArn": "tg-app", "TargetType": "instance", "Protocol": "HTTP", "Port": 8080, "Targets": [ { "Id": "i-app" } ] } ] } ],
+	  "subnets": [ { "SubnetId": "subnet-pub", "RouteTableId": "rt-pub" }, { "SubnetId": "subnet-priv", "RouteTableId": "rt-priv" } ],
+	  "route_tables": [ { "RouteTableId": "rt-pub", "Routes": [ { "DestinationCidrBlock": "0.0.0.0/0", "GatewayId": "igw-1" } ] },
+	                    { "RouteTableId": "rt-priv", "Routes": [ { "DestinationCidrBlock": "0.0.0.0/0", "NatGatewayId": "nat-1" } ] } ]
+	}`
+	ctx := context.Background()
+	store := memory.New()
+	applyBody(t, ctx, store, iam.New(), iamBundle, ingestion.Options{})
+	applyBody(t, ctx, store, cloudnet.New(), network, ingestion.Options{Account: acct})
+	// Custodian reports the same load balancer - as aws.app-elb, Custodian's own name for
+	// application and network load balancers - and it must land on the same node.
+	custodianLB := `{"account_id":"` + acct + `","policies":[{"resource":"aws.app-elb","resources":[
+	  {"LoadBalancerName":"web","LoadBalancerArn":"` + lbArn + `","Scheme":"internet-facing"}]}]}`
+	evs, err := custodian.New().Parse(strings.NewReader(custodianLB), ingestion.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := false
+	for _, n := range evs[0].Nodes {
+		read = read || (n.Label == ontology.LabelLoadBalancer &&
+			n.ID == ingestion.RegionalID(ontology.LabelLoadBalancer, acct, "eu-west-1", "web"))
+	}
+	if !read {
+		t.Error("Custodian's aws.app-elb load balancer is not read, or not keyed as the network feed keys it")
+	}
+	applyBody(t, ctx, store, custodian.New(), custodianLB, ingestion.Options{})
+	if n := nodesNamed(t, ctx, store, ontology.LabelLoadBalancer, "web"); n != 1 {
+		t.Errorf("the load balancer is %d nodes; the network feed and Custodian must describe one", n)
+	}
+	snap, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes := map[string]bool{}
+	for _, r := range routeNames(analyzer.FindCriticalPaths(snap)) {
+		routes[r] = true
+	}
+	if !routes["web -> app -> app-role -> account-admin (effective)"] {
+		t.Errorf("the route through the load balancer into the private instance's role is missing: %v", routes)
+	}
+}

@@ -408,7 +408,7 @@
 						},
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"provider\": \"aws\",\n  \"account_id\": \"123456789012\",\n  \"policies\": [\n    {\n      \"policy\": \"elb-internet-facing\",\n      \"resource\": \"aws.elbv2\",\n      \"resources\": [\n        { \"LoadBalancerName\": \"public-alb\", \"Scheme\": \"internet-facing\", \"Targets\": [\"i-0web1\"] }\n      ]\n    },\n    {\n      \"policy\": \"ec2-with-instance-profile\",\n      \"resource\": \"aws.ec2\",\n      \"resources\": [\n        {\n          \"InstanceId\": \"i-0web1\",\n          \"PublicIpAddress\": \"203.0.113.10\",\n          \"IamInstanceProfile\": { \"Arn\": \"arn:aws:iam::123456789012:instance-profile/web-admin\" },\n          \"Tags\": [{ \"Key\": \"Name\", \"Value\": \"web-frontend\" }]\n        }\n      ]\n    },\n    {\n      \"policy\": \"iam-instance-profiles\",\n      \"resource\": \"aws.iam-profile\",\n      \"resources\": [\n        {\n          \"InstanceProfileName\": \"web-admin\",\n          \"Arn\": \"arn:aws:iam::123456789012:instance-profile/web-admin\",\n          \"Roles\": [{ \"RoleName\": \"web-admin\", \"Arn\": \"arn:aws:iam::123456789012:role/web-admin\" }]\n        }\n      ]\n    },\n    {\n      \"policy\": \"iam-admin-roles\",\n      \"resource\": \"aws.iam-role\",\n      \"resources\": [\n        {\n          \"RoleName\": \"web-admin\",\n          \"Arn\": \"arn:aws:iam::123456789012:role/web-admin\",\n          \"AdminAccess\": true,\n          \"CanAccess\": [{ \"type\": \"bucket\", \"name\": \"customer-exports\" }]\n        }\n      ]\n    },\n    {\n      \"policy\": \"s3-sensitive-data\",\n      \"resource\": \"aws.s3\",\n      \"resources\": [\n        { \"Name\": \"customer-exports\", \"Public\": false, \"Sensitive\": true }\n      ]\n    }\n  ]\n}",
+							"raw": "{\n  \"provider\": \"aws\",\n  \"account_id\": \"123456789012\",\n  \"policies\": [\n    {\n      \"policy\": \"elb-internet-facing\",\n      \"resource\": \"aws.app-elb\",\n      \"resources\": [\n        { \"LoadBalancerName\": \"public-alb\", \"Scheme\": \"internet-facing\", \"Targets\": [\"i-0web1\"] }\n      ]\n    },\n    {\n      \"policy\": \"ec2-with-instance-profile\",\n      \"resource\": \"aws.ec2\",\n      \"resources\": [\n        {\n          \"InstanceId\": \"i-0web1\",\n          \"PublicIpAddress\": \"203.0.113.10\",\n          \"IamInstanceProfile\": { \"Arn\": \"arn:aws:iam::123456789012:instance-profile/web-admin\" },\n          \"Tags\": [{ \"Key\": \"Name\", \"Value\": \"web-frontend\" }]\n        }\n      ]\n    },\n    {\n      \"policy\": \"iam-instance-profiles\",\n      \"resource\": \"aws.iam-profile\",\n      \"resources\": [\n        {\n          \"InstanceProfileName\": \"web-admin\",\n          \"Arn\": \"arn:aws:iam::123456789012:instance-profile/web-admin\",\n          \"Roles\": [{ \"RoleName\": \"web-admin\", \"Arn\": \"arn:aws:iam::123456789012:role/web-admin\" }]\n        }\n      ]\n    },\n    {\n      \"policy\": \"iam-admin-roles\",\n      \"resource\": \"aws.iam-role\",\n      \"resources\": [\n        {\n          \"RoleName\": \"web-admin\",\n          \"Arn\": \"arn:aws:iam::123456789012:role/web-admin\",\n          \"AdminAccess\": true,\n          \"CanAccess\": [{ \"type\": \"bucket\", \"name\": \"customer-exports\" }]\n        }\n      ]\n    },\n    {\n      \"policy\": \"s3-sensitive-data\",\n      \"resource\": \"aws.s3\",\n      \"resources\": [\n        { \"Name\": \"customer-exports\", \"Public\": false, \"Sensitive\": true }\n      ]\n    }\n  ]\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -770,6 +770,44 @@
 							"path": [
 								"ingest",
 								"lambda"
+							]
+						},
+						"description": "Identity-federation from an external IdP (Okta/Entra/…): IdentityProvider(internet) --AUTHENTICATES--> User --ASSUMES--> IAM_Role. Federated role ARNs converge with the IAM collector, so a no-MFA user federating into an admin/escalation role lights up the modern path internet → SSO → user → cloud admin. Assemble from the Okta/Entra admin API."
+					}
+				},
+				{
+					"name": "15. Load balancer in front of a private instance",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"_comment\": \"The commonest AWS shape: an internet-facing application load balancer in a public subnet, the instance behind it in a private one. The instance is not exposed itself (no public address, its subnet routes through NAT); the load balancer is, on tcp/443 - the port its listener serves and its group admits - and it ROUTES_TO the instance named in its target group. The route internet → web → app → app-role appears; before 1.30.0 nothing led to the instance. The AWS connector assembles this from describe-load-balancers, describe-listeners, describe-target-groups and describe-target-health.\",\n  \"security_groups\": [\n    {\n      \"GroupId\": \"sg-alb\",\n      \"IpPermissions\": [\n        {\n          \"IpProtocol\": \"tcp\",\n          \"FromPort\": 443,\n          \"ToPort\": 443,\n          \"IpRanges\": [\n            {\n              \"CidrIp\": \"0.0.0.0/0\"\n            }\n          ]\n        }\n      ]\n    },\n    {\n      \"GroupId\": \"sg-app\",\n      \"IpPermissions\": [\n        {\n          \"IpProtocol\": \"tcp\",\n          \"FromPort\": 8080,\n          \"ToPort\": 8080,\n          \"UserIdGroupPairs\": [\n            {\n              \"GroupId\": \"sg-alb\"\n            }\n          ]\n        }\n      ]\n    }\n  ],\n  \"instances\": [\n    {\n      \"InstanceId\": \"i-app\",\n      \"SubnetId\": \"subnet-priv\",\n      \"PrivateIpAddress\": \"10.0.2.10\",\n      \"SecurityGroups\": [\n        {\n          \"GroupId\": \"sg-app\"\n        }\n      ],\n      \"Tags\": [\n        {\n          \"Key\": \"Name\",\n          \"Value\": \"app\"\n        }\n      ],\n      \"IamInstanceProfile\": {\n        \"Arn\": \"arn:aws:iam::123456789012:instance-profile/app\"\n      },\n      \"MetadataOptions\": {\n        \"HttpTokens\": \"required\"\n      }\n    }\n  ],\n  \"instance_profiles\": [\n    {\n      \"Arn\": \"arn:aws:iam::123456789012:instance-profile/app\",\n      \"Roles\": [\n        {\n          \"Arn\": \"arn:aws:iam::123456789012:role/app-role\",\n          \"RoleName\": \"app-role\"\n        }\n      ]\n    }\n  ],\n  \"load_balancers\": [\n    {\n      \"LoadBalancerArn\": \"arn:aws:elasticloadbalancing:eu-west-1:123456789012:loadbalancer/app/web/50dc6c495c0c9188\",\n      \"LoadBalancerName\": \"web\",\n      \"Type\": \"application\",\n      \"Scheme\": \"internet-facing\",\n      \"IpAddressType\": \"ipv4\",\n      \"SecurityGroups\": [\n        \"sg-alb\"\n      ],\n      \"AvailabilityZones\": [\n        {\n          \"SubnetId\": \"subnet-pub-a\"\n        },\n        {\n          \"SubnetId\": \"subnet-pub-b\"\n        }\n      ],\n      \"Listeners\": [\n        {\n          \"Protocol\": \"HTTPS\",\n          \"Port\": 443\n        }\n      ],\n      \"TargetGroups\": [\n        {\n          \"TargetGroupArn\": \"arn:aws:elasticloadbalancing:eu-west-1:123456789012:targetgroup/app/73e2d6bc24d8a067\",\n          \"TargetType\": \"instance\",\n          \"Protocol\": \"HTTP\",\n          \"Port\": 8080,\n          \"Targets\": [\n            {\n              \"Id\": \"i-app\"\n            }\n          ]\n        }\n      ]\n    }\n  ],\n  \"subnets\": [\n    {\n      \"SubnetId\": \"subnet-pub-a\",\n      \"RouteTableId\": \"rt-pub\"\n    },\n    {\n      \"SubnetId\": \"subnet-pub-b\",\n      \"RouteTableId\": \"rt-pub\"\n    },\n    {\n      \"SubnetId\": \"subnet-priv\",\n      \"RouteTableId\": \"rt-priv\"\n    }\n  ],\n  \"route_tables\": [\n    {\n      \"RouteTableId\": \"rt-pub\",\n      \"Routes\": [\n        {\n          \"DestinationCidrBlock\": \"0.0.0.0/0\",\n          \"GatewayId\": \"igw-1\"\n        }\n      ]\n    },\n    {\n      \"RouteTableId\": \"rt-priv\",\n      \"Routes\": [\n        {\n          \"DestinationCidrBlock\": \"0.0.0.0/0\",\n          \"NatGatewayId\": \"nat-1\"\n        }\n      ]\n    }\n  ]\n}\n",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{ingestUrl}}/ingest/cloudnet?account=123456789012",
+							"host": [
+								"{{ingestUrl}}"
+							],
+							"path": [
+								"ingest",
+								"cloudnet"
+							],
+							"query": [
+								{
+									"key": "account",
+									"value": "123456789012"
+								}
 							]
 						},
 						"description": "Identity-federation from an external IdP (Okta/Entra/…): IdentityProvider(internet) --AUTHENTICATES--> User --ASSUMES--> IAM_Role. Federated role ARNs converge with the IAM collector, so a no-MFA user federating into an admin/escalation role lights up the modern path internet → SSO → user → cloud admin. Assemble from the Okta/Entra admin API."

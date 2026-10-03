@@ -232,7 +232,7 @@ curl -sS -X POST "$INGEST_URL/ingest/custodian" -H 'Content-Type: application/js
   "provider": "aws",
   "account_id": "123456789012",
   "policies": [
-    { "policy": "elb-internet-facing", "resource": "aws.elbv2", "resources": [
+    { "policy": "elb-internet-facing", "resource": "aws.app-elb", "resources": [
       { "LoadBalancerName": "prod-alb", "Scheme": "internet-facing", "Tags": [{"Key":"app","Value":"payments"}] }
     ]},
     { "policy": "ec2", "resource": "aws.ec2", "resources": [
@@ -395,7 +395,21 @@ service with its `serviceArn`, `taskRoleArn`, `assignPublicIp` and the `security
 `subnets` of its network configuration (flattened from `describe-services` and
 `describe-task-definition`; the AWS connector does this). A service is exposed by the same
 rules as an instance - a public address only when it assigns one - takes part in SG-to-SG
-reachability, and assumes its task role, which any of its containers can fetch.
+reachability, and assumes its task role, which any of its containers can fetch. Add the
+`targetGroups` it registers in (`loadBalancers[].targetGroupArn` in `describe-services`), and a
+load balancer reaches it.
+
+**Load balancers** go under `load_balancers`, one per `describe-load-balancers` entry
+(`LoadBalancerArn`, `LoadBalancerName`, `Type`, `Scheme`, `IpAddressType`, `SecurityGroups`,
+`AvailabilityZones[].SubnetId`) with its `Listeners` (`Protocol`, `Port`) and `TargetGroups`
+(`TargetGroupArn`, `TargetType`, `Protocol`, `Port`, and `Targets` from
+`describe-target-health`: `Id`, `Port`) folded in; the AWS connector assembles this. An
+internet-facing one is an entry point on the ports its listeners serve that its groups admit,
+from subnets routed to an internet gateway; an internal one is not. It `ROUTES_TO` its
+targets - an instance, an ECS service, a Lambda function, another load balancer - so the
+instance in a private subnet behind a public load balancer, which the rules above rightly call
+unexposed, is reached through it. The node is keyed as Cloud Custodian's `aws.app-elb` report of the same
+load balancer, so the two meet.
 
 ```bash
 # Assemble a bundle from: aws ec2 describe-security-groups / describe-instances /

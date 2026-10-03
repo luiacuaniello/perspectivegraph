@@ -44,6 +44,12 @@ type Rule struct {
 	Build func(from, to ontology.Node) Suggestion
 }
 
+// isECSService reports whether a container node is an ECS service, which the network feed
+// marks with its cluster.
+func isECSService(n ontology.Node) bool {
+	return n.Label == ontology.LabelContainer && propStr(n, "ecs_cluster") != ""
+}
+
 func edgeIn(t ontology.EdgeType, set ...ontology.EdgeType) bool {
 	for _, s := range set {
 		if t == s {
@@ -56,10 +62,12 @@ func edgeIn(t ontology.EdgeType, set ...ontology.EdgeType) bool {
 // Registry is the ordered rule set Generate consults.
 var Registry = []Rule{
 	{
+		// A Kubernetes workload: a NetworkPolicy cuts it off. An ECS service is a container
+		// too, but no NetworkPolicy reaches it - its door is a security group, below.
 		Name: "isolate-container",
 		Match: func(st analyzer.Step, _, to ontology.Node) bool {
 			return edgeIn(st.EdgeType, ontology.EdgeExposes, ontology.EdgeRoutesTo, ontology.EdgeHosts) &&
-				to.Label == ontology.LabelContainer
+				to.Label == ontology.LabelContainer && !isECSService(to)
 		},
 		Build: func(_, to ontology.Node) Suggestion { return networkPolicy(to) },
 	},
@@ -67,7 +75,7 @@ var Registry = []Rule{
 		Name: "restrict-public-ingress",
 		Match: func(st analyzer.Step, from, to ontology.Node) bool {
 			return edgeIn(st.EdgeType, ontology.EdgeExposes, ontology.EdgeRoutesTo, ontology.EdgeHosts) &&
-				to.Label == ontology.LabelVirtualMachine && from.Label == ontology.LabelLoadBalancer
+				(to.Label == ontology.LabelVirtualMachine || isECSService(to)) && from.Label == ontology.LabelLoadBalancer
 		},
 		Build: func(from, to ontology.Node) Suggestion { return sgRevoke(from, to) },
 	},

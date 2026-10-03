@@ -1,0 +1,8 @@
+[
+  {
+    "id": "GHSA-ch52-4w7c-c8xp",
+    "package": "http-cache-semantics",
+    "reason": "the flaw lets one user read another's response from a shared HTTP cache; Astro depends on the library to cache what it fetches while building, and this site is static, built in CI from this repository, with no shared cache serving anyone. No fixed release exists (every version through 4.2.0 is affected).",
+    "reviewBy": "2026-11-30"
+  }
+]

@@ -5,7 +5,7 @@
   "policies": [
     {
       "policy": "elb-internet-facing",
-      "resource": "aws.elbv2",
+      "resource": "aws.app-elb",
       "resources": [
         {
           "LoadBalancerName": "public-alb",

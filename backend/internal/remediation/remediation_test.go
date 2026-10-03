@@ -263,3 +263,35 @@ func TestAnOpenGitHubTrustGetsItsSubjectPinned(t *testing.T) {
 		}
 	}
 }
+
+// A load balancer in front of an ECS service: the service's door is a security group, so
+// the fix is the security-group rule, not a Kubernetes NetworkPolicy, which no ECS task
+// obeys. A Kubernetes pod behind the same kind of edge still gets the NetworkPolicy.
+func TestAnECSServiceIsNotFixedWithANetworkPolicy(t *testing.T) {
+	path := func(target ontology.Node) analyzer.AttackPath {
+		return analyzer.AttackPath{
+			Nodes: []ontology.Node{
+				{ID: "lb", Label: ontology.LabelLoadBalancer, Name: "web", Properties: map[string]any{ontology.PropInternetExposed: true}},
+				target,
+			},
+			Steps: []analyzer.Step{{EdgeType: ontology.EdgeRoutesTo, From: "lb", To: target.ID}},
+		}
+	}
+	kinds := func(p analyzer.AttackPath) map[string]bool {
+		out := map[string]bool{}
+		for _, s := range Generate(p) {
+			out[s.Kind] = true
+		}
+		return out
+	}
+	ecs := kinds(path(ontology.Node{ID: "svc", Label: ontology.LabelContainer, Name: "api",
+		Properties: map[string]any{"ecs_cluster": "prod"}}))
+	if ecs["k8s-networkpolicy"] || !ecs["terraform"] {
+		t.Errorf("an ECS service behind a load balancer: got %v, want the security-group fix only", ecs)
+	}
+	pod := kinds(path(ontology.Node{ID: "pod", Label: ontology.LabelContainer, Name: "api",
+		Properties: map[string]any{"k8s_ns": "prod"}}))
+	if !pod["k8s-networkpolicy"] {
+		t.Errorf("a Kubernetes pod behind a load balancer: got %v, want the NetworkPolicy", pod)
+	}
+}

@@ -38,7 +38,9 @@ CONNECTORS_ENABLED=aws AWS_CONNECTOR_MODE=sdk AWS_REGION=us-east-1 \
 # iam:GetPolicy + iam:GetPolicyVersion (to resolve permissions-boundary documents),
 # eks:ListClusters, eks:ListAccessEntries, eks:ListAssociatedAccessPolicies,
 # lambda:ListFunctions, lambda:GetFunctionUrlConfig, lambda:GetPolicy, lambda:ListTags,
-# ecs:ListClusters, ecs:ListServices, ecs:DescribeServices, ecs:DescribeTaskDefinition
+# ecs:ListClusters, ecs:ListServices, ecs:DescribeServices, ecs:DescribeTaskDefinition,
+# elasticloadbalancing:DescribeLoadBalancers, elasticloadbalancing:DescribeListeners,
+# elasticloadbalancing:DescribeTargetGroups, elasticloadbalancing:DescribeTargetHealth
 # (all covered by the AWS-managed SecurityAudit policy)
 # plus, for EKS Pod Identity, which SecurityAudit does not cover:
 # eks:ListPodIdentityAssociations, eks:DescribePodIdentityAssociation
@@ -76,6 +78,17 @@ the network pull reads ECS services in awsvpc mode - their security groups, subn
 address and task role - so a service is exposed and reaches its role the way an instance does.
 A Region without Lambda or ECS costs nothing; an ECS read that fails is logged and the rest of
 the network pull goes on.
+
+**Load balancers.** In most AWS estates the internet arrives at a load balancer and the
+workloads sit behind it in private subnets, which the network rules rightly call unexposed -
+so without the load balancer the route was missing altogether. The network pull reads every
+application and network load balancer with its listeners and target groups. An
+internet-facing one is an entry point on the ports its listeners serve that its security
+groups admit (a network load balancer without groups admits what it listens on), through the
+routes and network ACLs of its subnets; it routes to the instances, the ECS services (through
+the target groups a service registers in, so it holds with no task running), the Lambda
+functions and the other load balancers its target groups name. It is keyed the way Cloud
+Custodian keys a load balancer, so both feeds describe the same node.
 
 Connectors are **leader-only** (replicas don't multiply API calls), interval-driven
 (`CONNECTOR_INTERVAL`), and observable via `GET /connectors` plus
