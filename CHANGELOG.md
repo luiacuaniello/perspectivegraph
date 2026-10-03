@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.30.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.29.1...v1.30.0) (2026-10-03)
+
+
+### Features
+
+* **connector:** read load balancers, the way into most AWS estates ([#307](https://github.com/luiacuaniello/perspectivegraph/issues/307)) ([8575d03](https://github.com/luiacuaniello/perspectivegraph/commit/8575d03113a59d57bce1f705b97e178c2e16a5b0))
+
 ## [1.29.1](https://github.com/luiacuaniello/perspectivegraph/compare/v1.29.0...v1.29.1) (2026-10-02)
 
 
