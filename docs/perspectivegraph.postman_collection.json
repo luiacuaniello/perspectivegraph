@@ -812,6 +812,38 @@
 						},
 						"description": "Identity-federation from an external IdP (Okta/Entra/…): IdentityProvider(internet) --AUTHENTICATES--> User --ASSUMES--> IAM_Role. Federated role ARNs converge with the IAM collector, so a no-MFA user federating into an admin/escalation role lights up the modern path internet → SSO → user → cloud admin. Assemble from the Okta/Entra admin API."
 					}
+				},
+				{
+					"name": "16. API Gateway (routes that answer without credentials)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"_comment\": \"Per API, what API Gateway returns, as the AWS connector assembles it. The orders REST API answers GET /orders without credentials, so it is an entry point and leads to orders-webhook; POST /orders sits behind a Cognito authorizer and leads nowhere. back-office is PRIVATE: reachable only through a VPC endpoint, no entry point. The shop HTTP API answers GET /items without credentials (to items) and wants a JWT for POST /items. Functions are keyed by ARN, as the lambda collector keys them, so the route continues into each function's role.\",\n  \"account\": \"123456789012\",\n  \"region\": \"eu-west-1\",\n  \"rest_apis\": [\n    {\n      \"id\": \"a1b2c3d4e5\",\n      \"name\": \"orders\",\n      \"endpointTypes\": [\n        \"REGIONAL\"\n      ],\n      \"stages\": [\n        \"prod\"\n      ],\n      \"methods\": [\n        {\n          \"path\": \"/orders\",\n          \"httpMethod\": \"GET\",\n          \"authorizationType\": \"NONE\",\n          \"apiKeyRequired\": false,\n          \"integrationType\": \"AWS_PROXY\",\n          \"integrationUri\": \"arn:aws:apigateway:eu-west-1:lambda:path/2015-03-31/functions/arn:aws:lambda:eu-west-1:123456789012:function:orders-webhook/invocations\"\n        },\n        {\n          \"path\": \"/orders\",\n          \"httpMethod\": \"POST\",\n          \"authorizationType\": \"COGNITO_USER_POOLS\",\n          \"apiKeyRequired\": false,\n          \"integrationType\": \"AWS_PROXY\",\n          \"integrationUri\": \"arn:aws:apigateway:eu-west-1:lambda:path/2015-03-31/functions/arn:aws:lambda:eu-west-1:123456789012:function:orders-write/invocations\"\n        }\n      ]\n    },\n    {\n      \"id\": \"f6g7h8i9j0\",\n      \"name\": \"back-office\",\n      \"endpointTypes\": [\n        \"PRIVATE\"\n      ],\n      \"stages\": [\n        \"prod\"\n      ],\n      \"methods\": [\n        {\n          \"path\": \"/\",\n          \"httpMethod\": \"GET\",\n          \"authorizationType\": \"NONE\",\n          \"apiKeyRequired\": false,\n          \"integrationType\": \"AWS_PROXY\",\n          \"integrationUri\": \"arn:aws:apigateway:eu-west-1:lambda:path/2015-03-31/functions/arn:aws:lambda:eu-west-1:123456789012:function:back-office/invocations\"\n        }\n      ]\n    }\n  ],\n  \"http_apis\": [\n    {\n      \"apiId\": \"k1l2m3n4o5\",\n      \"name\": \"shop\",\n      \"protocolType\": \"HTTP\",\n      \"stages\": [\n        \"$default\"\n      ],\n      \"routes\": [\n        {\n          \"routeKey\": \"GET /items\",\n          \"authorizationType\": \"NONE\",\n          \"target\": \"integrations/abc123\"\n        },\n        {\n          \"routeKey\": \"POST /items\",\n          \"authorizationType\": \"JWT\",\n          \"target\": \"integrations/def456\"\n        }\n      ],\n      \"integrations\": [\n        {\n          \"integrationId\": \"abc123\",\n          \"integrationType\": \"AWS_PROXY\",\n          \"integrationUri\": \"arn:aws:lambda:eu-west-1:123456789012:function:items\"\n        },\n        {\n          \"integrationId\": \"def456\",\n          \"integrationType\": \"AWS_PROXY\",\n          \"integrationUri\": \"arn:aws:lambda:eu-west-1:123456789012:function:items-write\"\n        }\n      ]\n    }\n  ]\n}\n",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{ingestUrl}}/ingest/apigateway",
+							"host": [
+								"{{ingestUrl}}"
+							],
+							"path": [
+								"ingest",
+								"apigateway"
+							]
+						},
+						"description": "Identity-federation from an external IdP (Okta/Entra/…): IdentityProvider(internet) --AUTHENTICATES--> User --ASSUMES--> IAM_Role. Federated role ARNs converge with the IAM collector, so a no-MFA user federating into an admin/escalation role lights up the modern path internet → SSO → user → cloud admin. Assemble from the Okta/Entra admin API."
+					}
 				}
 			]
 		},

@@ -107,6 +107,7 @@ arrived yet are retried), but this is the logical flow:
 | 8 | IAM authorization | `POST /ingest/iam` | **privilege escalation**: `CAN_ESCALATE_TO` edges to account-admin, public-trust roles |
 | 9 | EKS access | `POST /ingest/eks` | **cluster ↔ account**: Pod Identity (service account → IAM role), access entries (IAM principal → cluster-admin) |
 | 10 | Lambda | `POST /ingest/lambda` | **serverless entry points**: functions anyone can invoke → their execution role |
+| 11 | API Gateway | `POST /ingest/apigateway` | **API entry points**: routes that answer without credentials → the functions and load balancers behind them |
 
 > **Ingesting more than one cloud account?** Add `?account=<id>` to the cloud sources.
 > Identifiers like `i-…` and `sg-…` are unique only *within* an account, so without it
@@ -491,15 +492,43 @@ the role's escalations. The function is an entry point when anyone can invoke it
   condition narrowing who - anyone with an AWS account, which an attacker has.
 
 The verdict is written either way, so removing a public URL takes the function off the
-internet on the next pull. A function invoked through API Gateway is marked `invoked_by`
-but not made an entry point: whether the API asks for credentials lives in API Gateway,
-which is not read yet.
+internet on the next pull. A function invoked through API Gateway is marked `invoked_by`;
+whether that is a way in is the API's to say, below.
 
 ```bash
 # Per function, what list-functions, get-function-url-config, get-policy and list-tags
 # return (see backend/testdata/lambda-sample.json). The AWS connector assembles it.
 curl -sS -X POST "$INGEST_URL/ingest/lambda" \
   -H 'Content-Type: application/json' --data-binary @lambda.json
+```
+
+### Amazon API Gateway (the front door of serverless code)
+
+An API is how most Lambda functions meet the internet. The collector draws each REST, HTTP
+and WebSocket API as an `API` node, and it is an entry point when all of these hold:
+
+- it is **deployed** to at least one stage;
+- it is **not private** (a REST API whose endpoint type is `PRIVATE` answers only through a
+  VPC endpoint);
+- a **route asks for nothing**: no authorizer (JWT, Cognito, IAM, or a custom Lambda
+  authorizer, whose logic is not read and so counts as asking), and no API key;
+- for a REST API with a **resource policy**, the policy lets everyone invoke it and does not
+  deny everyone outside a fixed network ("deny unless from these addresses" keeps an
+  internet attacker out; "deny unless over TLS" does not).
+
+Only the open routes lead anywhere: the API `ROUTES_TO` the Lambda function each one
+integrates with, keyed by the function's plain ARN as the lambda collector keys it, or to the
+load balancer behind a private (VPC link) integration. A route behind an authorizer draws no
+edge, since an attacker has no token for it. The node lists the open routes (`open_routes`)
+and says why it is or is not a way in (`exposure`). The verdict is written either way, so an
+API whose last open route gains an authorizer is retracted on the next pull.
+
+```bash
+# Per API, what get-rest-apis, get-resources --embed methods and get-stages return, or
+# get-apis, get-routes, get-integrations and get-stages for HTTP and WebSocket APIs
+# (see backend/testdata/apigateway-sample.json). The AWS connector assembles it.
+curl -sS -X POST "$INGEST_URL/ingest/apigateway?account=123456789012" \
+  -H 'Content-Type: application/json' --data-binary @apigateway.json
 ```
 
 ### SSO / IdP federation (Okta → cloud - the modern front door)

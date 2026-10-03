@@ -1,6 +1,10 @@
 package ingestion
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+	"unicode/utf8"
+)
 
 // A resource policy is public when it lets every principal in, unless a condition confines
 // it to fixed values of the keys AWS lists - S3 Block Public Access's definition. The first
@@ -41,6 +45,7 @@ func TestResourcePolicyPublic(t *testing.T) {
 		{"allowed, then denied to everyone", `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject"},{"Effect":"Deny","Principal":"*","Action":"s3:*"}]}`, false},
 		{"a single statement, not a list", `{"Statement":{"Effect":"Allow","Principal":"*","Action":"s3:*"}}`, true},
 		{"no policy", ``, false},
+		{"as API Gateway returns it, escaped", `{\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":\"*\",\"Action\":\"s3:GetObject\",\"Resource\":\"arn:aws:s3:::b\/*\"}]}`, true},
 	} {
 		p, err := ParseResourcePolicy(c.policy)
 		if err != nil {
@@ -50,6 +55,56 @@ func TestResourcePolicyPublic(t *testing.T) {
 			t.Errorf("%s: public = %v, want %v", c.name, got, c.public)
 		}
 	}
+}
+
+// API Gateway's escaped policy is the body of a JSON string. A body with a bare quote is
+// not one - read as one, it could end the string early and smuggle in whatever follows -
+// so it is refused, and the policy stays unreadable.
+func TestUnescapeJSONString(t *testing.T) {
+	for _, c := range []struct {
+		body, want string
+		ok         bool
+	}{
+		{`{\"Resource\":\"arn:aws:execute-api:eu-north-1:123456789012:a1\/*\"}`, `{"Resource":"arn:aws:execute-api:eu-north-1:123456789012:a1/*"}`, true},
+		{`a\\b \t \n é €`, "a\\b \t \n é €", true},
+		{`😀`, "😀", true},
+		{`\ud83d alone`, "� alone", true},
+		{`plain é`, "plain é", true},
+		{`a" , "b`, "", false},
+		{`\x41`, "", false},
+		{`\u00`, "", false},
+		{`\u+0ff`, "", false},
+		{`trailing \`, "", false},
+		{"raw \n newline", "", false},
+	} {
+		got, ok := unescapeJSONString(c.body)
+		if ok != c.ok || got != c.want {
+			t.Errorf("unescapeJSONString(%q) = %q, %v; want %q, %v", c.body, got, ok, c.want, c.ok)
+		}
+	}
+	if p, err := ParseResourcePolicy(`{\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":\"*\",\"Action\":\"execute-api:Invoke\"}]}" , "x`); err == nil && p.Public("execute-api:Invoke") {
+		t.Error("a policy with a quote left bare after it was read as an open one")
+	}
+}
+
+// Whatever encoding/json writes inside a string's quotes reads back as the string.
+func FuzzUnescapeJSONString(f *testing.F) {
+	for _, s := range []string{"", `{"a":"b/c"}`, "<&> ", "tab\there\\", "é😀\x7f\x01"} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, s string) {
+		if !utf8.ValidString(s) {
+			return // encoding/json replaces invalid UTF-8; nothing comes back to compare
+		}
+		quoted, err := json.Marshal(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, ok := unescapeJSONString(string(quoted[1 : len(quoted)-1]))
+		if !ok || got != s {
+			t.Fatalf("unescapeJSONString(%s) = %q, %v; want %q", quoted, got, ok, s)
+		}
+	})
 }
 
 // A Lambda function policy speaks to two doors: a direct call, and a call through the
@@ -70,6 +125,37 @@ func TestResourcePolicyThroughAFunctionURL(t *testing.T) {
 	}
 	if p.PublicThroughURL("AWS_IAM", "lambda:InvokeFunctionUrl") {
 		t.Error("a grant for NONE URLs does not hold for an AWS_IAM one")
+	}
+}
+
+// "Deny everyone not coming from these addresses" confines a policy to a network: an
+// attacker on the internet is outside it. "Deny unless over TLS" confines nothing, and a
+// Deny scoped to a range wider than /8 is no confinement either.
+func TestResourcePolicyConfined(t *testing.T) {
+	allowAll := `{"Effect":"Allow","Principal":"*","Action":"execute-api:Invoke","Resource":"*"}`
+	deny := func(cond string) string {
+		return `{"Statement":[` + allowAll + `,{"Effect":"Deny","Principal":"*","Action":"execute-api:Invoke","Resource":"*","Condition":` + cond + `}]}`
+	}
+	for _, c := range []struct {
+		name     string
+		policy   string
+		confined bool
+	}{
+		{"deny outside one range", deny(`{"NotIpAddress":{"aws:SourceIp":["203.0.113.0/24"]}}`), true},
+		{"deny outside one VPC endpoint", deny(`{"StringNotEquals":{"aws:SourceVpce":"vpce-1"}}`), true},
+		{"deny without TLS", deny(`{"Bool":{"aws:SecureTransport":"false"}}`), false},
+		{"deny outside half the internet", deny(`{"NotIpAddress":{"aws:SourceIp":"0.0.0.0/1"}}`), false},
+		{"deny outside any VPC", deny(`{"StringNotLike":{"aws:SourceVpc":"vpc-*"}}`), false},
+		{"an allow with a negated condition", `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"execute-api:Invoke","Condition":{"NotIpAddress":{"aws:SourceIp":"10.0.0.0/8"}}}]}`, false},
+		{"no deny at all", `{"Statement":[` + allowAll + `]}`, false},
+	} {
+		p, err := ParseResourcePolicy(c.policy)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if got := p.Confined("execute-api:Invoke"); got != c.confined {
+			t.Errorf("%s: confined = %v, want %v", c.name, got, c.confined)
+		}
 	}
 }
 

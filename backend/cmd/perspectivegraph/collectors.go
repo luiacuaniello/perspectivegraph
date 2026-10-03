@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion"
+	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/apigateway"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/build"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/cloudnet"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/custodian"
@@ -28,7 +29,7 @@ import (
 func allCollectors() []ingestion.Collector {
 	return []ingestion.Collector{
 		trivy.New(), semgrep.New(), custodian.New(), falco.New(), build.New(), k8s.New(),
-		cloudnet.New(), iam.New(), supplychain.New(), sso.New(), dataclass.New(), eks.New(), lambda.New(),
+		cloudnet.New(), iam.New(), supplychain.New(), sso.New(), dataclass.New(), eks.New(), lambda.New(), apigateway.New(),
 	}
 }
 

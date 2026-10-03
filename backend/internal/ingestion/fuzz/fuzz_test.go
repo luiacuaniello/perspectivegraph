@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion"
+	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/apigateway"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/build"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/cloudnet"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/custodian"
@@ -67,3 +68,6 @@ func FuzzDataclass(f *testing.F) { run(f, dataclass.New(), "../../../testdata/da
 func FuzzBuild(f *testing.F)     { run(f, build.New(), "../../../testdata/build-sample.json") }
 func FuzzEKS(f *testing.F)       { run(f, eks.New(), "../../../testdata/eks-sample.json") }
 func FuzzLambda(f *testing.F)    { run(f, lambda.New(), "../../../testdata/lambda-sample.json") }
+func FuzzAPIGateway(f *testing.F) {
+	run(f, apigateway.New(), "../../../testdata/apigateway-sample.json")
+}

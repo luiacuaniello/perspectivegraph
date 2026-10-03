@@ -15,6 +15,7 @@ const (
 	LabelLoadBalancer   Label = "LoadBalancer"
 	LabelDatabase       Label = "Database" // managed DB (RDS, Cloud SQL…), often a crown jewel
 	LabelBucket         Label = "Bucket"   // object storage (S3, GCS…), often a crown jewel
+	LabelAPI            Label = "API"      // an HTTP front door to code (API Gateway)
 
 	// Code / App
 	LabelRepository Label = "Repository"
@@ -79,7 +80,7 @@ const (
 // reach a label/edge type can never become Cypher injection.
 var validLabels = map[Label]bool{
 	LabelVirtualMachine: true, LabelContainer: true, LabelFunction: true, LabelVPC: true,
-	LabelLoadBalancer: true, LabelDatabase: true, LabelBucket: true,
+	LabelLoadBalancer: true, LabelDatabase: true, LabelBucket: true, LabelAPI: true,
 	LabelRepository: true, LabelImage: true, LabelPackage: true, LabelLibrary: true,
 	LabelUser: true, LabelIAMRole: true, LabelServiceAccount: true, LabelIdentityProvider: true,
 	LabelCVE: true, LabelWeakness: true, LabelMisconfiguration: true, LabelSecret: true,

@@ -19,6 +19,10 @@
 #                       first forwarding to an ECS service in a private subnet and to a Lambda
 #                       function: a plain HTTP request to each DNS name says which one the
 #                       internet reaches.
+#   API Gateway         an HTTP API with an open route and one behind a JWT authorizer, a
+#                       REST API with an open method, and one whose policy denies everyone
+#                       outside a documentation range: an unauthenticated request to each
+#                       route says which ones answer (401 or 403 is closed).
 #   GitHub OIDC         a role pinned to one repository (an identity provider that is no
 #                       entry point), and an attempt at a role open to every repository,
 #                       which AWS is documented to refuse.
@@ -92,6 +96,16 @@ teardown() {
   for td in $(aws ecs list-task-definitions --family-prefix "$PREFIX" --query 'taskDefinitionArns[]' --output text); do
     aws ecs deregister-task-definition --task-definition "$td" >/dev/null
     aws ecs delete-task-definitions --task-definitions "$td" >/dev/null 2>&1
+  done
+  for api in $(aws apigatewayv2 get-apis --query "Items[?starts_with(Name, '${PREFIX}-')].ApiId" --output text 2>/dev/null); do
+    aws apigatewayv2 delete-api --api-id "$api" && say "  deleted HTTP API $api"
+  done
+  for api in $(aws apigateway get-rest-apis --query "items[?starts_with(name, '${PREFIX}-')].id" --output text 2>/dev/null); do
+    # AWS takes one DeleteRestApi call every 30 seconds per account.
+    for _ in 1 2 3 4; do
+      aws apigateway delete-rest-api --rest-api-id "$api" 2>/dev/null && { say "  deleted REST API $api"; break; }
+      sleep 31
+    done
   done
   for f in "${FUNCTIONS[@]}"; do
     aws lambda delete-function --function-name "${PREFIX}-${f}" >/dev/null 2>&1 && say "  deleted function ${PREFIX}-${f}"
@@ -323,6 +337,51 @@ retry 12 aws elbv2 register-targets --target-group-arn "$TG_FN" --targets Id="$F
 say "  functions: open (URL NONE, both grants AWS asks for), urlonly (URL NONE, the URL grant only),"
 say "             iam (URL AWS_IAM), private (no URL); all at reserved concurrency 0"
 
+# ── API Gateway ─────────────────────────────────────────────────────────────
+FN_IAM_ARN=$(aws lambda get-function --function-name "${PREFIX}-iam" --query Configuration.FunctionArn --output text)
+apigw_may_invoke() { # apigw_may_invoke <function> <statement id> <api id>
+  aws lambda add-permission --function-name "${PREFIX}-$1" --statement-id "$2" --action lambda:InvokeFunction \
+    --principal apigateway.amazonaws.com --source-arn "arn:aws:execute-api:${REGION}:${ACCOUNT}:$3/*" >/dev/null
+}
+# An HTTP API: GET /open asks for nothing; GET /jwt wants a Google ID token for a client id
+# no one can hold (Google generates them; nobody picks one). AWS checks that the issuer
+# publishes an OpenID discovery document, so the issuer has to be a real one.
+HTTP_API=$(aws apigatewayv2 create-api --name "${PREFIX}-http" --protocol-type HTTP --query ApiId --output text)
+I_OPEN=$(aws apigatewayv2 create-integration --api-id "$HTTP_API" --integration-type AWS_PROXY --integration-uri "$FN_PRIVATE_ARN" \
+  --payload-format-version 2.0 --query IntegrationId --output text)
+I_JWT=$(aws apigatewayv2 create-integration --api-id "$HTTP_API" --integration-type AWS_PROXY --integration-uri "$FN_IAM_ARN" \
+  --payload-format-version 2.0 --query IntegrationId --output text)
+AUTH=$(aws apigatewayv2 create-authorizer --api-id "$HTTP_API" --authorizer-type JWT --name jwt \
+  --identity-source '$request.header.Authorization' --jwt-configuration Audience=pg-lab-unissued.apps.googleusercontent.com,Issuer=https://accounts.google.com \
+  --query AuthorizerId --output text)
+aws apigatewayv2 create-route --api-id "$HTTP_API" --route-key 'GET /open' --target "integrations/$I_OPEN" >/dev/null
+aws apigatewayv2 create-route --api-id "$HTTP_API" --route-key 'GET /jwt' --target "integrations/$I_JWT" \
+  --authorization-type JWT --authorizer-id "$AUTH" >/dev/null
+aws apigatewayv2 create-stage --api-id "$HTTP_API" --stage-name '$default' --auto-deploy >/dev/null
+apigw_may_invoke private apigw-http "$HTTP_API"
+apigw_may_invoke iam apigw-http "$HTTP_API"
+# Two REST APIs, each with GET / asking for nothing into the private function; the second's
+# policy lets everyone in, then denies everyone outside 192.0.2.0/24 - a documentation range.
+rest_api() { # rest_api <name> [policy] -> "<id> <root resource id>"
+  local id root
+  if [ -n "${2:-}" ]; then
+    id=$(aws apigateway create-rest-api --name "${PREFIX}-$1" --endpoint-configuration types=REGIONAL --policy "$2" --query id --output text)
+  else
+    id=$(aws apigateway create-rest-api --name "${PREFIX}-$1" --endpoint-configuration types=REGIONAL --query id --output text)
+  fi
+  root=$(aws apigateway get-resources --rest-api-id "$id" --query 'items[0].id' --output text)
+  aws apigateway put-method --rest-api-id "$id" --resource-id "$root" --http-method GET --authorization-type NONE >/dev/null
+  aws apigateway put-integration --rest-api-id "$id" --resource-id "$root" --http-method GET --type AWS_PROXY \
+    --integration-http-method POST --uri "arn:aws:apigateway:${REGION}:lambda:path/2015-03-31/functions/${FN_PRIVATE_ARN}/invocations" >/dev/null
+  aws apigateway create-deployment --rest-api-id "$id" --stage-name prod >/dev/null
+  apigw_may_invoke private "apigw-$1" "$id"
+  echo "$id"
+}
+OFFICE='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"execute-api:Invoke","Resource":"execute-api:/*"},{"Effect":"Deny","Principal":"*","Action":"execute-api:Invoke","Resource":"execute-api:/*","Condition":{"NotIpAddress":{"aws:SourceIp":"192.0.2.0/24"}}}]}'
+REST_OPEN=$(rest_api rest)
+REST_OFFICE=$(rest_api office "$OFFICE")
+say "  APIs: http (GET /open open, GET /jwt behind a JWT authorizer), rest (GET / open), office (denies outside 192.0.2.0/24)"
+
 # ── S3 ──────────────────────────────────────────────────────────────────────
 SUFFIX=$(python3 -c 'import secrets; print(secrets.token_hex(3))')
 BUCKETS=()
@@ -395,6 +454,21 @@ for lb in pub int; do
   done
   echo "$lb $code" >>"$WORK/lbs.txt"
 done
+
+# Each route, asked without credentials. A new stage can answer 404 for a few seconds.
+: >"$WORK/apis.txt"
+api_code() { # api_code <label> <url>
+  local code=000
+  for _ in $(seq 1 12); do
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$2" || true)
+    case "$code" in 000|404) sleep 5 ;; *) break ;; esac
+  done
+  echo "$1 $code" >>"$WORK/apis.txt"
+}
+api_code http-open "https://${HTTP_API}.execute-api.${REGION}.amazonaws.com/open"
+api_code http-jwt "https://${HTTP_API}.execute-api.${REGION}.amazonaws.com/jwt"
+api_code rest-open "https://${REST_OPEN}.execute-api.${REGION}.amazonaws.com/prod/"
+api_code rest-office "https://${REST_OFFICE}.execute-api.${REGION}.amazonaws.com/prod/"
 
 # ── The engine ──────────────────────────────────────────────────────────────
 collect() {
@@ -492,6 +566,28 @@ routes_to = {(e["from"], e["to"]) for e in edges if e["type"] == "ROUTES_TO"}
 check("LB pub -> ECS behind-alb", True, (pub, behind) in routes_to, "through the service's target group, with no task running")
 check("LB pub -> Lambda private", True, (pub, fn_private) in routes_to, "a lambda target group")
 check("ECS behind-alb exposed", False, exposed(nodes[behind]) if behind else "missing", "private subnets, no public address: only the load balancer reaches it")
+
+# API Gateway, against what each route answered a stranger
+apicodes = dict(l.split() for l in open(f"{work}/apis.txt"))
+answers = lambda code: code not in ("401", "403", "000", "404")
+routes_to = {(e["from"], e["to"]) for e in edges if e["type"] == "ROUTES_TO"}
+api = lambda name: next(((i, n) for i, n in nodes.items() if n["label"] == "API" and n["name"] == f"{prefix}-{name}"), (None, None))
+fn_iam = next((i for i, n in nodes.items() if n["label"] == "Function" and n["name"] == f"{prefix}-iam"), None)
+check("AWS: the JWT route refuses a stranger", True, apicodes.get("http-jwt") in ("401", "403"), f"answered {apicodes.get('http-jwt')}")
+for name, label in (("http", "http-open"), ("rest", "rest-open"), ("office", "rest-office")):
+    i, n = api(name)
+    if n is None:
+        check(f"API {name}", "read", "missing", ""); continue
+    code = apicodes.get(label, "000")
+    check(f"API {name} exposed (AWS: {'answers' if answers(code) else 'refuses'})", answers(code), exposed(n),
+          f"an unauthenticated request answered {code}; " + n["props"].get("exposure", ""))
+http_id, http = api("http")
+rest_id, _ = api("rest")
+if http:
+    check("API http open routes", "GET /open", http["props"].get("open_routes", ""), "GET /jwt sits behind the authorizer")
+check("API http -> Lambda private", True, (http_id, fn_private) in routes_to, "the open route's integration")
+check("API http -> Lambda iam", False, (http_id, fn_iam) in routes_to, "only the JWT route reaches it")
+check("API rest -> Lambda private", True, (rest_id, fn_private) in routes_to, "read from the method's integration URI")
 
 # GitHub OIDC
 idps = [n for n in nodes.values() if n["label"] == "IdentityProvider" and n["props"].get("oidc_issuer") == "token.actions.githubusercontent.com"]

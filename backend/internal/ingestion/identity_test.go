@@ -16,6 +16,7 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/graph"
 	"github.com/luiacuaniello/perspectivegraph/internal/graph/memory"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion"
+	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/apigateway"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/cloudnet"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/custodian"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/dataclass"
@@ -935,5 +936,52 @@ func TestALoadBalancerIsTheWayIn(t *testing.T) {
 	}
 	if !routes["web -> app -> app-role -> account-admin (effective)"] {
 		t.Errorf("the route through the load balancer into the private instance's role is missing: %v", routes)
+	}
+}
+
+// A Lambda function with no URL, invoked through an API: the function is not exposed
+// itself, the API's open route is the way in, and the route runs on into the function's
+// role. A route behind an authorizer to another function leads nowhere.
+func TestAnOpenAPIRouteIsTheWayIntoAFunction(t *testing.T) {
+	const acct = "123456789012"
+	const fnArn = "arn:aws:lambda:eu-west-1:" + acct + ":function:"
+	iamBundle := `{"UserDetailList":[],"GroupDetailList":[],"Policies":[],"RoleDetailList":[
+	 {"RoleName":"items-exec","Arn":"arn:aws:iam::` + acct + `:role/items-exec","AssumeRolePolicyDocument":{"Statement":[]},
+	  "RolePolicyList":[{"PolicyName":"p","PolicyDocument":{"Statement":[{"Effect":"Allow","Action":"iam:PassRole","Resource":"*"},
+	   {"Effect":"Allow","Action":"lambda:CreateFunction","Resource":"*"}]}}]}]}`
+	viaAPI := `{"Statement":[{"Effect":"Allow","Principal":{"Service":"apigateway.amazonaws.com"},"Action":"lambda:InvokeFunction"}]}`
+	functions := `{"functions":[
+	  {"FunctionName":"items","FunctionArn":"` + fnArn + `items","Role":"arn:aws:iam::` + acct + `:role/items-exec","Policy":` + viaAPI + `},
+	  {"FunctionName":"orders","FunctionArn":"` + fnArn + `orders","Role":"arn:aws:iam::` + acct + `:role/items-exec","Policy":` + viaAPI + `}]}`
+	apis := `{"account":"` + acct + `","region":"eu-west-1","http_apis":[{"apiId":"a1","name":"shop","protocolType":"HTTP","stages":["$default"],
+	  "routes":[{"routeKey":"GET /items","authorizationType":"NONE","target":"integrations/i1"},
+	            {"routeKey":"POST /orders","authorizationType":"JWT","target":"integrations/i2"}],
+	  "integrations":[{"integrationId":"i1","integrationType":"AWS_PROXY","integrationUri":"` + fnArn + `items"},
+	                  {"integrationId":"i2","integrationType":"AWS_PROXY","integrationUri":"` + fnArn + `orders"}]}]}`
+	ctx := context.Background()
+	store := memory.New()
+	applyBody(t, ctx, store, iam.New(), iamBundle, ingestion.Options{})
+	applyBody(t, ctx, store, lambda.New(), functions, ingestion.Options{})
+	applyBody(t, ctx, store, apigateway.New(), apis, ingestion.Options{})
+	snap, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range snap.Nodes {
+		if n.Label == ontology.LabelFunction && n.InternetExposed() {
+			t.Errorf("%s has no URL and no public policy: not exposed itself", n.Name)
+		}
+	}
+	routes := map[string]bool{}
+	for _, r := range routeNames(analyzer.FindCriticalPaths(snap)) {
+		routes[r] = true
+	}
+	if !routes["shop -> items -> items-exec -> account-admin (effective)"] {
+		t.Errorf("the open route into the function's role is missing: %v", routes)
+	}
+	for r := range routes {
+		if strings.Contains(r, "shop -> orders") {
+			t.Errorf("a route behind a JWT authorizer is no way in: %s", r)
+		}
 	}
 }

@@ -17,6 +17,32 @@ digest, take the backup, stage it.
 
 ---
 
+## 1.31.0
+
+### API Gateway is read: an open route is a way in
+
+**Affects you if** you publish Lambda functions, or private load balancers, through Amazon
+API Gateway.
+
+A function with no URL of its own, published through an API, was not an entry point: the
+Lambda collector marked it `invoked_by` API Gateway and stopped there, since whether the API
+asked for credentials was not read. A new collector, `POST /ingest/apigateway`, and a new AWS
+connector feed, `apigateway`, read REST, HTTP and WebSocket APIs. An API that is deployed, not
+private, and has a route asking for nothing - no authorizer, no API key - is an entry point,
+unless a REST API's resource policy keeps strangers out; each open route leads to its Lambda
+function, or through a VPC link to its load balancer. Routes behind an authorizer lead
+nowhere. APIs are a new node label, `API`.
+
+The resource-policy reader also learned the commonest API policy: allow everyone, then deny
+everyone outside a list of addresses or a VPC endpoint. That keeps an internet attacker out,
+and is now read so.
+
+What to do: nothing - `apigateway:GET` is inside `SecurityAudit`. A custom read-only role
+needs `apigateway:GET`; without it the connector reports the error for that feed and reads the
+rest. Expect new routes through public APIs.
+
+---
+
 ## 1.30.0
 
 ### Load balancers are read, and the routes behind them appear

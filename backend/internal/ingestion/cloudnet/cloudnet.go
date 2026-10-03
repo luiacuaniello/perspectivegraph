@@ -636,24 +636,9 @@ const lbRoutesProb = 0.9
 
 // lbID keys a load balancer the way the custodian collector does - by name, account and
 // Region, which together are unique - so that both feeds describe one node.
-func lbID(account, arn, name string) string {
-	return ingestion.RegionalID(ontology.LabelLoadBalancer, first(account, ingestion.AccountFromARN(arn)),
-		ingestion.RegionFromARN(arn), name)
-}
+func lbID(account, arn, name string) string { return ingestion.LoadBalancerID(account, arn, name) }
 
-// lbNameFromARN reads a load balancer's name out of its ARN:
-// arn:aws:elasticloadbalancing:REGION:ACCOUNT:loadbalancer/app/NAME/ID.
-func lbNameFromARN(arn string) string {
-	_, rest, ok := strings.Cut(arn, ":loadbalancer/")
-	if !ok {
-		return ""
-	}
-	parts := strings.Split(rest, "/")
-	if len(parts) >= 3 {
-		return parts[1]
-	}
-	return parts[0]
-}
+func lbNameFromARN(arn string) string { return ingestion.LoadBalancerNameFromARN(arn) }
 
 // unqualifiedFunctionARN drops a version or alias from a Lambda function ARN, so a target
 // registered by alias joins the function the lambda collector keys by its plain ARN.

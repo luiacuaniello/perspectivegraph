@@ -40,7 +40,8 @@ CONNECTORS_ENABLED=aws AWS_CONNECTOR_MODE=sdk AWS_REGION=us-east-1 \
 # lambda:ListFunctions, lambda:GetFunctionUrlConfig, lambda:GetPolicy, lambda:ListTags,
 # ecs:ListClusters, ecs:ListServices, ecs:DescribeServices, ecs:DescribeTaskDefinition,
 # elasticloadbalancing:DescribeLoadBalancers, elasticloadbalancing:DescribeListeners,
-# elasticloadbalancing:DescribeTargetGroups, elasticloadbalancing:DescribeTargetHealth
+# elasticloadbalancing:DescribeTargetGroups, elasticloadbalancing:DescribeTargetHealth,
+# apigateway:GET (REST, HTTP and WebSocket APIs, their stages, routes and integrations)
 # (all covered by the AWS-managed SecurityAudit policy)
 # plus, for EKS Pod Identity, which SecurityAudit does not cover:
 # eks:ListPodIdentityAssociations, eks:DescribePodIdentityAssociation
@@ -89,6 +90,12 @@ routes and network ACLs of its subnets; it routes to the instances, the ECS serv
 the target groups a service registers in, so it holds with no task running), the Lambda
 functions and the other load balancers its target groups name. It is keyed the way Cloud
 Custodian keys a load balancer, so both feeds describe the same node.
+
+**API Gateway.** The connector reads every REST, HTTP and WebSocket API with its stages and,
+for each route, whether it asks for credentials and what it integrates with. A deployed,
+non-private API with a route that asks for nothing is an entry point, and that route leads to
+its Lambda function or, through a VPC link, its load balancer - so a function with no URL of
+its own, published through an API, is reached the way an attacker reaches it.
 
 Connectors are **leader-only** (replicas don't multiply API calls), interval-driven
 (`CONNECTOR_INTERVAL`), and observable via `GET /connectors` plus

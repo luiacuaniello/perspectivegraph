@@ -155,8 +155,9 @@ from *directionally honest* to *empirically grounded*, and it needs real exploit
 resources on both sides of each 1.29.0 rule, has the engine read them through the live connector as a
 `SecurityAudit`-only role, and takes the verdict from AWS wherever AWS gives one: ten bucket policies
 judged by `GetBucketPolicyStatus`, three function URLs judged by an unauthenticated request - 403 is
-closed, anything else got past authorization - and two load balancers, an internet-facing one and an
-internal one, judged by a plain HTTP request to each DNS name. Nothing runs and nothing behind them is
+closed, anything else got past authorization - two load balancers, an internet-facing one and an
+internal one, judged by a plain HTTP request to each DNS name, and three APIs, judged by an
+unauthenticated request to each route. Nothing runs and nothing behind them is
 reachable: the functions have reserved concurrency 0, the buckets are empty and behind
 `RestrictPublicBuckets`, the ECS services have no tasks. The load balancers bill by the hour, so a run
 costs a few cents; it tears itself down.
@@ -184,6 +185,15 @@ answered the request (503: no task behind it) and the engine called it the entry
 internal one never answered and the engine called it no way in. The engine drew the route from the public
 one to an ECS service in a private subnet - through the service's target group, with no task running - and
 to a Lambda function, and kept the service itself unexposed. All agreed on the first run.
+
+API Gateway joined in 1.31.0: an HTTP API with an open route and one behind a JWT authorizer, a REST
+API with an open method, and a REST API whose policy lets everyone in, then denies everyone outside a
+documentation range. AWS answered the open routes (503 and 500: the function behind them never runs),
+refused the JWT route (401) and the confined API (403). The first run caught one error in the new code
+before it shipped: API Gateway hands a REST API's policy back escaped, slashes included, the reader
+could not decode it, and erring toward reporting it called the confined API open. With that fixed, the
+engine agreed on all of it - the open routes, the route into each function, and no route through the
+authorizer.
 
 ### Condition keys, and why they are not refutations
 

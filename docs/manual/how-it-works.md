@@ -109,7 +109,7 @@ The common vocabulary every collector maps onto. Defined in
 
 | Category | Node labels (`V`) | Edge types (`E`) |
 | --- | --- | --- |
-| **Infrastructure** | `VirtualMachine`, `Container`, `Function`, `VPC`, `LoadBalancer`, `Database`, `Bucket` | `HOSTS`, `CONNECTS_TO`, `EXPOSES`, `ROUTES_TO` |
+| **Infrastructure** | `VirtualMachine`, `Container`, `Function`, `API`, `VPC`, `LoadBalancer`, `Database`, `Bucket` | `HOSTS`, `CONNECTS_TO`, `EXPOSES`, `ROUTES_TO` |
 | **Code / App** | `Repository`, `Package`, `Library`, `Image` | `DEPENDS_ON`, `COMPILED_INTO`, `BUILT_FROM` |
 | **Identity** | `User`, `IAM_Role`, `ServiceAccount` | `ASSUMES`, `HAS_PERMISSION`, `CAN_ESCALATE_TO` |
 | **Security** | `CVE`, `Weakness`, `Misconfiguration`, `Secret` | `AFFECTS`, `EXPLOITS`, `MITIGATES` |
