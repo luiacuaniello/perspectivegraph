@@ -25,3 +25,6 @@ Thank you to everyone whose work is in this repository:
   ([#290](https://github.com/luiacuaniello/perspectivegraph/pull/290)) and for the ranked
   attack-path list ([#293](https://github.com/luiacuaniello/perspectivegraph/pull/293)),
   which also found that the runtime indicator was hidden from screen readers.
+- [@dipakshimpi](https://github.com/dipakshimpi) - the Helm chart's values schema
+  ([#310](https://github.com/luiacuaniello/perspectivegraph/pull/310)): a misspelt or unknown
+  setting now fails `helm install` instead of being silently ignored.

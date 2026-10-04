@@ -16,16 +16,21 @@ the upgrade recipe in
 digest, take the backup, stage it.
 
 ---
+
 ## 1.32.0
 
-### Helm values are now validated strictly
+### Helm values are checked against a schema
 
-The Helm chart now validates values against a schema. Unknown or misspelled
-keys that were previously ignored will now cause Helm validation to fail.
+**Affects you if** you install with Helm and pass your own values file or `--set` flags.
 
-What to do: review custom values files for unsupported or misspelled keys
-before upgrading. In particular, check any values that are not part of the
-chart's documented `values.yaml`.
+The chart now ships a `values.schema.json`, and Helm checks your values against it on
+`install`, `upgrade`, `lint` and `template`. A key the chart does not know - a misspelt
+`netwrokPolicy:`, or one an earlier release removed - used to be ignored, leaving the setting
+you meant at its default; now the command fails and names the key. A value of the wrong type
+fails the same way.
+
+What to do: before upgrading, run `helm lint` or `helm template` with your values and fix or
+remove any key it reports.
 
 ---
 
