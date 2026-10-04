@@ -1,0 +1,308 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "frontend": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": {
+              "type": "string"
+            },
+            "tag": {
+              "type": "string"
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ]
+            }
+          }
+        },
+        "podSecurityContext": {
+          "type": "object"
+        },
+        "containerSecurityContext": {
+          "type": "object"
+        },
+        "topologySpreadConstraints": {
+          "type": "array"
+        },
+        "affinity": {
+          "type": "object"
+        }
+      }
+    },
+
+    "backend": {
+      "type": "object",
+      "properties": {
+        "replicas": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+
+    "service": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "ClusterIP",
+            "NodePort",
+            "LoadBalancer",
+            "ExternalName"
+          ]
+        },
+        "apiPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "ingestPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "frontendPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
+      }
+    },
+
+    "postgres": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "externalHost": {
+          "type": "string"
+        },
+        "externalPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "auth": {
+          "type": "object",
+          "properties": {
+            "user": {
+              "type": "string"
+            },
+            "database": {
+              "type": "string"
+            },
+            "password": {
+              "type": "string"
+            },
+            "dsn": {
+              "type": "string"
+            }
+          }
+        },
+        "persistence": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "storageClass": {
+              "type": "string"
+            },
+            "size": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+
+    "nats": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "image": {
+          "type": "string"
+        },
+        "externalUrl": {
+          "type": "string"
+        },
+        "auth": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "user": {
+              "type": "string"
+            },
+            "password": {
+              "type": "string"
+            },
+            "existingSecret": {
+              "type": "string"
+            }
+          }
+        },
+        "persistence": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "storageClass": {
+              "type": "string"
+            },
+            "size": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+
+    "persistence": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "storageClass": {
+          "type": "string"
+        },
+        "size": {
+          "type": "string"
+        }
+      }
+    },
+
+    "ingress": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "allowUnauthenticated": {
+          "type": "boolean"
+        },
+        "className": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string"
+        },
+        "maxBodySize": {
+          "type": [
+            "string",
+            "integer"
+          ]
+        },
+        "annotations": {
+          "type": "object"
+        },
+        "tls": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "host": {
+              "type": "string"
+            },
+            "secretName": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+
+    "networkPolicy": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "postgresFrom": {
+          "type": "array"
+        },
+        "backendFrom": {
+          "type": "array"
+        }
+      }
+    },
+
+    "auth": {
+      "type": "object",
+      "properties": {
+        "apiTokens": {
+          "type": "string"
+        },
+        "anonymousRole": {
+          "type": "string",
+          "enum": [
+            "",
+            "viewer"
+          ]
+        },
+        "oidc": {
+          "type": "object",
+          "properties": {
+            "jwksUrl": {
+              "type": "string"
+            },
+            "issuer": {
+              "type": "string"
+            },
+            "audience": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+
+    "ingest": {
+      "type": "object",
+      "properties": {
+        "hmacSecret": {
+          "type": "string"
+        },
+        "hmacSecrets": {
+          "type": "string"
+        },
+        "hmacAcceptV1": {
+          "type": "boolean"
+        }
+      }
+    },
+
+    "secrets": {
+      "type": "object",
+      "properties": {
+        "existingSecret": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
