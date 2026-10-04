@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
+	"unicode/utf16"
+	"unicode/utf8"
 )
 
 // ResourcePolicy is a resource-based policy - an S3 bucket policy, a Lambda function
@@ -42,6 +45,10 @@ type ResourceStatement struct {
 	// other call. URLAuthType is the auth type the latter requires.
 	URLOnly     bool
 	URLAuthType string
+	// DeniesOutside means a Deny that holds for every caller outside a fixed set: "deny
+	// unless from these addresses", "unless through this VPC endpoint". Unlike a Deny that
+	// holds only without TLS, it is one an attacker on the internet cannot step around.
+	DeniesOutside bool
 }
 
 // narrowingKeys are the condition keys whose fixed values make a statement non-public, as
@@ -66,6 +73,14 @@ func ParseResourcePolicy(raw any) (ResourcePolicy, error) {
 			return ResourcePolicy{}, nil
 		}
 		doc = []byte(v)
+		// API Gateway hands a REST API's policy back escaped - {\"Version\":…,
+		// \"Resource\":\"arn:…\/*\"} - which is the body of a JSON string, not JSON.
+		// Undoing every escape JSON allows, \/ included, gives the document back.
+		if !json.Valid(doc) && strings.Contains(v, `\"`) {
+			if unq, ok := unescapeJSONString(v); ok && json.Valid([]byte(unq)) {
+				doc = []byte(unq)
+			}
+		}
 	default:
 		b, err := json.Marshal(v)
 		if err != nil {
@@ -122,12 +137,80 @@ func ParseResourcePolicy(raw any) (ResourcePolicy, error) {
 					if narrowingOperator(op) && narrowingKeys[key] && allFixed(key, vals) {
 						s.Narrowed = true
 					}
+					if negatedOperator(op) && narrowingKeys[key] && allFixed(key, vals) {
+						s.DeniesOutside = true
+					}
 				}
 			}
+		}
+		if s.Allow {
+			s.DeniesOutside = false
 		}
 		out.Statements = append(out.Statements, s)
 	}
 	return out, nil
+}
+
+// unescapeJSONString undoes the escapes of the body of a JSON string - \" \\ \/ \b \f \n
+// \r \t and \uXXXX, surrogate pairs included - reading the escapes one by one rather than
+// putting the body between quotes for a decoder, which a stray quote in it could break out
+// of. ok is false when s is no such body: an escape JSON does not allow, or a quote or
+// control character left bare.
+func unescapeJSONString(s string) (string, bool) {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '"' || c < 0x20 {
+			return "", false
+		}
+		if c != '\\' {
+			b.WriteByte(c)
+			continue
+		}
+		if i++; i == len(s) {
+			return "", false
+		}
+		switch s[i] {
+		case '"', '\\', '/':
+			b.WriteByte(s[i])
+		case 'b':
+			b.WriteByte('\b')
+		case 'f':
+			b.WriteByte('\f')
+		case 'n':
+			b.WriteByte('\n')
+		case 'r':
+			b.WriteByte('\r')
+		case 't':
+			b.WriteByte('\t')
+		case 'u':
+			r, ok := hex4(s, i+1)
+			if !ok {
+				return "", false
+			}
+			i += 4
+			if utf16.IsSurrogate(r) && strings.HasPrefix(s[i+1:], `\u`) {
+				if lo, ok := hex4(s, i+3); ok {
+					if pair := utf16.DecodeRune(r, lo); pair != utf8.RuneError {
+						r, i = pair, i+6
+					}
+				}
+			}
+			b.WriteRune(r) // a lone surrogate becomes U+FFFD, as encoding/json makes it
+		default:
+			return "", false
+		}
+	}
+	return b.String(), true
+}
+
+// hex4 reads the four hex digits of a \u escape that start at s[i].
+func hex4(s string, i int) (rune, bool) {
+	if i+4 > len(s) {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(s[i:i+4], 16, 16)
+	return rune(n), err == nil
 }
 
 // Public reports whether the policy lets anyone perform one of the actions in a call made
@@ -197,6 +280,28 @@ func (s ResourceStatement) covers(actions []string) bool {
 				return true
 			}
 		}
+	}
+	return false
+}
+
+// Confined reports whether the policy denies one of the actions to every caller outside a
+// fixed set of addresses, endpoints or identities - which an attacker on the internet is
+// outside of, whatever an Allow elsewhere in the policy grants.
+func (p ResourcePolicy) Confined(actions ...string) bool {
+	for _, s := range p.Statements {
+		if s.DeniesOutside && s.anyone() && s.covers(actions) {
+			return true
+		}
+	}
+	return false
+}
+
+// negatedOperator reports whether a condition operator holds for every value but the ones
+// listed: on a Deny, it denies everyone outside them.
+func negatedOperator(op string) bool {
+	switch strings.TrimSuffix(strings.ToLower(op), "ifexists") {
+	case "stringnotequals", "stringnotequalsignorecase", "stringnotlike", "arnnotequals", "arnnotlike", "notipaddress":
+		return true
 	}
 	return false
 }

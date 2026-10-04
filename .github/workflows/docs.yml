@@ -68,8 +68,10 @@ jobs:
           cache: npm
           cache-dependency-path: site/package-lock.json
       - run: npm ci --no-audit --no-fund
+      # Fails on any high or critical advisory except one named in audit-exceptions.json,
+      # each with its reason and a date it must be reviewed by (scripts/audit.mjs).
       - name: npm audit (high/critical)
-        run: npm audit --audit-level=high
+        run: node scripts/audit.mjs
       - name: Build (fails on a broken internal link or anchor)
         run: npm run build
       - if: github.event_name != 'pull_request'

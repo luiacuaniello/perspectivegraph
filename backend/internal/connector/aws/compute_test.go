@@ -68,7 +68,9 @@ func (fakeECS) ListServices(context.Context, *ecs.ListServicesInput, ...func(*ec
 func (fakeECS) DescribeServices(context.Context, *ecs.DescribeServicesInput, ...func(*ecs.Options)) (*ecs.DescribeServicesOutput, error) {
 	svc := func(name string, public ecstypes.AssignPublicIp) ecstypes.Service {
 		return ecstypes.Service{ServiceArn: aws.String("arn:aws:ecs:eu-west-1:123456789012:service/prod/" + name),
-			ServiceName: aws.String(name), TaskDefinition: aws.String("arn:aws:ecs:eu-west-1:123456789012:task-definition/app:1"),
+			// Both register in the workers target group, which fakeELB's load balancer uses.
+			LoadBalancers: []ecstypes.LoadBalancer{{TargetGroupArn: aws.String(tgArn + "workers/1")}},
+			ServiceName:   aws.String(name), TaskDefinition: aws.String("arn:aws:ecs:eu-west-1:123456789012:task-definition/app:1"),
 			NetworkConfiguration: &ecstypes.NetworkConfiguration{AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
 				AssignPublicIp: public, SecurityGroups: []string{"sg-web"}, Subnets: []string{"subnet-pub"}}}}
 	}

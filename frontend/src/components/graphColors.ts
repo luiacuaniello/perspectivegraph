@@ -15,6 +15,7 @@ export function category(label: string): Category {
     case "Function":
     case "VPC":
     case "LoadBalancer":
+    case "API":
       return "infra";
     case "Database":
     case "Bucket":

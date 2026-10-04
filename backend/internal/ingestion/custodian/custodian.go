@@ -7,7 +7,7 @@
 //	{
 //	  "provider": "aws",
 //	  "policies": [
-//	    {"policy": "...", "resource": "aws.elbv2", "resources": [ {...}, ... ]},
+//	    {"policy": "...", "resource": "aws.app-elb", "resources": [ {...}, ... ]},
 //	    ...
 //	  ]
 //	}
@@ -94,7 +94,10 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 				g.bucket(res)
 			case "aws.rds", "rds", "database":
 				g.database(res)
-			case "aws.elb", "aws.elbv2", "elb", "loadbalancer":
+			// aws.app-elb is what Cloud Custodian calls application and network load
+			// balancers; aws.elb is the classic kind. aws.elbv2 is no Custodian resource,
+			// kept because bundles assembled by hand from these docs used it.
+			case "aws.app-elb", "app-elb", "aws.elb", "elb", "aws.elbv2", "loadbalancer":
 				g.loadBalancer(res)
 			}
 		}

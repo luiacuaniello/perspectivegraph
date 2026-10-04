@@ -16,6 +16,7 @@ import (
 	"fmt"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion"
+	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/apigateway"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/cloudnet"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/eks"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/iam"
@@ -37,6 +38,9 @@ const (
 	FeedEKS Feed = "eks"
 	// FeedLambda is each Lambda function with its URL, resource policy and tags.
 	FeedLambda Feed = "lambda"
+	// FeedAPIGateway is each REST, HTTP and WebSocket API with its stages, its routes'
+	// authorization and what they integrate with.
+	FeedAPIGateway Feed = "apigateway"
 )
 
 // transport acquires the raw describe-* JSON the existing collectors parse.
@@ -77,6 +81,7 @@ func New(t transport) *Connector {
 			{FeedIAM, iam.New()},
 			{FeedEKS, eks.New()},
 			{FeedLambda, lambda.New()},
+			{FeedAPIGateway, apigateway.New()},
 		},
 	}
 }
@@ -134,7 +139,7 @@ func (c *Connector) snapshotScope(feed Feed, account string) string {
 	switch feed {
 	case FeedIAM:
 		return "aws:" + account
-	case FeedNetwork, FeedEKS, FeedLambda:
+	case FeedNetwork, FeedEKS, FeedLambda, FeedAPIGateway:
 		r, ok := c.t.(interface{ Region() string })
 		if !ok || r.Region() == "" {
 			return ""
@@ -146,6 +151,8 @@ func (c *Connector) snapshotScope(feed Feed, account string) string {
 			return "aws:" + account + "/" + r.Region() + "/eks"
 		case FeedLambda:
 			return "aws:" + account + "/" + r.Region() + "/lambda"
+		case FeedAPIGateway:
+			return "aws:" + account + "/" + r.Region() + "/apigateway"
 		}
 		return "aws:" + account + "/" + r.Region()
 	}

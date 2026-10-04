@@ -11,10 +11,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
+	apigw "github.com/aws/aws-sdk-go-v2/service/apigateway"
+	apigwv2 "github.com/aws/aws-sdk-go-v2/service/apigatewayv2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+	elb "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
@@ -56,12 +59,15 @@ type iamAPI interface {
 // the cloudnet/iam collectors already parse, so the live path and the fixtures
 // path converge on identical downstream code.
 type sdkTransport struct {
-	ec2    ec2API
-	iam    iamAPI
-	eks    eksAPI
-	lambda lambdaAPI
-	ecs    ecsAPI
-	sts    stsAPI
+	ec2     ec2API
+	iam     iamAPI
+	eks     eksAPI
+	lambda  lambdaAPI
+	ecs     ecsAPI
+	elb     elbAPI
+	apigw   apigwAPI
+	apigwV2 apigwV2API
+	sts     stsAPI
 	// region is the one region the EC2 client reads; IAM is global.
 	region string
 
@@ -96,13 +102,16 @@ func newSDK(ctx context.Context, cfg Config) (transport, error) {
 		awsCfg.Credentials = aws.NewCredentialsCache(provider)
 	}
 	return &sdkTransport{
-		ec2:    ec2.NewFromConfig(awsCfg),
-		iam:    iam.NewFromConfig(awsCfg),
-		eks:    eks.NewFromConfig(awsCfg),
-		lambda: lambda.NewFromConfig(awsCfg),
-		ecs:    ecs.NewFromConfig(awsCfg),
-		sts:    sts.NewFromConfig(awsCfg),
-		region: awsCfg.Region,
+		ec2:     ec2.NewFromConfig(awsCfg),
+		iam:     iam.NewFromConfig(awsCfg),
+		eks:     eks.NewFromConfig(awsCfg),
+		lambda:  lambda.NewFromConfig(awsCfg),
+		ecs:     ecs.NewFromConfig(awsCfg),
+		elb:     elb.NewFromConfig(awsCfg),
+		apigw:   apigw.NewFromConfig(awsCfg),
+		apigwV2: apigwv2.NewFromConfig(awsCfg),
+		sts:     sts.NewFromConfig(awsCfg),
+		region:  awsCfg.Region,
 	}, nil
 }
 
@@ -146,6 +155,8 @@ func (t *sdkTransport) Fetch(ctx context.Context, feed Feed) ([]byte, error) {
 		return t.fetchEKS(ctx)
 	case FeedLambda:
 		return t.fetchLambda(ctx)
+	case FeedAPIGateway:
+		return t.fetchAPIGateway(ctx)
 	default:
 		return nil, nil
 	}
@@ -403,6 +414,14 @@ func (t *sdkTransport) fetchNetwork(ctx context.Context) ([]byte, error) {
 	}
 	b.ECSServices = svcs
 
+	// Load balancers are how the internet reaches most of what sits in private subnets. A
+	// failure here costs the load balancers, and is logged, not the rest of the network.
+	lbs, err := t.loadBalancers(ctx)
+	if err != nil {
+		slog.Warn("aws connector: load balancers not read", "err", err)
+	}
+	b.LoadBalancers = lbs
+
 	return json.Marshal(b)
 }
 
@@ -416,6 +435,7 @@ type networkBundle struct {
 	NetworkACLs      []naclJSON            `json:"network_acls,omitempty"`
 	InstanceProfiles []instanceProfileJSON `json:"instance_profiles,omitempty"`
 	ECSServices      []ecsServiceJSON      `json:"ecs_services,omitempty"`
+	LoadBalancers    []loadBalancerJSON    `json:"load_balancers,omitempty"`
 }
 
 // instanceProfileJSON mirrors iam list-instance-profiles: a profile and the role(s) it

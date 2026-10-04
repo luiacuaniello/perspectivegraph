@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion"
+	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/apigateway"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/build"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/cloudnet"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/custodian"
@@ -90,6 +91,7 @@ func TestCollectorsSurviveHostileInput(t *testing.T) {
 		"iam":         iam.New(),
 		"k8s":         k8s.New(),
 		"lambda":      lambda.New(),
+		"apigateway":  apigateway.New(),
 		"semgrep":     semgrep.New(),
 		"sso":         sso.New(),
 		"supplychain": supplychain.New(),

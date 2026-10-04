@@ -9,9 +9,9 @@
 // Input is a Lambda bundle - per function, what `aws lambda list-functions`,
 // `get-function-url-config`, `get-policy` and `list-tags` return - as the AWS connector
 // assembles it, or posted to /ingest/lambda. Roles are keyed by ARN, as the iam collector
-// keys them, so a function's route continues into its role's escalations. An invocation
-// through API Gateway is recorded but not followed: whether the API asks for credentials
-// lives in API Gateway, which is not read yet.
+// keys them, so a function's route continues into its role's escalations. A function an
+// API invokes is marked here; whether the API asks for credentials is read by the
+// apigateway collector, which draws the route from the API to the function.
 package lambda
 
 import (
@@ -105,7 +105,7 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 		for _, s := range policy.Statements {
 			for _, svc := range s.Services {
 				if s.Allow && svc == "apigateway.amazonaws.com" {
-					props["invoked_by"] = "API Gateway (its authorization is not read)"
+					props["invoked_by"] = "API Gateway (the apigateway feed decides whether that is a way in)"
 				}
 			}
 		}
