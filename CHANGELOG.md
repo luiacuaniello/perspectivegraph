@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.31.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.30.0...v1.31.0) (2026-10-04)
+
+
+### Features
+
+* **ingestion:** read API Gateway, the front door of serverless code ([#309](https://github.com/luiacuaniello/perspectivegraph/issues/309)) ([cc5cf64](https://github.com/luiacuaniello/perspectivegraph/commit/cc5cf64e51de2243a88f4b7c635cbb675f17c716))
+
 ## [1.30.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.29.1...v1.30.0) (2026-10-03)
 
 
