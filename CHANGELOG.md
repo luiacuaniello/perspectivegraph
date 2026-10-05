@@ -9,6 +9,19 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.32.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.31.0...v1.32.0) (2026-10-05)
+
+
+### Features
+
+* **dashboard:** show how this version's rules were checked against AWS ([#315](https://github.com/luiacuaniello/perspectivegraph/issues/315)) ([ff36d30](https://github.com/luiacuaniello/perspectivegraph/commit/ff36d3056404a6bf82b9650cfab1215d7e2a707c))
+* **helm:** add a values schema ([#310](https://github.com/luiacuaniello/perspectivegraph/issues/310)) ([45aa54e](https://github.com/luiacuaniello/perspectivegraph/commit/45aa54e8d79b570eb519fddcb88339d49470b75b))
+
+
+### Bug Fixes
+
+* **ingestion:** read the account's S3 Block Public Access, as S3 applies it ([#314](https://github.com/luiacuaniello/perspectivegraph/issues/314)) ([76882f9](https://github.com/luiacuaniello/perspectivegraph/commit/76882f9305fea32b06682c1d5dff52ef121dbd8b))
+
 ## [1.31.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.30.0...v1.31.0) (2026-10-04)
 
 
