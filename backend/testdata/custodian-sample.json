@@ -1,5 +1,5 @@
 {
-  "_comment": "Real AWS/Custodian export shapes: ALB Scheme + app tag, EC2 PublicIpAddress/IamInstanceProfile/Tags, IAM AttachedManagedPolicies, the instance profile that names the EC2 role (aws.iam-profile), S3 with tag-based data classification. LB→EC2 is inferred from the shared app tag; the admin role's reach over crown-jewel data stores is inferred from AdministratorAccess.",
+  "_comment": "Real AWS/Custodian export shapes: ALB Scheme + app tag, EC2 PublicIpAddress/IamInstanceProfile/Tags, IAM AttachedManagedPolicies, the instance profile that names the EC2 role (aws.iam-profile), S3 with tag-based data classification, the account's Block Public Access (aws.account, Custodian's s3-public-block filter). LB→EC2 is inferred from the shared app tag; the admin role's reach over crown-jewel data stores is inferred from AdministratorAccess.",
   "provider": "aws",
   "account_id": "123456789012",
   "policies": [
@@ -67,6 +67,21 @@
             { "Key": "classification", "Value": "pii" },
             { "Key": "app", "Value": "web" }
           ]
+        }
+      ]
+    },
+    {
+      "policy": "account-public-access-block",
+      "resource": "aws.account",
+      "resources": [
+        {
+          "account_id": "123456789012",
+          "c7n:s3-public-block": {
+            "BlockPublicAcls": true,
+            "IgnorePublicAcls": true,
+            "BlockPublicPolicy": true,
+            "RestrictPublicBuckets": true
+          }
         }
       ]
     }

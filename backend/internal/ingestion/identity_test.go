@@ -524,6 +524,41 @@ func TestExposureFollowsTheNetworkVerdict(t *testing.T) {
 	}
 }
 
+// A bucket's exposure was written only when it was open, and properties accumulate across
+// ingests, so a bucket closed after an export - by its owner, or by an account-wide Block
+// Public Access setting - stayed open in the graph. The verdict is now written either way.
+func TestABucketClosedLaterIsRetracted(t *testing.T) {
+	const public = `"{\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":\"*\",\"Action\":\"s3:GetObject\",\"Resource\":\"arn:aws:s3:::exports/*\"}]}"`
+	export := func(extra string) string {
+		return `{"account_id":"123456789012","policies":[{"resource":"aws.s3","resources":[
+		  {"Name":"exports","Policy":` + public + `,"Tags":[{"Key":"classification","Value":"pii"}]}]}` + extra + `]}`
+	}
+	bucket := func(store *memory.Store) ontology.Node {
+		snap, err := store.Snapshot(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, n := range snap.Nodes {
+			if n.Label == ontology.LabelBucket {
+				return n
+			}
+		}
+		t.Fatal("no bucket")
+		return ontology.Node{}
+	}
+	ctx := context.Background()
+	store := memory.New()
+	applyBody(t, ctx, store, custodian.New(), export(""), ingestion.Options{})
+	if n := bucket(store); !n.IsSeed() || !n.HeldByAttacker() {
+		t.Fatalf("a policy granting s3:GetObject to anyone opens the bucket: %v", n.Properties)
+	}
+	applyBody(t, ctx, store, custodian.New(), export(`,{"resource":"aws.account","resources":[
+	  {"account_id":"123456789012","c7n:s3-public-block":{"IgnorePublicAcls":true,"RestrictPublicBuckets":true}}]}`), ingestion.Options{})
+	if n := bucket(store); n.IsSeed() || n.HeldByAttacker() {
+		t.Errorf("the account now restricts public buckets, and the bucket is still open: %v", n.Properties)
+	}
+}
+
 // A role that trusts GitHub Actions without pinning the subject to an owner can be assumed
 // by a workflow in any repository on GitHub - a door from the internet the engine did not
 // see, since it read only AWS and Service principals. The route now starts there.

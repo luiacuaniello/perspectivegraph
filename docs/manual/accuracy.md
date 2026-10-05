@@ -195,6 +195,16 @@ could not decode it, and erring toward reporting it called the confined API open
 engine agreed on all of it - the open routes, the route into each function, and no route through the
 authorizer.
 
+Block Public Access set on the whole account has a lab of its own, `make public-access-lab-aws`, free
+because it builds two empty buckets and nothing else. Each carries a policy that lets anyone list and
+read it; one is closed by its own `RestrictPublicBuckets`, the other only by the account's. AWS
+referees twice: `GetBucketPolicyStatus` calls both policies public, and an anonymous request to each
+gets `403 AccessDenied`. The engine agreed on both. Told nothing of the account's setting - what every
+version before 1.32.0 saw, since none read it - it calls the second bucket open: a false positive on
+every account that blocks public access account-wide. No stranger gets in at any point: each policy is
+put only once a setting already closes it, and the lab refuses to run where the account already has a
+setting of its own, so it never loosens one.
+
 ### Condition keys, and why they are not refutations
 
 The engine treats an `Allow` as unconditional - `Condition` is documented as deliberately out of scope, so

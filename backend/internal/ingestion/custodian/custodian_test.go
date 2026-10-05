@@ -1,6 +1,7 @@
 package custodian
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -229,7 +230,9 @@ func TestBucketPolicyDecidesWhoReachesTheData(t *testing.T) {
 	ev := parseBundle(t, `{"account_id":"`+account+`","policies":[{"resource":"aws.s3","resources":[
 	  {"Name":"open-by-policy","Policy":`+public+`,"Tags":[{"Key":"classification","Value":"pii"}]},
 	  {"Name":"blocked","Policy":`+public+`,"c7n:PublicAccessBlock":{"RestrictPublicBuckets":true,"BlockPublicPolicy":true}},
-	  {"Name":"shared","Policy":`+crossAccount+`}]}]}`)
+	  {"Name":"shared","Policy":`+crossAccount+`},
+	  {"Name":"acl-ignored","Acl":{"Grants":[{"Grantee":{"URI":"http://acs.amazonaws.com/groups/global/AllUsers"},"Permission":"READ"}]},
+	   "c7n:PublicAccessBlock":{"IgnorePublicAcls":true}}]}]}`)
 	byName := map[string]ontology.Node{}
 	for _, n := range ev.Nodes {
 		byName[n.Name] = n
@@ -243,6 +246,9 @@ func TestBucketPolicyDecidesWhoReachesTheData(t *testing.T) {
 	if byName["shared"].Bool(ontology.PropInternetExposed) {
 		t.Error("a policy naming one role makes nothing public")
 	}
+	if ignored := byName["acl-ignored"]; ignored.InternetExposed() || ignored.Properties["public_blocked_by"] != "IgnorePublicAcls (bucket)" {
+		t.Errorf("IgnorePublicAcls voids a public ACL grant, and says so: %+v", ignored.Properties)
+	}
 	analytics := ontology.NewID(ontology.LabelIAMRole, "arn:aws:iam::222222222222:role/analytics")
 	granted := false
 	for _, e := range ev.Edges {
@@ -251,5 +257,60 @@ func TestBucketPolicyDecidesWhoReachesTheData(t *testing.T) {
 	}
 	if !granted {
 		t.Error("the role the bucket policy names in another account reaches the bucket")
+	}
+}
+
+// Block Public Access set on the account closes every bucket in it, as S3 applies the
+// stricter of the bucket's and the account's settings. Custodian reports the account's on
+// an aws.account resource (the s3-public-block filter); the collector read only the
+// bucket's, so a bucket an account-wide setting closes was reported open.
+func TestTheAccountsBlockPublicAccessClosesItsBuckets(t *testing.T) {
+	const public = `"{\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":\"*\",\"Action\":\"s3:GetObject\",\"Resource\":\"arn:aws:s3:::b/*\"}]}"`
+	const aclPublic = `{"Grants":[{"Grantee":{"URI":"http://acs.amazonaws.com/groups/global/AllUsers"},"Permission":"READ"}]}`
+	accountPolicy := func(id, key, settings string) string {
+		idField := ""
+		if id != "" {
+			idField = `"account_id":"` + id + `",`
+		}
+		return `{"resource":"aws.account","resources":[{` + idField + `"` + key + `":` + settings + `}]}`
+	}
+	buckets := `{"resource":"aws.s3","resources":[{"Name":"by-policy","Policy":` + public + `},{"Name":"by-acl","Acl":` + aclPublic + `}]}`
+	restrict := `{"BlockPublicAcls":false,"IgnorePublicAcls":true,"BlockPublicPolicy":false,"RestrictPublicBuckets":true}`
+	refuseNew := `{"BlockPublicAcls":true,"IgnorePublicAcls":false,"BlockPublicPolicy":true,"RestrictPublicBuckets":false}`
+
+	for _, c := range []struct {
+		name, bundle string
+		open         bool
+	}{
+		{"no account settings in the export", `{"account_id":"` + account + `","policies":[` + buckets + `]}`, true},
+		{"the account restricts public buckets and ignores public ACLs",
+			`{"account_id":"` + account + `","policies":[` + buckets + `,` + accountPolicy(account, "c7n:s3-public-block", restrict) + `]}`, false},
+		{"as the API returns them, the account policy first",
+			`{"account_id":"` + account + `","policies":[` + accountPolicy(account, "PublicAccessBlockConfiguration", restrict) + `,` + buckets + `]}`, false},
+		{"settings that only refuse new grants leave existing ones in force",
+			`{"account_id":"` + account + `","policies":[` + buckets + `,` + accountPolicy(account, "c7n:s3-public-block", refuseNew) + `]}`, true},
+		{"another account's settings",
+			`{"account_id":"` + account + `","policies":[` + buckets + `,` + accountPolicy("210987654321", "c7n:s3-public-block", restrict) + `]}`, true},
+		{"no account_id on the bundle, one account described",
+			`{"policies":[` + buckets + `,` + accountPolicy(account, "c7n:s3-public-block", restrict) + `]}`, false},
+		{"no account_id on the bundle, two accounts described",
+			`{"policies":[` + buckets + `,` + accountPolicy(account, "c7n:s3-public-block", restrict) + `,` +
+				accountPolicy("210987654321", "c7n:s3-public-block", `{}`) + `]}`, true},
+	} {
+		ev := parseBundle(t, c.bundle)
+		for _, n := range ev.Nodes {
+			if n.Label != ontology.LabelBucket {
+				continue
+			}
+			if n.InternetExposed() != c.open || n.Bool(ontology.PropPublicAccess) != c.open {
+				t.Errorf("%s: %s exposed=%v public=%v, want %v", c.name, n.Name, n.InternetExposed(), n.Bool(ontology.PropPublicAccess), c.open)
+			}
+			if _, written := n.Properties[ontology.PropNetworkExposed].(bool); !written {
+				t.Errorf("%s: %s carries no exposure verdict, so a later closure could not retract it", c.name, n.Name)
+			}
+			if !c.open && !strings.Contains(fmt.Sprint(n.Properties["public_blocked_by"]), "(account)") {
+				t.Errorf("%s: %s does not say the account's setting closed it: %v", c.name, n.Name, n.Properties["public_blocked_by"])
+			}
+		}
 	}
 }

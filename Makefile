@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help chart-install up up-full up-demo demo demo-build demo-run up-search down logs run-backend build-backend test bench bench-cloudgoat mcp reachability-lab-aws redteam-aws boundary-lab-aws entrypoints-lab-aws tidy run-frontend install-frontend lockfile docs-site seed seed-discovery seed-load clean
+.PHONY: help chart-install up up-full up-demo demo demo-build demo-run up-search down logs run-backend build-backend test bench bench-cloudgoat mcp reachability-lab-aws redteam-aws boundary-lab-aws entrypoints-lab-aws public-access-lab-aws tidy run-frontend install-frontend lockfile docs-site seed seed-discovery seed-load clean
 
 # CGO is disabled so the Go binaries link statically (Go's pure-Go DNS resolver
 # instead of the system one). This also sidesteps a macOS system-linker bug on
@@ -106,6 +106,10 @@ boundary-lab-aws:
 ## entrypoints-lab-aws: check the 1.29.0 entry points on a REAL account, with AWS as the referee where it gives one - nine bucket policies against GetBucketPolicyStatus, function URLs against an unauthenticated request (403 = closed), ECS services in a routed, an unrouted and an ACL-filtered subnet, an internet-facing and an internal load balancer against an HTTP request to each, API Gateway routes (open, behind a JWT authorizer, behind a policy that denies everyone outside a network) against an unauthenticated request to each, a GitHub OIDC trust pinned to one repository. The engine reads it all as a SecurityAudit-only role. FAILS on any disagreement. Costs a few cents - the two load balancers bill by the hour for the minutes the lab is up; no instance, no NAT, functions never run, buckets empty and behind RestrictPublicBuckets - and tears itself down on exit. KEEP=1 leaves it up; --teardown cleans a leaked lab. Needs an AWS profile (PROFILE=, REGION=).
 entrypoints-lab-aws:
 	./scripts/entrypoints-lab-aws.sh
+
+## public-access-lab-aws: check S3 Block Public Access on a REAL account - set on a bucket, and set on the whole account - with AWS as the referee: GetBucketPolicyStatus on each policy and an anonymous request to each bucket (403 = closed). FAILS on any disagreement, and if the engine, told nothing of the account's settings, does not err toward open. Free: two empty buckets, and no stranger ever gets in. Refuses to run where the account already has account-level Block Public Access, and deletes the one it sets. CONTROL=1 also lifts the account's setting for about a minute to show the referee answering "open"; --teardown cleans a leaked lab. Needs an AWS profile (PROFILE=, REGION=).
+public-access-lab-aws:
+	./scripts/public-access-lab-aws.sh
 
 ## bench-cloudgoat: grade the attack-path engine against CloudGoat-shaped ground-truth scenarios (precision/recall). Runs in CI under `make test`; this target prints the per-scenario table. Add scenarios under backend/testdata/cloudgoat (see its README).
 bench-cloudgoat:

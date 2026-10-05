@@ -84,3 +84,85 @@ func TestBucketVerdictsAgreeWithAWS(t *testing.T) {
 		}
 	}
 }
+
+// TestBlockPublicAccessAgreesWithAWS puts the collector's reading of Block Public Access -
+// a bucket's own, and the account's - next to what AWS does with a stranger's request. It
+// runs only inside scripts/public-access-lab-aws.sh, which builds two buckets with a policy
+// open to anyone, one closed by its own RestrictPublicBuckets and one only by the account's,
+// and records for each what GetBucketPolicyStatus says of the policy and what an anonymous
+// listing gets. Anywhere else it skips.
+func TestBlockPublicAccessAgreesWithAWS(t *testing.T) {
+	path := os.Getenv("PG_LAB_PUBLIC_ACCESS")
+	if path == "" {
+		t.Skip("run by scripts/public-access-lab-aws.sh, which builds the buckets and asks AWS about them")
+	}
+	raw, err := os.ReadFile(path) // #nosec G304 -- a path the lab script hands over
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lab struct {
+		Account    string          `json:"account"`
+		AccountBPA map[string]bool `json:"account_bpa"`
+		Buckets    []struct {
+			Name            string          `json:"name"`
+			Policy          string          `json:"policy"`
+			BPA             map[string]bool `json:"bpa"`
+			AWSPolicyPublic bool            `json:"aws_policy_public"`
+			Anonymous       string          `json:"anonymous"`
+		} `json:"buckets"`
+	}
+	if err := json.Unmarshal(raw, &lab); err != nil {
+		t.Fatal(err)
+	}
+	if len(lab.Buckets) == 0 {
+		t.Fatal("the lab recorded no buckets")
+	}
+	// open is the engine's verdict on a bucket, with or without the account's settings in
+	// the export - the aws.account resource Custodian's s3-public-block filter reports.
+	open := func(bucket map[string]any, withAccount bool) bool {
+		t.Helper()
+		policies := []any{map[string]any{"resource": "aws.s3", "resources": []any{bucket}}}
+		if withAccount {
+			policies = append(policies, map[string]any{"resource": "aws.account", "resources": []any{
+				map[string]any{"account_id": lab.Account, "c7n:s3-public-block": lab.AccountBPA},
+			}})
+		}
+		body, _ := json.Marshal(map[string]any{"account_id": lab.Account, "policies": policies})
+		for _, n := range parseBundle(t, string(body)).Nodes {
+			if n.Label == ontology.LabelBucket {
+				return n.InternetExposed()
+			}
+		}
+		t.Fatalf("no bucket node for %v", bucket["Name"])
+		return false
+	}
+	for _, b := range lab.Buckets {
+		short := b.Name[strings.LastIndex(b.Name, "-")+1:]
+		if !b.AWSPolicyPublic {
+			t.Fatalf("%s: GetBucketPolicyStatus calls the policy private, so the lab was not built as intended", short)
+		}
+		// 200 is a stranger let in; 403 AccessDenied is one kept out. Anything else - a
+		// redirect, a timeout - is no verdict, and a lab without one proves nothing.
+		strangerIn := strings.HasPrefix(b.Anonymous, "200")
+		if !strangerIn && b.Anonymous != "403 AccessDenied" {
+			t.Fatalf("%s: the anonymous request gave no verdict: %q", short, b.Anonymous)
+		}
+		bucket := map[string]any{"Name": b.Name, "Policy": b.Policy, "c7n:PublicAccessBlock": b.BPA}
+		got := open(bucket, true)
+		verdict := "agree"
+		if got != strangerIn {
+			verdict = "DISAGREE"
+			t.Errorf("%s: a stranger gets %q from AWS, and the engine calls the bucket open=%v", short, b.Anonymous, got)
+		}
+		t.Logf("%-12s policy public=%-5v stranger gets %-17s engine open=%-5v %s", short, b.AWSPolicyPublic, b.Anonymous, got, verdict)
+		// The account's settings are what close this one: an export without them must err
+		// toward reporting it open, which is the false positive reading them removes.
+		if !b.BPA["RestrictPublicBuckets"] && lab.AccountBPA["RestrictPublicBuckets"] {
+			without := open(bucket, false)
+			if !without {
+				t.Errorf("%s: told nothing of the account's settings, the engine should report the public policy open", short)
+			}
+			t.Logf("%-12s without the account's settings in the export, engine open=%v (what 1.31 reported)", short, without)
+		}
+	}
+}

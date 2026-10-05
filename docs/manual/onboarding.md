@@ -287,12 +287,30 @@ That is S3 Block Public Access's own definition of public. Any other condition -
 user agent, TLS - is one a stranger can meet, and a wildcard or a negated operator confines no
 one. A `Deny` closes what an `Allow` opens only when it has no condition: "deny unless over TLS"
 does not stop an attacker who uses TLS. The node says which (`public_via`: `bucket policy` or `acl`).
-The bucket's Block Public Access settings, when the bundle carries them (the
-`check-public-block` filter annotates them as `c7n:PublicAccessBlock`), close what they close:
-`IgnorePublicAcls` the ACL grant, `RestrictPublicBuckets` the policy; the account-level
-setting is not read. The roles and users a policy names - often in other accounts - get a
-`HAS_PERMISSION` edge to the bucket: the access is on the bucket, whatever their own policies
-say.
+The roles and users a policy names - often in other accounts - get a `HAS_PERMISSION` edge to
+the bucket: the access is on the bucket, whatever their own policies say.
+
+**Export the account's Block Public Access too.** Block Public Access is set on a bucket, on
+the whole account, or both, and S3 applies the stricter of the two, setting by setting:
+`IgnorePublicAcls` voids an ACL grant, `RestrictPublicBuckets` keeps strangers out of a public
+policy. `BlockPublicAcls` and `BlockPublicPolicy` only refuse new grants and leave existing
+ones in force, so they close nothing. The bucket's settings come with the bucket when the
+`check-public-block` filter annotates them (`c7n:PublicAccessBlock`). The account's come from
+one more policy in the export:
+
+```yaml
+- name: account-public-access-block
+  resource: aws.account
+  filters:
+    - type: s3-public-block   # annotates c7n:s3-public-block
+      key: RestrictPublicBuckets
+      value: present          # an account with no setting has nothing to apply
+```
+
+It needs `s3:GetAccountPublicAccessBlock`, which `SecurityAudit` includes. Without it, a bucket
+the account closes is reported open. The node names the setting that closed it
+(`public_blocked_by`, for example `RestrictPublicBuckets (account)`), and its exposure is
+written either way, so a bucket closed after an export is retracted by the next one.
 
 ### Falco (runtime confirmation)
 

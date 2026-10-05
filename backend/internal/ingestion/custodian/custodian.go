@@ -15,7 +15,8 @@
 // Every field read here exists in real AWS/Custodian exports: EC2
 // InstanceId/PublicIpAddress/IamInstanceProfile/Tags, ALB
 // LoadBalancerName/Scheme/Tags, IAM RoleName/AttachedManagedPolicies, S3
-// Name/Tags/Acl grants, RDS DBInstanceIdentifier/PubliclyAccessible/TagList.
+// Name/Tags/Acl grants/Policy/c7n:PublicAccessBlock, the account's Block Public Access
+// (aws.account, c7n:s3-public-block), RDS DBInstanceIdentifier/PubliclyAccessible/TagList.
 //
 // Two relationships AWS does not state directly are inferred and documented:
 //
@@ -60,12 +61,15 @@ type bundle struct {
 	AccountID string `json:"account_id"`
 	// Region is the Region the bundle was exported from, when it is one Region's
 	// export. A resource's own ARN takes precedence.
-	Region   string `json:"region"`
-	Policies []struct {
-		Policy    string           `json:"policy"`
-		Resource  string           `json:"resource"` // e.g. "aws.ec2", "aws.iam-role"
-		Resources []map[string]any `json:"resources"`
-	} `json:"policies"`
+	Region   string         `json:"region"`
+	Policies []policyResult `json:"policies"`
+}
+
+// policyResult is one Custodian policy's resources.json, with the resource type it ran on.
+type policyResult struct {
+	Policy    string           `json:"policy"`
+	Resource  string           `json:"resource"` // e.g. "aws.ec2", "aws.iam-role"
+	Resources []map[string]any `json:"resources"`
 }
 
 type Collector struct{}
@@ -81,6 +85,9 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 
 	g := &builder{nodes: map[string]ontology.Node{}, appOf: map[string]string{}, regionOf: map[string]string{},
 		account: b.AccountID, region: b.Region, profileRole: map[string]string{}}
+	// The account's Block Public Access settings bear on every bucket in it, so they are
+	// read before any bucket is judged, wherever the account's policy sits in the bundle.
+	g.accountBlock = accountPublicAccessBlock(b.AccountID, b.Policies)
 	for _, pol := range b.Policies {
 		for _, res := range pol.Resources {
 			switch strings.ToLower(pol.Resource) {
@@ -130,6 +137,9 @@ type builder struct {
 	region      string            // the bundle's region, "" when it has none
 	profileRole map[string]string // instance-profile ARN (and name) -> role ARN
 	pending     []instanceLink    // instances whose role is resolved once every policy is read
+	// accountBlock is the account's S3 Block Public Access settings, from an aws.account
+	// resource in the bundle; empty when the export does not carry them.
+	accountBlock map[string]bool
 }
 
 // instanceLink is an instance and the instance profile it runs with, waiting for the
@@ -350,27 +360,43 @@ func (b *builder) bucket(r map[string]any) {
 	props := map[string]any{}
 	// A bucket is public through its ACL or through its policy. ACLs are disabled by
 	// default on buckets created since April 2023, so the policy is how a bucket is made
-	// public today - and it was not read: a bucket opened by policy looked private. The
-	// bucket's Block Public Access settings, when the export carries them, close either.
-	block := publicAccessBlock(r)
+	// public today - and it was not read: a bucket opened by policy looked private.
+	//
+	// Block Public Access closes either, set on the bucket or on the whole account, and S3
+	// applies the stricter of the two, setting by setting. IgnorePublicAcls voids public
+	// grants; RestrictPublicBuckets keeps strangers out of a public policy. The other two
+	// settings only refuse new public grants and policies, and leave existing ones in
+	// force. The account's settings were not read: a bucket an account-wide setting closes
+	// was reported open.
+	bucketBlock := publicAccessBlock(r, "c7n:PublicAccessBlock", "PublicAccessBlockConfiguration")
 	policy, err := ingestion.ParseResourcePolicy(r["Policy"])
 	if err != nil {
 		props["policy_note"] = "bucket policy not read: " + err.Error()
 	}
 	aclGranted, aclReadable := publicGrant(r)
-	if block["IgnorePublicAcls"] {
+	policyReadable, policyWritable := policy.Public(bucketReadActions...), policy.Public(bucketWriteActions...)
+	var blockedBy []string
+	if aclGranted && (bucketBlock["IgnorePublicAcls"] || b.accountBlock["IgnorePublicAcls"]) {
 		aclGranted, aclReadable = false, false
+		blockedBy = append(blockedBy, blockLevel(bucketBlock, b.accountBlock, "IgnorePublicAcls"))
 	}
-	policyReadable := !block["RestrictPublicBuckets"] && policy.Public(bucketReadActions...)
-	policyWritable := !block["RestrictPublicBuckets"] && policy.Public(bucketWriteActions...)
-	if aclGranted || policyReadable || policyWritable {
+	if (policyReadable || policyWritable) && (bucketBlock["RestrictPublicBuckets"] || b.accountBlock["RestrictPublicBuckets"]) {
+		policyReadable, policyWritable = false, false
+		blockedBy = append(blockedBy, blockLevel(bucketBlock, b.accountBlock, "RestrictPublicBuckets"))
+	}
+	exposed := aclGranted || policyReadable || policyWritable
+	// Written either way, so a bucket that is closed - by its owner, or by a Block Public
+	// Access setting turned on later - is retracted on the next export rather than kept
+	// open by what an earlier one said.
+	props[ontology.PropNetworkExposed] = exposed
+	// A public READ grant hands the data to anyone: the bucket is not a door into the
+	// estate but already open, and a crown jewel that is open is compromised as it stands.
+	// A write-only grant is exposure, not disclosure.
+	props[ontology.PropPublicAccess] = aclReadable || policyReadable
+	props["public_via"] = ""
+	props["public_blocked_by"] = strings.Join(blockedBy, "; ")
+	if exposed {
 		props[ontology.PropInternetExposed] = true
-		// A public READ grant hands the data to anyone: the bucket is not a door into the
-		// estate but already open, and a crown jewel that is open is compromised as it
-		// stands. A write-only grant is exposure, not disclosure.
-		if aclReadable || policyReadable {
-			props[ontology.PropPublicAccess] = true
-		}
 		switch {
 		case policyReadable || policyWritable:
 			props["public_via"] = "bucket policy"
@@ -408,11 +434,14 @@ var (
 // call, with no exploit, so it scores as a granted permission does elsewhere.
 const bucketPolicyGrantProb = 0.7
 
-// publicAccessBlock reads a bucket's Block Public Access settings, as Custodian annotates
-// them (c7n:PublicAccessBlock) or as GetPublicAccessBlock returns them.
-func publicAccessBlock(r map[string]any) map[string]bool {
+// publicAccessBlock reads the Block Public Access settings that are on, from whichever of
+// keys the resource carries them under: a bucket's as Custodian annotates them
+// (c7n:PublicAccessBlock), an account's as its s3-public-block filter does
+// (c7n:s3-public-block), or either as the GetPublicAccessBlock APIs return them
+// (PublicAccessBlockConfiguration).
+func publicAccessBlock(r map[string]any, keys ...string) map[string]bool {
 	out := map[string]bool{}
-	for _, key := range []string{"c7n:PublicAccessBlock", "PublicAccessBlockConfiguration"} {
+	for _, key := range keys {
 		cfg, _ := r[key].(map[string]any)
 		for k, v := range cfg {
 			if on, ok := v.(bool); ok && on {
@@ -421,6 +450,49 @@ func publicAccessBlock(r map[string]any) map[string]bool {
 		}
 	}
 	return out
+}
+
+// accountPublicAccessBlock finds the account's Block Public Access settings among the
+// bundle's aws.account resources. A Custodian export is one account's, so the settings of
+// an account resource naming another account do not apply to its buckets. Without an
+// account_id on the bundle, the settings apply only when exactly one account is described:
+// with several there is no telling which owns the buckets, and none is applied - erring
+// toward reporting a bucket open.
+func accountPublicAccessBlock(account string, policies []policyResult) map[string]bool {
+	var found []map[string]bool
+	for _, pol := range policies {
+		if r := strings.ToLower(pol.Resource); r != "aws.account" && r != "account" {
+			continue
+		}
+		for _, res := range pol.Resources {
+			if id := str(res["account_id"]); account != "" && id != "" && id != account {
+				continue
+			}
+			found = append(found, publicAccessBlock(res, "c7n:s3-public-block", "PublicAccessBlockConfiguration"))
+		}
+	}
+	if len(found) != 1 && account == "" {
+		return map[string]bool{}
+	}
+	out := map[string]bool{}
+	for _, f := range found {
+		for k := range f {
+			out[k] = true
+		}
+	}
+	return out
+}
+
+// blockLevel names where a Block Public Access setting that closes a bucket is set.
+func blockLevel(bucket, account map[string]bool, setting string) string {
+	switch {
+	case bucket[setting] && account[setting]:
+		return setting + " (bucket and account)"
+	case account[setting]:
+		return setting + " (account)"
+	default:
+		return setting + " (bucket)"
+	}
 }
 
 func (b *builder) database(r map[string]any) {

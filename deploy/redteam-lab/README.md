@@ -52,11 +52,61 @@ EC2 and IAM they parameterize) and `outputs.tf` (the ground-truth manifest: whic
 *should* be exploitable given the randomized reality, plus the ingest bundle, so a run
 is self-describing).
 
+## The measurement protocol
+
+A lab that only confirms what the engine already believes measures nothing. These rules
+are fixed before the first apply, so that neither the sample nor the predictions can be
+bent to the result afterwards.
+
+**Predictions are registered before any attempt.** For each apply, the engine's output is
+committed - signed and timestamped - before anyone touches the environment: every path with
+its score and its 90% interval, and alongside it the routes the ground-truth manifest knows
+of that the engine did not report. Outcomes are recorded against that frozen file. A
+prediction is never edited after an attempt; a bug found during the attempts is fixed in the
+engine and scored on the next apply, not on this one.
+
+**Paths are drawn from every score band, not the likeliest.** The attempts are a stratified
+sample over the five bands of the reliability diagram, including low-scored paths and the
+routes the engine missed. Testing only the confident predictions would make a self-assured
+model look calibrated, because its confident predictions would be the only ones checked. The
+Accuracy page's *test first* marker already picks one route per band, the one with the
+widest interval.
+
+**What counts as an outcome.** A path is *confirmed* only if every hop is achieved in order,
+from the entry to the asset. It is *refuted* if a hop is attempted the way the path describes
+and fails. It is *unsettled* if a hop cannot be attempted at all - an exploit the lab does not
+contain. Only confirmed and refuted outcomes enter the calibration; unsettled ones are counted
+and reported, because a set that silently drops the hard cases flatters the model. The verdict
+of each hop is recorded too, so a bias can be traced to the kind of evidence behind a hop.
+
+**How many.** At least 40 settled outcomes, at least 10 of them confirmed and 10 refuted. The
+engine's own floors are lower, and are floors against fitting noise rather than targets: it
+gives no calibration verdict below 8 settled outcomes, no discrimination (AUC) verdict below
+10 per class, and below 20 it reports a recalibrated Brier score in-sample, saying so. If a
+lab yields fewer outcomes than planned, the report says so rather than stretching them.
+
+**Corrections are graded out of sample.** A correction fitted on outcomes - per provenance,
+isotonic or Platt - is evaluated only on outcomes it was not fitted to.
+
+**What is reported.** Brier score, ECE and AUC, each with its interval, and the reliability
+diagram, together with the scenarios, the registered predictions and the outcomes, published
+as a benchmark any attack-path tool can be graded against. The report also says which attacker
+the outcomes are evidence for: a lab attempt is one operator with full knowledge of the
+environment, not the commodity, criminal or APT profile mix the engine scores.
+
+**How the hops are attempted.** Entry hops directly - an SSRF against the instance metadata
+service, under IMDSv1 and under IMDSv2, a service with a known exploit. IAM stages with Pacu,
+whose modules perform the escalation the engine names. Anything a dry run can settle is
+settled by `iam:SimulatePrincipalPolicy` instead, as the free labs do.
+
 ## Safety rails (non-negotiable, if it is ever built)
 
 - **Dedicated, disposable account only.** This lab exists to stand up genuinely
   exploitable infrastructure. It must never run near anything real. Use an account with
   a hard budget alarm and nothing else in it.
+- **Only what you own, within AWS's rules.** Attempts target only the lab's own account,
+  within AWS's penetration-testing policy for the services involved. Denial of service,
+  real or simulated, is never attempted, and command-and-control is out of scope.
 - **Destroy immediately.** Labs are ephemeral; leaving one running is both cost and
   exposure. Note that unlike the free labs, this one runs compute and is **not** free.
 - **Prefer the dry run.** Anything settleable with `iam:SimulatePrincipalPolicy` should
@@ -71,6 +121,12 @@ is self-describing).
 
 Every axis a dry run can reach is now covered by
 [`internal/redteam`](../../backend/internal/redteam), and one of them found a real bug.
+Exposure has its own referees since October 2026: `make entrypoints-lab-aws` and
+`make public-access-lab-aws` put bucket policies, Block Public Access, function URLs, load
+balancers and API routes to AWS's own answers - S3's verdict on a policy, and what a stranger's
+request actually gets. They found four errors in released code and stopped a fifth before it
+shipped. They settle whether the first hop is open, not whether an attacker who reaches it gets
+code execution - which is still this lab's question.
 What is left needs something no API provides: an Organization for the SCP row, and real
 exploitable compute for the IMDS row - the one axis that justifies building this lab at
 all. Anything a future axis *can* settle with a simulation should still be settled that

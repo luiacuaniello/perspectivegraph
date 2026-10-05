@@ -32,6 +32,23 @@ fails the same way.
 What to do: before upgrading, run `helm lint` or `helm template` with your values and fix or
 remove any key it reports.
 
+### The account's Block Public Access is read, and a closed bucket is retracted
+
+**Affects you if** you send Cloud Custodian exports that include S3 buckets.
+
+A bucket whose policy is public was reported open even when the account's Block Public Access
+kept every stranger out: the collector read only the bucket's own settings. It now also reads the
+account's, from an `aws.account` resource that Custodian's `s3-public-block` filter annotates, and
+applies the stricter of the two, setting by setting, as S3 does. A bucket's exposure is now written
+either way, too: a bucket closed after one export - by its owner, or by such a setting - is
+retracted by the next, where before it stayed open in the graph.
+
+What to do: add the `aws.account` policy shown in the [onboarding
+guide](manual/onboarding.md#cloud-custodian-cloud-inventory--iam) to your Custodian export. It
+needs `s3:GetAccountPublicAccessBlock`, which `SecurityAudit` includes. Without it, buckets are
+judged as before. Expect fewer routes starting at public buckets on accounts that block public
+access.
+
 ---
 
 ## 1.31.0
