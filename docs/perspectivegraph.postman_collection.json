@@ -1414,6 +1414,36 @@
 					}
 				},
 				{
+					"name": "Checked against AWS (lab records)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{apiUrl}}/graphql",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "{ labRuns { lab title command region engine ranAt cost agreed disagreed unsettled checks { case question referee aws engine verdict note } } }",
+								"variables": ""
+							}
+						},
+						"description": "How this version's rules were checked on a real AWS account: the latest run of each lab (make public-access-lab-aws, entrypoints-lab-aws, boundary-lab-aws), with every question put both to AWS - S3's judgement of a policy, a stranger's request, IAM's policy simulator - and to the engine. Built into the binary: evidence about the engine, not about the estate it reads. The Accuracy page shows the same records."
+					},
+					"response": []
+				},
+				{
 					"name": "Policy violations",
 					"request": {
 						"method": "POST",

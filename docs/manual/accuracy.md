@@ -205,7 +205,23 @@ every account that blocks public access account-wide. No stranger gets in at any
 put only once a setting already closes it, and the lab refuses to run where the account already has a
 setting of its own, so it never loosens one.
 
-### Condition keys, and why they are not refutations
+### The labs' record, on the Accuracy page
+
+Each of these labs ends by writing what it found - every question it put to AWS, where AWS's answer
+came from, what AWS said, what the engine said, and whether they agree - with the date, the Region
+and the engine version (`git describe`) of the run. The records live in
+`backend/internal/labrecord/records/`, one per lab, written by `scripts/lab-record.py`, and are built
+into the binary: the dashboard's Accuracy page shows them under *Checked against AWS*, and the
+GraphQL field `labRuns` returns them. So every instance shows how the rules of its own version were
+checked, disagreements included - a record with one is still a record.
+
+Only the checks AWS answered go into a record: S3's judgement of a policy, the answer a stranger's
+request gets, IAM's policy simulator. The checks the entry-points lab makes against its own
+construction - which ports a service exposes, which route a load balancer draws - stay in its output
+and out of the record. Nor does a record say anything about a route as a whole: it settles the facts
+a route's steps rest on, and whether a whole route can be walked is the calibration's question, above.
+A record never carries an account ID: the script replaces any twelve-digit number, and the binary
+refuses to load a record that still holds one.
 
 The engine treats an `Allow` as unconditional - `Condition` is documented as deliberately out of scope, so
 detection errs toward over-reporting. That means it claims escalations that in reality only apply under

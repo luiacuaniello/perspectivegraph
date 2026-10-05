@@ -2,11 +2,12 @@ import { render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AccuracyView from "./AccuracyView";
 import type { AttackPath, Calibration, Discrimination, ValidationMetrics } from "../api/client";
-import { fetchValidations } from "../api/client";
+import { fetchLabRuns, fetchValidations } from "../api/client";
 
 vi.mock("../api/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api/client")>()),
   fetchValidations: vi.fn(),
+  fetchLabRuns: vi.fn(),
 }));
 
 // The sentence at the top of Accuracy is the one a non-statistician reads and repeats. Each
@@ -33,6 +34,7 @@ const discriminates: Discrimination = {
 };
 
 beforeEach(() => {
+  vi.mocked(fetchLabRuns).mockResolvedValue([]);
   vi.mocked(fetchValidations).mockResolvedValue({ validations: [], metrics: {} as ValidationMetrics, calibration: calibration({}), persistent: true });
 });
 

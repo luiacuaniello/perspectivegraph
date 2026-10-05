@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -52,6 +53,7 @@ func runRedteam(args []string) error {
 	compare := fs.Bool("compare", false, "also run the engine over the account and report where it disagrees with AWS (non-zero exit on disagreement)")
 	limit := fs.Int("limit", 200, "with -roles, stop after this many roles")
 	resource := fs.String("resource", "", "settle the claim over this resource ARN instead of account-wide, which is what reveals a grant scoped to specific resources")
+	record := fs.String("record", "", "with -compare, append each principal's two verdicts to this file as a lab check (one JSON object per line, for scripts/lab-record.py)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -86,7 +88,7 @@ func runRedteam(args []string) error {
 	}
 
 	if *compare {
-		return compareEngineToAWS(ctx, oracle, *region, *assumeRole, principals)
+		return compareEngineToAWS(ctx, oracle, *region, *assumeRole, principals, *record)
 	}
 
 	var held, blocked, unsettled int
@@ -126,7 +128,7 @@ func runRedteam(args []string) error {
 // number nobody has to act on.
 //
 // The collect is read-only, like everything else here.
-func compareEngineToAWS(ctx context.Context, oracle *redteam.AWSOracle, region, assumeRole string, principals []string) error {
+func compareEngineToAWS(ctx context.Context, oracle *redteam.AWSOracle, region, assumeRole string, principals []string, recordPath string) error {
 	conn, err := awsconn.NewFromConfig(ctx, awsconn.Config{Mode: "sdk", Region: region, RoleARN: assumeRole})
 	if err != nil {
 		return fmt.Errorf("build sdk connector: %w", err)
@@ -156,15 +158,25 @@ func compareEngineToAWS(ctx context.Context, oracle *redteam.AWSOracle, region, 
 			awsSays = "no privesc"
 		}
 		engineSays, mark, outcome := grade(claims[arn], res.Decision)
+		verdict := "unsettled"
 		switch outcome {
 		case outcomeAgree:
 			agree++
+			verdict = "agree"
 		case outcomeDisagree:
 			disagree++
+			verdict = "disagree"
 		default:
 			unsettled++
 		}
 		fmt.Printf("  %-42s %-12s %-12s %s\n", shortARN(arn), engineSays, awsSays, mark)
+		if recordPath != "" {
+			if err := appendCheck(recordPath, map[string]string{"case": shortARN(arn),
+				"question": "Can this identity make itself administrator?", "referee": "IAM SimulatePrincipalPolicy",
+				"aws": awsSays, "engine": engineSays, "verdict": verdict}); err != nil {
+				return err
+			}
+		}
 	}
 
 	fmt.Printf("\n%d principal(s): %d agree, %d disagree, %d unsettled\n",
@@ -321,4 +333,14 @@ func shortARN(arn string) string {
 		return "user/" + arn[i+len(":user/"):]
 	}
 	return arn
+}
+
+// appendCheck adds one check to a lab's rows file, the form scripts/lab-record.py reads.
+func appendCheck(path string, check map[string]string) error {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600) // #nosec G304 -- a path the operator names with -record
+	if err != nil {
+		return fmt.Errorf("record: %w", err)
+	}
+	defer f.Close()
+	return json.NewEncoder(f).Encode(check)
 }

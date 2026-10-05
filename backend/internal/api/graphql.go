@@ -29,6 +29,7 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/graph"
 	"github.com/luiacuaniello/perspectivegraph/internal/history"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion"
+	"github.com/luiacuaniello/perspectivegraph/internal/labrecord"
 	"github.com/luiacuaniello/perspectivegraph/internal/normalization"
 	"github.com/luiacuaniello/perspectivegraph/internal/policy"
 	"github.com/luiacuaniello/perspectivegraph/internal/ratelimit"
@@ -984,6 +985,37 @@ func (a *API) Schema() (graphql.Schema, error) {
 		},
 	})
 
+	labCheckType := graphql.NewObject(graphql.ObjectConfig{
+		Name:        "LabCheck",
+		Description: "One question a lab put both to AWS and to the engine, on a real account: a fact a route's step rests on, such as whether a bucket is open or a role can escalate.",
+		Fields: graphql.Fields{
+			"case":     &graphql.Field{Type: graphql.String, Description: "The resource or principal, as the lab names it.", Resolve: field[labrecord.Check](func(c labrecord.Check) any { return c.Case })},
+			"question": &graphql.Field{Type: graphql.String, Resolve: field[labrecord.Check](func(c labrecord.Check) any { return c.Question })},
+			"referee":  &graphql.Field{Type: graphql.String, Description: "Where AWS's answer came from.", Resolve: field[labrecord.Check](func(c labrecord.Check) any { return c.Referee })},
+			"aws":      &graphql.Field{Type: graphql.String, Resolve: field[labrecord.Check](func(c labrecord.Check) any { return c.AWS })},
+			"engine":   &graphql.Field{Type: graphql.String, Resolve: field[labrecord.Check](func(c labrecord.Check) any { return c.Engine })},
+			"verdict":  &graphql.Field{Type: graphql.String, Description: "agree | disagree | unsettled.", Resolve: field[labrecord.Check](func(c labrecord.Check) any { return c.Verdict })},
+			"note":     &graphql.Field{Type: graphql.String, Resolve: field[labrecord.Check](func(c labrecord.Check) any { return c.Note })},
+		},
+	})
+	labRunType := graphql.NewObject(graphql.ObjectConfig{
+		Name:        "LabRun",
+		Description: "A lab's latest run on a real AWS account, built into this version: how its rules were checked, not a fact about the estate being read.",
+		Fields: graphql.Fields{
+			"lab":       &graphql.Field{Type: graphql.String, Resolve: field[labrecord.Run](func(r labrecord.Run) any { return r.Lab })},
+			"title":     &graphql.Field{Type: graphql.String, Resolve: field[labrecord.Run](func(r labrecord.Run) any { return r.Title })},
+			"command":   &graphql.Field{Type: graphql.String, Description: "How to run it again.", Resolve: field[labrecord.Run](func(r labrecord.Run) any { return r.Command })},
+			"region":    &graphql.Field{Type: graphql.String, Resolve: field[labrecord.Run](func(r labrecord.Run) any { return r.Region })},
+			"engine":    &graphql.Field{Type: graphql.String, Description: "The engine version the run was made with.", Resolve: field[labrecord.Run](func(r labrecord.Run) any { return r.Engine })},
+			"ranAt":     &graphql.Field{Type: graphql.String, Resolve: field[labrecord.Run](func(r labrecord.Run) any { return r.RanAt.UTC().Format(time.RFC3339) })},
+			"cost":      &graphql.Field{Type: graphql.String, Resolve: field[labrecord.Run](func(r labrecord.Run) any { return r.Cost })},
+			"agreed":    &graphql.Field{Type: graphql.Int, Resolve: field[labrecord.Run](func(r labrecord.Run) any { return r.Count(labrecord.Agree) })},
+			"disagreed": &graphql.Field{Type: graphql.Int, Resolve: field[labrecord.Run](func(r labrecord.Run) any { return r.Count(labrecord.Disagree) })},
+			"unsettled": &graphql.Field{Type: graphql.Int, Resolve: field[labrecord.Run](func(r labrecord.Run) any { return r.Count(labrecord.Unsettled) })},
+			"checks":    &graphql.Field{Type: graphql.NewList(labCheckType), Resolve: field[labrecord.Run](func(r labrecord.Run) any { return r.Checks })},
+		},
+	})
+
 	edgeCutInput := graphql.NewInputObject(graphql.InputObjectConfig{
 		Name:        "EdgeCutInput",
 		Description: "An edge to remove in a what-if. `from`/`to` accept a node id or name; `type` is optional (empty matches any edge between the pair).",
@@ -1284,6 +1316,13 @@ func (a *API) Schema() (graphql.Schema, error) {
 				Description: "Probability calibration over tested verdicts: does a path scored 0.8 actually confirm ~80% of the time? Brier/log-loss/ECE + a reliability diagram - the demo→production gate for trusting the scores as probabilities.",
 				Resolve: func(p graphql.ResolveParams) (any, error) {
 					return a.validation.Calibration(p.Context, tenantOf(p.Context))
+				},
+			},
+			"labRuns": &graphql.Field{
+				Type:        graphql.NewList(labRunType),
+				Description: "The latest run of each lab that checks this version's rules on a real AWS account, with AWS as the referee - newest first. Built into the binary: evidence about the engine, not about the estate it reads.",
+				Resolve: func(graphql.ResolveParams) (any, error) {
+					return labrecord.All()
 				},
 			},
 			"calibrationTrend": &graphql.Field{

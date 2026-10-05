@@ -1,0 +1,173 @@
+{
+  "lab": "entrypoints-lab-aws",
+  "title": "Entry points: bucket policies, function URLs, load balancers, API routes",
+  "command": "make entrypoints-lab-aws",
+  "region": "eu-north-1",
+  "engine": "v1.31.0-3-g76882f9-dirty",
+  "ran_at": "2026-10-05T11:25:24Z",
+  "cost": "a few cents",
+  "checks": [
+    {
+      "case": "function open",
+      "question": "Does a stranger get past the function URL's authorization?",
+      "referee": "an unauthenticated request to the function URL",
+      "aws": "429 (let through)",
+      "engine": "open",
+      "verdict": "agree"
+    },
+    {
+      "case": "function urlonly",
+      "question": "Does a stranger get past the function URL's authorization?",
+      "referee": "an unauthenticated request to the function URL",
+      "aws": "403 (refused)",
+      "engine": "closed",
+      "verdict": "agree"
+    },
+    {
+      "case": "function iam",
+      "question": "Does a stranger get past the function URL's authorization?",
+      "referee": "an unauthenticated request to the function URL",
+      "aws": "403 (refused)",
+      "engine": "closed",
+      "verdict": "agree"
+    },
+    {
+      "case": "load balancer internet-facing",
+      "question": "Does the internet reach this load balancer?",
+      "referee": "an HTTP request to its DNS name",
+      "aws": "answered 503",
+      "engine": "exposed",
+      "verdict": "agree"
+    },
+    {
+      "case": "load balancer internal",
+      "question": "Does the internet reach this load balancer?",
+      "referee": "an HTTP request to its DNS name",
+      "aws": "no answer",
+      "engine": "not exposed",
+      "verdict": "agree"
+    },
+    {
+      "case": "API http",
+      "question": "Does this API answer a stranger?",
+      "referee": "an unauthenticated request to its open route",
+      "aws": "503",
+      "engine": "an entry point",
+      "verdict": "agree"
+    },
+    {
+      "case": "API rest",
+      "question": "Does this API answer a stranger?",
+      "referee": "an unauthenticated request to its open route",
+      "aws": "500",
+      "engine": "an entry point",
+      "verdict": "agree"
+    },
+    {
+      "case": "API office",
+      "question": "Does this API answer a stranger?",
+      "referee": "an unauthenticated request to its open route",
+      "aws": "403",
+      "engine": "no way in",
+      "verdict": "agree"
+    },
+    {
+      "case": "API http, route behind a JWT authorizer",
+      "question": "Does a stranger get through the route behind the authorizer?",
+      "referee": "an unauthenticated request to the route",
+      "aws": "401",
+      "engine": "no route",
+      "verdict": "agree"
+    },
+    {
+      "case": "open",
+      "question": "Does S3 count this bucket policy as public?",
+      "referee": "S3 GetBucketPolicyStatus",
+      "aws": "public",
+      "engine": "public",
+      "verdict": "agree",
+      "note": "open to anyone, on condition of TLS"
+    },
+    {
+      "case": "referer",
+      "question": "Does S3 count this bucket policy as public?",
+      "referee": "S3 GetBucketPolicyStatus",
+      "aws": "public",
+      "engine": "public",
+      "verdict": "agree",
+      "note": "open to anyone with a given Referer"
+    },
+    {
+      "case": "vpcwild",
+      "question": "Does S3 count this bucket policy as public?",
+      "referee": "S3 GetBucketPolicyStatus",
+      "aws": "public",
+      "engine": "public",
+      "verdict": "agree",
+      "note": "open to any VPC (vpc-*)"
+    },
+    {
+      "case": "ipfixed",
+      "question": "Does S3 count this bucket policy as public?",
+      "referee": "S3 GetBucketPolicyStatus",
+      "aws": "not public",
+      "engine": "not public",
+      "verdict": "agree",
+      "note": "open to one documentation range"
+    },
+    {
+      "case": "ipbroad",
+      "question": "Does S3 count this bucket policy as public?",
+      "referee": "S3 GetBucketPolicyStatus",
+      "aws": "public",
+      "engine": "public",
+      "verdict": "agree",
+      "note": "open to 0.0.0.0/1, half the IPv4 internet"
+    },
+    {
+      "case": "vpce",
+      "question": "Does S3 count this bucket policy as public?",
+      "referee": "S3 GetBucketPolicyStatus",
+      "aws": "not public",
+      "engine": "not public",
+      "verdict": "agree",
+      "note": "open through one VPC endpoint"
+    },
+    {
+      "case": "account",
+      "question": "Does S3 count this bucket policy as public?",
+      "referee": "S3 GetBucketPolicyStatus",
+      "aws": "not public",
+      "engine": "not public",
+      "verdict": "agree",
+      "note": "open to one account's principals"
+    },
+    {
+      "case": "grantee",
+      "question": "Does S3 count this bucket policy as public?",
+      "referee": "S3 GetBucketPolicyStatus",
+      "aws": "not public",
+      "engine": "not public",
+      "verdict": "agree",
+      "note": "granted to one named role"
+    },
+    {
+      "case": "putonly",
+      "question": "Does S3 count this bucket policy as public?",
+      "referee": "S3 GetBucketPolicyStatus",
+      "aws": "public",
+      "engine": "public",
+      "verdict": "agree",
+      "note": "anyone may write, not read"
+    },
+    {
+      "case": "tlsdeny",
+      "question": "Does S3 count this bucket policy as public?",
+      "referee": "S3 GetBucketPolicyStatus",
+      "aws": "public",
+      "engine": "public",
+      "verdict": "agree",
+      "note": "open, with a Deny for requests without TLS"
+    }
+  ]
+}

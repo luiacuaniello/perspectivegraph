@@ -373,7 +373,11 @@ rest_api() { # rest_api <name> [policy] -> "<id> <root resource id>"
   aws apigateway put-method --rest-api-id "$id" --resource-id "$root" --http-method GET --authorization-type NONE >/dev/null
   aws apigateway put-integration --rest-api-id "$id" --resource-id "$root" --http-method GET --type AWS_PROXY \
     --integration-http-method POST --uri "arn:aws:apigateway:${REGION}:lambda:path/2015-03-31/functions/${FN_PRIVATE_ARN}/invocations" >/dev/null
-  aws apigateway create-deployment --rest-api-id "$id" --stage-name prod >/dev/null
+  # API Gateway throttles deployments (TooManyRequests), and an API left undeployed is
+  # closed for the wrong reason - the check that policy or route is meant to settle would
+  # pass without being made. So retry, and fail the lab rather than carry on: this runs in
+  # $(...), where set -e does not reach, so the failure has to be returned.
+  retry 6 aws apigateway create-deployment --rest-api-id "$id" --stage-name prod >/dev/null || return 1
   apigw_may_invoke private "apigw-$1" "$id"
   echo "$id"
 }
@@ -486,9 +490,9 @@ sleep 5
 collect "$WORK/events-after.json"
 
 status=0
-python3 - "$WORK" "$PREFIX" "$GH_OPEN" <<'PY' || status=$?
+python3 - "$WORK" "$PREFIX" "$GH_OPEN" "$WORK/rows.jsonl" <<'PY' || status=$?
 import json, sys
-work, prefix, gh_open = sys.argv[1:4]
+work, prefix, gh_open, rows_path = sys.argv[1:5]
 def load(p):
     nodes, edges = {}, []
     for ev in json.load(open(p)):
@@ -505,6 +509,14 @@ def check(what, expected, got, why):
     ok = expected == got
     bad += not ok
     rows.append((("PASS" if ok else "FAIL"), what, str(expected), str(got), why))
+
+# record writes a check AWS answered to the rows the dashboard's record is made from. Checks
+# against the lab's own construction - ports, edges, routing rules - are not AWS's answers,
+# and stay out of it.
+def record(case, question, referee, aws_says, engine_says, ok):
+    with open(rows_path, "a") as f:
+        f.write(json.dumps({"case": case, "question": question, "referee": referee, "aws": aws_says,
+                            "engine": engine_says, "verdict": "agree" if ok else "disagree"}) + "\n")
 
 def exposed(n):
     p = n["props"]
@@ -541,6 +553,10 @@ for fn in ("open", "urlonly", "iam", "private"):
     aws_open = code is not None and code != "403"
     why = f"unauthenticated request answered {code}" if code else "no function URL"
     check(f"Lambda {fn} exposed (AWS: {'open' if aws_open else 'closed'})", aws_open, exposed(n), why + "; " + n["props"].get("exposure", ""))
+    if code:
+        record(f"function {fn}", "Does a stranger get past the function URL's authorization?",
+               "an unauthenticated request to the function URL", f"{code} ({'let through' if aws_open else 'refused'})",
+               "open" if exposed(n) else "closed", aws_open == exposed(n))
 fn_role = next((i for i, n in nodes.items() if n["label"] == "IAM_Role" and n["name"] == f"{prefix}-fn"), None)
 fn_open = next((i for i, n in nodes.items() if n["label"] == "Function" and n["name"] == f"{prefix}-open"), None)
 check("Lambda open -> execution role", True, any(e["type"] == "ASSUMES" and e["from"] == fn_open and e["to"] == fn_role for e in edges), "")
@@ -557,6 +573,9 @@ for lb in ("pub", "int"):
     answered = code != "000"
     check(f"LB {lb} exposed (AWS: {'answers' if answered else 'silent'})", answered, exposed(n),
           f"an HTTP request to its DNS name answered {code}; " + n["props"].get("net_reachability", ""))
+    record(f"load balancer {'internet-facing' if lb == 'pub' else 'internal'}", "Does the internet reach this load balancer?",
+           "an HTTP request to its DNS name", f"answered {code}" if answered else "no answer",
+           "exposed" if exposed(n) else "not exposed", answered == exposed(n))
     if answered:
         check(f"LB {lb} ports", "tcp/80", n["props"].get("exposed_ports", ""), "the listener serves 80, the group admits 80")
 pub = next((i for i, n in nodes.items() if n["label"] == "LoadBalancer" and n["name"] == f"{prefix}-pub"), None)
@@ -581,12 +600,25 @@ for name, label in (("http", "http-open"), ("rest", "rest-open"), ("office", "re
     code = apicodes.get(label, "000")
     check(f"API {name} exposed (AWS: {'answers' if answers(code) else 'refuses'})", answers(code), exposed(n),
           f"an unauthenticated request answered {code}; " + n["props"].get("exposure", ""))
+    record(f"API {name}", "Does this API answer a stranger?", "an unauthenticated request to its open route",
+           code, "an entry point" if exposed(n) else "no way in", answers(code) == exposed(n))
 http_id, http = api("http")
 rest_id, _ = api("rest")
+# Closed for the right reason: an API left undeployed is closed too, and would pass the
+# check above without its policy ever being read.
+_, office = api("office")
+if office:
+    check("API office closed by its policy", True, "resource policy" in office["props"].get("exposure", ""),
+          office["props"].get("exposure", ""))
 if http:
     check("API http open routes", "GET /open", http["props"].get("open_routes", ""), "GET /jwt sits behind the authorizer")
 check("API http -> Lambda private", True, (http_id, fn_private) in routes_to, "the open route's integration")
 check("API http -> Lambda iam", False, (http_id, fn_iam) in routes_to, "only the JWT route reaches it")
+jwt = apicodes.get("http-jwt", "000")
+record("API http, route behind a JWT authorizer", "Does a stranger get through the route behind the authorizer?",
+       "an unauthenticated request to the route", jwt,
+       "a route to its function" if (http_id, fn_iam) in routes_to else "no route",
+       (jwt in ("401", "403")) == ((http_id, fn_iam) not in routes_to))
 check("API rest -> Lambda private", True, (rest_id, fn_private) in routes_to, "read from the method's integration URI")
 
 # GitHub OIDC
@@ -607,9 +639,15 @@ PY
 
 say ""
 say "── S3: the custodian collector against GetBucketPolicyStatus ──"
-(cd "$ROOT/backend" && PG_LAB_BUCKETS="$WORK/buckets.json" go test ./internal/ingestion/custodian/ \
+(cd "$ROOT/backend" && PG_LAB_BUCKETS="$WORK/buckets.json" PG_LAB_ROWS="$WORK/rows.jsonl" go test ./internal/ingestion/custodian/ \
   -run TestBucketVerdictsAgreeWithAWS -count=1 -v) >"$WORK/s3.out" 2>&1 || status=1
 grep -E 'lab_test.go|^(--- |ok|FAIL)' "$WORK/s3.out" | sed 's/^ *lab_test.go:[0-9]*: /  /' >&2
+# The record the dashboard's Accuracy page shows: the checks AWS answered, disagreements included.
+if [ -s "$WORK/rows.jsonl" ]; then
+  python3 "$ROOT/scripts/lab-record.py" --lab entrypoints-lab-aws \
+    --title "Entry points: bucket policies, function URLs, load balancers, API routes" \
+    --command "make entrypoints-lab-aws" --region "$REGION" --cost "a few cents" --rows "$WORK/rows.jsonl"
+fi
 
 say ""
 say "─────────────────────────────────────────────────────────────"

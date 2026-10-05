@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { fetchValidations, type AttackPath, type Calibration, type CalibrationTrendPoint, type ValidationMetrics } from "../api/client";
 import { CalibrationPanel } from "./CalibrationPanel";
 import InfoTip from "./InfoTip";
+import LabChecks from "./LabChecks";
 import { isProvisional, meaningFor, PROVISIONAL_BELOW } from "./accuracyVerdict";
 import { predictions, testFirst } from "./awaitingOutcomes";
 import { routeLabel } from "./routeChannels";
@@ -47,6 +48,8 @@ export default function AccuracyView({ calibration, trend, validation, paths, on
           {meaningFor(calibration)}
         </p>
       </section>
+
+      <LabChecks />
 
       {!has && paths && paths.length > 0 && <AwaitingOutcomes paths={paths} onOpenPath={onOpenPath} />}
 

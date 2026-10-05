@@ -219,7 +219,10 @@ the engine's escalation claims against AWS's own policy evaluator. That grading 
 caught one false positive, a permissions boundary the engine ignored; it is fixed, and
 `make boundary-lab-aws` fails whenever the engine and AWS disagree. `make entrypoints-lab-aws`
 puts bucket policies and function URLs to AWS the same way; its first run caught four errors,
-also fixed.
+also fixed. `make public-access-lab-aws` does it, for free, for Block Public Access set on the
+whole account. Each of these labs writes what it found into the build, and the dashboard's
+Accuracy page shows it under *Checked against AWS*: every question, AWS's answer, the engine's,
+and the version it was asked of.
 
 - **Clouds.** AWS is live and verified against a real account, cross-account `AssumeRole`
   included. Azure is fixtures only, and there is no GCP connector.

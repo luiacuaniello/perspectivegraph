@@ -1,0 +1,27 @@
+{
+  "lab": "public-access-lab-aws",
+  "title": "S3 Block Public Access, on a bucket and on the whole account",
+  "command": "make public-access-lab-aws",
+  "region": "eu-north-1",
+  "engine": "v1.31.0-3-g76882f9-dirty",
+  "ran_at": "2026-10-05T11:11:00Z",
+  "cost": "free",
+  "checks": [
+    {
+      "case": "bucketblock",
+      "question": "Does a stranger get into a bucket whose public policy its own RestrictPublicBuckets closes?",
+      "referee": "an anonymous request to the bucket",
+      "aws": "403 AccessDenied",
+      "engine": "closed",
+      "verdict": "agree"
+    },
+    {
+      "case": "accountblock",
+      "question": "Does a stranger get into a bucket whose public policy only the account's RestrictPublicBuckets closes?",
+      "referee": "an anonymous request to the bucket",
+      "aws": "403 AccessDenied",
+      "engine": "closed",
+      "verdict": "agree"
+    }
+  ]
+}

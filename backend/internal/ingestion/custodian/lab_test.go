@@ -9,6 +9,39 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
 )
 
+// labRow appends one check to the rows file a lab script turns into its record
+// (scripts/lab-record.py), when the script names one: the question, AWS's answer, the
+// engine's, and whether they agree.
+func labRow(t *testing.T, check map[string]string) {
+	t.Helper()
+	path := os.Getenv("PG_LAB_ROWS")
+	if path == "" {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600) // #nosec G304 -- a path the lab script hands over
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := json.NewEncoder(f).Encode(check); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func agreement(agree bool) string {
+	if agree {
+		return "agree"
+	}
+	return "disagree"
+}
+
+func publicWord(public bool) string {
+	if public {
+		return "public"
+	}
+	return "not public"
+}
+
 // TestBucketVerdictsAgreeWithAWS puts the collector's reading of real bucket policies next
 // to AWS's own. It runs only inside scripts/entrypoints-lab-aws.sh, which builds the buckets
 // on a real account and records, for each, the policy and Block Public Access settings as
@@ -64,6 +97,9 @@ func TestBucketVerdictsAgreeWithAWS(t *testing.T) {
 			t.Errorf("%s: AWS says public=%v, the engine says %v (policy %s)", short, b.AWSPublic, got, b.Policy)
 		}
 		t.Logf("%-9s AWS public=%-5v engine public=%-5v %s", short, b.AWSPublic, got, verdict)
+		labRow(t, map[string]string{"case": short, "question": "Does S3 count this bucket policy as public?",
+			"referee": "S3 GetBucketPolicyStatus", "aws": publicWord(b.AWSPublic), "engine": publicWord(got),
+			"verdict": agreement(got == b.AWSPublic), "note": bucketCaseNote[short]})
 
 		// With the bucket's real settings, RestrictPublicBuckets keeps strangers out of a
 		// public policy - which is how the lab keeps its public policies harmless.
@@ -155,6 +191,18 @@ func TestBlockPublicAccessAgreesWithAWS(t *testing.T) {
 			t.Errorf("%s: a stranger gets %q from AWS, and the engine calls the bucket open=%v", short, b.Anonymous, got)
 		}
 		t.Logf("%-12s policy public=%-5v stranger gets %-17s engine open=%-5v %s", short, b.AWSPolicyPublic, b.Anonymous, got, verdict)
+		closedBy := "its own RestrictPublicBuckets"
+		if !b.BPA["RestrictPublicBuckets"] {
+			closedBy = "only the account's RestrictPublicBuckets"
+		}
+		engineSays := "closed"
+		if got {
+			engineSays = "open"
+		}
+		labRow(t, map[string]string{"case": short,
+			"question": "Does a stranger get into a bucket whose public policy " + closedBy + " closes?",
+			"referee":  "an anonymous request to the bucket", "aws": b.Anonymous, "engine": engineSays,
+			"verdict": agreement(got == strangerIn)})
 		// The account's settings are what close this one: an export without them must err
 		// toward reporting it open, which is the false positive reading them removes.
 		if !b.BPA["RestrictPublicBuckets"] && lab.AccountBPA["RestrictPublicBuckets"] {
@@ -165,4 +213,19 @@ func TestBlockPublicAccessAgreesWithAWS(t *testing.T) {
 			t.Logf("%-12s without the account's settings in the export, engine open=%v (what 1.31 reported)", short, without)
 		}
 	}
+}
+
+// bucketCaseNote says what each bucket in scripts/entrypoints-lab-aws.sh puts to the test,
+// for the record a reader sees.
+var bucketCaseNote = map[string]string{
+	"open":    "open to anyone, on condition of TLS",
+	"referer": "open to anyone with a given Referer",
+	"vpcwild": "open to any VPC (vpc-*)",
+	"ipfixed": "open to one documentation range",
+	"ipbroad": "open to 0.0.0.0/1, half the IPv4 internet",
+	"vpce":    "open through one VPC endpoint",
+	"account": "open to one account's principals",
+	"grantee": "granted to one named role",
+	"putonly": "anyone may write, not read",
+	"tlsdeny": "open, with a Deny for requests without TLS",
 }

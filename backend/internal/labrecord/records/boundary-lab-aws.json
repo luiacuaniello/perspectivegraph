@@ -1,0 +1,27 @@
+{
+  "lab": "boundary-lab-aws",
+  "title": "IAM permissions boundaries: an escalation the boundary blocks, and its control",
+  "command": "make boundary-lab-aws",
+  "region": "eu-north-1",
+  "engine": "v1.31.0-3-g76882f9-dirty",
+  "ran_at": "2026-10-05T11:08:47Z",
+  "cost": "free",
+  "checks": [
+    {
+      "case": "role/pg-boundary-lab-unbounded",
+      "question": "Can this identity make itself administrator?",
+      "referee": "IAM SimulatePrincipalPolicy",
+      "aws": "ESCALATES",
+      "engine": "ESCALATES",
+      "verdict": "agree"
+    },
+    {
+      "case": "role/pg-boundary-lab-bounded",
+      "question": "Can this identity make itself administrator?",
+      "referee": "IAM SimulatePrincipalPolicy",
+      "aws": "no privesc",
+      "engine": "no privesc",
+      "verdict": "agree"
+    }
+  ]
+}

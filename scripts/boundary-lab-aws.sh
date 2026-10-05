@@ -174,10 +174,18 @@ say ""
 
 cd "$(dirname "$0")/../backend"
 status=0
+ROWS=$(mktemp)
 AWS_PROFILE="$PROFILE" CGO_ENABLED=0 go run ./cmd/perspectivegraph redteam \
-  -region "$REGION" -compare \
+  -region "$REGION" -compare -record "$ROWS" \
   -principal "arn:aws:iam::${ACCOUNT}:role/${UNBOUNDED},arn:aws:iam::${ACCOUNT}:role/${BOUNDED}" \
   2>&1 | sed 's/^/  /' || status=$?
+# The record the dashboard's Accuracy page shows, disagreements included.
+if [ -s "$ROWS" ]; then
+  python3 ../scripts/lab-record.py --lab boundary-lab-aws \
+    --title "IAM permissions boundaries: an escalation the boundary blocks, and its control" \
+    --command "make boundary-lab-aws" --region "$REGION" --cost "free" --rows "$ROWS"
+fi
+rm -f "$ROWS"
 
 say ""
 say "─────────────────────────────────────────────────────────────"

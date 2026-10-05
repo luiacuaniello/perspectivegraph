@@ -169,9 +169,15 @@ PY
 status=0
 say ""
 say "── S3: the custodian collector against AWS ───────────────────"
-(cd "$ROOT/backend" && PG_LAB_PUBLIC_ACCESS="$WORK/public-access.json" go test ./internal/ingestion/custodian/ \
-  -run TestBlockPublicAccessAgreesWithAWS -count=1 -v) >"$WORK/s3.out" 2>&1 || status=1
+(cd "$ROOT/backend" && PG_LAB_PUBLIC_ACCESS="$WORK/public-access.json" PG_LAB_ROWS="$WORK/rows.jsonl" \
+  go test ./internal/ingestion/custodian/ -run TestBlockPublicAccessAgreesWithAWS -count=1 -v) >"$WORK/s3.out" 2>&1 || status=1
 grep -E 'lab_test.go|^(--- |ok|FAIL)' "$WORK/s3.out" | sed 's/^ *lab_test.go:[0-9]*: /  /' >&2
+# The record the dashboard's Accuracy page shows, disagreements included.
+if [ -s "$WORK/rows.jsonl" ]; then
+  python3 "$ROOT/scripts/lab-record.py" --lab public-access-lab-aws \
+    --title "S3 Block Public Access, on a bucket and on the whole account" \
+    --command "make public-access-lab-aws" --region "$REGION" --cost "free" --rows "$WORK/rows.jsonl"
+fi
 
 if [ "$CONTROL" = "1" ]; then
   say ""

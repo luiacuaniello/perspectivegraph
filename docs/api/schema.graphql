@@ -205,6 +205,30 @@ type IngestSource {
   stale: Boolean
 }
 
+type LabCheck {
+  aws: String
+  case: String
+  engine: String
+  note: String
+  question: String
+  referee: String
+  verdict: String
+}
+
+type LabRun {
+  agreed: Int
+  checks: [LabCheck]
+  command: String
+  cost: String
+  disagreed: Int
+  engine: String
+  lab: String
+  ranAt: String
+  region: String
+  title: String
+  unsettled: Int
+}
+
 type Node {
   account: String
   classification: String
@@ -287,6 +311,7 @@ type Query {
   ingestCoverage: [IngestSource]
   invariantViolations: [PolicyViolation]
   kShortestPaths(from: String, k: Int, target: String!): [AttackPath]
+  labRuns: [LabRun]
   posture: Posture
   prVerdict(sha: String!, slug: String!): PRVerdict
   remediationPlan(app: String, title: String): [Fix]

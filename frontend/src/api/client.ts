@@ -237,6 +237,32 @@ export interface Calibration {
   priorityDiscrimination?: Discrimination | null;
 }
 
+// A lab's latest run on a real AWS account, built into the backend: how this version's rules
+// were checked against AWS - a fact about the engine, not about the estate it reads.
+export interface LabCheck {
+  case: string;
+  question: string;
+  referee: string;
+  aws: string;
+  engine: string;
+  verdict: "agree" | "disagree" | "unsettled";
+  note?: string | null;
+}
+
+export interface LabRun {
+  lab: string;
+  title: string;
+  command: string;
+  region: string;
+  engine: string;
+  ranAt: string;
+  cost: string;
+  agreed: number;
+  disagreed: number;
+  unsettled: number;
+  checks: LabCheck[];
+}
+
 // One sample of the calibration trend: the headline numbers at a point in time, so a
 // calibration program can watch the evidence accumulate.
 export interface CalibrationTrendPoint {
@@ -750,6 +776,12 @@ export const runWhatIf = (cuts: EdgeCut[]) =>
   ).then((d) => d.whatIf);
 
 export const fetchDashboard = (app?: string) => gql<Dashboard>(dashboardQuery(app));
+
+export const fetchLabRuns = () =>
+  gql<{ labRuns: LabRun[] | null }>(
+    `{ labRuns { lab title command region engine ranAt cost agreed disagreed unsettled
+         checks { case question referee aws engine verdict note } } }`,
+  ).then((d) => d.labRuns ?? []);
 
 export interface Status {
   version: string;
