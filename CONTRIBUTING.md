@@ -157,6 +157,16 @@ arrives in a routine bump rather than in a reviewed decision.
 Anything outside that list stops the build so a human decides. If your change needs such a
 dependency, say why in the pull request rather than widening the list quietly.
 
+## This repository's own licensing
+
+Every file here is covered by [REUSE.toml](REUSE.toml), in the form
+[REUSE](https://reuse.software) defines: it is the project's own, under Apache-2.0, unless an
+annotation says otherwise, and the text of every licence it names is in [LICENSES/](LICENSES).
+A new file of yours needs nothing. A file you bring from elsewhere - a vendored snippet, an
+image, a fixture copied from another project - needs its own annotation in REUSE.toml, or SPDX
+headers of its own, naming its author and its licence. CI runs `reuse lint` and fails on a
+licence named without its text.
+
 ## Conventions
 
 - **Go:** `gofmt`, `go vet`, **`gosec`** clean. Justify an unavoidable gosec
