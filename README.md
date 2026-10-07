@@ -257,4 +257,5 @@ and the version it was asked of.
 
 ## License
 
-[Apache License 2.0](LICENSE).
+[Apache License 2.0](LICENSE). Licensing is declared for every file, in the form
+[REUSE](https://reuse.software) defines, and checked in CI: [REUSE.toml](REUSE.toml).

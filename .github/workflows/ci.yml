@@ -492,6 +492,19 @@ jobs:
             --production --excludePrivatePackages \
             --onlyAllow "${ALLOWED_NPM}" --summary
 
+  # Our own licensing, file by file, as https://reuse.software reads it: REUSE.toml says who
+  # holds each file's copyright and under which licence it is offered, and LICENSES/ holds the
+  # text of every licence it names. A licence named without its text, or an SPDX header that
+  # does not parse, fails here. A file from elsewhere does not: the first annotation covers
+  # every file as the project's own, so naming its real author is the review's job.
+  reuse:
+    name: Licensing (REUSE)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      - uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5 # v6.0.0
+
   images:
     name: Container images (Trivy)
     runs-on: ubuntu-latest

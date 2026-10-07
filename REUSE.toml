@@ -1,0 +1,23 @@
+# Who holds the copyright of each file in this repository, and under which licence it is
+# offered, in the form https://reuse.software reads. CI runs `reuse lint` against it.
+#
+# Every file is the project's own, under Apache-2.0, unless an annotation further down says
+# otherwise; a later annotation wins over an earlier one. A file added from elsewhere gets an
+# annotation of its own here, or SPDX headers of its own, which take precedence over the
+# first annotation.
+version = 1
+SPDX-PackageName = "PerspectiveGraph"
+SPDX-PackageDownloadLocation = "https://github.com/luiacuaniello/perspectivegraph"
+
+[[annotations]]
+path = "**"
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 PerspectiveGraph authors"
+SPDX-License-Identifier = "Apache-2.0"
+
+# The Developer Certificate of Origin, reproduced verbatim as its own licence asks.
+[[annotations]]
+path = "DCO"
+precedence = "override"
+SPDX-FileCopyrightText = "2004, 2006 The Linux Foundation and its contributors"
+SPDX-License-Identifier = "LicenseRef-DCO"
