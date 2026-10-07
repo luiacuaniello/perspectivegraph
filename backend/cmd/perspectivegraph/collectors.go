@@ -15,6 +15,7 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/semgrep"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/sso"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/supplychain"
+	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/terraform"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/trivy"
 )
 
@@ -26,11 +27,28 @@ import (
 // on one route but not the other would make a commit analysable through the server and
 // UNKNOWN through the gate, or the reverse. That divergence would be invisible until it
 // mattered.
+//
+// The one exception is a change report - a Terraform plan - which the gate reads and the
+// ingest webhook does not (ingestCollectors): it describes a state that is not deployed,
+// and writing it into the live graph would show routes that do not exist yet.
 func allCollectors() []ingestion.Collector {
 	return []ingestion.Collector{
 		trivy.New(), semgrep.New(), custodian.New(), falco.New(), build.New(), k8s.New(),
 		cloudnet.New(), iam.New(), supplychain.New(), sso.New(), dataclass.New(), eks.New(), lambda.New(), apigateway.New(),
+		terraform.New(),
 	}
+}
+
+// ingestCollectors are the collectors whose reports the ingest webhook writes into the
+// live graph: every one but the change reports.
+func ingestCollectors() []ingestion.Collector {
+	var out []ingestion.Collector
+	for _, c := range allCollectors() {
+		if _, change := c.(ingestion.ChangeParser); !change {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // collectorFor returns the collector that parses a tool's output, by source name.

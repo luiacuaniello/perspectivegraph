@@ -20,6 +20,7 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/semgrep"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/sso"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/supplychain"
+	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/terraform"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/trivy"
 )
 
@@ -96,6 +97,7 @@ func TestCollectorsSurviveHostileInput(t *testing.T) {
 		"sso":         sso.New(),
 		"supplychain": supplychain.New(),
 		"trivy":       trivy.New(),
+		"terraform":   terraform.New(),
 	}
 
 	for pname, p := range parsers {

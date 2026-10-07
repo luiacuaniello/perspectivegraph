@@ -147,6 +147,11 @@ one that is clean:
 | `blocked` | 1 | It opens or worsens critical attack paths - the check names them |
 | `unknown` | 2 | **Nobody analysed it.** The scan, the ingest or the SHA is wrong |
 
+A Terraform plan goes through the same gate before anything is deployed: `source: terraform`
+with the output of `terraform show -json`, judged on its own or against the live estate. A
+security group rule, a policy attachment or a bucket policy that opens a route fails the check
+in the pull request that writes it - see [Terraform plans](docs/manual/ci-gate.md#the-merge-gate-github-action-cli-and-trivy-plugin).
+
 Outside GitHub Actions it is one command, and it installs as a Trivy plugin too:
 
 ```bash

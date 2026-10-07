@@ -19,8 +19,10 @@ package impact
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"sort"
+	"strings"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/analyzer"
 	"github.com/luiacuaniello/perspectivegraph/internal/graph"
@@ -78,6 +80,10 @@ type Result struct {
 	// part of a route. Sample is one of them, for the message that explains it.
 	Waiting int
 	Sample  ontology.Edge
+	// Incomplete says what the change leaves unknown until it is applied (Input.Unknown),
+	// empty when nothing. A route found anyway is still a route; no route found is not a
+	// clean answer but an unknown one.
+	Incomplete string
 }
 
 // Input is the estate and the change to apply to it.
@@ -90,7 +96,13 @@ type Input struct {
 	BasePending []ontology.Edge
 	// Change is the change's scanner output, parsed into events and stamped with the
 	// commit (slug and sha).
-	Change    []ontology.Event
+	Change []ontology.Event
+	// BaseChange is the state a change report says it starts from (a Terraform plan's
+	// prior state), applied to the estate - unstamped - before the comparison, so both
+	// sides describe the assets the report describes the same way.
+	BaseChange []ontology.Event
+	// Unknown is what the change report says cannot be known until the change is applied.
+	Unknown   []string
 	Slug, SHA string
 	// Normalizer builds the normalizer the change goes through. It must be configured
 	// as the ingest path's is - threat intel, secret scrubbing - or the change lands
@@ -116,13 +128,6 @@ func Evaluate(ctx context.Context, in Input) (Result, error) {
 	if err := store.UpsertBatch(ctx, nodes, edges); err != nil {
 		return Result{}, err
 	}
-	// "Before" is read back from the copy rather than taken from Base, so both sides of
-	// the comparison went through the same store: a node listed twice, an edge to a node
-	// that is not there, are settled the same way on both.
-	before, err := store.Snapshot(ctx)
-	if err != nil {
-		return Result{}, err
-	}
 	mgr, err := graph.NewManager(ctx, func(context.Context, string) (graph.Store, error) { return store, nil })
 	if err != nil {
 		return Result{}, err
@@ -130,6 +135,18 @@ func Evaluate(ctx context.Context, in Input) (Result, error) {
 	norm := normalization.New(mgr)
 	if in.Normalizer != nil {
 		norm = in.Normalizer(mgr)
+	}
+	for _, ev := range in.BaseChange {
+		if err := norm.Handle(ctx, ev); err != nil && !errors.Is(err, graph.ErrEndpointsMissing) {
+			return Result{}, err
+		}
+	}
+	// "Before" is read back from the copy rather than taken from Base, so both sides of
+	// the comparison went through the same store: a node listed twice, an edge to a node
+	// that is not there, are settled the same way on both.
+	before, err := store.Snapshot(ctx)
+	if err != nil {
+		return Result{}, err
 	}
 	for _, ev := range in.Change {
 		// An edge to an asset the estate does not describe waits, as it would in the live
@@ -143,6 +160,7 @@ func Evaluate(ctx context.Context, in Input) (Result, error) {
 		return Result{}, err
 	}
 	res := compare(before, after, in.Slug, in.SHA)
+	res.Incomplete = UnknownReason(in.Unknown)
 	waiting, n, err := store.PendingEdges(ctx, 1)
 	if err != nil {
 		return Result{}, err
@@ -152,6 +170,24 @@ func Evaluate(ctx context.Context, in Input) (Result, error) {
 		res.Sample = waiting[0]
 	}
 	return res, nil
+}
+
+// UnknownReason renders what a change leaves unknown as the reason a verdict is
+// incomplete: the first few, and how many more.
+func UnknownReason(unknown []string) string {
+	if len(unknown) == 0 {
+		return ""
+	}
+	const shown = 3
+	head := unknown
+	if len(head) > shown {
+		head = head[:shown]
+	}
+	out := "known only after apply - " + strings.Join(head, "; ")
+	if n := len(unknown) - len(head); n > 0 {
+		out += fmt.Sprintf("; and %d more", n)
+	}
+	return out
 }
 
 // compare is the diff itself, on two snapshots: the estate before and after the change.

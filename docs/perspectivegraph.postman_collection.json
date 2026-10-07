@@ -991,6 +991,62 @@
 					"response": []
 				},
 				{
+					"name": "Merge gate - a Terraform plan (POST /gate/impact?source=terraform)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"format_version\": \"1.2\",\n  \"planned_values\": {\n    \"root_module\": {\n      \"resources\": [\n        {\n          \"address\": \"aws_route_table.public\",\n          \"mode\": \"managed\",\n          \"type\": \"aws_route_table\",\n          \"name\": \"public\",\n          \"values\": {\n            \"id\": \"rtb-0a1\",\n            \"route\": [\n              {\n                \"cidr_block\": \"0.0.0.0/0\",\n                \"gateway_id\": \"igw-0a1\"\n              }\n            ]\n          }\n        },\n        {\n          \"address\": \"aws_route_table_association.web\",\n          \"mode\": \"managed\",\n          \"type\": \"aws_route_table_association\",\n          \"name\": \"web\",\n          \"values\": {\n            \"id\": \"rtbassoc-0a1\",\n            \"subnet_id\": \"subnet-0a1\",\n            \"route_table_id\": \"rtb-0a1\"\n          }\n        },\n        {\n          \"address\": \"aws_subnet.web\",\n          \"mode\": \"managed\",\n          \"type\": \"aws_subnet\",\n          \"name\": \"web\",\n          \"values\": {\n            \"id\": \"subnet-0a1\",\n            \"map_public_ip_on_launch\": false\n          }\n        },\n        {\n          \"address\": \"aws_security_group.web\",\n          \"mode\": \"managed\",\n          \"type\": \"aws_security_group\",\n          \"name\": \"web\",\n          \"values\": {\n            \"id\": \"sg-0a1\",\n            \"name\": \"web\",\n            \"ingress\": [\n              {\n                \"from_port\": 443,\n                \"to_port\": 443,\n                \"protocol\": \"tcp\",\n                \"cidr_blocks\": [\n                  \"10.0.0.0/8\"\n                ],\n                \"ipv6_cidr_blocks\": [],\n                \"security_groups\": [],\n                \"self\": false\n              },\n              {\n                \"from_port\": 22,\n                \"to_port\": 22,\n                \"protocol\": \"tcp\",\n                \"cidr_blocks\": [\n                  \"0.0.0.0/0\"\n                ],\n                \"ipv6_cidr_blocks\": [],\n                \"security_groups\": [],\n                \"self\": false\n              }\n            ]\n          }\n        },\n        {\n          \"address\": \"aws_iam_role.web\",\n          \"mode\": \"managed\",\n          \"type\": \"aws_iam_role\",\n          \"name\": \"web\",\n          \"values\": {\n            \"name\": \"web\",\n            \"path\": \"/\",\n            \"arn\": \"arn:aws:iam::123456789012:role/web\",\n            \"assume_role_policy\": \"{\\\"Version\\\":\\\"2012-10-17\\\",\\\"Statement\\\":[{\\\"Effect\\\":\\\"Allow\\\",\\\"Principal\\\":{\\\"Service\\\":\\\"ec2.amazonaws.com\\\"},\\\"Action\\\":\\\"sts:AssumeRole\\\"}]}\"\n          }\n        },\n        {\n          \"address\": \"aws_iam_role_policy_attachment.admin\",\n          \"mode\": \"managed\",\n          \"type\": \"aws_iam_role_policy_attachment\",\n          \"name\": \"admin\",\n          \"values\": {\n            \"id\": \"web-admin\",\n            \"role\": \"web\",\n            \"policy_arn\": \"arn:aws:iam::aws:policy/AdministratorAccess\"\n          }\n        },\n        {\n          \"address\": \"aws_iam_instance_profile.web\",\n          \"mode\": \"managed\",\n          \"type\": \"aws_iam_instance_profile\",\n          \"name\": \"web\",\n          \"values\": {\n            \"name\": \"web\",\n            \"arn\": \"arn:aws:iam::123456789012:instance-profile/web\",\n            \"role\": \"web\"\n          }\n        },\n        {\n          \"address\": \"aws_instance.web\",\n          \"mode\": \"managed\",\n          \"type\": \"aws_instance\",\n          \"name\": \"web\",\n          \"values\": {\n            \"id\": \"i-0a1\",\n            \"subnet_id\": \"subnet-0a1\",\n            \"vpc_security_group_ids\": [\n              \"sg-0a1\"\n            ],\n            \"iam_instance_profile\": \"web\",\n            \"private_ip\": \"10.0.1.10\",\n            \"public_ip\": \"203.0.113.10\",\n            \"tags\": {\n              \"Name\": \"web-1\"\n            }\n          }\n        }\n      ]\n    }\n  },\n  \"prior_state\": {\n    \"values\": {\n      \"root_module\": {\n        \"resources\": [\n          {\n            \"address\": \"aws_route_table.public\",\n            \"mode\": \"managed\",\n            \"type\": \"aws_route_table\",\n            \"name\": \"public\",\n            \"values\": {\n              \"id\": \"rtb-0a1\",\n              \"route\": [\n                {\n                  \"cidr_block\": \"0.0.0.0/0\",\n                  \"gateway_id\": \"igw-0a1\"\n                }\n              ]\n            }\n          },\n          {\n            \"address\": \"aws_route_table_association.web\",\n            \"mode\": \"managed\",\n            \"type\": \"aws_route_table_association\",\n            \"name\": \"web\",\n            \"values\": {\n              \"id\": \"rtbassoc-0a1\",\n              \"subnet_id\": \"subnet-0a1\",\n              \"route_table_id\": \"rtb-0a1\"\n            }\n          },\n          {\n            \"address\": \"aws_subnet.web\",\n            \"mode\": \"managed\",\n            \"type\": \"aws_subnet\",\n            \"name\": \"web\",\n            \"values\": {\n              \"id\": \"subnet-0a1\",\n              \"map_public_ip_on_launch\": false\n            }\n          },\n          {\n            \"address\": \"aws_security_group.web\",\n            \"mode\": \"managed\",\n            \"type\": \"aws_security_group\",\n            \"name\": \"web\",\n            \"values\": {\n              \"id\": \"sg-0a1\",\n              \"name\": \"web\",\n              \"ingress\": [\n                {\n                  \"from_port\": 443,\n                  \"to_port\": 443,\n                  \"protocol\": \"tcp\",\n                  \"cidr_blocks\": [\n                    \"10.0.0.0/8\"\n                  ],\n                  \"ipv6_cidr_blocks\": [],\n                  \"security_groups\": [],\n                  \"self\": false\n                }\n              ]\n            }\n          },\n          {\n            \"address\": \"aws_iam_role.web\",\n            \"mode\": \"managed\",\n            \"type\": \"aws_iam_role\",\n            \"name\": \"web\",\n            \"values\": {\n              \"name\": \"web\",\n              \"path\": \"/\",\n              \"arn\": \"arn:aws:iam::123456789012:role/web\",\n              \"assume_role_policy\": \"{\\\"Version\\\":\\\"2012-10-17\\\",\\\"Statement\\\":[{\\\"Effect\\\":\\\"Allow\\\",\\\"Principal\\\":{\\\"Service\\\":\\\"ec2.amazonaws.com\\\"},\\\"Action\\\":\\\"sts:AssumeRole\\\"}]}\"\n            }\n          },\n          {\n            \"address\": \"aws_iam_role_policy_attachment.admin\",\n            \"mode\": \"managed\",\n            \"type\": \"aws_iam_role_policy_attachment\",\n            \"name\": \"admin\",\n            \"values\": {\n              \"id\": \"web-admin\",\n              \"role\": \"web\",\n              \"policy_arn\": \"arn:aws:iam::aws:policy/AdministratorAccess\"\n            }\n          },\n          {\n            \"address\": \"aws_iam_instance_profile.web\",\n            \"mode\": \"managed\",\n            \"type\": \"aws_iam_instance_profile\",\n            \"name\": \"web\",\n            \"values\": {\n              \"name\": \"web\",\n              \"arn\": \"arn:aws:iam::123456789012:instance-profile/web\",\n              \"role\": \"web\"\n            }\n          },\n          {\n            \"address\": \"aws_instance.web\",\n            \"mode\": \"managed\",\n            \"type\": \"aws_instance\",\n            \"name\": \"web\",\n            \"values\": {\n              \"id\": \"i-0a1\",\n              \"subnet_id\": \"subnet-0a1\",\n              \"vpc_security_group_ids\": [\n                \"sg-0a1\"\n              ],\n              \"iam_instance_profile\": \"web\",\n              \"private_ip\": \"10.0.1.10\",\n              \"public_ip\": \"203.0.113.10\",\n              \"tags\": {\n                \"Name\": \"web-1\"\n              }\n            }\n          }\n        ]\n      }\n    }\n  },\n  \"resource_changes\": [\n    {\n      \"address\": \"aws_route_table.public\",\n      \"change\": {\n        \"actions\": [\n          \"no-op\"\n        ],\n        \"after_unknown\": {}\n      }\n    },\n    {\n      \"address\": \"aws_route_table_association.web\",\n      \"change\": {\n        \"actions\": [\n          \"no-op\"\n        ],\n        \"after_unknown\": {}\n      }\n    },\n    {\n      \"address\": \"aws_subnet.web\",\n      \"change\": {\n        \"actions\": [\n          \"no-op\"\n        ],\n        \"after_unknown\": {}\n      }\n    },\n    {\n      \"address\": \"aws_security_group.web\",\n      \"change\": {\n        \"actions\": [\n          \"update\"\n        ],\n        \"after_unknown\": {}\n      }\n    },\n    {\n      \"address\": \"aws_iam_role.web\",\n      \"change\": {\n        \"actions\": [\n          \"no-op\"\n        ],\n        \"after_unknown\": {}\n      }\n    },\n    {\n      \"address\": \"aws_iam_role_policy_attachment.admin\",\n      \"change\": {\n        \"actions\": [\n          \"no-op\"\n        ],\n        \"after_unknown\": {}\n      }\n    },\n    {\n      \"address\": \"aws_iam_instance_profile.web\",\n      \"change\": {\n        \"actions\": [\n          \"no-op\"\n        ],\n        \"after_unknown\": {}\n      }\n    },\n    {\n      \"address\": \"aws_instance.web\",\n      \"change\": {\n        \"actions\": [\n          \"no-op\"\n        ],\n        \"after_unknown\": {}\n      }\n    }\n  ],\n  \"configuration\": {\n    \"provider_config\": {\n      \"aws\": {\n        \"expressions\": {\n          \"region\": {\n            \"constant_value\": \"eu-west-1\"\n          }\n        }\n      }\n    },\n    \"root_module\": {\n      \"resources\": []\n    }\n  }\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{apiUrl}}/gate/impact?source=terraform&slug={{slug}}&sha={{sha}}&pr={{pr}}&account=123456789012",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"gate",
+								"impact"
+							],
+							"query": [
+								{
+									"key": "source",
+									"value": "terraform"
+								},
+								{
+									"key": "slug",
+									"value": "{{slug}}"
+								},
+								{
+									"key": "sha",
+									"value": "{{sha}}"
+								},
+								{
+									"key": "pr",
+									"value": "{{pr}}"
+								},
+								{
+									"key": "account",
+									"value": "123456789012",
+									"description": "Optional. The AWS account the plan describes, for a plan whose resources are all new and so name none: without it its instances are keyed without an account and do not meet the estate's."
+								}
+							]
+						},
+						"description": "The same question asked of a Terraform plan, before anything is deployed. The body is the plan as `terraform show -json <planfile>` writes it. The plan carries the state it starts from (prior_state) and the state it would leave (planned_values); the engine adds the first to a copy of its graph and applies the second, each written in the shapes the AWS API returns and read by the collectors that read a live account - so a planned instance is judged exposed, and keyed, exactly as a running one.\n\nIn this example web-1 already has a public address in a subnet routed to an internet gateway, and its role is account administrator; its group admits only 10.0.0.0/8. The plan opens SSH to 0.0.0.0/0: the route web-1 -> web -> account-admin is `introduced`.\n\nA value known only after apply - a bucket policy naming the ARN of a bucket the same plan creates - is listed in `incomplete`, and a gate that finds no route reads that as UNKNOWN, not clean. Plans are the gate's alone: /ingest/terraform does not exist, because a plan describes what is not deployed yet."
+					},
+					"response": []
+				},
+				{
 					"name": "Temporal history (trend / MTTR / path age)",
 					"request": {
 						"method": "POST",

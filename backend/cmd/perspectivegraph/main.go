@@ -873,7 +873,7 @@ func run(parent context.Context, cfg config.Config) error {
 	// (which reports it), so an empty board can say what it was actually built from.
 	coverageStore := coverage.New().WithStaleAfter(cfg.CoverageStaleAfter)
 
-	ingestSrv := ingestion.NewServer(bus, allCollectors()...).
+	ingestSrv := ingestion.NewServer(bus, ingestCollectors()...).
 		WithHMAC(hmac).WithAudit(auditRec).WithRateLimit(ingestLimiter).
 		WithConnectorStatus(func() any { return connSched.Status() }).
 		WithCoverage(coverageStore)

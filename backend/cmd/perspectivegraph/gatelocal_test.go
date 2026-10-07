@@ -254,11 +254,11 @@ func TestLocalModeAgreesWithTheAnalyzerService(t *testing.T) {
 	}
 	norm := normalization.New(mgr)
 	events := estateEvents()
-	reportEvents, err := o.parseReports(o.reports, true)
+	reports, err := o.parseReports(o.reports, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, ev := range append(reportEvents, events...) {
+	for _, ev := range append(reports.events, events...) {
 		if err := norm.Handle(ctx, ev); err != nil {
 			t.Fatal(err)
 		}
@@ -556,11 +556,11 @@ func TestATrulyDanglingReferenceStillFails(t *testing.T) {
 func parseTrivyForTest(t *testing.T) []ontology.Event {
 	t.Helper()
 	o := localOpts{slug: localSlug, sha: localSHA, repository: localSlug, reports: []reportSpec{trivySampleSpec(t)}}
-	events, err := o.parseReports(o.reports, true)
+	reports, err := o.parseReports(o.reports, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return events
+	return reports.events
 }
 
 // Reading NOTHING from the live account - bad credentials, a wrong region, a denied role

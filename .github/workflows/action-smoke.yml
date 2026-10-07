@@ -315,6 +315,33 @@ jobs:
           [ "$COMMIT_ATTRIBUTION" = "commit" ] || { echo "::error::commit attribution=${COMMIT_ATTRIBUTION}"; fail=1; }
           exit "$fail"
 
+      # A Terraform plan carries the state it changes, so local mode takes it with no
+      # estate: the action must not refuse it for the missing aws-region the way it refuses
+      # a scan.
+      - id: plan
+        continue-on-error: true
+        uses: ./
+        with:
+          mode: local
+          binary: ${{ runner.temp }}/pg-build/perspectivegraph
+          report: backend/internal/ingestion/terraform/testdata/web-create.json
+          source: terraform
+          slug: acme/infra
+          sha: abc123def456
+
+      - name: Assert the plan was judged on its own, and blocked
+        env:
+          OUTCOME: ${{ steps.plan.outcome }}
+          VERDICT: ${{ steps.plan.outputs.verdict }}
+          PATHS: ${{ steps.plan.outputs.critical-paths }}
+        run: |
+          set -uo pipefail
+          fail=0
+          [ "$OUTCOME" = "failure" ] || { echo "::error::outcome=${OUTCOME}, want failure"; fail=1; }
+          [ "$VERDICT" = "blocked" ] || { echo "::error::verdict=${VERDICT}, want blocked"; fail=1; }
+          [ "$PATHS" = "3" ] || { echo "::error::critical-paths=${PATHS}, want 3"; fail=1; }
+          exit "$fail"
+
   # Server mode's comparison: the report goes to POST /gate/impact and nothing is ingested.
   # The canned engine answers the comparison and refuses the webhook, so a gate that still
   # ingested would fail here rather than pass by accident.

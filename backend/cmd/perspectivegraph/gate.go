@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/auth"
+	"github.com/luiacuaniello/perspectivegraph/internal/ingestion"
 )
 
 // The exit codes are the whole interface: a CI runner reads them, not the prose.
@@ -108,6 +109,7 @@ func runGate(args []string) error {
 	sha := fs.String("sha", os.Getenv("GITHUB_SHA"), "commit SHA under test")
 	pr := fs.Int("pr", 0, "pull-request number, if any")
 	repo := fs.String("repo", "", "repository identity for reports that carry file paths but not the repo (defaults to -slug)")
+	account := fs.String("account", "", "the AWS account the report describes, for reports whose identifiers are unique only within one account (a Terraform plan's instances). A plan names its account through the ARNs it holds; this is for one that names none")
 	cluster := fs.String("cluster", "", "the Kubernetes cluster the report describes, as the estate's dumps of it were ingested (?cluster=). Kubernetes names repeat across clusters, so the change meets the estate only under the same name")
 	ingest := fs.String("ingest", envOr("INGEST_URL", "http://localhost:8081"), "ingest base URL")
 	api := fs.String("api", envOr("API_URL", "http://localhost:8080"), "API base URL")
@@ -136,6 +138,11 @@ func runGate(args []string) error {
 	case "diff", "commit":
 	default:
 		return fmt.Errorf("-attribution %q: want diff or commit", *attribution)
+	}
+	if c, ok := collectorFor(*source); ok && *persist {
+		if _, change := c.(ingestion.ChangeParser); change {
+			return fmt.Errorf("-persist does not apply to -source %s: a plan describes what is not deployed yet, and is never written into the live graph", *source)
+		}
 	}
 	if len(baseReports) > 0 && !*local {
 		return errors.New("-base-reports is for local mode: a server compares with the estate it already holds")
@@ -170,7 +177,7 @@ func runGate(args []string) error {
 		v, err := localVerdict(context.Background(), localOpts{
 			slug: *slug, sha: *sha, pr: *pr, repository: *repo,
 			reports: specs, baseReports: base, estate: *estate,
-			awsRegion: *awsRegion, awsRole: *awsRole, cluster: *cluster,
+			awsRegion: *awsRegion, awsRole: *awsRole, cluster: *cluster, account: *account,
 			stdin: stdin, attribution: *attribution,
 		})
 		if err != nil {
@@ -193,7 +200,7 @@ func runGate(args []string) error {
 	v, err := serverVerdict(serverOpts{
 		client: &http.Client{Timeout: 30 * time.Second},
 		api:    *api, ingest: *ingest, token: *token, secret: *secret,
-		source: *source, slug: *slug, sha: *sha, repo: *repo, cluster: *cluster, pr: *pr,
+		source: *source, slug: *slug, sha: *sha, repo: *repo, cluster: *cluster, account: *account, pr: *pr,
 		report: body, attribution: *attribution, persist: *persist,
 		timeout: *timeout, poll: *poll,
 	}, os.Stderr)
@@ -209,7 +216,7 @@ type serverOpts struct {
 	client                     *http.Client
 	api, ingest, token, secret string
 	source, slug, sha, repo    string
-	cluster                    string
+	cluster, account           string
 	pr                         int
 	report                     []byte // nil: poll only, something else ingested
 	attribution                string
@@ -229,7 +236,7 @@ func serverVerdict(o serverOpts, log io.Writer) (gateVerdict, error) {
 		attr = "commit"
 	}
 	if attr == "diff" {
-		v, err := postImpact(o.client, o.api, o.source, o.slug, o.sha, o.repo, o.cluster, o.pr, o.token, o.report)
+		v, err := postImpact(o.client, o.api, o.source, o.slug, o.sha, o.repo, o.cluster, o.account, o.pr, o.token, o.report)
 		switch {
 		case errors.Is(err, errNoImpact):
 			// An engine older than 1.22 has no comparison to offer. Falling back keeps the
@@ -302,10 +309,13 @@ var errNoImpact = errors.New("the engine has no /gate/impact")
 // report goes to POST /gate/impact with the same parameters the ingest webhook takes, and
 // the answer is the verdict. The API authenticates it with the bearer token; nothing is
 // written, so it needs no ingest signature.
-func postImpact(client *http.Client, base, source, slug, sha, repo, cluster string, pr int, token string, body []byte) (gateVerdict, error) {
+func postImpact(client *http.Client, base, source, slug, sha, repo, cluster, account string, pr int, token string, body []byte) (gateVerdict, error) {
 	q := url.Values{"source": {source}, "slug": {slug}, "sha": {sha}}
 	if repo != "" {
 		q.Set("repo", repo)
+	}
+	if account != "" {
+		q.Set("account", account)
 	}
 	if cluster != "" {
 		q.Set("cluster", cluster)
@@ -582,6 +592,13 @@ func printGateVerdict(w io.Writer, v gateVerdict, slug, sha string, maxCritical 
 		// Not clean: the engine found no route, but it did not see the whole estate, and
 		// a route through the part it could not read looks exactly like no route at all.
 		fmt.Fprintf(w, "UNKNOWN  %s@%s\n", slug, shortSHA(sha))
+		if strings.HasPrefix(v.Incomplete, "known only after apply") {
+			// A plan that builds a policy from a resource it also creates: the policy's
+			// text exists only once that resource does.
+			fmt.Fprintf(w, "  Part of the change is %s, so \"no attack path\" cannot be trusted.\n", v.Incomplete)
+			fmt.Fprintln(w, "  This is NOT a clean result. Plan again once what it refers to exists, or pass -allow-unknown.")
+			break
+		}
 		fmt.Fprintf(w, "  The estate was read only in part, so \"no attack path\" cannot be trusted:\n  %s\n", v.Incomplete)
 		fmt.Fprintln(w, "  This is NOT a clean result. Fix the estate access and run it again.")
 	case v.CriticalPaths > maxCritical && v.Attribution == "diff" && !v.Recorded:
@@ -609,8 +626,8 @@ func printGateVerdict(w io.Writer, v gateVerdict, slug, sha string, maxCritical 
 		fmt.Fprintln(w, "  comparison cannot tell its routes from older ones: routes through it count as the per-commit gate counts them.")
 	}
 	if !v.Reachable {
-		fmt.Fprintln(w, "  None of the change's assets can be reached from an attack seed. If it runs somewhere, check that the")
-		fmt.Fprintln(w, "  scanned image is named as the workload runs it - a mismatch looks exactly like this.")
+		fmt.Fprintln(w, "  None of the change's assets can be reached from an attack seed. For a scanned image that runs")
+		fmt.Fprintln(w, "  somewhere, check that it is named as the workload runs it - a mismatch looks exactly like this.")
 	}
 }
 

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -150,5 +151,60 @@ func TestTheGateRefusesAnonymousAndMalformedCalls(t *testing.T) {
 	}
 	if code, _ := postGate(t, seededAPI(t).WithAuth(auth.NewTokenStore("gate:viewer"), nil), "gate", gateQuery); code != http.StatusNotFound {
 		t.Errorf("gate not enabled: status %d, want 404", code)
+	}
+}
+
+// changeFixture stands in for a change report - a Terraform plan: the state it starts
+// from, the state it leads to, stamped, and what it leaves unknown.
+type changeFixture struct {
+	before, after []ontology.Event
+	unknown       []string
+}
+
+func (changeFixture) Source() string { return "plan" }
+
+func (f changeFixture) Parse(r io.Reader, opts ingestion.Options) ([]ontology.Event, error) {
+	ch, err := f.ParseChange(r, opts)
+	return ch.After, err
+}
+
+func (f changeFixture) ParseChange(r io.Reader, opts ingestion.Options) (ingestion.Change, error) {
+	// The engine's graph is an estate: a change report read against it is told so.
+	if !opts.EstateKnown {
+		return ingestion.Change{}, errors.New("the server must say it holds an estate")
+	}
+	after, err := fixture{events: f.after}.Parse(r, opts)
+	return ingestion.Change{Before: f.before, After: after, Unknown: f.unknown}, err
+}
+
+// A route the plan's starting state already has: a plan describes its resources as they
+// are, and the comparison starts from that description - a route there before the plan
+// is not the plan's, even when the engine had never seen those resources.
+func TestTheGateStartsFromWhatAChangeReportSaysIsThere(t *testing.T) {
+	route := ontology.Event{Source: "plan", Kind: ontology.KindRelationship,
+		Nodes: []ontology.Node{
+			{ID: "vm", Label: ontology.LabelVirtualMachine, Name: "web-1", Properties: map[string]any{ontology.PropInternetExposed: true}},
+			{ID: "db", Label: ontology.LabelDatabase, Name: "orders", Properties: map[string]any{ontology.PropCrownJewel: true}},
+		},
+		Edges: []ontology.Edge{{Type: ontology.EdgeConnectsTo, From: "vm", To: "db", ExploitProbability: 0.8}},
+	}
+	a := seededAPI(t).WithGate([]ingestion.Collector{changeFixture{before: []ontology.Event{route}, after: []ontology.Event{route}}}, nil).
+		WithAuth(auth.NewTokenStore("gate:viewer"), nil)
+	code, v := postGate(t, a, "gate", "source=plan&slug=acme/infra&sha=c0ffee")
+	if code != http.StatusOK {
+		t.Fatalf("status %d", code)
+	}
+	if len(v.Paths) != 0 || v.Preexisting == 0 {
+		t.Errorf("paths=%d preexisting=%d: the route was there before the plan", len(v.Paths), v.Preexisting)
+	}
+
+	// The same report with what it cannot know until apply: still no route, and the answer
+	// says why it is not a clean one.
+	a = seededAPI(t).WithGate([]ingestion.Collector{changeFixture{before: []ontology.Event{route}, after: []ontology.Event{route},
+		unknown: []string{"aws_s3_bucket_policy.exports: the policy of bucket exports is known only after apply"}}}, nil).
+		WithAuth(auth.NewTokenStore("gate:viewer"), nil)
+	_, v = postGate(t, a, "gate", "source=plan&slug=acme/infra&sha=c0ffee")
+	if !strings.Contains(v.Incomplete, "known only after apply") || !strings.Contains(v.Incomplete, "exports") {
+		t.Errorf("incomplete = %q", v.Incomplete)
 	}
 }

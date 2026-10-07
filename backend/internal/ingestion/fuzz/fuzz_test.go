@@ -31,6 +31,7 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/semgrep"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/sso"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/supplychain"
+	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/terraform"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/trivy"
 	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
 )
@@ -68,6 +69,9 @@ func FuzzDataclass(f *testing.F) { run(f, dataclass.New(), "../../../testdata/da
 func FuzzBuild(f *testing.F)     { run(f, build.New(), "../../../testdata/build-sample.json") }
 func FuzzEKS(f *testing.F)       { run(f, eks.New(), "../../../testdata/eks-sample.json") }
 func FuzzLambda(f *testing.F)    { run(f, lambda.New(), "../../../testdata/lambda-sample.json") }
+func FuzzTerraform(f *testing.F) {
+	run(f, terraform.New(), "../terraform/testdata/web-create.json")
+}
 func FuzzAPIGateway(f *testing.F) {
 	run(f, apigateway.New(), "../../../testdata/apigateway-sample.json")
 }

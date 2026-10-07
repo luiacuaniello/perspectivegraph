@@ -72,6 +72,9 @@ type gateImpact struct {
 	Preexisting   int        `json:"preexisting"`
 	Recorded      bool       `json:"recorded"`
 	Reachable     bool       `json:"reachable"`
+	// Incomplete says what the change leaves unknown until it is applied: the gate reads
+	// "no route" as UNKNOWN, not clean, when it is set.
+	Incomplete string `json:"incomplete,omitempty"`
 }
 
 func (a *API) handleGateImpact(w http.ResponseWriter, r *http.Request) {
@@ -98,17 +101,27 @@ func (a *API) handleGateImpact(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "slug and sha are required: they identify the change the report belongs to")
 		return
 	}
-	opts := ingestion.Options{Repository: q.Get("repo"), RepoSlug: slug, CommitSHA: sha, Account: q.Get("account"), Cluster: q.Get("cluster")}
+	opts := ingestion.Options{Repository: q.Get("repo"), RepoSlug: slug, CommitSHA: sha, Account: q.Get("account"), Cluster: q.Get("cluster"),
+		EstateKnown: true}
 	if n, err := strconv.Atoi(q.Get("pr")); err == nil {
 		opts.PRNumber = n
 	}
 	defer r.Body.Close()
-	events, err := c.Parse(http.MaxBytesReader(w, r.Body, gateMaxBody), opts)
+	// A change report - a Terraform plan - also says what state it starts from and what
+	// it leaves unknown; a scanner report is only the state it describes.
+	var ch ingestion.Change
+	body := http.MaxBytesReader(w, r.Body, gateMaxBody)
+	var err error
+	if cp, ok := c.(ingestion.ChangeParser); ok {
+		ch, err = cp.ParseChange(body, opts)
+	} else {
+		ch.After, err = c.Parse(body, opts)
+	}
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	for _, ev := range events {
+	for _, ev := range append(append([]ontology.Event(nil), ch.Before...), ch.After...) {
 		if err := ontology.ValidateVocabulary(ev); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "outside the ontology: "+err.Error())
 			return
@@ -124,7 +137,8 @@ func (a *API) handleGateImpact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v, err := a.heavy(r.Context(), "gate|"+source+"|"+slug+"|"+sha, func(ctx context.Context) (any, error) {
-		return impact.Evaluate(ctx, impact.Input{Base: snap, Change: events, Slug: slug, SHA: sha, Normalizer: a.gateNormalizer})
+		return impact.Evaluate(ctx, impact.Input{Base: snap, Change: ch.After, BaseChange: ch.Before, Unknown: ch.Unknown,
+			Slug: slug, SHA: sha, Normalizer: a.gateNormalizer})
 	})
 	if err != nil {
 		status := http.StatusInternalServerError
@@ -146,6 +160,7 @@ func (a *API) handleGateImpact(w http.ResponseWriter, r *http.Request) {
 		Preexisting: res.Preexisting,
 		Recorded:    res.Recorded,
 		Reachable:   res.Reachable,
+		Incomplete:  res.Incomplete,
 		Paths:       make([]gatePath, 0, len(res.Blocking)),
 	}
 	apps := allowedApps(r.Context())

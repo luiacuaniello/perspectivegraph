@@ -135,8 +135,16 @@ type localOpts struct {
 	// "commit" (every route through an asset stamped with the commit).
 	attribution string
 	estate      string // events JSON, as written by `awscollect -json`
-	awsRegion   string
-	awsRole     string
+	// account is the AWS account the reports describe, for those whose identifiers are
+	// unique only within one (a plan's instances); empty, the report's own say.
+	account string
+	// estateKnown is set once an estate has been read: a change report then leaves to it
+	// what it cannot judge better (ingestion.Options.EstateKnown); estateAccount is the
+	// account it was read from, for a change report that names none.
+	estateKnown   bool
+	estateAccount string
+	awsRegion     string
+	awsRole       string
 	// cluster names the Kubernetes cluster this change's reports describe (see
 	// ingestion.Options.Cluster), so they meet the estate's objects of that cluster.
 	cluster string
@@ -180,24 +188,41 @@ func localVerdict(ctx context.Context, o localOpts) (gateVerdict, error) {
 	// a different graph than the server builds from the same input.
 	norm := normalization.New(mgr)
 
-	est, err := o.collectEstate(ctx)
-	if err != nil {
-		return gateVerdict{}, err
+	// A plan describes the estate it changes - the part its configuration manages - so it
+	// can be judged on its own. Without a live read, a route through what the
+	// configuration does not manage is not seen; with one, it is.
+	change := false
+	for _, spec := range o.reports {
+		if c, ok := collectorFor(spec.source); ok {
+			_, isChange := c.(ingestion.ChangeParser)
+			change = change || isChange
+		}
 	}
-	if len(est.events) == 0 {
-		return gateVerdict{}, fmt.Errorf("the estate source produced no events, so there is nothing for this commit to be reachable through")
+	planOnly := change && o.estate == "" && o.awsRegion == "" && o.collectAWSFn == nil
+	var est estate
+	if !planOnly {
+		if est, err = o.collectEstate(ctx); err != nil {
+			return gateVerdict{}, err
+		}
+		if len(est.events) == 0 {
+			return gateVerdict{}, fmt.Errorf("the estate source produced no events, so there is nothing for this commit to be reachable through")
+		}
+		// A plan of new resources names no account; the account the estate was read from
+		// is the one it lands in.
+		o.estateAccount = estateAccount(est.events)
+		o.estateKnown = true
 	}
-
 	reports, err := o.parseReports(o.reports, true)
 	if err != nil {
 		return gateVerdict{}, err
 	}
+	est.events = append(est.events, reports.before...)
 
 	if o.attribution != "commit" {
 		return o.diffVerdict(ctx, norm, store, est, reports)
 	}
 
-	if err := applyEvents(ctx, norm, store, append(reports, est.events...)); err != nil {
+	if err := applyEvents(ctx, norm, store, append(reports.events, est.events...)); err != nil {
 		return gateVerdict{}, err
 	}
 
@@ -214,19 +239,49 @@ func localVerdict(ctx context.Context, o localOpts) (gateVerdict, error) {
 
 	v := buildVerdict(snap, paths, o.slug, o.sha)
 	v.Attribution = "commit"
-	v.Incomplete = est.partial
+	v.Incomplete = joinReasons(est.partial, impact.UnknownReason(reports.unknown))
 	return v, nil
+}
+
+// estateAccount is the account most of the estate's assets say they belong to, or "".
+func estateAccount(events []ontology.Event) string {
+	counts := map[string]int{}
+	for _, ev := range events {
+		for _, n := range ev.Nodes {
+			if a, _ := n.Properties[ontology.PropAccount].(string); a != "" {
+				counts[a]++
+			}
+		}
+	}
+	best, most := "", 0
+	for a, n := range counts {
+		if n > most || (n == most && a < best) {
+			best, most = a, n
+		}
+	}
+	return best
+}
+
+// joinReasons puts together the reasons a verdict is incomplete.
+func joinReasons(reasons ...string) string {
+	var out []string
+	for _, r := range reasons {
+		if r != "" {
+			out = append(out, r)
+		}
+	}
+	return strings.Join(out, "; ")
 }
 
 // diffVerdict is local mode's comparison, the same one a server runs (package impact):
 // the estate - with the scans of what runs now, when given - against the estate with
 // this change's reports applied.
-func (o localOpts) diffVerdict(ctx context.Context, norm *normalization.Normalizer, store *memory.Store, est estate, reports []ontology.Event) (gateVerdict, error) {
+func (o localOpts) diffVerdict(ctx context.Context, norm *normalization.Normalizer, store *memory.Store, est estate, reports parsedReports) (gateVerdict, error) {
 	base, err := o.parseReports(o.baseReports, false)
 	if err != nil {
 		return gateVerdict{}, err
 	}
-	for _, ev := range append(est.events, base...) {
+	for _, ev := range append(est.events, base.events...) {
 		if err := norm.Handle(ctx, ev); err != nil && !errors.Is(err, graph.ErrEndpointsMissing) {
 			return gateVerdict{}, fmt.Errorf("apply event: %w", err)
 		}
@@ -242,7 +297,7 @@ func (o localOpts) diffVerdict(ctx context.Context, norm *normalization.Normaliz
 		return gateVerdict{}, err
 	}
 	res, err := impact.Evaluate(ctx, impact.Input{
-		Base: snap, BasePending: pending, Change: reports, Slug: o.slug, SHA: o.sha,
+		Base: snap, BasePending: pending, Change: reports.events, Unknown: reports.unknown, Slug: o.slug, SHA: o.sha,
 	})
 	if err != nil {
 		return gateVerdict{}, err
@@ -258,7 +313,7 @@ func (o localOpts) diffVerdict(ctx context.Context, norm *normalization.Normaliz
 				"%d edge(s) wait for an endpoint, e.g. %s %s->%s: %w", res.Waiting, e.Type, e.From, e.To, graph.ErrEndpointsMissing)
 	}
 	v := verdictFromImpact(res)
-	v.Incomplete = est.partial
+	v.Incomplete = joinReasons(est.partial, res.Incomplete)
 	return v, nil
 }
 
@@ -386,37 +441,61 @@ func (o localOpts) collectAWS(ctx context.Context) ([]ontology.Event, error) {
 // commit: the stamp is what makes the change findable in the graph afterwards, and
 // without it every verdict here would be UNKNOWN. The base branch's are not - they are
 // what runs now, not the change.
-func (o localOpts) parseReports(specs []reportSpec, stamped bool) ([]ontology.Event, error) {
-	opts := ingestion.Options{Repository: o.repository, Cluster: o.cluster}
+//
+// A change report - a Terraform plan - also says what state it starts from (Before), which
+// joins the estate, and what it leaves unknown until it is applied.
+func (o localOpts) parseReports(specs []reportSpec, stamped bool) (parsedReports, error) {
+	opts := ingestion.Options{Repository: o.repository, Cluster: o.cluster, Account: o.account, EstateKnown: o.estateKnown}
 	if stamped {
 		opts.RepoSlug, opts.CommitSHA, opts.PRNumber = o.slug, o.sha, o.pr
 	}
-	var out []ontology.Event
+	var out parsedReports
 	for _, spec := range specs {
 		c, ok := collectorFor(spec.source)
 		if !ok {
-			return nil, fmt.Errorf("no collector for source %q", spec.source)
+			return parsedReports{}, fmt.Errorf("no collector for source %q", spec.source)
 		}
-		var (
-			events []ontology.Event
-			err    error
-		)
+		var r io.Reader
 		if spec.path == "-" {
-			events, err = c.Parse(bytes.NewReader(o.stdin), opts)
+			r = bytes.NewReader(o.stdin)
 		} else {
 			f, openErr := os.Open(spec.path) // #nosec G304 G703 -- operator-supplied path to their own scanner output
 			if openErr != nil {
-				return nil, fmt.Errorf("open -report %s: %w", spec.path, openErr)
+				return parsedReports{}, fmt.Errorf("open -report %s: %w", spec.path, openErr)
 			}
-			events, err = c.Parse(f, opts)
-			_ = f.Close()
+			defer func() { _ = f.Close() }()
+			r = f
+		}
+		var ch ingestion.Change
+		var err error
+		if cp, isChange := c.(ingestion.ChangeParser); isChange && stamped {
+			copts := opts
+			if copts.Account == "" {
+				copts.Account = o.estateAccount
+			}
+			ch, err = cp.ParseChange(r, copts)
+			out.change = true
+		} else {
+			ch.After, err = c.Parse(r, opts)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("parse %s report %s: %w", spec.source, spec.path, err)
+			return parsedReports{}, fmt.Errorf("parse %s report %s: %w", spec.source, spec.path, err)
 		}
-		out = append(out, events...)
+		out.events = append(out.events, ch.After...)
+		out.before = append(out.before, ch.Before...)
+		out.unknown = append(out.unknown, ch.Unknown...)
 	}
 	return out, nil
+}
+
+// parsedReports are reports turned into events.
+type parsedReports struct {
+	events []ontology.Event
+	// before is the state change reports start from; unknown, what they leave unknown
+	// until applied; change, whether there was a change report at all.
+	before  []ontology.Event
+	unknown []string
+	change  bool
 }
 
 // applyEvents feeds every event through the normalizer, independently of the order they

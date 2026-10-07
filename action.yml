@@ -63,7 +63,10 @@ inputs:
     required: false
     default: ""
   source:
-    description: 'Collector that parses the report, i.e. the /ingest/{source} route: trivy, semgrep, ...'
+    description: >-
+      Collector that parses the report, i.e. the /ingest/{source} route: trivy, semgrep, k8s,
+      ... - or terraform, for a plan as `terraform show -json <planfile>` writes it, which the
+      gate reads before anything is deployed.
     required: false
     default: trivy
   mode:
@@ -72,7 +75,8 @@ inputs:
       verdict. "local" needs no deployment at all: the runner reads your estate read-only,
       ingests this pull request's scan, and computes the verdict in-process with the same
       engine. Local mode still needs an estate - `aws-region` or `estate` - because
-      without one there are no attack paths, only a flat list of findings.
+      without one there are no attack paths, only a flat list of findings. A Terraform plan
+      is the exception: it carries the state it changes, so it can be judged on its own.
     required: false
     default: server
   attribution:
@@ -165,6 +169,14 @@ inputs:
       The Kubernetes cluster the report describes, when the estate's dumps of it were
       ingested with ?cluster=. Kubernetes names repeat across clusters, so the change meets
       the estate's objects only under the same name. Leave empty for a single cluster.
+    required: false
+    default: ""
+  account:
+    description: >-
+      The AWS account the report describes, for reports whose identifiers are unique only
+      within one account - a Terraform plan's instances. A plan names its account through
+      the ARNs it holds; set this for one that names none, so its instances meet the
+      estate's.
     required: false
     default: ""
   max-critical:
@@ -386,6 +398,13 @@ runs:
           *) echo "cluster=no" >> "$GITHUB_OUTPUT" ;;
         esac
 
+        # -account arrived with Terraform plans. "cross-account" in another flag's help
+        # would match a bare -account, so the pattern takes the flag as help lists it.
+        case "$probe" in
+          *"-account string"*) echo "account=yes" >> "$GITHUB_OUTPUT" ;;
+          *) echo "account=no" >> "$GITHUB_OUTPUT" ;;
+        esac
+
         echo "$dir" >> "$GITHUB_PATH"
 
     - name: Gate on attack paths
@@ -417,6 +436,8 @@ runs:
         KNOWS_ATTRIBUTION: ${{ steps.download.outputs.attribution }}
         CLUSTER: ${{ inputs.cluster }}
         KNOWS_CLUSTER: ${{ steps.download.outputs.cluster }}
+        ACCOUNT: ${{ inputs.account }}
+        KNOWS_ACCOUNT: ${{ steps.download.outputs.account }}
       run: |
         # -e OFF, explicitly. GitHub runs composite bash steps as `bash -e -o pipefail`,
         # so a non-zero exit from the gate would abort this step at the line that produces
@@ -441,6 +462,13 @@ runs:
           fi
           args+=(-cluster "$CLUSTER")
         fi
+        if [ -n "$ACCOUNT" ]; then
+          if [ "$KNOWS_ACCOUNT" != "yes" ]; then
+            echo "::error::account is set, but this gate binary predates -account. Pin a newer version, or leave account empty."
+            exit 1
+          fi
+          args+=(-account "$ACCOUNT")
+        fi
         [ -n "$REPORT" ] && args+=(-report "$REPORT" -source "$SOURCE")
         [ "$ALLOW_UNKNOWN" = "true" ] && args+=(-allow-unknown)
         case "$ATTRIBUTION" in
@@ -454,7 +482,7 @@ runs:
         fi
 
         if [ "$MODE" = "local" ]; then
-          if [ -z "$AWS_REGION_IN" ] && [ -z "$ESTATE" ]; then
+          if [ -z "$AWS_REGION_IN" ] && [ -z "$ESTATE" ] && { [ "$SOURCE" != "terraform" ] || [ -z "$REPORT" ]; }; then
             echo "::error::local mode needs an estate: set aws-region (live, read-only) or estate. Without one there are no attack paths to reason about, only a flat list of findings."
             exit 1
           fi

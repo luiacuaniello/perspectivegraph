@@ -574,6 +574,13 @@ e.g. Okta `/api/v1/users` + the AWS-federation app's role mappings.
 
 ---
 
+### Terraform plans (the merge gate only)
+
+A plan is not sent to the estate: it describes infrastructure that does not exist yet, and the
+ingest webhook refuses it. The merge gate reads it - `source: terraform`, with the output of
+`terraform show -json <planfile>` - and answers whether it opens a route before it is applied.
+See [Terraform plans](ci-gate.md#the-merge-gate-github-action-cli-and-trivy-plugin).
+
 ## 3. The two markers that make paths appear
 
 The analyzer looks for routes from an **`internet_exposed`** node (seed) to a

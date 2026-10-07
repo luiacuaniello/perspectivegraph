@@ -1,0 +1,187 @@
+package terraform
+
+import (
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/luiacuaniello/perspectivegraph/internal/ingestion"
+)
+
+func readFixture(t *testing.T, name string) *Plan {
+	t.Helper()
+	f, err := os.Open("testdata/" + name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	p, err := Read(f, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// The fixtures are real: `terraform show -json` of plans made with the AWS provider,
+// offline, so every attribute AWS assigns on apply is unknown in them - the case a pull
+// request that adds infrastructure always is.
+
+// An identifier known only after apply is what the configuration builds it from: an
+// instance's subnet and group, created by the same plan, are those resources' placeholders,
+// with the prefix AWS will give them; a route's internet gateway likewise, through a block
+// the configuration writes as one expression.
+func TestUnknownIdentifiersFollowTheConfiguration(t *testing.T) {
+	p := readFixture(t, "web-create.json")
+	web := p.byAddr[Planned]["aws_instance.web"]
+	if got := p.Str(Planned, web, "subnet_id"); got != "subnet-planned:aws_subnet.public" {
+		t.Errorf("subnet_id = %q", got)
+	}
+	if got := p.Strs(Planned, web, "vpc_security_group_ids"); len(got) != 1 || got[0] != "sg-planned:aws_security_group.web" {
+		t.Errorf("vpc_security_group_ids = %v", got)
+	}
+	rt := p.byAddr[Planned]["aws_route_table.public"]
+	if got := p.routeOf(Planned, rt, "route", 0).GatewayID; got != "igw-planned:aws_internet_gateway.gw" {
+		t.Errorf("route gateway = %q, want the internet gateway's placeholder: a route to igw-… is what makes a subnet public", got)
+	}
+	// An IAM role's ARN is built from its name, as AWS builds it.
+	role := p.byAddr[Planned]["aws_iam_role.web"]
+	if got := p.arnOf(Planned, role); got != "arn:aws:iam::planned:role/web-role" {
+		t.Errorf("role ARN = %q", got)
+	}
+}
+
+// A document built from a resource not created yet - a bucket policy naming the bucket's
+// own ARN - is unknown, and stays unknown: its references are what it is built FROM, not
+// what it is, and reading the bucket's ARN as the policy would invent a document.
+func TestADocumentIsNeverTakenForWhatItReferences(t *testing.T) {
+	p := readFixture(t, "web-create.json")
+	pol := p.byAddr[Planned]["aws_s3_bucket_policy.exports"]
+	if got := p.Str(Planned, pol, "policy"); got != "" {
+		t.Errorf("policy = %q, want unknown", got)
+	}
+	if p.Known(Planned, pol, "policy") {
+		t.Error("the policy must read as unknown")
+	}
+	if got := p.Str(Planned, pol, "bucket"); got != "pg-tf-exports" {
+		t.Errorf("bucket = %q: an identifier attribute does follow its reference", got)
+	}
+	_, notes := p.s3(Planned)
+	if len(notes) != 1 || !strings.Contains(notes[0], "pg-tf-exports") {
+		t.Errorf("notes = %v, want the bucket's policy noted as known only after apply", notes)
+	}
+}
+
+// Through a module: an input variable resolves in the calling module, an output in the
+// called one, and a for_each instance keeps its key.
+func TestReferencesCrossModules(t *testing.T) {
+	p := readFixture(t, "mod-create.json")
+	a := p.byAddr[Planned][`module.app.aws_instance.this["a"]`]
+	if a == nil {
+		t.Fatal("the for_each instance is missing")
+	}
+	if got := p.Str(Planned, a, "subnet_id"); got != "subnet-planned:aws_subnet.a" {
+		t.Errorf("subnet through var.subnet_id = %q", got)
+	}
+	if got := p.Strs(Planned, a, "vpc_security_group_ids"); len(got) != 1 || got[0] != "sg-planned:module.app.aws_security_group.this" {
+		t.Errorf("group inside the module = %v", got)
+	}
+	rule := p.byAddr[Planned]["aws_security_group_rule.from_app"]
+	if got := p.Str(Planned, rule, "source_security_group_id"); got != "sg-planned:module.app.aws_security_group.this" {
+		t.Errorf("group through module.app.sg_id = %q", got)
+	}
+	if got := p.Str(Planned, rule, "security_group_id"); got != "sg-planned:aws_vpc.main.default" {
+		t.Errorf("the VPC's default group = %q", got)
+	}
+	prof := p.byAddr[Planned]["module.app.aws_iam_instance_profile.this"]
+	if got := p.roleARN(Planned, p.Str(Planned, prof, "role")); got != "arn:aws:iam::planned:role/team/app-role" {
+		t.Errorf("profile role = %q, want the role's ARN with its path", got)
+	}
+}
+
+// An instance's public address: asked for, bound by an Elastic IP, or handed out by its
+// subnet. When none of that can be told, none is recorded and the security groups alone
+// decide - erring toward reporting.
+func TestPlannedAddresses(t *testing.T) {
+	p := readFixture(t, "web-create.json")
+	b, _ := p.network(Planned)
+	got := map[string]instRecord{}
+	for _, i := range b.Instances {
+		got[i.InstanceID] = i
+	}
+	if web := got["i-planned:aws_instance.web"]; web.PublicIPAddress == "" || web.PrivateIPAddress == "" {
+		t.Errorf("web has an Elastic IP and a public subnet: %+v", web)
+	}
+	if db := got["i-planned:aws_instance.db[0]"]; db.PublicIPAddress != "" || db.PrivateIPAddress == "" {
+		t.Errorf("db sits in a subnet that hands out no public address: %+v", db)
+	}
+	m := readFixture(t, "mod-create.json")
+	mb, _ := m.network(Planned)
+	for _, i := range mb.Instances {
+		if i.PublicIPAddress == "" {
+			t.Errorf("%s asks for a public address: %+v", i.InstanceID, i)
+		}
+	}
+}
+
+func TestAccountAndRegionFromThePlan(t *testing.T) {
+	p := readFixture(t, "web-create.json")
+	if p.Region != "eu-north-1" {
+		t.Errorf("region = %q, from the provider block", p.Region)
+	}
+	if p.Account != "" {
+		t.Errorf("account = %q: a plan of new resources names none", p.Account)
+	}
+	f, _ := os.Open("testdata/web-create.json")
+	defer f.Close()
+	q, err := Read(f, "111122223333", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := q.arnOf(Planned, q.byAddr[Planned]["aws_iam_role.web"]); got != "arn:aws:iam::111122223333:role/web-role" {
+		t.Errorf("with the account given, role ARN = %q", got)
+	}
+}
+
+func TestNotAPlan(t *testing.T) {
+	if _, err := Read(strings.NewReader(`{"format_version":"1.0","values":{}}`), "", ""); err == nil {
+		t.Error("a state file, not a plan, must be refused")
+	}
+	if _, err := Read(strings.NewReader(`{`), "", ""); err == nil {
+		t.Error("broken JSON must be refused")
+	}
+}
+
+// A plan is input, and the pull request's author writes the configuration behind it. One
+// written by hand can make two attributes refer to each other; following that has to stop
+// rather than recurse until the process dies.
+func TestReferencesThatLoopBackEnd(t *testing.T) {
+	plan := `{
+	 "planned_values": {"root_module": {"resources": [
+	  {"address": "aws_instance.a", "mode": "managed", "type": "aws_instance", "name": "a", "values": {}},
+	  {"address": "aws_subnet.b", "mode": "managed", "type": "aws_subnet", "name": "b", "values": {}}
+	 ]}},
+	 "resource_changes": [
+	  {"address": "aws_instance.a", "change": {"actions": ["create"], "after_unknown": {"subnet_id": true, "id": true}}},
+	  {"address": "aws_subnet.b", "change": {"actions": ["create"], "after_unknown": {"id": true}}}
+	 ],
+	 "configuration": {"root_module": {"resources": [
+	  {"address": "aws_instance.a", "mode": "managed", "type": "aws_instance", "name": "a",
+	   "expressions": {"subnet_id": {"references": ["aws_subnet.b.id"]}}},
+	  {"address": "aws_subnet.b", "mode": "managed", "type": "aws_subnet", "name": "b",
+	   "expressions": {"id": {"references": ["aws_instance.a.subnet_id"]}}}
+	 ]}}
+	}`
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if _, err := New().ParseChange(strings.NewReader(plan), ingestion.Options{}); err != nil {
+			t.Error(err)
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("following references that loop back never ended")
+	}
+}

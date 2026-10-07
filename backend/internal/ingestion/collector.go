@@ -39,6 +39,13 @@ type Options struct {
 	// cluster, and a route can start in one and end in the other. Empty keeps the ids a
 	// single-cluster estate always had.
 	Cluster string
+
+	// EstateKnown says the report is read against an estate that already describes the
+	// deployed assets - an engine's graph, or a live read of the account. A change report
+	// then leaves to the estate what it cannot judge better: a Terraform plan whose
+	// configuration does not describe a subnet's routing says nothing about an untouched
+	// instance's exposure that the account itself does not say more precisely.
+	EstateKnown bool
 }
 
 // PRProps returns the PR-context node properties carried by these options, or
@@ -68,4 +75,29 @@ type Collector interface {
 	Source() string
 	// Parse reads a single report and returns the events it describes.
 	Parse(r io.Reader, opts Options) ([]ontology.Event, error)
+}
+
+// ChangeParser is a collector for a report that describes a change before it is made: a
+// Terraform plan. Besides the state the change leads to - what Parse returns - it says
+// which state the change starts from, and what cannot be known until it is applied.
+//
+// The gate takes Before as part of the estate. A plan describes the resources it manages
+// as they are now, and the comparison has to start from that description, not only from
+// whatever the estate holds: an asset read two ways - from the cloud's API, and from the
+// plan - would otherwise differ between the two sides for no reason the change gives.
+//
+// Such a report is the gate's alone. It describes what is not deployed yet, so the ingest
+// webhook refuses it rather than write a planned state into the live graph.
+type ChangeParser interface {
+	Collector
+	ParseChange(r io.Reader, opts Options) (Change, error)
+}
+
+// Change is a change report, parsed.
+type Change struct {
+	Before, After []ontology.Event
+	// Unknown lists what the change leaves unknown until it is applied - a policy that
+	// names a resource not created yet. A route through any of it can be neither found
+	// nor ruled out, so a comparison that finds none is not clean but unknown.
+	Unknown []string
 }
