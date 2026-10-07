@@ -9,6 +9,18 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.33.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.32.0...v1.33.0) (2026-10-07)
+
+
+### Features
+
+* **remediation:** suggest closing a Lambda function anyone can invoke ([#316](https://github.com/luiacuaniello/perspectivegraph/issues/316)) ([34843ff](https://github.com/luiacuaniello/perspectivegraph/commit/34843ff3b8db7e7ea7029770d7f9b5604ea82060))
+
+
+### Bug Fixes
+
+* **remediation:** never suggest an empty fix for an open Lambda function ([#323](https://github.com/luiacuaniello/perspectivegraph/issues/323)) ([0f188e3](https://github.com/luiacuaniello/perspectivegraph/commit/0f188e3fae1f2a652d156b4352f17f745cf68d41))
+
 ## [1.32.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.31.0...v1.32.0) (2026-10-05)
 
 
