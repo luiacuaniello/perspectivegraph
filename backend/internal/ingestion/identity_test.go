@@ -405,6 +405,12 @@ func TestALambdaFunctionAnyoneCanInvokeIsAnEntryPoint(t *testing.T) {
 	for _, n := range snap.Nodes {
 		if n.Label == ontology.LabelFunction {
 			exposed[n.Name] = n.InternetExposed()
+			// The remediation package picks its fix by these two; any other wording on an
+			// open function would get the generic one.
+			if how, _ := n.Properties[ontology.PropExposure].(string); n.InternetExposed() &&
+				how != ontology.ExposureFunctionURL && how != ontology.ExposureFunctionPolicy {
+				t.Errorf("%s is open by %q, a way the remediation package does not know", n.Name, how)
+			}
 		}
 	}
 	for name, want := range map[string]bool{"orders-api": true, "reports": false, "billing": true, "internal": false,

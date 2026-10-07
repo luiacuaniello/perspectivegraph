@@ -374,18 +374,58 @@ resource "aws_s3_bucket_public_access_block" "perspective_block_public_%s" {
 
 func closePublicLambda(lambda, role ontology.Node) Suggestion {
 	name := sanitize(lambda.Name)
-	exposure := propStr(lambda, "exposure")
+	exposure := propStr(lambda, ontology.PropExposure)
 
-	var content string
-
-	switch exposure {
-	case "function URL without authentication":
-		content = fmt.Sprintf(`# PerspectiveGraph auto-remediation - Lambda %q is publicly invokable.
+	content := fmt.Sprintf(`# PerspectiveGraph auto-remediation - Lambda %q is publicly invokable.
 # The verification proves the public entry point is gone; it does not change
 # the permissions granted by the Lambda execution role.
 
-# This function uses an unauthenticated Lambda Function URL.
-# Update the EXISTING aws_lambda_function_url resource for this function:
+`, lambda.Name)
+
+	switch exposure {
+	case ontology.ExposureFunctionURL:
+		content += "# This function uses an unauthenticated Lambda Function URL.\n" + lambdaURLFix(lambda.Name)
+
+	case ontology.ExposureFunctionPolicy:
+		content += "# This function policy allows any AWS principal to invoke the function.\n" + lambdaPolicyFix
+
+	default:
+		// Not a way the lambda collector writes: a function from another feed, or one whose
+		// exposure was never read. Naming both ways, and how to tell which is open, beats a
+		// file with nothing to apply.
+		recorded := ""
+		if exposure != "" {
+			recorded = fmt.Sprintf(" (it records %q)", exposure)
+		}
+		content += fmt.Sprintf(`# The graph does not say how anyone can invoke this function%s.
+# Check both ways, and apply the fix below that matches:
+#
+#   aws lambda get-function-url-config --function-name %q
+#   aws lambda get-policy --function-name %q
+
+# If the function URL's authorization_type is "NONE":
+`, recorded, lambda.Name, lambda.Name) + lambdaURLFix(lambda.Name) + `
+# If the function policy lets principal "*" invoke the function:
+` + lambdaPolicyFix
+	}
+
+	return Suggestion{
+		Title:     "Close public access to Lambda " + lambda.Name,
+		Kind:      "terraform",
+		Filename:  "close-public-lambda-" + name + ".tf",
+		Content:   content,
+		Rationale: "Removes the public Lambda entry point so the internet can no longer reach the function through this path. The verification proves the route is gone, not that the execution role's permissions changed.",
+		Cut: CutEdge{
+			From: lambda.ID,
+			To:   role.ID,
+			Type: string(ontology.EdgeAssumes),
+		},
+	}
+}
+
+// lambdaURLFix closes a function URL without authentication.
+func lambdaURLFix(function string) string {
+	return fmt.Sprintf(`# Update the EXISTING aws_lambda_function_url resource for this function:
 #
 #   authorization_type = "AWS_IAM"
 #
@@ -404,15 +444,11 @@ func closePublicLambda(lambda, role ontology.Node) Suggestion {
 # For example:
 #
 #   aws lambda remove-permission --function-name %q --statement-id <STATEMENT_ID>
-`, lambda.Name, lambda.Name)
+`, function)
+}
 
-	case "function policy lets any AWS principal invoke it":
-		content = fmt.Sprintf(`# PerspectiveGraph auto-remediation - Lambda %q is publicly invokable.
-# The verification proves the public entry point is gone; it does not change
-# the permissions granted by the Lambda execution role.
-
-# This function policy allows any AWS principal to invoke the function.
-# Update the EXISTING aws_lambda_permission resource(s).
+// lambdaPolicyFix narrows a function policy that lets any AWS principal invoke it.
+const lambdaPolicyFix = `# Update the EXISTING aws_lambda_permission resource(s).
 #
 # Replace:
 #
@@ -422,22 +458,7 @@ func closePublicLambda(lambda, role ontology.Node) Suggestion {
 # Where appropriate, also restrict access with source_arn and/or source_account.
 #
 # Do not create a new permission resource that preserves public access.
-`, lambda.Name)
-	}
-
-	return Suggestion{
-		Title:     "Close public access to Lambda " + lambda.Name,
-		Kind:      "terraform",
-		Filename:  "close-public-lambda-" + name + ".tf",
-		Content:   content,
-		Rationale: "Removes the public Lambda entry point so the internet can no longer reach the function through this path. The verification proves the route is gone, not that the execution role's permissions changed.",
-		Cut: CutEdge{
-			From: lambda.ID,
-			To:   role.ID,
-			Type: string(ontology.EdgeAssumes),
-		},
-	}
-}
+`
 
 func networkPolicy(c ontology.Node) Suggestion {
 	app := sanitize(c.Name)

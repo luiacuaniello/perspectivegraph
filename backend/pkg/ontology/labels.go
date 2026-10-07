@@ -162,6 +162,16 @@ const (
 	// reached: an internet-facing database still wants a password, a public bucket does
 	// not. A crown jewel carrying it is compromised as it stands - see Node.HeldByAttacker.
 	PropPublicAccess = "public_access"
+	// PropExposure (string) says in words how the internet reaches a node, or why it does
+	// not, beside the verdict in PropNetworkExposed. Written by the feeds that decide it
+	// from a resource's own settings: Lambda functions and API Gateway APIs.
+	PropExposure = "exposure"
+	// ExposureFunctionURL and ExposureFunctionPolicy are the two ways the lambda collector
+	// finds a function open to anyone. The remediation package picks its fix by them, so
+	// both read them from here: a wording changed on one side only would quietly turn the
+	// fix for that way into the generic one that names both.
+	ExposureFunctionURL    = "function URL without authentication"
+	ExposureFunctionPolicy = "function policy lets any AWS principal invoke it"
 	// PropCrownJewel (bool) marks a node as a valid traversal *target*.
 	PropCrownJewel = "crown_jewel"
 	// PropCrownJewelBasis (string) records WHY a node is a crown jewel - "tagged"
