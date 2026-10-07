@@ -125,6 +125,21 @@ var Registry = []Rule{
 		},
 		Build: func(from, to ontology.Node) Suggestion { return networkSegment(from, to) },
 	},
+	{
+		// An internet-exposed Lambda can be invoked by anyone and then use
+		// its execution role. Cut the Lambda -> role assumption edge by
+		// removing the public invocation path.
+		Name: "close-public-lambda",
+		Match: func(st analyzer.Step, from, to ontology.Node) bool {
+			return st.EdgeType == ontology.EdgeAssumes &&
+				from.Label == ontology.LabelFunction &&
+				from.InternetExposed() &&
+				to.Label == ontology.LabelIAMRole
+		},
+		Build: func(from, to ontology.Node) Suggestion {
+			return closePublicLambda(from, to)
+		},
+	},
 }
 
 // Generate inspects a path and emits remediation artifacts for the edges that
@@ -356,6 +371,94 @@ resource "aws_s3_bucket_public_access_block" "perspective_block_public_%s" {
 		Rationale: "The sensitive bucket is open to anyone, so no edge stands in the way; blocking public access closes it.",
 	}, true
 }
+
+func closePublicLambda(lambda, role ontology.Node) Suggestion {
+	name := sanitize(lambda.Name)
+	exposure := propStr(lambda, ontology.PropExposure)
+
+	content := fmt.Sprintf(`# PerspectiveGraph auto-remediation - Lambda %q is publicly invokable.
+# The verification proves the public entry point is gone; it does not change
+# the permissions granted by the Lambda execution role.
+
+`, lambda.Name)
+
+	switch exposure {
+	case ontology.ExposureFunctionURL:
+		content += "# This function uses an unauthenticated Lambda Function URL.\n" + lambdaURLFix(lambda.Name)
+
+	case ontology.ExposureFunctionPolicy:
+		content += "# This function policy allows any AWS principal to invoke the function.\n" + lambdaPolicyFix
+
+	default:
+		// Not a way the lambda collector writes: a function from another feed, or one whose
+		// exposure was never read. Naming both ways, and how to tell which is open, beats a
+		// file with nothing to apply.
+		recorded := ""
+		if exposure != "" {
+			recorded = fmt.Sprintf(" (it records %q)", exposure)
+		}
+		content += fmt.Sprintf(`# The graph does not say how anyone can invoke this function%s.
+# Check both ways, and apply the fix below that matches:
+#
+#   aws lambda get-function-url-config --function-name %q
+#   aws lambda get-policy --function-name %q
+
+# If the function URL's authorization_type is "NONE":
+`, recorded, lambda.Name, lambda.Name) + lambdaURLFix(lambda.Name) + `
+# If the function policy lets principal "*" invoke the function:
+` + lambdaPolicyFix
+	}
+
+	return Suggestion{
+		Title:     "Close public access to Lambda " + lambda.Name,
+		Kind:      "terraform",
+		Filename:  "close-public-lambda-" + name + ".tf",
+		Content:   content,
+		Rationale: "Removes the public Lambda entry point so the internet can no longer reach the function through this path. The verification proves the route is gone, not that the execution role's permissions changed.",
+		Cut: CutEdge{
+			From: lambda.ID,
+			To:   role.ID,
+			Type: string(ontology.EdgeAssumes),
+		},
+	}
+}
+
+// lambdaURLFix closes a function URL without authentication.
+func lambdaURLFix(function string) string {
+	return fmt.Sprintf(`# Update the EXISTING aws_lambda_function_url resource for this function:
+#
+#   authorization_type = "AWS_IAM"
+#
+# Do not create a second aws_lambda_function_url resource.
+
+# When authorization_type was "NONE", remove the public Lambda permissions
+# explicitly as well. These permissions may have been added automatically
+# and are not removed simply by changing or destroying the Function URL.
+#
+# Remove permissions that grant:
+#   lambda:InvokeFunctionUrl
+#   lambda:InvokeFunction
+# to:
+#   principal = "*"
+#
+# For example:
+#
+#   aws lambda remove-permission --function-name %q --statement-id <STATEMENT_ID>
+`, function)
+}
+
+// lambdaPolicyFix narrows a function policy that lets any AWS principal invoke it.
+const lambdaPolicyFix = `# Update the EXISTING aws_lambda_permission resource(s).
+#
+# Replace:
+#
+#   principal = "*"
+#
+# with the AWS account or service that actually needs to invoke this function.
+# Where appropriate, also restrict access with source_arn and/or source_account.
+#
+# Do not create a new permission resource that preserves public access.
+`
 
 func networkPolicy(c ontology.Node) Suggestion {
 	app := sanitize(c.Name)

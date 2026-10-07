@@ -295,3 +295,199 @@ func TestAnECSServiceIsNotFixedWithANetworkPolicy(t *testing.T) {
 		t.Errorf("a Kubernetes pod behind a load balancer: got %v, want the NetworkPolicy", pod)
 	}
 }
+
+func TestGenerateRemediationForLambdaFunctionURLExposure(t *testing.T) {
+	p := analyzer.AttackPath{
+		Nodes: []ontology.Node{
+			{
+				ID:    "lambda",
+				Label: ontology.LabelFunction,
+				Name:  "public-handler",
+				Properties: map[string]any{
+					ontology.PropInternetExposed: true,
+					ontology.PropExposure:        ontology.ExposureFunctionURL,
+				},
+			},
+			{
+				ID:    "role",
+				Label: ontology.LabelIAMRole,
+				Name:  "lambda-execution-role",
+			},
+		},
+		Steps: []analyzer.Step{
+			{
+				EdgeType: ontology.EdgeAssumes,
+				From:     "lambda",
+				To:       "role",
+			},
+		},
+	}
+
+	var found *Suggestion
+	for _, s := range Generate(p) {
+		if strings.Contains(s.Filename, "lambda") {
+			s := s
+			found = &s
+			break
+		}
+	}
+
+	if found == nil {
+		t.Fatalf("expected remediation for Lambda Function URL exposure, got %+v", Generate(p))
+	}
+
+	if found.Kind != "terraform" {
+		t.Errorf("kind = %q, want terraform", found.Kind)
+	}
+
+	for _, want := range []string{
+		`aws_lambda_function_url`,
+		`authorization_type = "AWS_IAM"`,
+		`lambda:InvokeFunctionUrl`,
+		`lambda:InvokeFunction`,
+		`principal = "*"`,
+		`aws lambda remove-permission`,
+	} {
+		if !strings.Contains(found.Content, want) {
+			t.Errorf("remediation missing %q:\n%s", want, found.Content)
+		}
+	}
+
+	if found.Cut != (CutEdge{
+		From: "lambda",
+		To:   "role",
+		Type: string(ontology.EdgeAssumes),
+	}) {
+		t.Errorf("cut = %+v, want Lambda -> role ASSUMES", found.Cut)
+	}
+}
+
+func TestGenerateRemediationForLambdaPolicyExposure(t *testing.T) {
+	p := analyzer.AttackPath{
+		Nodes: []ontology.Node{
+			{
+				ID:    "lambda",
+				Label: ontology.LabelFunction,
+				Name:  "public-handler",
+				Properties: map[string]any{
+					ontology.PropInternetExposed: true,
+					ontology.PropExposure:        ontology.ExposureFunctionPolicy,
+				},
+			},
+			{
+				ID:    "role",
+				Label: ontology.LabelIAMRole,
+				Name:  "lambda-execution-role",
+			},
+		},
+		Steps: []analyzer.Step{
+			{
+				EdgeType: ontology.EdgeAssumes,
+				From:     "lambda",
+				To:       "role",
+			},
+		},
+	}
+
+	var found *Suggestion
+	for _, s := range Generate(p) {
+		if strings.Contains(s.Filename, "lambda") {
+			s := s
+			found = &s
+			break
+		}
+	}
+
+	if found == nil {
+		t.Fatalf("expected remediation for Lambda policy exposure, got %+v", Generate(p))
+	}
+
+	for _, want := range []string{
+		`aws_lambda_permission`,
+		`principal = "*"`,
+		`source_arn`,
+		`source_account`,
+	} {
+		if !strings.Contains(found.Content, want) {
+			t.Errorf("remediation missing %q:\n%s", want, found.Content)
+		}
+	}
+}
+
+func TestNoRemediationForNonExposedLambda(t *testing.T) {
+	p := analyzer.AttackPath{
+		Nodes: []ontology.Node{
+			{
+				ID:    "lambda",
+				Label: ontology.LabelFunction,
+				Name:  "private-handler",
+				Properties: map[string]any{
+					ontology.PropInternetExposed: false,
+				},
+			},
+			{
+				ID:    "role",
+				Label: ontology.LabelIAMRole,
+				Name:  "lambda-execution-role",
+			},
+		},
+		Steps: []analyzer.Step{
+			{
+				EdgeType: ontology.EdgeAssumes,
+				From:     "lambda",
+				To:       "role",
+			},
+		},
+	}
+
+	for _, s := range Generate(p) {
+		if strings.Contains(s.Filename, "lambda") {
+			t.Errorf("non-exposed Lambda received remediation: %+v", s)
+		}
+	}
+}
+
+// An open function whose exposure the fix does not know - a node from another feed, or one
+// whose exposure was never read - gets both fixes and how to tell which way is open, not
+// an empty file. The two ways the lambda collector writes keep their own fix.
+func TestAnOpenFunctionOfUnknownExposureGetsBothFixes(t *testing.T) {
+	for exposure, generic := range map[string]bool{
+		ontology.ExposureFunctionURL:      false,
+		ontology.ExposureFunctionPolicy:   false,
+		"":                                true,
+		"reached through a custom domain": true,
+	} {
+		p := analyzer.AttackPath{
+			Nodes: []ontology.Node{
+				{ID: "lambda", Label: ontology.LabelFunction, Name: "public-handler", Properties: map[string]any{
+					ontology.PropInternetExposed: true, ontology.PropExposure: exposure}},
+				{ID: "role", Label: ontology.LabelIAMRole, Name: "lambda-execution-role"},
+			},
+			Steps: []analyzer.Step{{EdgeType: ontology.EdgeAssumes, From: "lambda", To: "role"}},
+		}
+		var found *Suggestion
+		for _, s := range Generate(p) {
+			if strings.HasPrefix(s.Filename, "close-public-lambda-") {
+				s := s
+				found = &s
+			}
+		}
+		if found == nil {
+			t.Errorf("exposure %q: no fix for the open function", exposure)
+			continue
+		}
+		hasURLFix := strings.Contains(found.Content, `authorization_type = "AWS_IAM"`)
+		hasPolicyFix := strings.Contains(found.Content, "aws_lambda_permission")
+		checks := strings.Contains(found.Content, `aws lambda get-function-url-config --function-name "public-handler"`) &&
+			strings.Contains(found.Content, `aws lambda get-policy --function-name "public-handler"`)
+		switch {
+		case generic && !(hasURLFix && hasPolicyFix && checks):
+			t.Errorf("exposure %q: want both fixes and the commands that tell them apart:\n%s", exposure, found.Content)
+		case !generic && (checks || hasURLFix == hasPolicyFix):
+			t.Errorf("exposure %q: want the one fix for that way:\n%s", exposure, found.Content)
+		}
+		if found.Cut != (CutEdge{From: "lambda", To: "role", Type: string(ontology.EdgeAssumes)}) {
+			t.Errorf("exposure %q: cut = %+v, want the function's ASSUMES edge", exposure, found.Cut)
+		}
+	}
+}

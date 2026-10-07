@@ -212,7 +212,7 @@ func (g *graph) api(id, name, kind string, defaultEndpointOff bool, gate string,
 	// Written either way, so an API whose last open route gains an authorizer, or that is
 	// made private, is retracted on the next pull.
 	props[ontology.PropNetworkExposed] = exposed
-	props["exposure"] = how
+	props[ontology.PropExposure] = how
 	props["open_routes"] = ""
 	if exposed {
 		props[ontology.PropInternetExposed] = true

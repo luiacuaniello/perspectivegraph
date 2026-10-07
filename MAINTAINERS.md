@@ -27,4 +27,7 @@ Thank you to everyone whose work is in this repository:
   which also found that the runtime indicator was hidden from screen readers.
 - [@dipakshimpi](https://github.com/dipakshimpi) - the Helm chart's values schema
   ([#310](https://github.com/luiacuaniello/perspectivegraph/pull/310)): a misspelt or unknown
-  setting now fails `helm install` instead of being silently ignored.
+  setting now fails `helm install` instead of being silently ignored; and the fix for a Lambda
+  function anyone can invoke
+  ([#316](https://github.com/luiacuaniello/perspectivegraph/pull/316)), one for each way it
+  can be open: a function URL without authentication, or a function policy open to anyone.
