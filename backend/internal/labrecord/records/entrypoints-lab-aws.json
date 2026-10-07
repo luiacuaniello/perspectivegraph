@@ -3,8 +3,8 @@
   "title": "Entry points: bucket policies, function URLs, load balancers, API routes",
   "command": "make entrypoints-lab-aws",
   "region": "eu-north-1",
-  "engine": "v1.31.0-3-g76882f9-dirty",
-  "ran_at": "2026-10-05T11:25:24Z",
+  "engine": "v1.33.0",
+  "ran_at": "2026-10-07T10:03:36Z",
   "cost": "a few cents",
   "checks": [
     {

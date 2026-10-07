@@ -6,7 +6,8 @@ import InfoTip from "./InfoTip";
 // resources on a real account and puts the same question to AWS and to the engine - is this
 // bucket open, does this function URL let a stranger in, can this role make itself
 // administrator - and records both answers. The records are built into the backend, so they
-// describe the engine, not the estate it reads.
+// describe the engine, not the estate it reads, and every installation shows the same ones:
+// the visible text says so, since a reader takes "checked against AWS" to mean their own.
 //
 // It answers a narrower question than the verdict above it: whether the facts a route's
 // steps rest on are right, not whether a whole route can be walked. Without it the page
@@ -37,15 +38,15 @@ export default function LabChecks() {
         <h2 id="lab-checks-title" className="text-[12px] font-normal text-muted">
           Checked against AWS
         </h2>
-        <InfoTip text="The project's own labs, run on a real AWS account for this version of the engine: each builds resources on both sides of a rule and takes the verdict from AWS - S3's judgement of a policy, the answer a stranger's request gets, IAM's policy simulator. They check the engine's rules, not your estate." />
+        <InfoTip text="Each lab builds resources on both sides of a rule, on the project's own AWS account, and takes the verdict from AWS - S3's judgement of a policy, the answer a stranger's request gets, IAM's policy simulator. The records ship with the engine, so every installation shows the same ones, each with the engine version it was run with." />
       </div>
       <p className="mt-1.5 text-[17px] font-semibold tabular-nums text-slate-900">
         {agreed} of {total} answers match AWS's own
       </p>
       <p className="mt-2 max-w-[70ch] text-[13px] leading-relaxed text-slate-600">
-        The facts a route's steps rest on, put to AWS on a real account and to this version of the engine. They say
-        whether a bucket is open or a role can escalate, not whether a whole route can be walked - that is the
-        question above, and it needs real outcomes.
+        The project's own labs, on the project's own AWS account - not checks of your estate. Each puts the facts a
+        route's steps rest on to AWS and to the engine: whether a bucket is open or a role can escalate, not whether a
+        whole route can be walked. That is the question above, and it needs real outcomes.
       </p>
       <ul className="mt-3 flex flex-col divide-y divide-edge/70">
         {runs.map((r) => (

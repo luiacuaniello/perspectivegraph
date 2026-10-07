@@ -212,8 +212,10 @@ came from, what AWS said, what the engine said, and whether they agree - with th
 and the engine version (`git describe`) of the run. The records live in
 `backend/internal/labrecord/records/`, one per lab, written by `scripts/lab-record.py`, and are built
 into the binary: the dashboard's Accuracy page shows them under *Checked against AWS*, and the
-GraphQL field `labRuns` returns them. So every instance shows how the rules of its own version were
-checked, disagreements included - a record with one is still a record.
+GraphQL field `labRuns` returns them. So every instance shows how its engine's rules were checked,
+disagreements included - a record with one is still a record. Every instance shows the same records:
+they come from the project's own lab account, not from yours, and each names the engine version it
+was run with, which can be older than the instance's own.
 
 Only the checks AWS answered go into a record: S3's judgement of a policy, the answer a stranger's
 request gets, IAM's policy simulator. The checks the entry-points lab makes against its own

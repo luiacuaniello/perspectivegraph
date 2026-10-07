@@ -153,12 +153,31 @@ teardown() {
     aws ec2 delete-vpc --vpc-id "$vpc" && say "  deleted the lab VPC"
   fi
   # The first ECS cluster in an account creates ECS's service-linked role; leave the account
-  # as the lab found it.
+  # as the lab found it. Deleting one is a task AWS runs afterwards, and Elastic Load
+  # Balancing's fails while the deleted load balancers are still being cleaned up - so wait
+  # for the outcome, and say so when it failed rather than report a deletion that did not
+  # happen.
+  delete_slr() { # delete_slr <role> <service>
+    local task state=FAILED
+    task=$(aws iam delete-service-linked-role --role-name "$1" --query DeletionTaskId --output text 2>/dev/null) || return 0
+    for _ in $(seq 1 12); do
+      # A task just created can be unknown for a moment: keep asking.
+      state=$(aws iam get-service-linked-role-deletion-status --deletion-task-id "$task" --query Status --output text 2>/dev/null)
+      case "$state" in SUCCEEDED|FAILED) break ;; esac
+      sleep 5
+    done
+    if [ "$state" = SUCCEEDED ]; then
+      say "  deleted $2's service-linked role, which the lab created"
+    else
+      say "  $2's service-linked role, which the lab created, is still in use ($state); delete it later with"
+      say "    aws iam delete-service-linked-role --role-name $1"
+    fi
+  }
   if [ "${SLR_BEFORE:-yes}" = "no" ]; then
-    aws iam delete-service-linked-role --role-name AWSServiceRoleForECS >/dev/null 2>&1 && say "  deleted ECS's service-linked role, which the lab created"
+    delete_slr AWSServiceRoleForECS ECS
   fi
   if [ "${ELB_SLR_BEFORE:-yes}" = "no" ]; then
-    aws iam delete-service-linked-role --role-name AWSServiceRoleForElasticLoadBalancing >/dev/null 2>&1 && say "  deleted Elastic Load Balancing's service-linked role, which the lab created"
+    delete_slr AWSServiceRoleForElasticLoadBalancing "Elastic Load Balancing"
   fi
   [ -n "$WORK" ] && rm -rf "$WORK"
   say "  done"

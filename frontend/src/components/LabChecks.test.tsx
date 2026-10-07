@@ -47,6 +47,8 @@ describe("LabChecks", () => {
     render(<LabChecks />);
     expect(await screen.findByText("3 of 3 answers match AWS's own")).toBeInTheDocument();
     expect(screen.getByText(/not whether a whole route can be walked/)).toBeInTheDocument();
+    // Every installation shows the same records: they must not read as checks of the viewer's account.
+    expect(screen.getByText(/not checks of your estate/)).toBeInTheDocument();
     const lab = screen.getByText("S3 Block Public Access, on a bucket and on the whole account");
     fireEvent.click(lab);
     const table = screen.getByRole("table", { name: /S3 Block Public Access/ });

@@ -3,8 +3,8 @@
   "title": "IAM permissions boundaries: an escalation the boundary blocks, and its control",
   "command": "make boundary-lab-aws",
   "region": "eu-north-1",
-  "engine": "v1.31.0-3-g76882f9-dirty",
-  "ran_at": "2026-10-05T11:08:47Z",
+  "engine": "v1.33.0",
+  "ran_at": "2026-10-07T09:52:03Z",
   "cost": "free",
   "checks": [
     {
