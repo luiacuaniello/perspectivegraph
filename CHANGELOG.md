@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.34.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.33.1...v1.34.0) (2026-10-07)
+
+
+### Features
+
+* **gate:** judge a Terraform plan before it is applied ([#327](https://github.com/luiacuaniello/perspectivegraph/issues/327)) ([19cf306](https://github.com/luiacuaniello/perspectivegraph/commit/19cf3069051cc9e9a9f6ca037b3e50cdc6141206))
+
 ## [1.33.1](https://github.com/luiacuaniello/perspectivegraph/compare/v1.33.0...v1.33.1) (2026-10-07)
 
 
