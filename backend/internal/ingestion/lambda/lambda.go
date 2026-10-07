@@ -95,7 +95,7 @@ func (c *Collector) Parse(r io.Reader, _ ingestion.Options) ([]ontology.Event, e
 		// Written either way, as the network source writes its verdict: removing a public
 		// function URL must take the function off the internet on the next pull.
 		props[ontology.PropNetworkExposed] = exposed
-		props["exposure"] = how
+		props[ontology.PropExposure] = how
 		if exposed {
 			props[ontology.PropInternetExposed] = true
 		}
@@ -151,19 +151,19 @@ func exposure(url *functionURL, policyKnown bool, policy ingestion.ResourcePolic
 	if url != nil && strings.EqualFold(url.AuthType, "NONE") {
 		switch {
 		case !policyKnown:
-			return true, "function URL without authentication"
+			return true, ontology.ExposureFunctionURL
 		case !policy.PublicThroughURL("NONE", "lambda:InvokeFunctionUrl"):
 			if !direct {
 				return false, "function URL without authentication, but the function policy lets no one invoke it"
 			}
 		case !url.needsInvokeGrant() || policy.PublicThroughURL("NONE", "lambda:InvokeFunction"):
-			return true, "function URL without authentication"
+			return true, ontology.ExposureFunctionURL
 		case !direct:
 			return false, "function URL without authentication, but its policy lacks the lambda:InvokeFunction grant a URL created since October 2025 also needs"
 		}
 	}
 	if direct {
-		return true, "function policy lets any AWS principal invoke it"
+		return true, ontology.ExposureFunctionPolicy
 	}
 	return false, "invocable only by principals it names"
 }
