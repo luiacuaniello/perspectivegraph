@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.33.1](https://github.com/luiacuaniello/perspectivegraph/compare/v1.33.0...v1.33.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* **dashboard:** say the AWS lab records are the project's own, not checks of the viewer's account ([#324](https://github.com/luiacuaniello/perspectivegraph/issues/324)) ([a353009](https://github.com/luiacuaniello/perspectivegraph/commit/a353009df01530fc22631dd984b2d61c2e50ae17))
+
 ## [1.33.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.32.0...v1.33.0) (2026-10-07)
 
 
