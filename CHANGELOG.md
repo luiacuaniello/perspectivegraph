@@ -9,6 +9,18 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.35.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.34.0...v1.35.0) (2026-10-08)
+
+
+### Features
+
+* **gate:** read load balancers, ECS, API Gateway, EKS and network ACLs in Terraform plans ([#331](https://github.com/luiacuaniello/perspectivegraph/issues/331)) ([eccea60](https://github.com/luiacuaniello/perspectivegraph/commit/eccea601f7c89a5eaf266c93bff2740706b091fd))
+
+
+### Bug Fixes
+
+* **gate:** judge a Terraform plan with the network it does not describe ([#329](https://github.com/luiacuaniello/perspectivegraph/issues/329)) ([16673eb](https://github.com/luiacuaniello/perspectivegraph/commit/16673eb86dae71b715344c9015dfe397cccb2fa3))
+
 ## [1.34.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.33.1...v1.34.0) (2026-10-07)
 
 
