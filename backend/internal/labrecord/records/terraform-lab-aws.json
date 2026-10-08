@@ -3,8 +3,8 @@
   "title": "Terraform plans, judged before apply and checked after it",
   "command": "make terraform-lab-aws",
   "region": "eu-north-1",
-  "engine": "v1.34.0-1-g16673eb-dirty",
-  "ran_at": "2026-10-08T13:25:25Z",
+  "engine": "v1.35.0",
+  "ran_at": "2026-10-08T15:16:14Z",
   "cost": "a few cents",
   "checks": [
     {
