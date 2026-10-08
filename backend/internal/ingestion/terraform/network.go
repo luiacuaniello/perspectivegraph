@@ -19,6 +19,19 @@ type netBundle struct {
 	Subnets          []subnetRecord  `json:"subnets,omitempty"`
 	RouteTables      []rtRecord      `json:"route_tables,omitempty"`
 	InstanceProfiles []profileRecord `json:"instance_profiles,omitempty"`
+	// What a live read of the account carries and a plan does not: kept as read, so the
+	// account's network passes through to cloudnet whole when the plan is laid over it.
+	Provider      string          `json:"provider,omitempty"`
+	VPCPeerings   json.RawMessage `json:"vpc_peerings,omitempty"`
+	NetworkACLs   json.RawMessage `json:"network_acls,omitempty"`
+	ECSServices   json.RawMessage `json:"ecs_services,omitempty"`
+	LoadBalancers json.RawMessage `json:"load_balancers,omitempty"`
+
+	// described are the security groups the view holds in full - those the configuration
+	// manages - rather than only rules added to them; address is each instance's block in
+	// the configuration.
+	described map[string]bool
+	address   map[string]string
 }
 
 type sgRecord struct {
@@ -58,6 +71,8 @@ type instRecord struct {
 	PublicIPAddress    string        `json:"PublicIpAddress,omitempty"`
 	IPv6Address        string        `json:"Ipv6Address,omitempty"`
 	MetadataOptions    *metadataOpts `json:"MetadataOptions,omitempty"`
+	// NetworkInterfaces is a live instance's, kept as read.
+	NetworkInterfaces json.RawMessage `json:"NetworkInterfaces,omitempty"`
 }
 
 type tag struct {
@@ -76,6 +91,7 @@ type metadataOpts struct {
 type subnetRecord struct {
 	SubnetID     string `json:"SubnetId"`
 	RouteTableID string `json:"RouteTableId,omitempty"`
+	NetworkACLID string `json:"NetworkAclId,omitempty"`
 }
 
 type rtRecord struct {
@@ -115,7 +131,7 @@ func (p *Plan) id(v View, r *Resource) string {
 
 // network builds the network feed of a view.
 func (p *Plan) network(v View) (netBundle, []string) {
-	var b netBundle
+	b := netBundle{described: map[string]bool{}, address: map[string]string{}}
 	var notes []string
 	groups := map[string]*sgRecord{}
 	var order []string
@@ -135,6 +151,7 @@ func (p *Plan) network(v View) (netBundle, []string) {
 		}
 		g := group(p.id(v, r))
 		g.GroupName, _ = r.Values["name"].(string)
+		b.described[g.GroupID] = true
 		blocks, _ := r.Values["ingress"].([]any)
 		for i := range blocks {
 			perm, ok := p.ingressBlock(v, r, i)
@@ -368,6 +385,7 @@ func (p *Plan) network(v View) (netBundle, []string) {
 			continue
 		}
 		id := p.id(v, r)
+		b.address[id] = r.Address
 		rec := instRecord{InstanceID: id, SubnetID: p.Str(v, r, "subnet_id")}
 		groupIDs := p.Strs(v, r, "vpc_security_group_ids")
 		if len(groupIDs) == 0 {
@@ -451,10 +469,20 @@ func (p *Plan) roleARN(v View, nameOrARN string) string {
 	if strings.HasPrefix(nameOrARN, "arn:") {
 		return nameOrARN
 	}
-	for _, r := range p.Resources(v, "aws_iam_role") {
-		if p.nameOf(v, r) == nameOrARN {
-			return p.arnOf(v, r)
+	// Indexed once per view: every profile and attachment names a role, and looking each
+	// up among all the roles would cost the square of the plan.
+	byName, ok := p.roles[v]
+	if !ok {
+		byName = map[string]string{}
+		for _, r := range p.Resources(v, "aws_iam_role") {
+			if name := p.nameOf(v, r); byName[name] == "" {
+				byName[name] = p.arnOf(v, r)
+			}
 		}
+		p.roles[v] = byName
+	}
+	if arn := byName[nameOrARN]; arn != "" {
+		return arn
 	}
 	return "arn:aws:iam::" + p.accountOr() + ":role/" + nameOrARN
 }
@@ -569,35 +597,49 @@ func sortTags(t []tag) {
 // rules, the same addresses.
 func unchangedExposure(prior, planned netBundle) []string {
 	was := map[string]string{}
+	before := indexNet(prior)
 	for _, inst := range prior.Instances {
-		was[inst.InstanceID] = exposureInputs(prior, inst)
+		was[inst.InstanceID] = before.exposureInputs(inst)
 	}
+	after := indexNet(planned)
 	var out []string
 	for _, inst := range planned.Instances {
-		if fp, ok := was[inst.InstanceID]; ok && fp == exposureInputs(planned, inst) {
+		if fp, ok := was[inst.InstanceID]; ok && fp == after.exposureInputs(inst) {
 			out = append(out, inst.InstanceID)
 		}
 	}
 	return out
 }
 
+// netIndex is a view's network keyed for lookup: built once, so that comparing every
+// instance stays linear in the size of the plan - which its author writes - and not in its
+// square.
+type netIndex struct {
+	groups  map[string]sgRecord
+	tableOf map[string]string  // subnet -> route table
+	routes  map[string][]route // route table -> routes
+}
+
+func indexNet(b netBundle) netIndex {
+	ix := netIndex{groups: map[string]sgRecord{}, tableOf: map[string]string{}, routes: map[string][]route{}}
+	for _, g := range b.SecurityGroups {
+		ix.groups[g.GroupID] = g
+	}
+	for _, sn := range b.Subnets {
+		ix.tableOf[sn.SubnetID] = sn.RouteTableID
+	}
+	for _, t := range b.RouteTables {
+		ix.routes[t.RouteTableID] = t.Routes
+	}
+	return ix
+}
+
 // exposureInputs is everything the network feed decides an instance's exposure from, in
 // one comparable string.
-func exposureInputs(b netBundle, inst instRecord) string {
-	groups := map[string]sgRecord{}
-	for _, g := range b.SecurityGroups {
-		groups[g.GroupID] = g
-	}
+func (ix netIndex) exposureInputs(inst instRecord) string {
 	var routes []route
-	for _, sn := range b.Subnets {
-		if sn.SubnetID != inst.SubnetID {
-			continue
-		}
-		for _, t := range b.RouteTables {
-			if t.RouteTableID == sn.RouteTableID {
-				routes = t.Routes
-			}
-		}
+	if rt, ok := ix.tableOf[inst.SubnetID]; ok {
+		routes = ix.routes[rt]
 	}
 	var ids []string
 	for _, g := range inst.SecurityGroups {
@@ -606,7 +648,7 @@ func exposureInputs(b netBundle, inst instRecord) string {
 	sort.Strings(ids)
 	var perms []sgRecord
 	for _, id := range ids {
-		perms = append(perms, groups[id])
+		perms = append(perms, ix.groups[id])
 	}
 	fp, _ := json.Marshal(map[string]any{
 		"subnet": inst.SubnetID, "groups": perms, "routes": routes,

@@ -46,6 +46,13 @@ type Options struct {
 	// configuration does not describe a subnet's routing says nothing about an untouched
 	// instance's exposure that the account itself does not say more precisely.
 	EstateKnown bool
+
+	// LiveNetwork is the account's network as a live read fetched it: the cloudnet feed's
+	// bundle (describe-security-groups, describe-instances, routes, network ACLs…). A
+	// change report lays its own network over it, so that a rule it adds to a group meets
+	// the instances elsewhere that use the group, and an instance it puts in a group meets
+	// the group's rules. Empty without a live read; the graph does not hold either.
+	LiveNetwork []byte
 }
 
 // PRProps returns the PR-context node properties carried by these options, or
@@ -100,4 +107,8 @@ type Change struct {
 	// names a resource not created yet. A route through any of it can be neither found
 	// nor ruled out, so a comparison that finds none is not clean but unknown.
 	Unknown []string
+	// Outside lists what the change reaches but neither it nor the estate describes - a
+	// security group it opens that instances it does not describe may use. Like Unknown, a
+	// route through it can be neither found nor ruled out.
+	Outside []string
 }

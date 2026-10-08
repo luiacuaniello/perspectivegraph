@@ -76,7 +76,9 @@ inputs:
       ingests this pull request's scan, and computes the verdict in-process with the same
       engine. Local mode still needs an estate - `aws-region` or `estate` - because
       without one there are no attack paths, only a flat list of findings. A Terraform plan
-      is the exception: it carries the state it changes, so it can be judged on its own.
+      is the exception: it carries the state it changes, so it can be judged on its own -
+      though what it opens of a security group, subnet or route table it did not create is
+      then unknown, until `aws-region` lays it over the account's network.
     required: false
     default: server
   attribution:
@@ -115,7 +117,9 @@ inputs:
   aws-region:
     description: >-
       Local mode: read the estate live from this AWS region. Read-only - it describes
-      resources and writes nothing. Give the job an OIDC role with SecurityAudit.
+      resources and writes nothing. Give the job an OIDC role with SecurityAudit. A
+      Terraform plan's network is laid over the account's, so a rule it adds to a group
+      reaches the instances elsewhere that use it.
     required: false
     default: ""
   aws-role:

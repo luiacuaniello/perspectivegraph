@@ -101,9 +101,10 @@ type Input struct {
 	// prior state), applied to the estate - unstamped - before the comparison, so both
 	// sides describe the assets the report describes the same way.
 	BaseChange []ontology.Event
-	// Unknown is what the change report says cannot be known until the change is applied.
-	Unknown   []string
-	Slug, SHA string
+	// Unknown is what the change report says cannot be known until the change is applied;
+	// Outside, what it reaches that neither it nor the estate describes.
+	Unknown, Outside []string
+	Slug, SHA        string
 	// Normalizer builds the normalizer the change goes through. It must be configured
 	// as the ingest path's is - threat intel, secret scrubbing - or the change lands
 	// differently here than it would for real. nil means normalization.New's defaults.
@@ -160,7 +161,7 @@ func Evaluate(ctx context.Context, in Input) (Result, error) {
 		return Result{}, err
 	}
 	res := compare(before, after, in.Slug, in.SHA)
-	res.Incomplete = UnknownReason(in.Unknown)
+	res.Incomplete = IncompleteReason(in.Unknown, in.Outside)
 	waiting, n, err := store.PendingEdges(ctx, 1)
 	if err != nil {
 		return Result{}, err
@@ -172,22 +173,30 @@ func Evaluate(ctx context.Context, in Input) (Result, error) {
 	return res, nil
 }
 
-// UnknownReason renders what a change leaves unknown as the reason a verdict is
-// incomplete: the first few, and how many more.
-func UnknownReason(unknown []string) string {
-	if len(unknown) == 0 {
-		return ""
+// IncompleteReason renders what a change report could not judge as the reason a verdict
+// is incomplete: what is known only after apply, then what lies outside the plan, the
+// first few of each and how many more.
+func IncompleteReason(unknown, outside []string) string {
+	var parts []string
+	for _, kind := range []struct {
+		what  string
+		notes []string
+	}{{"known only after apply", unknown}, {"outside the plan", outside}} {
+		if len(kind.notes) == 0 {
+			continue
+		}
+		const shown = 3
+		head := kind.notes
+		if len(head) > shown {
+			head = head[:shown]
+		}
+		part := kind.what + " - " + strings.Join(head, "; ")
+		if n := len(kind.notes) - len(head); n > 0 {
+			part += fmt.Sprintf("; and %d more", n)
+		}
+		parts = append(parts, part)
 	}
-	const shown = 3
-	head := unknown
-	if len(head) > shown {
-		head = head[:shown]
-	}
-	out := "known only after apply - " + strings.Join(head, "; ")
-	if n := len(unknown) - len(head); n > 0 {
-		out += fmt.Sprintf("; and %d more", n)
-	}
-	return out
+	return strings.Join(parts, "; ")
 }
 
 // compare is the diff itself, on two snapshots: the estate before and after the change.

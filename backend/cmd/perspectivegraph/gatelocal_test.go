@@ -454,7 +454,7 @@ func TestEstateSourcesAddUpRatherThanOverride(t *testing.T) {
 	o := localOpts{
 		slug: localSlug, sha: localSHA,
 		estate:       writeEstate(t, estateEvents()), // 2 nodes
-		collectAWSFn: func(context.Context) ([]ontology.Event, error) { return fromCloud, nil },
+		collectAWSFn: func(context.Context) (liveRead, error) { return liveRead{events: fromCloud}, nil },
 	}
 
 	got, err := o.collectEstate(context.Background())
@@ -492,7 +492,7 @@ func TestLocalModeStopsWhenTheLiveCollectionFails(t *testing.T) {
 	o := localOpts{
 		slug: localSlug, sha: localSHA,
 		estate:       writeEstate(t, estateEvents()),
-		collectAWSFn: func(context.Context) ([]ontology.Event, error) { return nil, errors.New("AccessDenied") },
+		collectAWSFn: func(context.Context) (liveRead, error) { return liveRead{}, errors.New("AccessDenied") },
 	}
 	if _, err := o.collectEstate(context.Background()); err == nil {
 		t.Fatal("carried on after failing to read the live account")
@@ -571,8 +571,8 @@ func TestLocalModeFailsWhenTheLiveReadReturnedNothing(t *testing.T) {
 	o := localOpts{
 		slug: localSlug, sha: localSHA,
 		estate: writeEstate(t, standaloneEstate()), // a perfectly readable file
-		collectAWSFn: func(context.Context) ([]ontology.Event, error) {
-			return nil, errors.New("InvalidClientTokenId")
+		collectAWSFn: func(context.Context) (liveRead, error) {
+			return liveRead{}, errors.New("InvalidClientTokenId")
 		},
 	}
 	_, err := o.collectEstate(context.Background())
@@ -596,8 +596,8 @@ func TestPartialEstateTurnsACleanVerdictIntoUnknown(t *testing.T) {
 		slug: localSlug, sha: localSHA, repository: localSlug,
 		reports: []reportSpec{trivySampleSpec(t)},
 		estate:  writeEstate(t, standaloneEstate()),
-		collectAWSFn: func(context.Context) ([]ontology.Event, error) {
-			return standaloneEstate(), partial // read something, but not everything
+		collectAWSFn: func(context.Context) (liveRead, error) {
+			return liveRead{events: standaloneEstate()}, partial // read something, but not everything
 		},
 	}
 	v, err := localVerdict(context.Background(), o)

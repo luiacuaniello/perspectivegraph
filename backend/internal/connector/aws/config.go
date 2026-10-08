@@ -36,6 +36,11 @@ type Config struct {
 	// collide across accounts (i-…, sg-…) stay distinct.
 	Region  string
 	RoleARN string
+	// Tap, when set, is handed each feed's raw JSON - the describe-* shapes themselves -
+	// once its collector has parsed it, with the account it was read from. The gate reads
+	// a Terraform plan's network against the account's, and the events alone no longer
+	// say which instances use which security group.
+	Tap func(feed Feed, account string, raw []byte)
 }
 
 // NewFromConfig builds the AWS connector with the transport chosen by cfg.Mode:
@@ -51,7 +56,9 @@ func NewFromConfig(ctx context.Context, cfg Config) (Source, error) {
 			if err != nil {
 				return nil, err
 			}
-			return New(t), nil
+			c := New(t)
+			c.tap = cfg.Tap
+			return c, nil
 		}
 		multi := &multiConnector{}
 		for _, role := range roles {
@@ -61,11 +68,15 @@ func NewFromConfig(ctx context.Context, cfg Config) (Source, error) {
 			if err != nil {
 				return nil, fmt.Errorf("account %s: %w", role, err)
 			}
-			multi.accounts = append(multi.accounts, New(t))
+			c := New(t)
+			c.tap = cfg.Tap
+			multi.accounts = append(multi.accounts, c)
 		}
 		return multi, nil
 	case "", "fixtures":
-		return New(Fixtures(cfg.FixturesDir)), nil
+		c := New(Fixtures(cfg.FixturesDir))
+		c.tap = cfg.Tap
+		return c, nil
 	default:
 		return nil, fmt.Errorf("unknown aws connector mode %q (want fixtures|sdk)", cfg.Mode)
 	}

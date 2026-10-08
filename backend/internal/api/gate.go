@@ -138,7 +138,7 @@ func (a *API) handleGateImpact(w http.ResponseWriter, r *http.Request) {
 	}
 	v, err := a.heavy(r.Context(), "gate|"+source+"|"+slug+"|"+sha, func(ctx context.Context) (any, error) {
 		return impact.Evaluate(ctx, impact.Input{Base: snap, Change: ch.After, BaseChange: ch.Before, Unknown: ch.Unknown,
-			Slug: slug, SHA: sha, Normalizer: a.gateNormalizer})
+			Outside: ch.Outside, Slug: slug, SHA: sha, Normalizer: a.gateNormalizer})
 	})
 	if err != nil {
 		status := http.StatusInternalServerError

@@ -150,9 +150,12 @@ type Plan struct {
 
 	views   map[View][]*Resource
 	byAddr  map[View]map[string]*Resource
+	byType  map[View]map[string][]*Resource
 	config  map[string]*configModule // by module path without instance keys
 	calls   map[string]*moduleCall   // the call that instantiates a module path
 	actions map[string][]string
+	// roles is each view's roles by name, built on first use (roleARN).
+	roles map[View]map[string]string
 }
 
 // Read parses a plan. account and region, when given, win over what the plan suggests.
@@ -167,6 +170,8 @@ func Read(r io.Reader, account, region string) (*Plan, error) {
 	p := &Plan{
 		views:   map[View][]*Resource{},
 		byAddr:  map[View]map[string]*Resource{Prior: {}, Planned: {}},
+		byType:  map[View]map[string][]*Resource{Prior: {}, Planned: {}},
+		roles:   map[View]map[string]string{},
 		config:  map[string]*configModule{},
 		calls:   map[string]*moduleCall{},
 		actions: map[string][]string{},
@@ -243,6 +248,7 @@ func newResource(module string, vr valuesResource) *Resource {
 func (p *Plan) add(v View, r *Resource) {
 	p.views[v] = append(p.views[v], r)
 	p.byAddr[v][r.Address] = r
+	p.byType[v][r.Type] = append(p.byType[v][r.Type], r)
 }
 
 // walkValues visits every resource of a module tree with the module instance it lives in.
@@ -268,16 +274,19 @@ func (p *Plan) indexConfig(path string, m *configModule) {
 	}
 }
 
-// Resources returns the view's resources of the given types, in address order.
+// Resources returns the view's resources of the given types, in address order. It reads
+// only the resources of those types, so a reader asking for one type is not made to walk
+// the whole plan each time.
 func (p *Plan) Resources(v View, types ...string) []*Resource {
-	want := map[string]bool{}
-	for _, t := range types {
-		want[t] = true
-	}
 	var out []*Resource
-	for _, r := range p.views[v] {
-		if len(want) == 0 || want[r.Type] {
-			out = append(out, r)
+	if len(types) == 0 {
+		out = append(out, p.views[v]...)
+	}
+	seen := map[string]bool{}
+	for _, t := range types {
+		if !seen[t] {
+			seen[t] = true
+			out = append(out, p.byType[v][t]...)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Address < out[j].Address })

@@ -592,15 +592,26 @@ func printGateVerdict(w io.Writer, v gateVerdict, slug, sha string, maxCritical 
 		// Not clean: the engine found no route, but it did not see the whole estate, and
 		// a route through the part it could not read looks exactly like no route at all.
 		fmt.Fprintf(w, "UNKNOWN  %s@%s\n", slug, shortSHA(sha))
-		if strings.HasPrefix(v.Incomplete, "known only after apply") {
-			// A plan that builds a policy from a resource it also creates: the policy's
-			// text exists only once that resource does.
-			fmt.Fprintf(w, "  Part of the change is %s, so \"no attack path\" cannot be trusted.\n", v.Incomplete)
-			fmt.Fprintln(w, "  This is NOT a clean result. Plan again once what it refers to exists, or pass -allow-unknown.")
+		afterApply := strings.Contains(v.Incomplete, "known only after apply")
+		beyond := strings.Contains(v.Incomplete, "outside the plan")
+		if !afterApply && !beyond {
+			fmt.Fprintf(w, "  The estate was read only in part, so \"no attack path\" cannot be trusted:\n  %s\n", v.Incomplete)
+			fmt.Fprintln(w, "  This is NOT a clean result. Fix the estate access and run it again.")
 			break
 		}
-		fmt.Fprintf(w, "  The estate was read only in part, so \"no attack path\" cannot be trusted:\n  %s\n", v.Incomplete)
-		fmt.Fprintln(w, "  This is NOT a clean result. Fix the estate access and run it again.")
+		// What a plan cannot say: a policy built from a resource it also creates exists only
+		// once that resource does, and a security group it opens may hold instances it does
+		// not describe.
+		fmt.Fprintf(w, "  Part of the change is %s, so \"no attack path\" cannot be trusted.\n", v.Incomplete)
+		var fixes []string
+		if beyond {
+			fixes = append(fixes, "read the account as well (-aws-region), so the plan meets the network it does not describe")
+		}
+		if afterApply {
+			fixes = append(fixes, "plan again once what it refers to exists")
+		}
+		fixes[0] = strings.ToUpper(fixes[0][:1]) + fixes[0][1:]
+		fmt.Fprintf(w, "  This is NOT a clean result. %s, or pass -allow-unknown.\n", strings.Join(fixes, "; "))
 	case v.CriticalPaths > maxCritical && v.Attribution == "diff" && !v.Recorded:
 		fmt.Fprintf(w, "BLOCKED  %s@%s: this change opens or worsens %d critical attack path(s)\n", slug, shortSHA(sha), v.CriticalPaths)
 		printPaths(w, v.Paths)

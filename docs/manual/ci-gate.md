@@ -162,13 +162,24 @@ are opened by infrastructure code: a security group rule, a policy attachment, a
     mode: local
     source: terraform
     report: plan.json
-    aws-region: eu-west-1   # optional: routes through what the configuration does not manage
+    aws-region: eu-west-1   # recommended: what the configuration does not manage
 ```
 
 A plan carries the state it starts from and the state it would leave, so the gate compares the
 two and needs no estate of its own; with `aws-region` or `estate` it also sees routes that run
 through what the configuration does not manage - a role defined elsewhere, an image, a cluster.
 Server mode takes plans too, the engine's graph joining the plan's starting state.
+
+A security group, a subnet and a route table serve whatever uses them, and a plan describes only
+what its configuration manages. With `aws-region` the plan's network is laid over the account's,
+as the live read describes it - security groups, instances, subnets, route tables, network ACLs,
+load balancers - and the whole is judged as one: a rule added to a group another configuration
+manages reaches the instances that use it, an instance launched into an existing group meets
+that group's rules, and a route given to an existing subnet opens what sits in it. Without a
+live read - the plan alone, an `estate` file, or server mode, none of which hold security
+groups - that network is not there to meet. What the plan opens of a group, subnet or route
+table it did not create, and the rules of a group it uses but does not hold, are then listed as
+outside the plan, and a run that finds no route is `unknown` rather than clean.
 
 Nothing in the plan is judged by rules of its own. Each state is written in the shapes the AWS
 API returns and read by the collectors that read a live account, so a planned instance is judged
@@ -185,13 +196,13 @@ balancers, API Gateway, ECS, EKS and network ACLs.
 Some of a plan is known only after apply: a bucket policy that names its own bucket's ARN, when
 the plan creates the bucket. A route through it can be neither found nor ruled out, so a run
 that finds no route is `unknown`, and says which values were missing; plan again once the
-resource exists, or set `allow-unknown`. The plan alone also has limits worth knowing. A rule
-added to a security group the configuration does not manage reaches only the instances it
-manages. An AWS managed policy's text is not in the plan: AdministratorAccess, PowerUserAccess
-and IAMFullAccess are read from a copy built into the engine, any other as granting nothing. An
-instance in a subnet the configuration does not describe is judged by its security groups alone,
-erring toward reporting - unless the estate is read too and the plan leaves the instance's
-exposure as it was, in which case the account's own verdict stands. And a plan whose resources
+resource exists, or set `allow-unknown`. The plan alone also has limits worth knowing. An AWS
+managed policy's text is not in the plan: AdministratorAccess, PowerUserAccess and IAMFullAccess
+are read from a copy built into the engine, any other as granting nothing. An instance in a
+subnet the configuration does not describe is judged by its security groups alone, erring toward
+reporting - by the subnet's own routing and network ACL with `aws-region`, and, with an `estate`
+file or in server mode, by the estate's own verdict when the plan leaves the instance's exposure
+as it was. And a plan whose resources
 are all new names no account: a live read supplies it, and otherwise `account` (`-account`)
 does, so its instances meet the estate's. A plan is never written into the live graph - the
 ingest webhook does not take one, and `persist` is refused - because it describes what does not
@@ -205,7 +216,7 @@ that is `unknown`, and it fails the build by default:
 | --- | --- | --- |
 | `clean` | 0 | The engine analysed this change: it opens or worsens no critical path |
 | `blocked` | 1 | It opens or worsens critical attack paths - the check names each, and why |
-| `unknown` | 2 | **Nobody analysed it.** The scan, the ingest or the SHA is wrong - or no route was found in an estate read only in part, or in a plan part of which is known only after apply |
+| `unknown` | 2 | **Nobody analysed it.** The scan, the ingest or the SHA is wrong - or no route was found in an estate read only in part, or in a plan part of which is known only after apply or lies outside it |
 
 Set `allow-unknown: true` while you roll the gate out. Leaving it on afterwards turns a broken
 ingest back into a green check, which is the one thing this gate is for.

@@ -17,6 +17,31 @@ digest, take the backup, stage it.
 
 ---
 
+## 1.34.1
+
+### A Terraform plan that opens what it does not describe is no longer clean
+
+**Affects you if** you gate Terraform plans (`source: terraform`).
+
+A security group serves whatever uses it, and a plan holds only what its configuration manages.
+A plan that added a rule to a group another configuration manages, or launched an instance into
+such a group, was judged without the rest of that group: the instances elsewhere that the new
+rule opens, the rules elsewhere that the new instance meets. Measured on a real account, a plan
+putting an instance with an administrator role into a group open to SSH passed as `clean`, with
+the account read live or not.
+
+With `aws-region` (`-aws-region`) the plan's network is now laid over the account's, as the live
+read describes it, and those routes are found. Without it - the plan alone, an `estate` file, or
+server mode - what the plan opens of a security group, subnet or route table it did not create,
+and the rules of a group it uses but does not hold, are listed in `incomplete`: a run that finds
+no route then answers `unknown` (exit 2) where it answered `clean`.
+
+What to do: give the job `aws-region` and a read-only role - a job that runs `terraform plan`
+already holds AWS credentials. To keep passing such plans without it, set `allow-unknown`,
+knowing that the gate then does not see those routes.
+
+---
+
 ## 1.32.0
 
 ### Helm values are checked against a schema

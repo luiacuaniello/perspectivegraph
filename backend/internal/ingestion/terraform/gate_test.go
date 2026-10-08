@@ -104,7 +104,7 @@ func verdict(t *testing.T, plan string) impact.Result {
 		t.Fatal(err)
 	}
 	r, err := impact.Evaluate(context.Background(), impact.Input{Base: graph.Snapshot{}, BaseChange: ch.Before, Change: ch.After,
-		Unknown: ch.Unknown, Slug: "acme/infra", SHA: "c0ffee"})
+		Unknown: ch.Unknown, Outside: ch.Outside, Slug: "acme/infra", SHA: "c0ffee"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,9 @@ func TestOpeningSSHOnAnAdminInstanceIsBlocked(t *testing.T) {
 	if got := routes(r); !has(got, "introduced: web-1 -> web -> account-admin (effective)") {
 		t.Errorf("routes = %v, want the route the open SSH port makes", got)
 	}
-	if !r.Analysed || r.Incomplete != "" {
+	// The group exists already, and the plan alone cannot say what else uses it: the route
+	// it found stands, and the verdict says what it could not see.
+	if !r.Analysed || !strings.Contains(r.Incomplete, "outside the plan - security group sg-0a1 is opened to the internet on tcp/22") {
 		t.Errorf("analysed=%v incomplete=%q", r.Analysed, r.Incomplete)
 	}
 }
@@ -232,6 +234,10 @@ func TestAPlanThatChangesNothingIsClean(t *testing.T) {
 	}
 	if !r.Analysed || !r.Reachable {
 		t.Errorf("analysed=%v reachable=%v", r.Analysed, r.Reachable)
+	}
+	// Its groups exist and stay as they were: nothing it changes reaches beyond it.
+	if r.Incomplete != "" {
+		t.Errorf("incomplete = %q, want nothing: the plan opens nothing", r.Incomplete)
 	}
 }
 
@@ -354,8 +360,13 @@ func TestANewInstanceIsAddressedTheWayAWSWillAddressIt(t *testing.T) {
 	want := "introduced: bastion -> db"
 
 	prior := base(true)
-	if got := routes(verdict(t, planOf(t, prior, append(append([]res(nil), prior...), instance)))); !has(got, want) {
+	r := verdict(t, planOf(t, prior, append(append([]res(nil), prior...), instance)))
+	if got := routes(r); !has(got, want) {
 		t.Errorf("a subnet that hands out public addresses: %v", got)
+	}
+	// The groups and routes it joins are the configuration's, unchanged.
+	if r.Incomplete != "" {
+		t.Errorf("incomplete = %q, want nothing outside the plan", r.Incomplete)
 	}
 	prior = base(false)
 	if got := routes(verdict(t, planOf(t, prior, append(append([]res(nil), prior...), instance)))); len(got) != 0 {
@@ -414,7 +425,7 @@ func verdictOn(t *testing.T, plan string, estate graph.Snapshot) impact.Result {
 		t.Fatal(err)
 	}
 	r, err := impact.Evaluate(context.Background(), impact.Input{Base: estate, BaseChange: ch.Before, Change: ch.After,
-		Unknown: ch.Unknown, Slug: "acme/infra", SHA: "c0ffee"})
+		Unknown: ch.Unknown, Outside: ch.Outside, Slug: "acme/infra", SHA: "c0ffee"})
 	if err != nil {
 		t.Fatal(err)
 	}

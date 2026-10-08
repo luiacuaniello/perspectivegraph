@@ -1,6 +1,9 @@
 package terraform
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -183,5 +186,46 @@ func TestReferencesThatLoopBackEnd(t *testing.T) {
 	case <-done:
 	case <-time.After(10 * time.Second):
 		t.Fatal("following references that loop back never ended")
+	}
+}
+
+// A plan's size is its author's to choose, up to the gate's 32 MiB. Reading it has to grow
+// with its size, not with the square of it: looking up each instance profile's role among
+// all the roles, and each instance's groups among all the groups, once took 3.8 s for a 7 MiB
+// plan and would have taken a minute and a half at the limit. The bound is loose - a tenth
+// of it is what the reader needs - so only the square trips it.
+func TestReadingAPlanGrowsWithItsSize(t *testing.T) {
+	var res []any
+	add := func(typ, name string, v map[string]any) {
+		res = append(res, map[string]any{"address": typ + "." + name, "mode": "managed", "type": typ, "name": name, "values": v})
+	}
+	const n = 3000
+	for i := 0; i < n; i++ {
+		s := fmt.Sprint(i)
+		add("aws_security_group", "g"+s, map[string]any{"id": "sg-" + s, "name": "g" + s, "ingress": []any{}})
+		add("aws_security_group_rule", "r"+s, map[string]any{"type": "ingress", "security_group_id": "sg-" + s, "from_port": 22, "to_port": 22,
+			"protocol": "tcp", "source_security_group_id": fmt.Sprint("sg-", (i+1)%n)})
+		add("aws_subnet", "s"+s, map[string]any{"id": "subnet-" + s})
+		add("aws_route_table_association", "a"+s, map[string]any{"subnet_id": "subnet-" + s, "route_table_id": "rtb-" + s})
+		add("aws_route_table", "t"+s, map[string]any{"id": "rtb-" + s, "route": []any{}})
+		add("aws_iam_role", "role"+s, map[string]any{"name": "role" + s, "path": "/", "assume_role_policy": `{"Statement":[]}`})
+		add("aws_iam_instance_profile", "p"+s, map[string]any{"name": "p" + s, "role": "role" + s})
+		add("aws_iam_role_policy", "rp"+s, map[string]any{"name": "rp" + s, "role": "role" + s,
+			"policy": `{"Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"*"}]}`})
+		add("aws_instance", "i"+s, map[string]any{"id": "i-" + s, "subnet_id": "subnet-" + s, "vpc_security_group_ids": []any{"sg-" + s},
+			"iam_instance_profile": "p" + s, "private_ip": "10.0.0.1", "public_ip": ""})
+	}
+	values := map[string]any{"root_module": map[string]any{"resources": res}}
+	raw, err := json.Marshal(map[string]any{"format_version": "1.2", "planned_values": values,
+		"prior_state": map[string]any{"values": values}, "configuration": map[string]any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	if _, err := New().ParseChange(bytes.NewReader(raw), ingestion.Options{EstateKnown: true}); err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(start); took > 5*time.Second {
+		t.Errorf("a %d KiB plan took %v to read", len(raw)/1024, took)
 	}
 }

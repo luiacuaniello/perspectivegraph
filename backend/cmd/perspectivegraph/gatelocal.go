@@ -143,8 +143,11 @@ type localOpts struct {
 	// account it was read from, for a change report that names none.
 	estateKnown   bool
 	estateAccount string
-	awsRegion     string
-	awsRole       string
+	// liveNetwork is the network feed a live read fetched, per account: a plan's network
+	// is laid over it (ingestion.Options.LiveNetwork).
+	liveNetwork map[string][]byte
+	awsRegion   string
+	awsRole     string
 	// cluster names the Kubernetes cluster this change's reports describe (see
 	// ingestion.Options.Cluster), so they meet the estate's objects of that cluster.
 	cluster string
@@ -155,12 +158,21 @@ type localOpts struct {
 	// collectAWSFn is the live collection, swapped out in tests. Reaching the real SDK
 	// is the one part of this pipeline a test cannot exercise, and the merge of the two
 	// estate sources is precisely what must not regress.
-	collectAWSFn func(context.Context) ([]ontology.Event, error)
+	collectAWSFn func(context.Context) (liveRead, error)
+}
+
+// liveRead is what a live read of the account returned: the events, and the network feed
+// as AWS described it, per account.
+type liveRead struct {
+	events  []ontology.Event
+	network map[string][]byte
 }
 
 // estate is what the environment sources produced, and how completely they managed it.
 type estate struct {
 	events []ontology.Event
+	// network is the live read's network feed, per account (liveRead).
+	network map[string][]byte
 	// partial is the reason the read was incomplete, empty when it was not. A gate that
 	// downgrades this to a log line reports a clean build for an environment it never
 	// saw, which is the failure this whole tool exists to make visible.
@@ -211,6 +223,7 @@ func localVerdict(ctx context.Context, o localOpts) (gateVerdict, error) {
 		// is the one it lands in.
 		o.estateAccount = estateAccount(est.events)
 		o.estateKnown = true
+		o.liveNetwork = est.network
 	}
 	reports, err := o.parseReports(o.reports, true)
 	if err != nil {
@@ -239,7 +252,7 @@ func localVerdict(ctx context.Context, o localOpts) (gateVerdict, error) {
 
 	v := buildVerdict(snap, paths, o.slug, o.sha)
 	v.Attribution = "commit"
-	v.Incomplete = joinReasons(est.partial, impact.UnknownReason(reports.unknown))
+	v.Incomplete = joinReasons(est.partial, impact.IncompleteReason(reports.unknown, reports.outside))
 	return v, nil
 }
 
@@ -297,7 +310,8 @@ func (o localOpts) diffVerdict(ctx context.Context, norm *normalization.Normaliz
 		return gateVerdict{}, err
 	}
 	res, err := impact.Evaluate(ctx, impact.Input{
-		Base: snap, BasePending: pending, Change: reports.events, Unknown: reports.unknown, Slug: o.slug, SHA: o.sha,
+		Base: snap, BasePending: pending, Change: reports.events, Unknown: reports.unknown, Outside: reports.outside,
+		Slug: o.slug, SHA: o.sha,
 	})
 	if err != nil {
 		return gateVerdict{}, err
@@ -402,7 +416,8 @@ func (o localOpts) collectEstate(ctx context.Context) (estate, error) {
 		if err != nil {
 			return estate{}, err
 		}
-		out.events = append(out.events, live...)
+		out.events = append(out.events, live.events...)
+		out.network = live.network
 		out.partial = partial
 	}
 	return out, nil
@@ -413,28 +428,52 @@ func (o localOpts) collectEstate(ctx context.Context) (estate, error) {
 // region, a denied role - and continuing on whatever an -estate file happened to contain
 // would grade the commit against an environment nobody looked at. Reading only PART of it
 // is survivable, but it has to travel with the verdict rather than scroll past in a log.
-func collect2(ctx context.Context, collect func(context.Context) ([]ontology.Event, error)) ([]ontology.Event, string, error) {
-	events, err := collect(ctx)
+func collect2(ctx context.Context, collect func(context.Context) (liveRead, error)) (liveRead, string, error) {
+	read, err := collect(ctx)
 	if err == nil {
-		return events, "", nil
+		return read, "", nil
 	}
-	if len(events) == 0 {
-		return nil, "", fmt.Errorf("could not read the estate at all, so there is nothing to judge this commit against: %w", err)
+	if len(read.events) == 0 {
+		return liveRead{}, "", fmt.Errorf("could not read the estate at all, so there is nothing to judge this commit against: %w", err)
 	}
-	return events, err.Error(), nil
+	return read, err.Error(), nil
 }
 
 // collectAWS reads the live account: describes and lists only, no writes, no cost.
-func (o localOpts) collectAWS(ctx context.Context) ([]ontology.Event, error) {
+func (o localOpts) collectAWS(ctx context.Context) (liveRead, error) {
+	read := liveRead{network: map[string][]byte{}}
 	conn, err := awsconnector.NewFromConfig(ctx, awsconnector.Config{
 		Mode: "sdk", Region: o.awsRegion, RoleARN: o.awsRole,
+		// The network feed as read, besides its events: a plan's network is laid over it.
+		Tap: func(feed awsconnector.Feed, account string, raw []byte) {
+			if feed == awsconnector.FeedNetwork {
+				read.network[account] = raw
+			}
+		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("aws connector: %w", err)
+		return liveRead{}, fmt.Errorf("aws connector: %w", err)
 	}
 	// Collect joins per-feed errors and still returns what it did read, so the error and
 	// the events both matter. Grading how bad it is belongs to the caller.
-	return conn.Collect(ctx)
+	read.events, err = conn.Collect(ctx)
+	return read, err
+}
+
+// networkFor is the live network feed a plan of the given account is laid over: that
+// account's, or the only one read when either side does not say which account it is.
+func (o localOpts) networkFor(account string) []byte {
+	if raw, ok := o.liveNetwork[account]; ok {
+		return raw
+	}
+	if len(o.liveNetwork) == 1 {
+		for read, raw := range o.liveNetwork {
+			if read == "" || account == "" {
+				return raw
+			}
+		}
+	}
+	return nil
 }
 
 // parseReports turns scanner output into events. This pull request's are stamped with the
@@ -473,6 +512,7 @@ func (o localOpts) parseReports(specs []reportSpec, stamped bool) (parsedReports
 			if copts.Account == "" {
 				copts.Account = o.estateAccount
 			}
+			copts.LiveNetwork = o.networkFor(copts.Account)
 			ch, err = cp.ParseChange(r, copts)
 			out.change = true
 		} else {
@@ -484,6 +524,7 @@ func (o localOpts) parseReports(specs []reportSpec, stamped bool) (parsedReports
 		out.events = append(out.events, ch.After...)
 		out.before = append(out.before, ch.Before...)
 		out.unknown = append(out.unknown, ch.Unknown...)
+		out.outside = append(out.outside, ch.Outside...)
 	}
 	return out, nil
 }
@@ -492,10 +533,11 @@ func (o localOpts) parseReports(specs []reportSpec, stamped bool) (parsedReports
 type parsedReports struct {
 	events []ontology.Event
 	// before is the state change reports start from; unknown, what they leave unknown
-	// until applied; change, whether there was a change report at all.
-	before  []ontology.Event
-	unknown []string
-	change  bool
+	// until applied; outside, what they reach but neither they nor the estate describe;
+	// change, whether there was a change report at all.
+	before           []ontology.Event
+	unknown, outside []string
+	change           bool
 }
 
 // applyEvents feeds every event through the normalizer, independently of the order they

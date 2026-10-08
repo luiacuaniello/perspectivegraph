@@ -2,6 +2,7 @@ package aws
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -51,5 +52,30 @@ func TestMissingFixturesIsNotFatal(t *testing.T) {
 	}
 	if len(events) != 0 {
 		t.Fatalf("missing fixtures should yield no events, got %d", len(events))
+	}
+}
+
+// The tap is handed each feed's describe-* JSON as read, with the account: the gate lays
+// a Terraform plan's network over the account's, which the events alone cannot rebuild.
+func TestTapHandsOverTheRawFeeds(t *testing.T) {
+	got := map[Feed][]byte{}
+	src, err := NewFromConfig(context.Background(), Config{FixturesDir: testdata,
+		Tap: func(feed Feed, account string, raw []byte) {
+			if account != "" {
+				t.Errorf("fixtures name no account, got %q", account)
+			}
+			got[feed] = raw
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := src.Collect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got[FeedNetwork]), `"security_groups"`) {
+		t.Errorf("network feed = %.80q, want the cloudnet bundle", got[FeedNetwork])
+	}
+	if len(got[FeedIAM]) == 0 {
+		t.Error("the IAM feed was not handed over")
 	}
 }

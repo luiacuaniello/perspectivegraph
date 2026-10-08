@@ -21,6 +21,12 @@
 // stands for. An ARN AWS builds from a name - an IAM role's, a bucket's - is built the
 // same way.
 //
+// A security group, a subnet and a route table serve whatever uses them, and a plan holds
+// only what its configuration manages. Given the account's network as a live read fetched it
+// (ingestion.Options.LiveNetwork), each state of the plan is laid over it and judged whole;
+// without it, what the plan opens of those it did not create is listed as outside the plan
+// (live.go).
+//
 // What it reads: VPC networking (security groups and their rules, subnets, route tables
 // and routes, internet gateways, Elastic IPs), EC2 instances and their instance profiles,
 // IAM roles, users, their policies and attachments and permissions boundaries, S3 buckets
@@ -64,7 +70,12 @@ func (c *Collector) ParseChange(r io.Reader, opts ingestion.Options) (ingestion.
 	if err != nil {
 		return ingestion.Change{}, err
 	}
+	live, err := readLive(opts.LiveNetwork)
+	if err != nil {
+		return ingestion.Change{}, err
+	}
 	prior, planned := p.bundles(Prior), p.bundles(Planned)
+	beyond := outside(prior.net, planned.net, live)
 	// What the estate decides better than the plan. An instance whose exposure the plan
 	// does not touch - same subnet and routes, same groups and rules, same addresses - is
 	// exposed or not as the estate says: the plan may not describe its subnet's routing,
@@ -76,20 +87,32 @@ func (c *Collector) ParseChange(r io.Reader, opts ingestion.Options) (ingestion.
 			settled[ontology.ScopedID(ontology.LabelVirtualMachine, p.Account, id)] = true
 		}
 	}
-	before, err := p.events(prior, ingestion.Options{Account: p.Account}, settled)
+	// With the account's network read, each state of the plan is judged laid over it (see
+	// live.go): the instances the plan does not describe are judged with it.
+	if live != nil {
+		prior.view, planned.view = overlay(*live, prior.net), overlay(*live, planned.net)
+	}
+	was, err := p.feeds(prior)
 	if err != nil {
 		return ingestion.Change{}, err
 	}
-	after, err := p.events(planned, opts, settled)
+	now, err := p.feeds(planned)
 	if err != nil {
 		return ingestion.Change{}, err
 	}
-	return ingestion.Change{Before: before, After: after, Unknown: planned.notes}, nil
+	// Compared before finish leaves anything to the estate, which it does on both sides.
+	changed := changedNodes(was, now)
+	before := p.finish(was, prior, ingestion.Options{}, settled, nil)
+	after := p.finish(now, planned, opts, settled, changed)
+	return ingestion.Change{Before: before, After: after, Unknown: planned.notes, Outside: beyond}, nil
 }
 
 // bundles is one state of the plan in the shapes of the AWS feeds.
 type bundles struct {
-	net   netBundle
+	net netBundle
+	// view is the network the state is judged on: the plan's own, or the plan's laid over
+	// the account's when a live read gave it.
+	view  netBundle
 	iam   iamBundle
 	fn    lambdaBundle
 	s3    custodianBundle
@@ -105,6 +128,7 @@ func (p *Plan) bundles(v View) bundles {
 	var b bundles
 	var n []string
 	b.net, n = p.network(v)
+	b.view = b.net
 	b.notes = append(b.notes, n...)
 	b.iam, n = p.iam(v)
 	b.notes = append(b.notes, n...)
@@ -146,12 +170,44 @@ var exposureProps = []string{
 	"exposed_ports", "exposed_management_ports", "net_reachability", "exposure", "public_via", "public_blocked_by",
 }
 
-// events turns one state of the plan into the events of the collectors that read each
-// part, stamping with the commit the assets the configuration defines or changes.
-func (p *Plan) events(b bundles, opts ingestion.Options, settled map[string]bool) ([]ontology.Event, error) {
+// feeds turns one state of the plan into the events of the collectors that read each part.
+func (p *Plan) feeds(b bundles) ([]ontology.Event, error) {
 	inner := ingestion.Options{Account: p.Account}
 	out := []ontology.Event{}
+	for _, feed := range []struct {
+		col    ingestion.Collector
+		bundle any
+		empty  bool
+	}{
+		{cloudnet.New(), b.view, len(b.view.SecurityGroups) == 0 && len(b.view.Instances) == 0},
+		{iam.New(), b.iam, len(b.iam.RoleDetailList) == 0 && len(b.iam.UserDetailList) == 0},
+		{lambda.New(), b.fn, len(b.fn.Functions) == 0},
+		{custodian.New(), b.s3, len(b.s3.Policies) == 1 && len(b.s3.Policies[0].Resources) == 0},
+	} {
+		if feed.empty {
+			continue
+		}
+		raw, err := json.Marshal(feed.bundle)
+		if err != nil {
+			return nil, err
+		}
+		evs, err := feed.col.Parse(bytes.NewReader(raw), inner)
+		if err != nil {
+			return nil, fmt.Errorf("terraform plan, %s part: %w", feed.col.Source(), err)
+		}
+		out = append(out, evs...)
+	}
+	return out, nil
+}
+
+// finish leaves to the estate what it decides better (settled, partial) and stamps with the
+// commit the assets the configuration defines or changes, and those whose reachability the
+// change changes.
+func (p *Plan) finish(out []ontology.Event, b bundles, opts ingestion.Options, settled, changed map[string]bool) []ontology.Event {
 	stamp := map[string]bool{}
+	for id := range changed {
+		stamp[id] = true
+	}
 	for _, inst := range b.net.Instances {
 		stamp[ontology.ScopedID(ontology.LabelVirtualMachine, p.Account, inst.InstanceID)] = true
 	}
@@ -172,30 +228,6 @@ func (p *Plan) events(b bundles, opts ingestion.Options, settled map[string]bool
 			name, _ := bk["Name"].(string)
 			stamp[ontology.NewID(ontology.LabelBucket, name)] = true
 		}
-	}
-
-	for _, feed := range []struct {
-		col    ingestion.Collector
-		bundle any
-		empty  bool
-	}{
-		{cloudnet.New(), b.net, len(b.net.SecurityGroups) == 0 && len(b.net.Instances) == 0},
-		{iam.New(), b.iam, len(b.iam.RoleDetailList) == 0 && len(b.iam.UserDetailList) == 0},
-		{lambda.New(), b.fn, len(b.fn.Functions) == 0},
-		{custodian.New(), b.s3, len(b.s3.Policies) == 1 && len(b.s3.Policies[0].Resources) == 0},
-	} {
-		if feed.empty {
-			continue
-		}
-		raw, err := json.Marshal(feed.bundle)
-		if err != nil {
-			return nil, err
-		}
-		evs, err := feed.col.Parse(bytes.NewReader(raw), inner)
-		if err != nil {
-			return nil, fmt.Errorf("terraform plan, %s part: %w", feed.col.Source(), err)
-		}
-		out = append(out, evs...)
 	}
 
 	pr := opts.PRProps()
@@ -219,7 +251,7 @@ func (p *Plan) events(b bundles, opts ingestion.Options, settled map[string]bool
 			}
 		}
 	}
-	return out, nil
+	return out
 }
 
 func dedupe(l []string) []string {

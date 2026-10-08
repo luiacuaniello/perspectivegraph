@@ -63,6 +63,8 @@ type transport interface {
 type Connector struct {
 	t     transport
 	feeds []feedBinding
+	// tap, when set, is handed each feed's raw JSON once it has parsed (Config.Tap).
+	tap func(feed Feed, account string, raw []byte)
 }
 
 type feedBinding struct {
@@ -114,6 +116,9 @@ func (c *Connector) Collect(ctx context.Context) ([]ontology.Event, error) {
 		if err != nil {
 			errs = append(errs, fmt.Errorf("parse %s: %w", b.feed, err))
 			continue
+		}
+		if c.tap != nil {
+			c.tap(b.feed, account, raw)
 		}
 		if scope := c.snapshotScope(b.feed, account); scope != "" {
 			for i := range evs {
