@@ -214,6 +214,18 @@ func TestReadingAPlanGrowsWithItsSize(t *testing.T) {
 			"policy": `{"Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"*"}]}`})
 		add("aws_instance", "i"+s, map[string]any{"id": "i-" + s, "subnet_id": "subnet-" + s, "vpc_security_group_ids": []any{"sg-" + s},
 			"iam_instance_profile": "p" + s, "private_ip": "10.0.0.1", "public_ip": ""})
+		// Everything a hostile plan could pile onto one load balancer, one API, one ACL and
+		// one cluster.
+		add("aws_lb_target_group", "tg"+s, map[string]any{"arn": "arn:aws:elasticloadbalancing:eu-north-1:111122223333:targetgroup/tg" + s + "/x", "name": "tg" + s})
+		add("aws_lb_listener", "l"+s, map[string]any{"load_balancer_arn": "arn:aws:elasticloadbalancing:eu-north-1:111122223333:loadbalancer/app/edge/x",
+			"port": 80, "default_action": []any{map[string]any{"type": "forward",
+				"target_group_arn": "arn:aws:elasticloadbalancing:eu-north-1:111122223333:targetgroup/tg" + s + "/x"}}})
+		add("aws_api_gateway_method", "m"+s, map[string]any{"rest_api_id": "api0", "resource_id": "r" + s, "http_method": "GET", "authorization": "NONE"})
+		add("aws_api_gateway_stage", "st"+s, map[string]any{"rest_api_id": "api0", "stage_name": "s" + s})
+		add("aws_network_acl_rule", "acl"+s, map[string]any{"network_acl_id": "acl-0", "rule_number": i, "protocol": "tcp",
+			"rule_action": "allow", "cidr_block": "0.0.0.0/0", "from_port": 22, "to_port": 22})
+		add("aws_eks_access_policy_association", "e"+s, map[string]any{"cluster_name": "prod",
+			"principal_arn": "arn:aws:iam::111122223333:role/role" + s, "policy_arn": "arn:aws:eks::aws:cluster-access-policy/AmazonEKSViewPolicy"})
 	}
 	values := map[string]any{"root_module": map[string]any{"resources": res}}
 	raw, err := json.Marshal(map[string]any{"format_version": "1.2", "planned_values": values,

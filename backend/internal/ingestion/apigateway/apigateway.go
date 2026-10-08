@@ -245,8 +245,9 @@ func (g *graph) api(id, name, kind string, defaultEndpointOff bool, gate string,
 
 // functionInURI finds a Lambda function ARN in an integration URI, whether given plainly
 // (HTTP APIs) or wrapped in API Gateway's invocation path (REST APIs). A function named
-// through a stage variable is not resolved.
-var functionInURI = regexp.MustCompile(`arn:aws[a-z-]*:lambda:[a-z0-9-]+:\d{12}:function:[A-Za-z0-9_-]+(?::[A-Za-z0-9$_-]+)?`)
+// through a stage variable is not resolved. The account is an account id, or the stand-in
+// a Terraform plan writes for one it cannot name yet.
+var functionInURI = regexp.MustCompile(`arn:aws[a-z-]*:lambda:[a-z0-9-]+:[0-9a-z]+:function:[A-Za-z0-9_-]+(?::[A-Za-z0-9$_-]+)?`)
 
 // target is the node an integration reaches: a Lambda function, keyed by its plain ARN as
 // the lambda collector keys it, or the load balancer behind a private (VPC link)

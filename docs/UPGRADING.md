@@ -17,6 +17,29 @@ digest, take the backup, stage it.
 
 ---
 
+## 1.35.0
+
+### Terraform plans: load balancers, ECS, API Gateway, EKS and network ACLs are read
+
+**Affects you if** you gate Terraform plans (`source: terraform`).
+
+A plan's load balancers, ECS services, API Gateway APIs, EKS access and network ACLs were
+skipped: a pull request that put an instance behind a public load balancer, published an API
+route that asks for no credentials, or gave a pod an administrator role passed as `clean`. They
+are read now, and such a plan blocks. A network ACL that keeps the internet out of a subnet now
+keeps a plan's instance there from being reported, too.
+
+As with security groups in 1.34.1, what a plan changes of one of these that it does not define -
+a listener on a load balancer another configuration manages, a route on such an API, a rule on
+such a network ACL - is listed in `incomplete` unless `aws-region` reads the account, and a run
+that finds no route then answers `unknown` (exit 2) where it answered `clean`.
+
+What to do: nothing, if the job sets `aws-region`. Otherwise expect `unknown` on plans that
+change load balancers, APIs or network ACLs they do not define: add `aws-region` - a job that
+runs `terraform plan` already holds AWS credentials - or set `allow-unknown`.
+
+---
+
 ## 1.34.1
 
 ### A Terraform plan that opens what it does not describe is no longer clean

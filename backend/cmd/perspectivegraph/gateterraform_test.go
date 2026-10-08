@@ -198,7 +198,7 @@ func TestLocalModeLaysThePlanOverTheLiveNetwork(t *testing.T) {
 		t.Fatal(err)
 	}
 	o.collectAWSFn = func(context.Context) (liveRead, error) {
-		return liveRead{events: events, network: map[string][]byte{acct: network}}, nil
+		return liveRead{events: events, feeds: map[string]map[string][]byte{acct: {"cloudnet": network}}}, nil
 	}
 	live, err := localVerdict(context.Background(), o)
 	if err != nil {
@@ -212,19 +212,20 @@ func TestLocalModeLaysThePlanOverTheLiveNetwork(t *testing.T) {
 // The live network a plan is laid over is its account's, never another's: with one read
 // and no account named on either side it is that one; with several, only the plan's own.
 func TestTheLiveNetworkIsThePlansAccounts(t *testing.T) {
-	one := localOpts{liveNetwork: map[string][]byte{"111122223333": []byte("a")}}
-	if one.networkFor("") == nil || one.networkFor("111122223333") == nil {
+	feeds := func(tag string) map[string][]byte { return map[string][]byte{"cloudnet": []byte(tag)} }
+	one := localOpts{liveFeeds: map[string]map[string][]byte{"111122223333": feeds("a")}}
+	if one.feedsFor("") == nil || one.feedsFor("111122223333") == nil {
 		t.Error("the only account read is the plan's when the plan names none, or the same")
 	}
-	if one.networkFor("444455556666") != nil {
+	if one.feedsFor("444455556666") != nil {
 		t.Error("a plan of another account must not be laid over this one")
 	}
-	unnamed := localOpts{liveNetwork: map[string][]byte{"": []byte("a")}}
-	if unnamed.networkFor("444455556666") == nil {
+	unnamed := localOpts{liveFeeds: map[string]map[string][]byte{"": feeds("a")}}
+	if unnamed.feedsFor("444455556666") == nil {
 		t.Error("a read that could not name its account is the plan's")
 	}
-	two := localOpts{liveNetwork: map[string][]byte{"111122223333": []byte("a"), "444455556666": []byte("b")}}
-	if string(two.networkFor("444455556666")) != "b" || two.networkFor("") != nil {
+	two := localOpts{liveFeeds: map[string]map[string][]byte{"111122223333": feeds("a"), "444455556666": feeds("b")}}
+	if string(two.feedsFor("444455556666")["cloudnet"]) != "b" || two.feedsFor("") != nil {
 		t.Error("with several accounts read, only the plan's own")
 	}
 }

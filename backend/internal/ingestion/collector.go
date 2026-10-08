@@ -47,12 +47,13 @@ type Options struct {
 	// instance's exposure that the account itself does not say more precisely.
 	EstateKnown bool
 
-	// LiveNetwork is the account's network as a live read fetched it: the cloudnet feed's
-	// bundle (describe-security-groups, describe-instances, routes, network ACLs…). A
-	// change report lays its own network over it, so that a rule it adds to a group meets
-	// the instances elsewhere that use the group, and an instance it puts in a group meets
-	// the group's rules. Empty without a live read; the graph does not hold either.
-	LiveNetwork []byte
+	// LiveFeeds are the account's feeds as a live read fetched them, by feed name: the
+	// network ("cloudnet": security groups, instances, routes, network ACLs, load
+	// balancers…) and API Gateway ("apigateway"). A change report lays its own over them,
+	// so that a rule it adds to a group meets the instances elsewhere that use the group,
+	// an instance it puts in a group meets the group's rules, and a route it adds to an API
+	// meets the API's stages. Empty without a live read; the graph holds none of it.
+	LiveFeeds map[string][]byte
 }
 
 // PRProps returns the PR-context node properties carried by these options, or

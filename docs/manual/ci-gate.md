@@ -170,15 +170,17 @@ two and needs no estate of its own; with `aws-region` or `estate` it also sees r
 through what the configuration does not manage - a role defined elsewhere, an image, a cluster.
 Server mode takes plans too, the engine's graph joining the plan's starting state.
 
-A security group, a subnet and a route table serve whatever uses them, and a plan describes only
-what its configuration manages. With `aws-region` the plan's network is laid over the account's,
-as the live read describes it - security groups, instances, subnets, route tables, network ACLs,
-load balancers - and the whole is judged as one: a rule added to a group another configuration
-manages reaches the instances that use it, an instance launched into an existing group meets
-that group's rules, and a route given to an existing subnet opens what sits in it. Without a
-live read - the plan alone, an `estate` file, or server mode, none of which hold security
-groups - that network is not there to meet. What the plan opens of a group, subnet or route
-table it did not create, and the rules of a group it uses but does not hold, are then listed as
+A security group, a subnet, a load balancer and an API serve whatever uses them, and a plan
+describes only what its configuration manages. With `aws-region` the plan is laid over the
+account as the live read describes it - security groups, instances, subnets, route tables,
+network ACLs, load balancers and their targets, ECS services, API Gateway APIs - and the whole is
+judged as one: a rule added to a group another configuration manages reaches the instances that
+use it, an instance launched into an existing group meets that group's rules, a route given to
+an existing subnet opens what sits in it, a listener added to an existing load balancer or a
+route added to an existing API is as public as the load balancer or the API is. Without a live
+read - the plan alone, an `estate` file, or server mode, none of which hold them - that is not
+there to meet. What the plan opens of a group, subnet, route table, network ACL, load balancer or
+API it did not create, and the rules of a group it uses but does not hold, are then listed as
 outside the plan, and a run that finds no route is `unknown` rather than clean.
 
 Nothing in the plan is judged by rules of its own. Each state is written in the shapes the AWS
@@ -188,10 +190,15 @@ running one, and is keyed the same way. A resource the plan creates has no ident
 gets a placeholder that keeps the prefix AWS will give it (`sg-`, `i-`, `igw-`) and names its
 block in the configuration, and the configuration's references say what each identifier not
 assigned yet will be. Read: security groups and their rules, subnets, route tables and routes,
-internet gateways, Elastic IPs, EC2 instances and their instance profiles, IAM roles and users
-with their policies, attachments and permissions boundaries, S3 buckets with their policies, ACLs
-and Block Public Access, and Lambda functions with their URLs and permissions. Not read yet: load
-balancers, API Gateway, ECS, EKS and network ACLs.
+network ACLs and their rules, internet gateways, Elastic IPs, EC2 instances and their instance
+profiles, load balancers with their listeners, listener rules, target groups and attachments, ECS
+services and the task roles of their task definitions, API Gateway REST, HTTP and WebSocket APIs
+with their resources, methods or routes, integrations and stages, EKS Pod Identity associations
+and access entries, IAM roles and users with their policies, attachments and permissions
+boundaries, S3 buckets with their policies, ACLs and Block Public Access, and Lambda functions
+with their URLs and permissions. Which listener forwards to which target group is not read - here
+as from a live account, a load balancer the internet reaches on any port reaches every target it
+forwards to.
 
 Some of a plan is known only after apply: a bucket policy that names its own bucket's ARN, when
 the plan creates the bucket. A route through it can be neither found nor ruled out, so a run
@@ -207,6 +214,10 @@ are all new names no account: a live read supplies it, and otherwise `account` (
 does, so its instances meet the estate's. A plan is never written into the live graph - the
 ingest webhook does not take one, and `persist` is refused - because it describes what does not
 exist yet.
+
+`make terraform-lab-aws` checks all of this on a real account, with AWS as the referee: it applies
+each plan after the gate has judged it and asks whether the internet then reaches the instance
+(see [Accuracy](accuracy.md#terraform-plans-refereed-after-apply)).
 
 **It has three outcomes, and the third is the point.** Every two-state gate gives a pipeline
 whose scanner output never arrived the same green tick as one that is genuinely clean. Here

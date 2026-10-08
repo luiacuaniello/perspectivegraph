@@ -72,6 +72,12 @@ func FuzzLambda(f *testing.F)    { run(f, lambda.New(), "../../../testdata/lambd
 func FuzzTerraform(f *testing.F) {
 	run(f, terraform.New(), "../terraform/testdata/web-create.json")
 }
+
+// FuzzTerraformEdge starts from a plan of load balancers, ECS, API Gateway, EKS and network
+// ACLs, so the mutations reach the readers of those first.
+func FuzzTerraformEdge(f *testing.F) {
+	run(f, terraform.New(), "../terraform/testdata/edge-create.json")
+}
 func FuzzAPIGateway(f *testing.F) {
 	run(f, apigateway.New(), "../../../testdata/apigateway-sample.json")
 }

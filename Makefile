@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help chart-install up up-full up-demo demo demo-build demo-run up-search down logs run-backend build-backend test bench bench-cloudgoat mcp reachability-lab-aws redteam-aws boundary-lab-aws entrypoints-lab-aws public-access-lab-aws tidy run-frontend install-frontend lockfile docs-site seed seed-discovery seed-load clean
+.PHONY: help chart-install up up-full up-demo demo demo-build demo-run up-search down logs run-backend build-backend test bench bench-cloudgoat mcp reachability-lab-aws redteam-aws boundary-lab-aws entrypoints-lab-aws public-access-lab-aws terraform-lab-aws tidy run-frontend install-frontend lockfile docs-site seed seed-discovery seed-load clean
 
 # CGO is disabled so the Go binaries link statically (Go's pure-Go DNS resolver
 # instead of the system one). This also sidesteps a macOS system-linker bug on
@@ -111,13 +111,17 @@ entrypoints-lab-aws:
 public-access-lab-aws:
 	./scripts/public-access-lab-aws.sh
 
+## terraform-lab-aws: check the merge gate on Terraform plans on a REAL account, with AWS as the referee - five plans against one applied stack (open the instance's group, deny the port in its network ACL, delete that deny, change nothing, and open a group another configuration manages), each judged by the gate alone and with the account read as a SecurityAudit-only role, then applied and graded by a TCP connection from the internet; the instance's role against IAM's policy simulator. FAILS on any disagreement, and if the plan that reaches beyond its configuration is not unknown alone. Needs terraform. Costs a few cents - a t3.micro and its public address for about ten minutes - and tears itself down on exit; Terraform's state stays in STATE_DIR. KEEP=1 leaves it up; --teardown destroys a leaked lab. Needs an AWS profile (PROFILE=, REGION=).
+terraform-lab-aws:
+	./scripts/terraform-lab-aws.sh
+
 ## bench-cloudgoat: grade the attack-path engine against CloudGoat-shaped ground-truth scenarios (precision/recall). Runs in CI under `make test`; this target prints the per-scenario table. Add scenarios under backend/testdata/cloudgoat (see its README).
 bench-cloudgoat:
 	cd backend && $(GO) test ./internal/benchmark -run TestCloudGoatBenchmark -v
 
 ## fuzz: fuzz the collector parse boundary (attacker-influenceable input) for panics/OOM. Runs every FuzzXxx briefly (FUZZTIME per target, default 20s). Deep run: cd backend && go test ./internal/ingestion/fuzz -run x -fuzz FuzzCloudnet -fuzztime 5m
 fuzz:
-	@cd backend && for t in FuzzCloudnet FuzzIAM FuzzK8s FuzzTrivy FuzzSemgrep FuzzFalco FuzzCustodian FuzzSupplychain FuzzSSO FuzzDataclass FuzzBuild; do \
+	@cd backend && for t in FuzzCloudnet FuzzIAM FuzzK8s FuzzTrivy FuzzSemgrep FuzzFalco FuzzCustodian FuzzSupplychain FuzzSSO FuzzDataclass FuzzBuild FuzzEKS FuzzLambda FuzzAPIGateway FuzzTerraform FuzzTerraformEdge; do \
 	  echo "== $$t =="; $(GO) test ./internal/ingestion/fuzz -run x -fuzz $$t -fuzztime $(or $(FUZZTIME),20s) || exit 1; \
 	done
 

@@ -19,19 +19,93 @@ type netBundle struct {
 	Subnets          []subnetRecord  `json:"subnets,omitempty"`
 	RouteTables      []rtRecord      `json:"route_tables,omitempty"`
 	InstanceProfiles []profileRecord `json:"instance_profiles,omitempty"`
+	NetworkACLs      []naclRecord    `json:"network_acls,omitempty"`
+	ECSServices      []ecsRecord     `json:"ecs_services,omitempty"`
+	LoadBalancers    []lbRecord      `json:"load_balancers,omitempty"`
 	// What a live read of the account carries and a plan does not: kept as read, so the
 	// account's network passes through to cloudnet whole when the plan is laid over it.
-	Provider      string          `json:"provider,omitempty"`
-	VPCPeerings   json.RawMessage `json:"vpc_peerings,omitempty"`
-	NetworkACLs   json.RawMessage `json:"network_acls,omitempty"`
-	ECSServices   json.RawMessage `json:"ecs_services,omitempty"`
-	LoadBalancers json.RawMessage `json:"load_balancers,omitempty"`
+	Provider    string          `json:"provider,omitempty"`
+	VPCPeerings json.RawMessage `json:"vpc_peerings,omitempty"`
 
-	// described are the security groups the view holds in full - those the configuration
-	// manages - rather than only rules added to them; address is each instance's block in
-	// the configuration.
+	// described are the security groups, network ACLs and load balancers the view holds in
+	// full - those the configuration manages - rather than only rules, listeners or targets
+	// added to them; address is each instance's block in the configuration.
 	described map[string]bool
 	address   map[string]string
+	// looseGroups are target groups that gain targets and that no load balancer of the
+	// view forwards to; unknownTask are the ECS services (address, ARN and task
+	// definition) whose task definition is not in the plan.
+	looseGroups []tgRecord
+	unknownTask []string
+}
+
+// naclRecord is a network ACL as describe-network-acls returns it.
+type naclRecord struct {
+	NetworkACLID string      `json:"NetworkAclId"`
+	Entries      []naclEntry `json:"Entries"`
+}
+
+type naclEntry struct {
+	RuleNumber    int         `json:"RuleNumber"`
+	Egress        bool        `json:"Egress"`
+	CidrBlock     string      `json:"CidrBlock,omitempty"`
+	Ipv6CidrBlock string      `json:"Ipv6CidrBlock,omitempty"`
+	RuleAction    string      `json:"RuleAction"`
+	Protocol      string      `json:"Protocol,omitempty"`
+	PortRange     *portBounds `json:"PortRange,omitempty"`
+}
+
+type portBounds struct {
+	From *int `json:"From,omitempty"`
+	To   *int `json:"To,omitempty"`
+}
+
+// ecsRecord is an ECS service in awsvpc mode, as the AWS connector flattens it.
+type ecsRecord struct {
+	ServiceArn     string   `json:"serviceArn"`
+	ServiceName    string   `json:"serviceName"`
+	ClusterArn     string   `json:"clusterArn"`
+	TaskRoleArn    string   `json:"taskRoleArn,omitempty"`
+	AssignPublicIP string   `json:"assignPublicIp,omitempty"`
+	SecurityGroups []string `json:"securityGroups,omitempty"`
+	Subnets        []string `json:"subnets,omitempty"`
+	TargetGroups   []string `json:"targetGroups,omitempty"`
+}
+
+// lbRecord is a load balancer with its listeners and target groups, as the AWS connector
+// flattens describe-load-balancers, describe-listeners and describe-target-health.
+type lbRecord struct {
+	LoadBalancerArn   string     `json:"LoadBalancerArn"`
+	LoadBalancerName  string     `json:"LoadBalancerName"`
+	Type              string     `json:"Type"`
+	Scheme            string     `json:"Scheme"`
+	IPAddressType     string     `json:"IpAddressType,omitempty"`
+	SecurityGroups    []string   `json:"SecurityGroups,omitempty"`
+	AvailabilityZones []lbZone   `json:"AvailabilityZones,omitempty"`
+	Listeners         []listener `json:"Listeners,omitempty"`
+	TargetGroups      []tgRecord `json:"TargetGroups,omitempty"`
+}
+
+type lbZone struct {
+	SubnetID string `json:"SubnetId"`
+}
+
+type listener struct {
+	Protocol string `json:"Protocol"`
+	Port     *int   `json:"Port,omitempty"`
+}
+
+type tgRecord struct {
+	TargetGroupArn string   `json:"TargetGroupArn"`
+	TargetType     string   `json:"TargetType"`
+	Protocol       string   `json:"Protocol,omitempty"`
+	Port           *int     `json:"Port,omitempty"`
+	Targets        []target `json:"Targets"`
+}
+
+type target struct {
+	ID   string `json:"Id"`
+	Port *int   `json:"Port,omitempty"`
 }
 
 type sgRecord struct {
@@ -163,11 +237,8 @@ func (p *Plan) network(v View) (netBundle, []string) {
 		}
 		// Without ingress blocks of its own, the attribute is computed from the rule
 		// resources read below; only rules written into the group itself can be lost here.
-		if cfg := p.configOf(r); unknownAt(r.Unknown, "ingress") && cfg != nil {
-			if _, inline := cfg.Expressions["ingress"]; inline {
-				notes = append(notes, r.Address+": its ingress rules are known only after apply")
-			}
-		}
+		notes = append(notes, p.unknownBlocks(v, r, "ingress", "its ingress rules", "cidr_blocks", "ipv6_cidr_blocks",
+			"security_groups", "from_port", "to_port", "protocol")...)
 	}
 	for _, r := range p.Resources(v, "aws_security_group_rule") {
 		if !r.Managed() || p.Str(v, r, "type") != "ingress" {
@@ -340,6 +411,10 @@ func (p *Plan) network(v View) (netBundle, []string) {
 		}
 	}
 
+	notes = append(notes, p.networkACLs(v, &b)...)
+	notes = append(notes, p.loadBalancers(v, &b)...)
+	notes = append(notes, p.ecsServices(v, &b)...)
+
 	// Instance profiles, by name and ARN, and the role each carries.
 	profileARN := map[string]string{}
 	for _, r := range p.Resources(v, "aws_iam_instance_profile") {
@@ -487,6 +562,32 @@ func (p *Plan) roleARN(v View, nameOrARN string) string {
 	return "arn:aws:iam::" + p.accountOr() + ":role/" + nameOrARN
 }
 
+// unknownBlocks notes what of the blocks a resource writes inline is known only after
+// apply: the whole list, or a field of a block that no reference of the configuration
+// names - a group created by the same plan is named, a range computed from something
+// unknown is not.
+func (p *Plan) unknownBlocks(v View, r *Resource, block, what string, fields ...string) []string {
+	cfg := p.configOf(r)
+	if cfg == nil || !unknownAt(r.Unknown, block) {
+		return nil
+	}
+	if _, inline := cfg.Expressions[block]; !inline {
+		return nil
+	}
+	blocks, isList := r.Values[block].([]any)
+	if whole, _ := r.Unknown[block].(bool); whole || !isList {
+		return []string{r.Address + ": " + what + " are known only after apply"}
+	}
+	for i := range blocks {
+		for _, f := range fields {
+			if unknownAt(r.Unknown, block, i, f) && !p.Known(v, r, block, i, f) {
+				return []string{r.Address + ": " + what + " are known only after apply"}
+			}
+		}
+	}
+	return nil
+}
+
 // ingressBlock reads an inline ingress block of a security group.
 func (p *Plan) ingressBlock(v View, r *Resource, i int) (ipPermission, bool) {
 	blk, ok := dig(r.Values, "ingress", i)
@@ -618,18 +719,25 @@ type netIndex struct {
 	groups  map[string]sgRecord
 	tableOf map[string]string  // subnet -> route table
 	routes  map[string][]route // route table -> routes
+	aclOf   map[string]string  // subnet -> network ACL
+	entries map[string][]naclEntry
 }
 
 func indexNet(b netBundle) netIndex {
-	ix := netIndex{groups: map[string]sgRecord{}, tableOf: map[string]string{}, routes: map[string][]route{}}
+	ix := netIndex{groups: map[string]sgRecord{}, tableOf: map[string]string{}, routes: map[string][]route{},
+		aclOf: map[string]string{}, entries: map[string][]naclEntry{}}
 	for _, g := range b.SecurityGroups {
 		ix.groups[g.GroupID] = g
 	}
 	for _, sn := range b.Subnets {
 		ix.tableOf[sn.SubnetID] = sn.RouteTableID
+		ix.aclOf[sn.SubnetID] = sn.NetworkACLID
 	}
 	for _, t := range b.RouteTables {
 		ix.routes[t.RouteTableID] = t.Routes
+	}
+	for _, a := range b.NetworkACLs {
+		ix.entries[a.NetworkACLID] = a.Entries
 	}
 	return ix
 }
@@ -650,8 +758,12 @@ func (ix netIndex) exposureInputs(inst instRecord) string {
 	for _, id := range ids {
 		perms = append(perms, ix.groups[id])
 	}
+	var acl []naclEntry
+	if id := ix.aclOf[inst.SubnetID]; id != "" {
+		acl = ix.entries[id]
+	}
 	fp, _ := json.Marshal(map[string]any{
-		"subnet": inst.SubnetID, "groups": perms, "routes": routes,
+		"subnet": inst.SubnetID, "groups": perms, "routes": routes, "acl": acl,
 		"public": inst.PublicIPAddress != "", "private": inst.PrivateIPAddress != "", "v6": inst.IPv6Address != "",
 	})
 	return string(fp)

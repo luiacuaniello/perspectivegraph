@@ -225,7 +225,8 @@ caught one false positive, a permissions boundary the engine ignored; it is fixe
 `make boundary-lab-aws` fails whenever the engine and AWS disagree. `make entrypoints-lab-aws`
 puts bucket policies and function URLs to AWS the same way; its first run caught four errors,
 also fixed. `make public-access-lab-aws` does it, for free, for Block Public Access set on the
-whole account. Each of these labs writes what it found into the build, and the dashboard's
+whole account, and `make terraform-lab-aws` applies the Terraform plans the merge gate judged and
+asks the internet whether each one opened a way in. Each of these labs writes what it found into the build, and the dashboard's
 Accuracy page shows it under *Checked against AWS*: every question, AWS's answer, the engine's,
 and the version it was asked of.
 

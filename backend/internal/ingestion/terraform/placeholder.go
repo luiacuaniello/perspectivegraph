@@ -53,8 +53,15 @@ func (p *Plan) placeholder(v View, r *Resource, attr string) string {
 			return p.arnOf(v, r)
 		case "aws_s3_bucket":
 			return p.nameOf(v, r)
-		case "aws_lambda_function":
+		case "aws_lambda_function", "aws_eks_cluster":
 			return p.nameOf(v, r)
+		case "aws_ecs_task_definition":
+			s, _ := r.Values["family"].(string)
+			return s
+		case "aws_lb", "aws_alb", "aws_lb_listener", "aws_alb_listener", "aws_lb_target_group", "aws_alb_target_group",
+			"aws_ecs_cluster", "aws_ecs_service":
+			// Their id is their ARN.
+			return p.arnOf(v, r)
 		}
 		if pre, ok := idPrefix[r.Type]; ok {
 			return pre + plannedMark + r.Address
@@ -62,6 +69,15 @@ func (p *Plan) placeholder(v View, r *Resource, attr string) string {
 		return plannedMark + r.Address
 	case "name", "bucket", "function_name":
 		return p.nameOf(v, r)
+	case "invoke_arn":
+		// What API Gateway calls a function by: its ARN in the invocation path.
+		if r.Type == "aws_lambda_function" {
+			return "arn:aws:apigateway:" + p.regionOf(r) + ":lambda:path/2015-03-31/functions/" + p.arnOf(v, r) + "/invocations"
+		}
+	case "root_resource_id":
+		if r.Type == "aws_api_gateway_rest_api" {
+			return plannedMark + r.Address + ".root"
+		}
 	case "default_security_group_id":
 		return "sg-" + plannedMark + r.Address + ".default"
 	case "default_route_table_id", "main_route_table_id":
@@ -90,14 +106,8 @@ func (p *Plan) arnOf(v View, r *Resource) string {
 	if s, _ := r.Values["arn"].(string); s != "" {
 		return s
 	}
-	account := p.Account
-	if account == "" {
-		account = "planned"
-	}
-	region := p.Region
-	if s, _ := r.Values["region"].(string); s != "" {
-		region = s
-	}
+	account := p.accountOr()
+	region := p.regionOf(r)
 	path, _ := r.Values["path"].(string)
 	if path == "" {
 		path = "/"
@@ -118,6 +128,49 @@ func (p *Plan) arnOf(v View, r *Resource) string {
 		return "arn:aws:lambda:" + region + ":" + account + ":function:" + name
 	case "aws_s3_bucket":
 		return "arn:aws:s3:::" + name
+	case "aws_lb", "aws_alb":
+		// The load balancer's own id ends the ARN; its name and Region are what the network
+		// feed keys it by, so an existing one, named in the plan, meets the account's.
+		kind := map[string]string{"network": "net", "gateway": "gwy"}[p.lbType(r)]
+		if kind == "" {
+			kind = "app"
+		}
+		return "arn:aws:elasticloadbalancing:" + region + ":" + account + ":loadbalancer/" + kind + "/" + name + "/" + strings.TrimSuffix(plannedMark, ":")
+	case "aws_lb_target_group", "aws_alb_target_group":
+		return "arn:aws:elasticloadbalancing:" + region + ":" + account + ":targetgroup/" + name + "/" + strings.TrimSuffix(plannedMark, ":")
+	case "aws_lb_listener", "aws_alb_listener":
+		lb := p.Str(v, r, "load_balancer_arn")
+		if !strings.Contains(lb, ":loadbalancer/") {
+			return ""
+		}
+		return strings.Replace(lb, ":loadbalancer/", ":listener/", 1) + "/" + r.Address
+	case "aws_ecs_cluster":
+		return "arn:aws:ecs:" + region + ":" + account + ":cluster/" + name
+	case "aws_ecs_service":
+		cluster := p.Str(v, r, "cluster")
+		return "arn:aws:ecs:" + region + ":" + account + ":service/" + cluster[strings.LastIndex(cluster, "/")+1:] + "/" + name
+	case "aws_ecs_task_definition":
+		family, _ := r.Values["family"].(string)
+		return "arn:aws:ecs:" + region + ":" + account + ":task-definition/" + family + ":" + strings.TrimSuffix(plannedMark, ":")
+	case "aws_eks_cluster":
+		return "arn:aws:eks:" + region + ":" + account + ":cluster/" + name
 	}
 	return ""
+}
+
+// regionOf is the Region a resource lives in: its own, when the provider version writes it,
+// or the plan's.
+func (p *Plan) regionOf(r *Resource) string {
+	if s, _ := r.Values["region"].(string); s != "" {
+		return s
+	}
+	return p.Region
+}
+
+// lbType is a load balancer's type, application when the configuration leaves it out.
+func (p *Plan) lbType(r *Resource) string {
+	if s, _ := r.Values["load_balancer_type"].(string); s != "" {
+		return s
+	}
+	return "application"
 }

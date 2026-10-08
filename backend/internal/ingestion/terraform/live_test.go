@@ -10,6 +10,7 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/graph"
 	"github.com/luiacuaniello/perspectivegraph/internal/impact"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion"
+	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/apigateway"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/cloudnet"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/terraform"
 	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
@@ -26,6 +27,10 @@ import (
 // lets in only the ports given, or everything when none are.
 func sharedWeb(t *testing.T, ingress []any, igw bool, aclPorts ...int) []byte {
 	t.Helper()
+	return marshal(t, sharedWebMap(ingress, igw, aclPorts...))
+}
+
+func sharedWebMap(ingress []any, igw bool, aclPorts ...int) map[string]any {
 	routes := []any{map[string]any{"DestinationCidrBlock": "10.0.0.0/16", "GatewayId": "local"}}
 	if igw {
 		routes = append(routes, map[string]any{"DestinationCidrBlock": "0.0.0.0/0", "GatewayId": "igw-0live"})
@@ -38,7 +43,7 @@ func sharedWeb(t *testing.T, ingress []any, igw bool, aclPorts ...int) []byte {
 				"Protocol": "6", "PortRange": map[string]any{"From": port, "To": port}})
 		}
 	}
-	b, err := json.Marshal(map[string]any{
+	return map[string]any{
 		"provider":        "aws",
 		"security_groups": []any{map[string]any{"GroupId": "sg-0live", "GroupName": "shared-web", "IpPermissions": ingress}},
 		"instances": []any{map[string]any{"InstanceId": "i-0live", "SubnetId": "subnet-0live",
@@ -55,7 +60,12 @@ func sharedWeb(t *testing.T, ingress []any, igw bool, aclPorts ...int) []byte {
 		"network_acls": []any{map[string]any{"NetworkAclId": "acl-0live", "Entries": entries}},
 		"instance_profiles": []any{map[string]any{"Arn": "arn:aws:iam::" + account + ":instance-profile/web",
 			"Roles": []any{map[string]any{"Arn": "arn:aws:iam::" + account + ":role/web", "RoleName": "web"}}}},
-	})
+	}
+}
+
+func marshal(t *testing.T, x any) []byte {
+	t.Helper()
+	b, err := json.Marshal(x)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,17 +80,33 @@ func perm(port int, cidr string) map[string]any {
 // live read returned, and the plan's network is laid over the network feed it fetched.
 func verdictLive(t *testing.T, plan string, live []byte) impact.Result {
 	t.Helper()
-	evs, err := cloudnet.New().Parse(bytes.NewReader(live), ingestion.Options{Account: account})
-	if err != nil {
-		t.Fatal(err)
-	}
+	return verdictFeeds(t, plan, map[string][]byte{"cloudnet": live}, true)
+}
+
+// verdictFeeds runs the plan against an estate read from the given feeds, laid over them
+// when overlay is set (local mode with -aws-region), or not (the server, whose graph holds
+// what the feeds said and not the feeds themselves).
+func verdictFeeds(t *testing.T, plan string, feeds map[string][]byte, overlay bool) impact.Result {
+	t.Helper()
 	var estate graph.Snapshot
-	for _, ev := range evs {
-		estate.Nodes = append(estate.Nodes, ev.Nodes...)
-		estate.Edges = append(estate.Edges, ev.Edges...)
+	for feed, col := range map[string]ingestion.Collector{"cloudnet": cloudnet.New(), "apigateway": apigateway.New()} {
+		if feeds[feed] == nil {
+			continue
+		}
+		evs, err := col.Parse(bytes.NewReader(feeds[feed]), ingestion.Options{Account: account})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, ev := range evs {
+			estate.Nodes = append(estate.Nodes, ev.Nodes...)
+			estate.Edges = append(estate.Edges, ev.Edges...)
+		}
 	}
-	ch, err := terraform.New().ParseChange(strings.NewReader(plan), ingestion.Options{RepoSlug: "acme/infra", CommitSHA: "c0ffee",
-		Account: account, EstateKnown: true, LiveNetwork: live})
+	opts := ingestion.Options{RepoSlug: "acme/infra", CommitSHA: "c0ffee", Account: account, EstateKnown: true}
+	if overlay {
+		opts.LiveFeeds = feeds
+	}
+	ch, err := terraform.New().ParseChange(strings.NewReader(plan), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +299,7 @@ func TestThePlansInstanceIsTheOneJudged(t *testing.T) {
 	moved := inst("sg-0quiet")
 	moved.actions = []string{"update"}
 	ch, err := terraform.New().ParseChange(strings.NewReader(planOf(t, []res{quiet, inst("sg-0live")}, []res{quiet, moved})),
-		ingestion.Options{Account: account, EstateKnown: true, LiveNetwork: sharedWeb(t, []any{perm(22, "0.0.0.0/0")}, true)})
+		ingestion.Options{Account: account, EstateKnown: true, LiveFeeds: map[string][]byte{"cloudnet": sharedWeb(t, []any{perm(22, "0.0.0.0/0")}, true)}})
 	if err != nil {
 		t.Fatal(err)
 	}

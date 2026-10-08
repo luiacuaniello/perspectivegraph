@@ -148,9 +148,11 @@ type Plan struct {
 	// the caller said so first (see Read).
 	Account, Region string
 
-	views   map[View][]*Resource
-	byAddr  map[View]map[string]*Resource
-	byType  map[View]map[string][]*Resource
+	views  map[View][]*Resource
+	byAddr map[View]map[string]*Resource
+	byType map[View]map[string][]*Resource
+	// byRef is each view's resources by what a reference names: mode, module, type, name.
+	byRef   map[View]map[string][]*Resource
 	config  map[string]*configModule // by module path without instance keys
 	calls   map[string]*moduleCall   // the call that instantiates a module path
 	actions map[string][]string
@@ -171,6 +173,7 @@ func Read(r io.Reader, account, region string) (*Plan, error) {
 		views:   map[View][]*Resource{},
 		byAddr:  map[View]map[string]*Resource{Prior: {}, Planned: {}},
 		byType:  map[View]map[string][]*Resource{Prior: {}, Planned: {}},
+		byRef:   map[View]map[string][]*Resource{Prior: {}, Planned: {}},
 		roles:   map[View]map[string]string{},
 		config:  map[string]*configModule{},
 		calls:   map[string]*moduleCall{},
@@ -249,6 +252,12 @@ func (p *Plan) add(v View, r *Resource) {
 	p.views[v] = append(p.views[v], r)
 	p.byAddr[v][r.Address] = r
 	p.byType[v][r.Type] = append(p.byType[v][r.Type], r)
+	k := refKey(r.Mode, r.Module, r.Type, r.Name)
+	p.byRef[v][k] = append(p.byRef[v][k], r)
+}
+
+func refKey(mode, module, typ, name string) string {
+	return mode + "\x00" + module + "\x00" + typ + "\x00" + name
 }
 
 // walkValues visits every resource of a module tree with the module instance it lives in.
@@ -409,6 +418,11 @@ var identifierAttr = map[string]bool{
 	"instance": true, "instance_id": true, "roles": true, "users": true, "allocation_id": true, "iam_instance_profile": true,
 	"policy_arn": true, "permissions_boundary": true, "managed_policy_arns": true,
 	"default_route_table_id": true, "main_route_table_id": true, "default_security_group_id": true, "default_network_acl_id": true,
+	"network_acl_id": true, "subnet_ids": true, "subnets": true,
+	"load_balancer_arn": true, "listener_arn": true, "target_group_arn": true, "target_id": true,
+	"cluster": true, "task_definition": true, "task_role_arn": true,
+	"rest_api_id": true, "resource_id": true, "parent_id": true, "api_id": true, "uri": true, "integration_uri": true, "target": true,
+	"cluster_name": true, "role_arn": true, "principal_arn": true,
 }
 
 // attrTypes are the resource types an identifier attribute can point at. A reference to
@@ -438,6 +452,26 @@ var attrTypes = map[string][]string{
 	"user":                         {"aws_iam_user"},
 	"bucket":                       {"aws_s3_bucket"},
 	"function_name":                {"aws_lambda_function"},
+	"network_acl_id":               {"aws_network_acl", "aws_default_network_acl", "aws_vpc"},
+	"subnet_ids":                   {"aws_subnet", "aws_default_subnet"},
+	"subnets":                      {"aws_subnet", "aws_default_subnet"},
+	"load_balancer_arn":            {"aws_lb", "aws_alb"},
+	"listener_arn":                 {"aws_lb_listener", "aws_alb_listener"},
+	"target_group_arn":             {"aws_lb_target_group", "aws_alb_target_group"},
+	"target_id":                    {"aws_instance", "aws_lambda_function", "aws_lb", "aws_alb"},
+	"cluster":                      {"aws_ecs_cluster"},
+	"task_definition":              {"aws_ecs_task_definition"},
+	"task_role_arn":                {"aws_iam_role"},
+	"rest_api_id":                  {"aws_api_gateway_rest_api"},
+	"resource_id":                  {"aws_api_gateway_resource", "aws_api_gateway_rest_api"},
+	"parent_id":                    {"aws_api_gateway_resource", "aws_api_gateway_rest_api"},
+	"api_id":                       {"aws_apigatewayv2_api"},
+	"uri":                          {"aws_lambda_function"},
+	"integration_uri":              {"aws_lambda_function", "aws_lb_listener", "aws_alb_listener"},
+	"target":                       {"aws_lambda_function"},
+	"cluster_name":                 {"aws_eks_cluster"},
+	"role_arn":                     {"aws_iam_role"},
+	"principal_arn":                {"aws_iam_role", "aws_iam_user"},
 }
 
 // fitting keeps the references that can be what attr holds: those to a resource of a
@@ -641,10 +675,9 @@ func (p *Plan) resolveOne(v View, module, ref string, depth int) []any {
 		attr = rest[0]
 	}
 	var out []any
-	for _, r := range p.views[v] {
-		if r.Mode != mode || r.Type != typ || r.Name != name || r.Module != module {
-			continue
-		}
+	// Looked up, not searched: a plan's references are as many as its resources, and
+	// walking every resource for each would cost the square of the plan.
+	for _, r := range p.byRef[v][refKey(mode, module, typ, name)] {
 		if key != "" && indexKey(r.Index) != key {
 			continue
 		}

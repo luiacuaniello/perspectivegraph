@@ -143,11 +143,11 @@ type localOpts struct {
 	// account it was read from, for a change report that names none.
 	estateKnown   bool
 	estateAccount string
-	// liveNetwork is the network feed a live read fetched, per account: a plan's network
-	// is laid over it (ingestion.Options.LiveNetwork).
-	liveNetwork map[string][]byte
-	awsRegion   string
-	awsRole     string
+	// liveFeeds are the feeds a live read fetched, per account and feed: a plan is laid
+	// over them (ingestion.Options.LiveFeeds).
+	liveFeeds map[string]map[string][]byte
+	awsRegion string
+	awsRole   string
 	// cluster names the Kubernetes cluster this change's reports describe (see
 	// ingestion.Options.Cluster), so they meet the estate's objects of that cluster.
 	cluster string
@@ -164,15 +164,15 @@ type localOpts struct {
 // liveRead is what a live read of the account returned: the events, and the network feed
 // as AWS described it, per account.
 type liveRead struct {
-	events  []ontology.Event
-	network map[string][]byte
+	events []ontology.Event
+	feeds  map[string]map[string][]byte
 }
 
 // estate is what the environment sources produced, and how completely they managed it.
 type estate struct {
 	events []ontology.Event
-	// network is the live read's network feed, per account (liveRead).
-	network map[string][]byte
+	// feeds are the live read's raw feeds, per account and feed (liveRead).
+	feeds map[string]map[string][]byte
 	// partial is the reason the read was incomplete, empty when it was not. A gate that
 	// downgrades this to a log line reports a clean build for an environment it never
 	// saw, which is the failure this whole tool exists to make visible.
@@ -223,7 +223,7 @@ func localVerdict(ctx context.Context, o localOpts) (gateVerdict, error) {
 		// is the one it lands in.
 		o.estateAccount = estateAccount(est.events)
 		o.estateKnown = true
-		o.liveNetwork = est.network
+		o.liveFeeds = est.feeds
 	}
 	reports, err := o.parseReports(o.reports, true)
 	if err != nil {
@@ -417,7 +417,7 @@ func (o localOpts) collectEstate(ctx context.Context) (estate, error) {
 			return estate{}, err
 		}
 		out.events = append(out.events, live.events...)
-		out.network = live.network
+		out.feeds = live.feeds
 		out.partial = partial
 	}
 	return out, nil
@@ -441,14 +441,19 @@ func collect2(ctx context.Context, collect func(context.Context) (liveRead, erro
 
 // collectAWS reads the live account: describes and lists only, no writes, no cost.
 func (o localOpts) collectAWS(ctx context.Context) (liveRead, error) {
-	read := liveRead{network: map[string][]byte{}}
+	read := liveRead{feeds: map[string]map[string][]byte{}}
 	conn, err := awsconnector.NewFromConfig(ctx, awsconnector.Config{
 		Mode: "sdk", Region: o.awsRegion, RoleARN: o.awsRole,
-		// The network feed as read, besides its events: a plan's network is laid over it.
+		// The network and API Gateway feeds as read, besides their events: a plan is laid
+		// over them.
 		Tap: func(feed awsconnector.Feed, account string, raw []byte) {
-			if feed == awsconnector.FeedNetwork {
-				read.network[account] = raw
+			if feed != awsconnector.FeedNetwork && feed != awsconnector.FeedAPIGateway {
+				return
 			}
+			if read.feeds[account] == nil {
+				read.feeds[account] = map[string][]byte{}
+			}
+			read.feeds[account][string(feed)] = raw
 		},
 	})
 	if err != nil {
@@ -460,16 +465,16 @@ func (o localOpts) collectAWS(ctx context.Context) (liveRead, error) {
 	return read, err
 }
 
-// networkFor is the live network feed a plan of the given account is laid over: that
-// account's, or the only one read when either side does not say which account it is.
-func (o localOpts) networkFor(account string) []byte {
-	if raw, ok := o.liveNetwork[account]; ok {
-		return raw
+// feedsFor are the live feeds a plan of the given account is laid over: that account's,
+// or the only one read when either side does not say which account it is.
+func (o localOpts) feedsFor(account string) map[string][]byte {
+	if feeds, ok := o.liveFeeds[account]; ok {
+		return feeds
 	}
-	if len(o.liveNetwork) == 1 {
-		for read, raw := range o.liveNetwork {
+	if len(o.liveFeeds) == 1 {
+		for read, feeds := range o.liveFeeds {
 			if read == "" || account == "" {
-				return raw
+				return feeds
 			}
 		}
 	}
@@ -512,7 +517,7 @@ func (o localOpts) parseReports(specs []reportSpec, stamped bool) (parsedReports
 			if copts.Account == "" {
 				copts.Account = o.estateAccount
 			}
-			copts.LiveNetwork = o.networkFor(copts.Account)
+			copts.LiveFeeds = o.feedsFor(copts.Account)
 			ch, err = cp.ParseChange(r, copts)
 			out.change = true
 		} else {

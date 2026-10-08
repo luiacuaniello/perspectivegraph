@@ -21,17 +21,20 @@
 // stands for. An ARN AWS builds from a name - an IAM role's, a bucket's - is built the
 // same way.
 //
-// A security group, a subnet and a route table serve whatever uses them, and a plan holds
-// only what its configuration manages. Given the account's network as a live read fetched it
-// (ingestion.Options.LiveNetwork), each state of the plan is laid over it and judged whole;
-// without it, what the plan opens of those it did not create is listed as outside the plan
-// (live.go).
+// A security group, a subnet, a load balancer and an API serve whatever uses them, and a
+// plan holds only what its configuration manages. Given the account's feeds as a live read
+// fetched them (ingestion.Options.LiveFeeds), each state of the plan is laid over them and
+// judged whole; without them, what the plan opens of what it did not create is listed as
+// outside the plan (live.go).
 //
 // What it reads: VPC networking (security groups and their rules, subnets, route tables
-// and routes, internet gateways, Elastic IPs), EC2 instances and their instance profiles,
-// IAM roles, users, their policies and attachments and permissions boundaries, S3 buckets
-// with their policies, ACLs and Block Public Access, and Lambda functions with their URLs
-// and permissions. Load balancers, API Gateway, ECS and EKS are not read yet.
+// and routes, network ACLs, internet gateways, Elastic IPs), EC2 instances and their
+// instance profiles, load balancers with their listeners, listener rules, target groups
+// and attachments, ECS services with their task roles, API Gateway REST, HTTP and WebSocket
+// APIs with their methods or routes, integrations and stages, EKS Pod Identity associations
+// and access entries, IAM roles, users, their policies and attachments and permissions
+// boundaries, S3 buckets with their policies, ACLs and Block Public Access, and Lambda
+// functions with their URLs and permissions.
 package terraform
 
 import (
@@ -42,8 +45,10 @@ import (
 	"sort"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion"
+	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/apigateway"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/cloudnet"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/custodian"
+	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/eks"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/iam"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion/lambda"
 	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
@@ -70,12 +75,12 @@ func (c *Collector) ParseChange(r io.Reader, opts ingestion.Options) (ingestion.
 	if err != nil {
 		return ingestion.Change{}, err
 	}
-	live, err := readLive(opts.LiveNetwork)
+	live, err := readLive(opts.LiveFeeds)
 	if err != nil {
 		return ingestion.Change{}, err
 	}
 	prior, planned := p.bundles(Prior), p.bundles(Planned)
-	beyond := outside(prior.net, planned.net, live)
+	beyond := outside(prior, planned, live)
 	// What the estate decides better than the plan. An instance whose exposure the plan
 	// does not touch - same subnet and routes, same groups and rules, same addresses - is
 	// exposed or not as the estate says: the plan may not describe its subnet's routing,
@@ -90,7 +95,8 @@ func (c *Collector) ParseChange(r io.Reader, opts ingestion.Options) (ingestion.
 	// With the account's network read, each state of the plan is judged laid over it (see
 	// live.go): the instances the plan does not describe are judged with it.
 	if live != nil {
-		prior.view, planned.view = overlay(*live, prior.net), overlay(*live, planned.net)
+		p.layOver(&prior, live, nil)
+		p.layOver(&planned, live, p.droppedACLEntries())
 	}
 	was, err := p.feeds(prior)
 	if err != nil {
@@ -111,12 +117,15 @@ func (c *Collector) ParseChange(r io.Reader, opts ingestion.Options) (ingestion.
 type bundles struct {
 	net netBundle
 	// view is the network the state is judged on: the plan's own, or the plan's laid over
-	// the account's when a live read gave it.
-	view  netBundle
-	iam   iamBundle
-	fn    lambdaBundle
-	s3    custodianBundle
-	notes []string
+	// the account's when a live read gave it; apiView likewise for API Gateway.
+	view    netBundle
+	iam     iamBundle
+	fn      lambdaBundle
+	s3      custodianBundle
+	api     apiBundle
+	apiView apiBundle
+	eks     eksBundle
+	notes   []string
 	// partial are the assets the configuration does not manage but changes - a bucket
 	// it only writes a policy for, a function it only adds a permission to. Their record
 	// holds only what the plan says, so it can say they are open, never that they are
@@ -135,6 +144,11 @@ func (p *Plan) bundles(v View) bundles {
 	b.fn, n = p.lambda(v)
 	b.notes = append(b.notes, n...)
 	b.s3, n = p.s3(v)
+	b.notes = append(b.notes, n...)
+	b.api, n = p.apis(v)
+	b.apiView = b.api
+	b.notes = append(b.notes, n...)
+	b.eks, n = p.eksAccess(v)
 	b.notes = append(b.notes, n...)
 	b.notes = dedupe(b.notes)
 
@@ -161,13 +175,37 @@ func (p *Plan) bundles(v View) bundles {
 			}
 		}
 	}
+	// A load balancer the plan only adds a listener or a target to, an API it only adds a
+	// route to: what the plan holds of them is not what they are.
+	for _, lb := range b.net.LoadBalancers {
+		if !b.net.described[lb.LoadBalancerArn] {
+			b.partial[ingestion.LoadBalancerID(p.Account, lb.LoadBalancerArn, lb.LoadBalancerName)] = true
+		}
+	}
+	for _, id := range b.apiIDs() {
+		if !b.api.described[id] {
+			b.partial[ingestion.RegionalID(ontology.LabelAPI, p.Account, p.Region, id)] = true
+		}
+	}
 	return b
+}
+
+// apiIDs are the ids of the APIs a state holds.
+func (b bundles) apiIDs() []string {
+	var out []string
+	for _, a := range b.api.RestAPIs {
+		out = append(out, a.ID)
+	}
+	for _, a := range b.api.HTTPAPIs {
+		out = append(out, a.APIID)
+	}
+	return out
 }
 
 // exposureProps are what the collectors write about whether the internet reaches an asset.
 var exposureProps = []string{
 	ontology.PropNetworkExposed, ontology.PropInternetExposed, ontology.PropPublicAccess,
-	"exposed_ports", "exposed_management_ports", "net_reachability", "exposure", "public_via", "public_blocked_by",
+	"exposed_ports", "exposed_management_ports", "net_reachability", "exposure", "public_via", "public_blocked_by", "open_routes",
 }
 
 // feeds turns one state of the plan into the events of the collectors that read each part.
@@ -179,10 +217,13 @@ func (p *Plan) feeds(b bundles) ([]ontology.Event, error) {
 		bundle any
 		empty  bool
 	}{
-		{cloudnet.New(), b.view, len(b.view.SecurityGroups) == 0 && len(b.view.Instances) == 0},
+		{cloudnet.New(), b.view, len(b.view.SecurityGroups) == 0 && len(b.view.Instances) == 0 &&
+			len(b.view.LoadBalancers) == 0 && len(b.view.ECSServices) == 0},
 		{iam.New(), b.iam, len(b.iam.RoleDetailList) == 0 && len(b.iam.UserDetailList) == 0},
 		{lambda.New(), b.fn, len(b.fn.Functions) == 0},
 		{custodian.New(), b.s3, len(b.s3.Policies) == 1 && len(b.s3.Policies[0].Resources) == 0},
+		{apigateway.New(), b.apiView, len(b.apiView.RestAPIs) == 0 && len(b.apiView.HTTPAPIs) == 0},
+		{eks.New(), b.eks, len(b.eks.Clusters) == 0},
 	} {
 		if feed.empty {
 			continue
@@ -227,6 +268,20 @@ func (p *Plan) finish(out []ontology.Event, b bundles, opts ingestion.Options, s
 		for _, bk := range part.Resources {
 			name, _ := bk["Name"].(string)
 			stamp[ontology.NewID(ontology.LabelBucket, name)] = true
+		}
+	}
+	for _, lb := range b.net.LoadBalancers {
+		stamp[ingestion.LoadBalancerID(p.Account, lb.LoadBalancerArn, lb.LoadBalancerName)] = true
+	}
+	for _, svc := range b.net.ECSServices {
+		stamp[ontology.NewID(ontology.LabelContainer, svc.ServiceArn)] = true
+	}
+	for _, id := range b.apiIDs() {
+		stamp[ingestion.RegionalID(ontology.LabelAPI, p.Account, p.Region, id)] = true
+	}
+	for _, c := range b.eks.Clusters {
+		for _, a := range c.PodIdentityAssociations {
+			stamp[ingestion.KubeID(ontology.LabelServiceAccount, c.Name, a.Namespace+"/"+a.ServiceAccount)] = true
 		}
 	}
 

@@ -23,23 +23,98 @@ import (
 // it uses but does not hold, are listed as outside the plan: a route through them can be
 // neither found nor ruled out.
 
-// readLive decodes the account's network feed, as a live read fetched it.
-func readLive(raw []byte) (*netBundle, error) {
-	if len(raw) == 0 {
-		return nil, nil
-	}
-	var b netBundle
-	if err := json.Unmarshal(raw, &b); err != nil {
-		return nil, fmt.Errorf("the account's network feed: %w", err)
-	}
-	return &b, nil
+// The feeds a live read hands over, by name: the network and API Gateway.
+const (
+	feedNetwork    = "cloudnet"
+	feedAPIGateway = "apigateway"
+)
+
+// liveState is the account as a live read fetched it: its network, and its APIs.
+type liveState struct {
+	net *netBundle
+	api *apiBundle
 }
 
-// overlay is a view of the plan's network laid over the account's. Rules and routes add
-// to what the account already has: a plan that removes one closes nothing here, which the
-// gate, asking only what a change opens, does not need. An instance the plan describes is
-// as the plan describes it; one it does not, as the account does.
-func overlay(live, plan netBundle) netBundle {
+// readLive decodes the account's feeds, as a live read fetched them.
+func readLive(feeds map[string][]byte) (*liveState, error) {
+	var l liveState
+	if raw := feeds[feedNetwork]; len(raw) > 0 {
+		var b netBundle
+		if err := json.Unmarshal(raw, &b); err != nil {
+			return nil, fmt.Errorf("the account's network feed: %w", err)
+		}
+		l.net = &b
+	}
+	if raw := feeds[feedAPIGateway]; len(raw) > 0 {
+		var b apiBundle
+		if err := json.Unmarshal(raw, &b); err != nil {
+			return nil, fmt.Errorf("the account's API Gateway feed: %w", err)
+		}
+		l.api = &b
+	}
+	if l.net == nil && l.api == nil {
+		return nil, nil
+	}
+	return &l, nil
+}
+
+// layOver judges a state of the plan laid over the account. An asset the plan held only in
+// part - a load balancer it adds a listener to, an API it adds a route to - is whole once
+// the account's record of it is there, and no longer partial.
+func (p *Plan) layOver(b *bundles, l *liveState, dropped map[string][]entryKey) {
+	if l.net != nil {
+		b.view = overlay(*l.net, b.net, dropped)
+		for _, lb := range l.net.LoadBalancers {
+			delete(b.partial, ingestion.LoadBalancerID(p.Account, lb.LoadBalancerArn, lb.LoadBalancerName))
+		}
+	}
+	if l.api != nil {
+		b.apiView = overlayAPI(*l.api, b.api)
+		for _, region := range []string{b.api.Region, b.apiView.Region} {
+			for _, id := range liveAPIIDs(*l.api) {
+				delete(b.partial, ingestion.RegionalID(ontology.LabelAPI, p.Account, region, id))
+			}
+		}
+	}
+}
+
+// entryKey names a network ACL entry: AWS keeps one per rule number and direction.
+type entryKey struct {
+	egress bool
+	number int
+}
+
+// droppedACLEntries are the network ACL rules the plan deletes: rule resources in the state
+// it starts from that the state it leads to does not have. Laid over the account, they go.
+func (p *Plan) droppedACLEntries() map[string][]entryKey {
+	out := map[string][]entryKey{}
+	for _, r := range p.Resources(Prior, "aws_network_acl_rule") {
+		if !r.Managed() {
+			continue
+		}
+		if now := p.byAddr[Planned][r.Address]; now != nil && now.Values["rule_number"] == r.Values["rule_number"] &&
+			now.Values["egress"] == r.Values["egress"] && p.Str(Planned, now, "network_acl_id") == p.Str(Prior, r, "network_acl_id") {
+			continue
+		}
+		n, ok := toInt(r.Values["rule_number"])
+		acl := p.Str(Prior, r, "network_acl_id")
+		if !ok || acl == "" {
+			continue
+		}
+		egress, _ := r.Values["egress"].(bool)
+		out[acl] = append(out[acl], entryKey{egress, n})
+	}
+	return out
+}
+
+// overlay is a view of the plan's network laid over the account's. Security group rules
+// and routes add to what the account already has: a plan that removes one closes nothing
+// here, which the gate, asking only what a change opens, does not need. A network ACL is
+// first-match, so there an entry the plan writes replaces the account's of its number, and
+// one it deletes goes. An instance, load balancer or ECS service the plan describes is as
+// the plan describes it - a target group keeping the targets the account registered in it
+// - and one it does not, as the account does.
+func overlay(live, plan netBundle, dropped map[string][]entryKey) netBundle {
 	out := live
 	out.described, out.address = plan.described, plan.address
 
@@ -84,10 +159,13 @@ func overlay(live, plan netBundle) netBundle {
 			out.Subnets = append(out.Subnets, sn)
 			continue
 		}
-		// The plan says which table a subnet uses when it manages the association; the
-		// account says the rest, its network ACL among it.
+		// The plan says which table and ACL a subnet uses when it manages the association;
+		// the account says the rest.
 		if sn.RouteTableID != "" {
 			out.Subnets[i].RouteTableID = sn.RouteTableID
+		}
+		if sn.NetworkACLID != "" {
+			out.Subnets[i].NetworkACLID = sn.NetworkACLID
 		}
 	}
 
@@ -108,6 +186,110 @@ func overlay(live, plan netBundle) netBundle {
 		out.RouteTables[i] = merged
 	}
 
+	out.NetworkACLs = make([]naclRecord, len(live.NetworkACLs))
+	acls := map[string]int{}
+	for i, a := range live.NetworkACLs {
+		out.NetworkACLs[i] = naclRecord{NetworkACLID: a.NetworkACLID, Entries: append([]naclEntry(nil), a.Entries...)}
+		acls[a.NetworkACLID] = i
+	}
+	for _, a := range plan.NetworkACLs {
+		i, ok := acls[a.NetworkACLID]
+		switch {
+		case !ok:
+			acls[a.NetworkACLID] = len(out.NetworkACLs)
+			out.NetworkACLs = append(out.NetworkACLs, naclRecord{NetworkACLID: a.NetworkACLID, Entries: append([]naclEntry(nil), a.Entries...)})
+		case plan.described[a.NetworkACLID]:
+			out.NetworkACLs[i].Entries = append([]naclEntry(nil), a.Entries...)
+		default:
+			l := newEntryList(out.NetworkACLs[i].Entries)
+			for _, e := range a.Entries {
+				l.set(e)
+			}
+			out.NetworkACLs[i].Entries = l.list()
+		}
+	}
+	for acl, keys := range dropped {
+		i, ok := acls[acl]
+		if !ok || plan.described[acl] {
+			continue
+		}
+		var kept []naclEntry
+		for _, e := range out.NetworkACLs[i].Entries {
+			gone := false
+			for _, k := range keys {
+				gone = gone || (k == entryKey{e.Egress, e.RuleNumber} && !planHasEntry(plan, acl, k))
+			}
+			if !gone {
+				kept = append(kept, e)
+			}
+		}
+		out.NetworkACLs[i].Entries = kept
+	}
+
+	// The account's targets of each group: an Auto Scaling group registers its instances,
+	// an ECS service its tasks, and neither is in the plan.
+	liveTargets := map[string][]target{}
+	out.LoadBalancers = make([]lbRecord, len(live.LoadBalancers))
+	lbs := map[string]int{}
+	for i, l := range live.LoadBalancers {
+		out.LoadBalancers[i] = copyLB(l)
+		lbs[l.LoadBalancerArn] = i
+		for _, g := range l.TargetGroups {
+			liveTargets[g.TargetGroupArn] = append(liveTargets[g.TargetGroupArn], g.Targets...)
+		}
+	}
+	for _, l := range plan.LoadBalancers {
+		merged := copyLB(l)
+		for gi, g := range merged.TargetGroups {
+			merged.TargetGroups[gi].Targets = unionTargets(liveTargets[g.TargetGroupArn], g.Targets)
+		}
+		i, ok := lbs[l.LoadBalancerArn]
+		switch {
+		case !ok:
+			lbs[l.LoadBalancerArn] = len(out.LoadBalancers)
+			out.LoadBalancers = append(out.LoadBalancers, merged)
+		case plan.described[l.LoadBalancerArn]:
+			out.LoadBalancers[i] = merged
+		default:
+			// Listeners and target groups added to a load balancer the configuration does
+			// not manage: the account says what it is.
+			cur := &out.LoadBalancers[i]
+			cur.Listeners = append(cur.Listeners, merged.Listeners...)
+			mergeGroups(cur, merged.TargetGroups)
+		}
+	}
+	if len(plan.looseGroups) > 0 {
+		loose := map[string][]target{}
+		for _, g := range plan.looseGroups {
+			loose[g.TargetGroupArn] = append(loose[g.TargetGroupArn], g.Targets...)
+		}
+		for i := range out.LoadBalancers {
+			for gi := range out.LoadBalancers[i].TargetGroups {
+				if t := &out.LoadBalancers[i].TargetGroups[gi]; loose[t.TargetGroupArn] != nil {
+					t.Targets = unionTargets(t.Targets, loose[t.TargetGroupArn])
+				}
+			}
+		}
+	}
+
+	out.ECSServices = append([]ecsRecord(nil), live.ECSServices...)
+	services := map[string]int{}
+	for i, svc := range out.ECSServices {
+		services[svc.ServiceArn] = i
+	}
+	for _, svc := range plan.ECSServices {
+		i, ok := services[svc.ServiceArn]
+		if !ok {
+			out.ECSServices = append(out.ECSServices, svc)
+			continue
+		}
+		if svc.TaskRoleArn == "" {
+			// A task definition outside the plan: the account knows its role.
+			svc.TaskRoleArn = out.ECSServices[i].TaskRoleArn
+		}
+		out.ECSServices[i] = svc
+	}
+
 	out.InstanceProfiles = append([]profileRecord(nil), live.InstanceProfiles...)
 	profiles := map[string]int{}
 	for i, pr := range out.InstanceProfiles {
@@ -119,6 +301,193 @@ func overlay(live, plan netBundle) netBundle {
 			continue
 		}
 		out.InstanceProfiles = append(out.InstanceProfiles, pr)
+	}
+	return out
+}
+
+func planHasEntry(plan netBundle, acl string, k entryKey) bool {
+	for _, a := range plan.NetworkACLs {
+		if a.NetworkACLID != acl {
+			continue
+		}
+		for _, e := range a.Entries {
+			if (entryKey{e.Egress, e.RuleNumber}) == k {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func copyLB(l lbRecord) lbRecord {
+	l.SecurityGroups = append([]string(nil), l.SecurityGroups...)
+	l.AvailabilityZones = append([]lbZone(nil), l.AvailabilityZones...)
+	l.Listeners = append([]listener(nil), l.Listeners...)
+	groups := make([]tgRecord, len(l.TargetGroups))
+	for i, g := range l.TargetGroups {
+		g.Targets = append([]target(nil), g.Targets...)
+		groups[i] = g
+	}
+	l.TargetGroups = groups
+	return l
+}
+
+// mergeGroups puts target groups into a load balancer's: a group's targets join the
+// group's own when the load balancer already forwards to it.
+func mergeGroups(lb *lbRecord, groups []tgRecord) {
+	at := map[string]int{}
+	for i, g := range lb.TargetGroups {
+		at[g.TargetGroupArn] = i
+	}
+	for _, g := range groups {
+		if i, ok := at[g.TargetGroupArn]; ok {
+			lb.TargetGroups[i].Targets = unionTargets(lb.TargetGroups[i].Targets, g.Targets)
+			continue
+		}
+		at[g.TargetGroupArn] = len(lb.TargetGroups)
+		lb.TargetGroups = append(lb.TargetGroups, g)
+	}
+}
+
+func unionTargets(a, b []target) []target {
+	out := append([]target(nil), a...)
+	seen := map[string]bool{}
+	for _, t := range a {
+		seen[fmt.Sprint(t.ID, "\x00", t.Port)] = true
+	}
+	for _, t := range b {
+		if k := fmt.Sprint(t.ID, "\x00", t.Port); !seen[k] {
+			seen[k] = true
+			out = append(out, t)
+		}
+	}
+	if out == nil {
+		out = []target{}
+	}
+	return out
+}
+
+// overlayAPI lays the plan's APIs over the account's: a method or route the plan writes
+// replaces the account's of its path or key, its stages join the API's, and an API the
+// configuration defines takes its name, endpoint and policy from it.
+func overlayAPI(live, plan apiBundle) apiBundle {
+	out := apiBundle{Account: live.Account, Region: live.Region, described: plan.described}
+	if out.Account == "" {
+		out.Account = plan.Account
+	}
+	if out.Region == "" {
+		out.Region = plan.Region
+	}
+	rest := map[string]int{}
+	for _, a := range live.RestAPIs {
+		a.Stages = append([]string{}, a.Stages...)
+		a.Methods = append([]restMethod{}, a.Methods...)
+		rest[a.ID] = len(out.RestAPIs)
+		out.RestAPIs = append(out.RestAPIs, a)
+	}
+	for _, a := range plan.RestAPIs {
+		i, ok := rest[a.ID]
+		if !ok {
+			out.RestAPIs = append(out.RestAPIs, a)
+			continue
+		}
+		cur := &out.RestAPIs[i]
+		if plan.described[a.ID] {
+			cur.Name, cur.EndpointTypes, cur.DisableExecuteAPIEndpoint = a.Name, a.EndpointTypes, a.DisableExecuteAPIEndpoint
+			if a.Policy != nil {
+				cur.Policy = a.Policy
+			}
+		}
+		cur.Stages = unionStrings(cur.Stages, a.Stages)
+		at := map[string]int{}
+		for j, m := range cur.Methods {
+			at[m.Path+" "+strings.ToUpper(m.HTTPMethod)] = j
+		}
+		for _, m := range a.Methods {
+			k := m.Path + " " + strings.ToUpper(m.HTTPMethod)
+			if j, ok := at[k]; ok {
+				cur.Methods[j] = m
+				continue
+			}
+			at[k] = len(cur.Methods)
+			cur.Methods = append(cur.Methods, m)
+		}
+	}
+	httpAPIs := map[string]int{}
+	for _, a := range live.HTTPAPIs {
+		a.Stages = append([]string{}, a.Stages...)
+		a.Routes = append([]httpRoute{}, a.Routes...)
+		a.Integrations = append([]httpIntegration{}, a.Integrations...)
+		httpAPIs[a.APIID] = len(out.HTTPAPIs)
+		out.HTTPAPIs = append(out.HTTPAPIs, a)
+	}
+	for _, a := range plan.HTTPAPIs {
+		i, ok := httpAPIs[a.APIID]
+		if !ok {
+			out.HTTPAPIs = append(out.HTTPAPIs, a)
+			continue
+		}
+		cur := &out.HTTPAPIs[i]
+		if plan.described[a.APIID] {
+			cur.Name, cur.ProtocolType, cur.DisableExecuteAPIEndpoint = a.Name, a.ProtocolType, a.DisableExecuteAPIEndpoint
+		}
+		cur.Stages = unionStrings(cur.Stages, a.Stages)
+		routes := map[string]int{}
+		for j, rt := range cur.Routes {
+			routes[rt.RouteKey] = j
+		}
+		for _, rt := range a.Routes {
+			if j, ok := routes[rt.RouteKey]; ok {
+				cur.Routes[j] = rt
+				continue
+			}
+			routes[rt.RouteKey] = len(cur.Routes)
+			cur.Routes = append(cur.Routes, rt)
+		}
+		integrations := map[string]int{}
+		for j, in := range cur.Integrations {
+			integrations[in.IntegrationID] = j
+		}
+		for _, in := range a.Integrations {
+			if j, ok := integrations[in.IntegrationID]; ok {
+				cur.Integrations[j] = in
+				continue
+			}
+			integrations[in.IntegrationID] = len(cur.Integrations)
+			cur.Integrations = append(cur.Integrations, in)
+		}
+	}
+	if out.RestAPIs == nil {
+		out.RestAPIs = []restAPIRecord{}
+	}
+	if out.HTTPAPIs == nil {
+		out.HTTPAPIs = []httpAPIRecord{}
+	}
+	return out
+}
+
+// unionStrings is a, then what of b it does not hold.
+func unionStrings(a, b []string) []string {
+	seen := map[string]bool{}
+	for _, s := range a {
+		seen[s] = true
+	}
+	for _, s := range b {
+		if !seen[s] {
+			seen[s] = true
+			a = append(a, s)
+		}
+	}
+	return a
+}
+
+func liveAPIIDs(b apiBundle) []string {
+	var out []string
+	for _, a := range b.RestAPIs {
+		out = append(out, a.ID)
+	}
+	for _, a := range b.HTTPAPIs {
+		out = append(out, a.APIID)
 	}
 	return out
 }
@@ -165,37 +534,58 @@ func admitted(b netBundle) map[string]admits {
 	return out
 }
 
-// outside lists what the plan's network reaches but does not describe, and the account -
-// when it was read - does not either:
+// outside lists what the plan reaches but does not describe, and the account - when it
+// was read - does not either:
 //
-//   - a group the plan did not create, which it opens further: to the internet or to
-//     another group. Instances the plan does not describe may use it.
+//   - a security group the plan did not create, which it opens further: to the internet or
+//     to another group. What the plan does not describe may use it.
 //   - a group the plan did not create, which it lets into another: instances the plan
 //     does not describe may be in it.
-//   - a group the plan does not hold, used by an instance whose exposure the plan changes:
-//     the group's rules are written elsewhere.
-//   - a route table or a subnet the plan did not create, which it routes to the internet:
-//     instances the plan does not describe may be behind it.
+//   - a group the plan does not hold, used by an instance, load balancer or ECS service the
+//     plan adds or changes: the group's rules are written elsewhere.
+//   - a route table, subnet or network ACL the plan did not create, which it opens to the
+//     internet: what the plan does not describe may be behind it.
+//   - a load balancer or API the plan adds a listener, target group or open route to,
+//     without describing it - its scheme, subnets, stages or policy.
+//   - targets added to a group no load balancer of the plan forwards to, and an ECS
+//     service whose task definition, and so its role, is defined elsewhere.
 //
-// What the live read holds is not listed: laid over the account, the plan meets its
-// instances and rules there. Only what the plan changes counts, so a plan that leaves a
-// group or a route as it was lists nothing for it.
-func outside(prior, planned netBundle, live *netBundle) []string {
+// What the live read holds is not listed: laid over the account, the plan meets it there.
+// Only what the plan changes counts, so a plan that leaves these as they were lists nothing.
+func outside(prior, planned bundles, live *liveState) []string {
 	inLive := map[string]bool{}
-	if live != nil {
-		for _, g := range live.SecurityGroups {
+	if live != nil && live.net != nil {
+		for _, g := range live.net.SecurityGroups {
 			inLive[g.GroupID] = true
 		}
-		for _, sn := range live.Subnets {
+		for _, sn := range live.net.Subnets {
 			inLive[sn.SubnetID] = true
 		}
-		for _, t := range live.RouteTables {
+		for _, t := range live.net.RouteTables {
 			inLive[t.RouteTableID] = true
 		}
+		for _, a := range live.net.NetworkACLs {
+			inLive[a.NetworkACLID] = true
+		}
+		for _, lb := range live.net.LoadBalancers {
+			inLive[lb.LoadBalancerArn] = true
+			for _, g := range lb.TargetGroups {
+				inLive[g.TargetGroupArn] = true
+			}
+		}
+		for _, svc := range live.net.ECSServices {
+			inLive[svc.ServiceArn] = true
+		}
 	}
+	if live != nil && live.api != nil {
+		for _, id := range liveAPIIDs(*live.api) {
+			inLive[id] = true
+		}
+	}
+	read := live != nil
 	unseen := func(id string) bool { return !IsPlaceholder(id) && !inLive[id] }
 	whyAs := func(kind, id, what, users string) string {
-		if live != nil {
+		if read {
 			return kind + " " + id + " " + what + ", and the account read live does not hold it"
 		}
 		return kind + " " + id + " " + what + ", and " + users
@@ -203,25 +593,16 @@ func outside(prior, planned netBundle, live *netBundle) []string {
 	why := func(group, what string) string {
 		return whyAs("security group", group, what, "what the plan does not describe - an instance, a load balancer - may use it")
 	}
+	was, now := prior.net, planned.net
 
 	var notes []string
-	was, now := admitted(prior), admitted(planned)
-	ids := make([]string, 0, len(now))
-	for id := range now {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		gr, old := now[id], was[id]
+	before, after := admitted(was), admitted(now)
+	for _, id := range sortedKeys(keysOfAdmits(after)) {
+		gr, old := after[id], before[id]
 		if opened := gr.v4.Minus(old.v4).Union(gr.v6.Minus(old.v6)); opened.Transport() && unseen(id) {
 			notes = append(notes, why(id, "is opened to the internet on "+opened.String()))
 		}
-		srcs := make([]string, 0, len(gr.from))
-		for src := range gr.from {
-			srcs = append(srcs, src)
-		}
-		sort.Strings(srcs)
-		for _, src := range srcs {
+		for _, src := range sortedKeys(keysOfPorts(gr.from)) {
 			added := gr.from[src].Minus(old.from[src])
 			if !added.Transport() {
 				continue
@@ -235,8 +616,8 @@ func outside(prior, planned netBundle, live *netBundle) []string {
 		}
 	}
 
-	wasTables, wasSubnets := routedToInternet(prior)
-	nowTables, nowSubnets := routedToInternet(planned)
+	wasTables, wasSubnets := routedToInternet(was)
+	nowTables, nowSubnets := routedToInternet(now)
 	for _, id := range sortedKeys(nowTables) {
 		if !wasTables[id] && unseen(id) {
 			notes = append(notes, whyAs("route table", id, "is given a route to the internet", "subnets the plan does not describe may use it"))
@@ -248,25 +629,170 @@ func outside(prior, planned netBundle, live *netBundle) []string {
 		}
 	}
 
-	same := map[string]bool{}
-	for _, id := range unchangedExposure(prior, planned) {
-		same[id] = true
+	// Network ACLs that let in more than they did, and subnets put under another ACL.
+	wasACL := map[string]naclRecord{}
+	for _, a := range was.NetworkACLs {
+		wasACL[a.NetworkACLID] = a
 	}
-	holds := "the configuration does not hold"
-	if live != nil {
-		holds = "neither the configuration nor the account read live holds"
+	nowACL := map[string]naclRecord{}
+	for _, a := range now.NetworkACLs {
+		nowACL[a.NetworkACLID] = a
+		o4, o6 := aclAdmits(wasACL[a.NetworkACLID])
+		n4, n6 := aclAdmits(a)
+		if more := n4.Minus(o4).Union(n6.Minus(o6)); more.Transport() && unseen(a.NetworkACLID) {
+			notes = append(notes, whyAs("network ACL", a.NetworkACLID, "lets in more from the internet ("+more.String()+")",
+				"subnets the plan does not describe may use it"))
+		}
 	}
-	for _, inst := range planned.Instances {
-		if same[inst.InstanceID] {
+	wasSubnetACL := map[string]string{}
+	for _, sn := range was.Subnets {
+		wasSubnetACL[sn.SubnetID] = sn.NetworkACLID
+	}
+	for _, sn := range now.Subnets {
+		if sn.NetworkACLID == "" || sn.NetworkACLID == wasSubnetACL[sn.SubnetID] || !unseen(sn.SubnetID) {
 			continue
 		}
-		for _, g := range inst.SecurityGroups {
-			if !planned.described[g.GroupID] && unseen(g.GroupID) {
-				notes = append(notes, planned.address[inst.InstanceID]+": its security group "+g.GroupID+" has rules "+holds)
+		if a, ok := nowACL[sn.NetworkACLID]; ok {
+			if v4, v6 := aclAdmits(a); !v4.Union(v6).Transport() {
+				continue // an ACL that lets nothing in opens nothing
+			}
+		}
+		notes = append(notes, whyAs("subnet", sn.SubnetID, "is put under network ACL "+sn.NetworkACLID,
+			"instances the plan does not describe may be in it"))
+	}
+
+	// What the plan adds or changes, in groups whose rules are elsewhere.
+	holds := "the configuration does not hold"
+	if read {
+		holds = "neither the configuration nor the account read live holds"
+	}
+	member := func(who string, groups []string) {
+		for _, g := range groups {
+			if !now.described[g] && unseen(g) {
+				notes = append(notes, who+": its security group "+g+" has rules "+holds)
 			}
 		}
 	}
+	same := map[string]bool{}
+	for _, id := range unchangedExposure(was, now) {
+		same[id] = true
+	}
+	for _, inst := range now.Instances {
+		if !same[inst.InstanceID] {
+			var groups []string
+			for _, g := range inst.SecurityGroups {
+				groups = append(groups, g.GroupID)
+			}
+			member(now.address[inst.InstanceID], groups)
+		}
+	}
+	wasLB := map[string]string{}
+	for _, lb := range was.LoadBalancers {
+		wasLB[lb.LoadBalancerArn] = fingerprint(lb)
+	}
+	for _, lb := range now.LoadBalancers {
+		if wasLB[lb.LoadBalancerArn] == fingerprint(lb) {
+			continue
+		}
+		name := "load balancer " + lb.LoadBalancerName
+		if now.described[lb.LoadBalancerArn] {
+			member(name, lb.SecurityGroups)
+			continue
+		}
+		if unseen(lb.LoadBalancerArn) {
+			notes = append(notes, whyAs("load balancer", lb.LoadBalancerName, "gets a listener or a target group",
+				"the plan does not describe its scheme, subnets or security groups"))
+		}
+	}
+	wasSvc := map[string]string{}
+	for _, svc := range was.ECSServices {
+		wasSvc[svc.ServiceArn] = fingerprint(svc)
+	}
+	for _, svc := range now.ECSServices {
+		if wasSvc[svc.ServiceArn] != fingerprint(svc) {
+			member("ECS service "+svc.ServiceName, svc.SecurityGroups)
+		}
+	}
+	wasTask := map[string]bool{}
+	for _, t := range was.unknownTask {
+		wasTask[t] = true
+	}
+	for _, t := range now.unknownTask {
+		parts := strings.SplitN(t, "\x00", 3)
+		if wasTask[t] || len(parts) < 3 || inLive[parts[1]] {
+			continue
+		}
+		notes = append(notes, parts[0]+": its task definition "+parts[2]+" is outside the plan, so the role its tasks hold is not known")
+	}
+	wasLoose := map[string]bool{}
+	for _, g := range was.looseGroups {
+		for _, t := range g.Targets {
+			wasLoose[g.TargetGroupArn+"\x00"+t.ID] = true
+		}
+	}
+	for _, g := range now.looseGroups {
+		for _, t := range g.Targets {
+			if !wasLoose[g.TargetGroupArn+"\x00"+t.ID] && unseen(g.TargetGroupArn) {
+				notes = append(notes, whyAs("target group", g.TargetGroupArn, "gains target "+t.ID,
+					"the load balancer that forwards to it is not in the plan"))
+			}
+		}
+	}
+
+	// Routes that ask for nothing, added to APIs the configuration does not define.
+	wasRoutes := map[string]bool{}
+	for _, k := range openRoutes(prior.api) {
+		wasRoutes[k[0]+"\x00"+k[1]] = true
+	}
+	for _, k := range openRoutes(planned.api) {
+		if !wasRoutes[k[0]+"\x00"+k[1]] && !planned.api.described[k[0]] && unseen(k[0]) {
+			notes = append(notes, whyAs("API", k[0], "gets a route that asks for nothing ("+k[1]+")",
+				"the plan does not describe its stages or resource policy"))
+		}
+	}
 	return dedupe(notes)
+}
+
+// openRoutes lists the routes of a state's APIs that ask for nothing, as (API, route).
+func openRoutes(b apiBundle) [][2]string {
+	var out [][2]string
+	for _, a := range b.RestAPIs {
+		for _, m := range a.Methods {
+			if strings.EqualFold(m.AuthorizationType, "NONE") && !m.APIKeyRequired {
+				out = append(out, [2]string{a.ID, m.HTTPMethod + " " + m.Path})
+			}
+		}
+	}
+	for _, a := range b.HTTPAPIs {
+		for _, rt := range a.Routes {
+			if strings.EqualFold(rt.AuthorizationType, "NONE") && !rt.APIKeyRequired {
+				out = append(out, [2]string{a.APIID, rt.RouteKey})
+			}
+		}
+	}
+	return out
+}
+
+// fingerprint is a record in one comparable string.
+func fingerprint(x any) string {
+	b, _ := json.Marshal(x)
+	return string(b)
+}
+
+func keysOfAdmits(m map[string]admits) map[string]bool {
+	out := make(map[string]bool, len(m))
+	for k := range m {
+		out[k] = true
+	}
+	return out
+}
+
+func keysOfPorts(m map[string]ingestion.PortSet) map[string]bool {
+	out := make(map[string]bool, len(m))
+	for k := range m {
+		out[k] = true
+	}
+	return out
 }
 
 // routedToInternet lists the route tables of a view with a default route through an

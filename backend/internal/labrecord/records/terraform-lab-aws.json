@@ -1,0 +1,59 @@
+{
+  "lab": "terraform-lab-aws",
+  "title": "Terraform plans, judged before apply and checked after it",
+  "command": "make terraform-lab-aws",
+  "region": "eu-north-1",
+  "engine": "v1.34.0-1-g16673eb-dirty",
+  "ran_at": "2026-10-08T13:25:25Z",
+  "cost": "a few cents",
+  "checks": [
+    {
+      "case": "open",
+      "question": "Does a plan that opens 8080 in the instance's security group open a way in?",
+      "referee": "the plan applied, then a TCP connection from the internet to the instance's port 8080",
+      "aws": "reached",
+      "engine": "blocked: pg-tf-lab-web -> pg-tf-lab-web -> account-admin (effective)",
+      "verdict": "agree"
+    },
+    {
+      "case": "acl",
+      "question": "Does a network ACL that denies 8080 keep the internet out, the group still open?",
+      "referee": "the plan applied, then a TCP connection from the internet to the instance's port 8080",
+      "aws": "not reached",
+      "engine": "clean",
+      "verdict": "agree"
+    },
+    {
+      "case": "acl-removed",
+      "question": "Does a plan that deletes that deny - still in the ACL's own attribute - open a way in?",
+      "referee": "the plan applied, then a TCP connection from the internet to the instance's port 8080",
+      "aws": "reached",
+      "engine": "blocked: pg-tf-lab-web -> pg-tf-lab-web -> account-admin (effective)",
+      "verdict": "agree"
+    },
+    {
+      "case": "unchanged",
+      "question": "Does a plan that changes nothing open a way in?",
+      "referee": "the plan applied, then a TCP connection from the internet to the instance's port 8080",
+      "aws": "not reached",
+      "engine": "clean",
+      "verdict": "agree"
+    },
+    {
+      "case": "shared",
+      "question": "Does a rule another configuration adds to a group the instance shares open a way in?",
+      "referee": "the plan applied, then a TCP connection from the internet to the instance's port 8080",
+      "aws": "reached",
+      "engine": "blocked: pg-tf-lab-web -> pg-tf-lab-web -> account-admin (effective)",
+      "verdict": "agree"
+    },
+    {
+      "case": "role",
+      "question": "Can the instance's role attach a policy to itself - make itself administrator?",
+      "referee": "IAM's policy simulator",
+      "aws": "allowed",
+      "engine": "can make itself administrator",
+      "verdict": "agree"
+    }
+  ]
+}

@@ -1,7 +1,8 @@
 # Lab records
 
 One JSON file per lab, written by the lab itself at the end of a run on a real AWS account
-(`make public-access-lab-aws`, `make entrypoints-lab-aws`, `make boundary-lab-aws`) through
+(`make public-access-lab-aws`, `make entrypoints-lab-aws`, `make boundary-lab-aws`,
+`make terraform-lab-aws`) through
 `scripts/lab-record.py`. Each holds, for every check, the
 question, the referee AWS supplied, what AWS answered, what the engine said, and whether
 they agreed - with the date, the Region and the engine version the run was made with.

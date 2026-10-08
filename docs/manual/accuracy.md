@@ -205,6 +205,27 @@ every account that blocks public access account-wide. No stranger gets in at any
 put only once a setting already closes it, and the lab refuses to run where the account already has a
 setting of its own, so it never loosens one.
 
+### Terraform plans, refereed after apply
+
+The merge gate judges a Terraform plan before it is applied; `make terraform-lab-aws` applies it
+afterwards and asks AWS what happened. It applies one stack - a t3.micro with a public address in a
+subnet routed to an internet gateway, behind a network ACL, serving an empty directory on port 8080,
+its role allowed to attach a policy to itself - and then five plans against it, each judged by the
+gate twice, alone and with the account read as a `SecurityAudit`-only role, before it is applied. The
+referee is a TCP connection from the internet to port 8080 once the plan is in, and IAM's policy
+simulator for the role the routes end at.
+
+On the first run, on the code that became 1.35.0, all six checks agreed. Opening 8080 in the instance's
+group was blocked, and the internet then reached it. A network ACL denying 8080, the group still open,
+passed, and the internet did not. A plan deleting that deny was blocked, and reached - the case that,
+in a configuration that writes its ACL entries as rule resources, the ACL's own attribute in the plan
+still shows the deny for; found while the lab was being built, and fixed before it ran. A plan that
+changed nothing passed. And a rule a second configuration added to a group the instance shares - a
+plan with no instance in it at all - was `unknown` alone, as it should be, blocked with the account
+read, and the internet reached the instance. The lab costs a few cents: the instance and its address
+for the ten or so minutes it is up. Terraform's state is kept outside the repository, so
+`--teardown` destroys a lab left up.
+
 ### The labs' record, on the Accuracy page
 
 Each of these labs ends by writing what it found - every question it put to AWS, where AWS's answer
