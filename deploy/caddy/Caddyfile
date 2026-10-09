@@ -1,0 +1,48 @@
+# The single-VM recipe's front door (docker-compose.vm.yml): TLS, then the dashboard and the
+# ingest endpoint. DOMAIN comes from .env, which scripts/prod-init.sh writes.
+#
+# Caddy obtains the certificate for DOMAIN itself and renews it. That needs the name to
+# resolve to this machine and ports 80 and 443 to be reachable from the internet, for the
+# ACME challenges. For "localhost" it issues one from a local CA of its own instead, which
+# is how the recipe is tested (scripts/prod-smoke.sh).
+{
+	# Nothing reconfigures this server while it runs, so the admin API is not served: an
+	# endpoint that rewrites the proxy is one more thing to reach. Restart to reconfigure.
+	admin off
+	# For DOMAIN=localhost Caddy signs with a CA of its own and would try to add that CA to
+	# the trust store of the machine it runs on - here a container, which has none worth
+	# changing. It is fetched from /data instead when needed (scripts/prod-smoke.sh does).
+	skip_install_trust
+}
+
+{$DOMAIN} {
+	# The write side of the graph: scanners, CI jobs and `perspectivegraph ingest` post
+	# here, signed with the ingest HMAC secret. POST under /ingest/ and nothing else - the
+	# ingest server's other routes, its health and its connector status, stay inside.
+	@ingest {
+		method POST
+		path /ingest/*
+	}
+	handle @ingest {
+		reverse_proxy backend:8081
+	}
+
+	# Everything else is the dashboard. Its nginx forwards the API routes to the backend
+	# and sets the page's security headers (CSP, framing, sniffing, referrer).
+	handle {
+		reverse_proxy frontend:80
+	}
+
+	encode zstd gzip
+	header {
+		# Not includeSubDomains: the name is often one host under a company's domain, and
+		# this server has no say over the others.
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+	# Credentials in headers are redacted by Caddy unless log_credentials is set.
+	log {
+		output stdout
+		format json
+	}
+}

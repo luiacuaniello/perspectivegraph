@@ -62,7 +62,10 @@ func TestGoVersionIsConsistentEverywhereItIsNamed(t *testing.T) {
 		count int
 	}{
 		{[]string{"backend", "Dockerfile"}, `golang:(\d+\.\d+\.\d+)-alpine`, 1},
-		{[]string{".github", "workflows", "ci.yml"}, `go-version: "(\d+\.\d+\.\d+)"`, 4},
+		// Caddy for the single-VM recipe is compiled with the same Go, so that its standard
+		// library is patched when the backend's is.
+		{[]string{"deploy", "caddy", "Dockerfile"}, `golang:(\d+\.\d+\.\d+)-alpine`, 1},
+		{[]string{".github", "workflows", "ci.yml"}, `go-version: "(\d+\.\d+\.\d+)"`, 5},
 		{[]string{".github", "workflows", "codeql.yml"}, `go-version: "(\d+\.\d+\.\d+)"`, 1},
 		{[]string{".github", "workflows", "fuzz.yml"}, `go-version: "(\d+\.\d+\.\d+)"`, 1},
 		{[]string{".github", "workflows", "publish-images.yml"}, `go-version: "(\d+\.\d+\.\d+)"`, 1},

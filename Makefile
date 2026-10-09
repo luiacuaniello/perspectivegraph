@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help chart-install up up-full up-demo demo demo-build demo-run up-search down logs run-backend build-backend test bench bench-cloudgoat mcp reachability-lab-aws redteam-aws boundary-lab-aws entrypoints-lab-aws public-access-lab-aws terraform-lab-aws tidy run-frontend install-frontend lockfile docs-site seed seed-discovery seed-load clean
+.PHONY: help chart-install up up-full up-demo up-aws prod-init prod-restore prod-smoke demo demo-build demo-run up-search down logs run-backend build-backend test bench bench-cloudgoat mcp reachability-lab-aws redteam-aws boundary-lab-aws entrypoints-lab-aws public-access-lab-aws terraform-lab-aws tidy run-frontend install-frontend lockfile docs-site seed seed-discovery seed-load clean
 
 # CGO is disabled so the Go binaries link statically (Go's pure-Go DNS resolver
 # instead of the system one). This also sidesteps a macOS system-linker bug on
@@ -55,6 +55,22 @@ demo-run:
 	@echo "  demonstration, not evidence)."
 	@echo ""
 	@echo "  Tear down when done: make down"
+
+## up-aws: the stack reading YOUR AWS account live, read-only (AWS_PROFILE, AWS_REGION, optional AWS_ROLE_ARN)
+up-aws:
+	@bash scripts/up-aws.sh
+
+## prod-init: production on ONE machine - secrets, .env, Caddy TLS, NATS auth, daily backups, started (DOMAIN=<name>)
+prod-init:
+	@bash scripts/prod-init.sh $(DOMAIN)
+
+## prod-restore: replace the single-VM stack's database with a dump (DUMP=backups/<file>)
+prod-restore:
+	@bash scripts/prod-restore.sh $(DUMP)
+
+## prod-smoke: run the single-VM recipe end to end in a scratch copy and check it (needs ports 80/443, Go)
+prod-smoke:
+	@bash scripts/prod-smoke.sh
 
 ## up-search: start infra plus the optional OpenSearch full-text index
 up-search:

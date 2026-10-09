@@ -87,6 +87,14 @@ helm install perspectivegraph oci://ghcr.io/luiacuaniello/charts/perspectivegrap
   --version 1.35.1 # x-release-please-version
 ```
 
+On one machine - a VM with Docker and a DNS name - one command sets up TLS, generated
+credentials, an authenticated bus and daily backups, and starts it:
+[production on one machine](docs/manual/single-vm.md).
+
+```bash
+make prod-init DOMAIN=perspectivegraph.example.com
+```
+
 The chart and the three images it runs (`ghcr.io/luiacuaniello/perspectivegraph`, `-dashboard`
 and `-postgres`) are signed with cosign keyless and carry an SPDX SBOM and SLSA provenance:
 [verify them](SECURITY.md#our-own-supply-chain) rather than taking the supply chain on trust.
@@ -237,9 +245,10 @@ and the version it was asked of.
 - **Deployment.** The backend is distroless and non-root on a read-only root filesystem, the
   images are pinned by digest, and under Helm every workload meets the `restricted` Pod Security
   Standard, asserted in CI. The compose defaults are open on purpose; `PG_ENV=production` refuses
-  to start unless API and ingest are authenticated. A real rollout needs more (external
-  PostgreSQL with AGE, TLS, backups, `TRUSTED_PROXY_CIDRS` behind a proxy): the
-  [operations runbook](docs/OPERATIONS.md) lists it.
+  to start unless API and ingest are authenticated. A real rollout needs more (TLS, backups,
+  `TRUSTED_PROXY_CIDRS` behind a proxy, a database you can fail over): on one machine
+  `make prod-init` does the first three, and CI restores one of its backups on every change;
+  the [operations runbook](docs/OPERATIONS.md) lists the rest.
 - **Support.** The newest release only, with a clock on security fixes (Critical 7 days, High
   30): [SUPPORT.md](SUPPORT.md).
 - **Telemetry.** None. Out of the box it opens no outbound connection; GitHub, the AI assistant

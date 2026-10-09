@@ -344,14 +344,18 @@ func run(parent context.Context, cfg config.Config) error {
 	ctx, fatal := context.WithCancelCause(parent)
 	defer fatal(nil)
 
-	// Validate the deployment profile before touching any dependency.
+	// Validate the deployment profile before touching any dependency. The secret files
+	// first: a file that could not be read is the reason a credential is missing, and
+	// checked later it was hidden behind the consequence - a 600 API_TOKENS_FILE on Linux
+	// stopped the process with "no API credential is configured", which sends the operator
+	// to a credential they did configure.
+	if err := checkSecretConfig(cfg); err != nil {
+		return err
+	}
 	if err := checkProductionConfig(cfg); err != nil {
 		return err
 	}
 	if err := checkAuthConfig(cfg); err != nil {
-		return err
-	}
-	if err := checkSecretConfig(cfg); err != nil {
 		return err
 	}
 

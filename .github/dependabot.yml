@@ -159,3 +159,22 @@ updates:
     groups:
       compose-images:
         patterns: ["*"]
+
+  # The single-VM recipe's Caddy: the Go toolchain it is compiled with and the distroless
+  # base it runs on - the image in front of the internet. The Go version is held to the
+  # backend's for the reason given above, so only patches and digests flow here too. Caddy's
+  # own version is CADDY_VERSION in that Dockerfile, which Dependabot does not read.
+  - package-ecosystem: docker
+    directory: /deploy/caddy
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    ignore:
+      - dependency-name: golang
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
+    groups:
+      caddy-images:
+        patterns: ["*"]

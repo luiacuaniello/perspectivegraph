@@ -38,6 +38,34 @@ annotation in `serviceAccount.annotations` (and the service account's name in th
 trust policy). To keep the old binding instead, set `serviceAccount.create=false` and
 `serviceAccount.name=default`.
 
+### Restoring a pg_dump: the documented recipe left the graph detached
+
+**Affects you if** you restored the database from a `pg_dump` following the backup section
+of [OPERATIONS](OPERATIONS.md#4-backup--restore-the-graph-is-sensitive-data) - and you will
+have noticed: every query since answers `graph with oid N does not exist`, and the dashboard
+is empty. Dumps themselves were always complete; physical backups (CloudNativePG's) are not
+affected.
+
+Apache AGE names each graph in its own catalog by the OID of the graph's schema, `pg_dump`
+writes that as a plain number, and the schema a restore creates gets a new one. The recipe
+stopped at `pg_restore`, so the catalog kept pointing at the old schema. It now ends with a
+step that points it at the restored one - found by restoring a dump in CI, which the
+single-VM recipe's check now does on every change.
+
+What to do, on a database restored that way: run, as a superuser,
+
+```sql
+BEGIN;
+SET LOCAL session_replication_role = replica;
+UPDATE ag_catalog.ag_label l SET graph = g.namespace::oid
+  FROM ag_catalog.ag_graph g
+ WHERE l.graph = g.graphid AND g.graphid <> g.namespace::oid;
+UPDATE ag_catalog.ag_graph SET graphid = namespace::oid WHERE graphid <> namespace::oid;
+COMMIT;
+```
+
+then restart the backend. On a database that was never restored, it changes nothing.
+
 ## 1.35.0
 
 ### Terraform plans: load balancers, ECS, API Gateway, EKS and network ACLs are read

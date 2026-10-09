@@ -13,15 +13,23 @@ import (
 // The published compose recipe is the one deployment with a proxy ALWAYS in front of the
 // backend - the dashboard's nginx - so it trusts that proxy by default. Without it the
 // per-IP controls key on nginx and become global, which is what
-// api.TestAPublishedInstanceKeepsVisitorsApartBehindItsProxy pins.
+// api.TestAPublishedInstanceKeepsVisitorsApartBehindItsProxy pins. The single-VM recipe
+// puts Caddy in front of that nginx and in front of the ingest server, so it needs the
+// same default for the same reason.
 //
 // The default is only right if it covers the networks Docker really hands a compose project
 // and stays narrow enough that a peer on the internet is never believed.
 func TestPublishedRecipeTrustsTheDashboardProxy(t *testing.T) {
-	public := mustRead(t, repoRoot(t), "docker-compose.public.yml")
-	m := regexp.MustCompile(`(?m)^\s+TRUSTED_PROXY_CIDRS:\s*\$\{TRUSTED_PROXY_CIDRS:-([^}]+)\}`).FindStringSubmatch(public)
+	for _, recipe := range []string{"docker-compose.public.yml", "docker-compose.vm.yml"} {
+		t.Run(recipe, func(t *testing.T) { checkRecipeTrustsItsProxies(t, recipe) })
+	}
+}
+
+func checkRecipeTrustsItsProxies(t *testing.T, recipe string) {
+	src := mustRead(t, repoRoot(t), recipe)
+	m := regexp.MustCompile(`(?m)^\s+TRUSTED_PROXY_CIDRS:\s*\$\{TRUSTED_PROXY_CIDRS:-([^}]+)\}`).FindStringSubmatch(src)
 	if m == nil {
-		t.Fatal("docker-compose.public.yml must set TRUSTED_PROXY_CIDRS with a default: every visitor reaches the backend through the dashboard's nginx")
+		t.Fatalf("%s must set TRUSTED_PROXY_CIDRS with a default: every request reaches the backend through a proxy", recipe)
 	}
 	ips, err := clientip.New(strings.Split(m[1], ","))
 	if err != nil {

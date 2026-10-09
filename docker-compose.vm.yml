@@ -1,0 +1,149 @@
+# Production on one machine: a VM with Docker, a DNS name pointing at it, one command.
+#
+#   make prod-init DOMAIN=perspectivegraph.example.com
+#
+# scripts/prod-init.sh generates every credential into ./secrets, writes .env - which names
+# this file in the stack's COMPOSE_FILE - and starts it. From then on plain `docker compose`
+# needs no -f flags: `docker compose ps`, `docker compose logs -f backend`, and after
+# checking out a newer release, `make prod-init` again (it keeps what exists) to upgrade.
+# The whole procedure, with the restore, is in docs/manual/single-vm.md.
+#
+# The stack is the published, signed images (docker-compose.demo.yml) with the credentials
+# in mounted files (docker-compose.secrets.yml), and this file on top. What it adds:
+#
+#   * Caddy, the only container that publishes a port: 80, for the ACME challenge and the
+#     redirect, and 443. It obtains and renews the certificate for DOMAIN, serves the
+#     dashboard and its API, and passes POST /ingest/* to the backend's ingest server - the
+#     signed write path. Every port docker-compose.yml binds to 127.0.0.1 is withdrawn, so
+#     on this machine nothing else listens either: the database, the broker and the backend
+#     are reached through `docker compose exec`, or not at all.
+#   * NATS with a password and its stream on a volume (deploy/nats/nats.conf).
+#   * A backup service: a pg_dump into ./backups every BACKUP_HOURS (24), the newest
+#     BACKUP_KEEP (14) kept. With the governance state in Postgres - below - one dump is the
+#     whole engine.
+#   * The production posture, set here so that it is reviewable and upgrades with the
+#     repository rather than living only in a generated .env. Each line takes a value from
+#     .env first, so any of it can be changed there.
+#
+# Needs Docker Compose 2.24 or newer, for the `!reset` that withdraws the ports.
+
+services:
+  caddy:
+    # Built here: Caddy's release compiled with this project's Go, on distroless
+    # (deploy/caddy/Dockerfile says why).
+    build:
+      context: ./deploy/caddy
+    image: perspectivegraph-caddy:local
+    container_name: perspective-caddy
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN to the name this machine answers to - scripts/prod-init.sh writes it into .env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # The certificates and the ACME account. Losing them means asking Let's Encrypt
+      # again, which rate-limits a name that asks too often.
+      - perspective-caddy-data:/data
+      - perspective-caddy-config:/config
+    depends_on:
+      frontend:
+        condition: service_healthy
+    profiles: ["app"]
+
+  postgres:
+    ports: !reset []
+
+  nats:
+    command: ["-c", "/etc/nats/nats.conf"]
+    ports: !reset []
+    volumes:
+      - ./deploy/nats/nats.conf:/etc/nats/nats.conf:ro
+      # Beside the configuration that includes it: nats-server resolves an include
+      # relative to the including file.
+      - ./secrets/nats_auth.conf:/etc/nats/auth.conf:ro
+      - perspective-natsdata:/data
+
+  backend:
+    ports: !reset []
+    environment:
+      NATS_USER: perspectivegraph
+      NATS_PASSWORD_FILE: /run/secrets/nats_password
+      NATS_PASSWORD: ""
+      EXPORT_SIGNING_KEY_FILE: /run/secrets/export_signing_key
+      EXPORT_SIGNING_KEY: ""
+      # Triage, tickets, verdicts, lockouts and the audit chain in Postgres: durable, and in
+      # the same dump as the graph.
+      GOVERNANCE_BACKEND: ${GOVERNANCE_BACKEND:-postgres}
+      AUDIT_RETENTION: ${AUDIT_RETENTION:-2160h}
+      AUTH_LOCKOUT_THRESHOLD: ${AUTH_LOCKOUT_THRESHOLD:-10}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://${DOMAIN}}
+      # Links in pull-request comments and alerts point here.
+      DASHBOARD_URL: ${DASHBOARD_URL:-https://${DOMAIN}}
+      # Caddy and the dashboard's nginx are both on the compose network, and every request
+      # comes through one or both of them: without trusting them, the rate limit and the
+      # lockout would key on the proxy and count every user as one. The range is Docker's
+      # bridge networks; docker-compose.public.yml explains the choice.
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-172.16.0.0/12}
+    secrets:
+      - nats_password
+      - export_signing_key
+
+  frontend:
+    ports: !reset []
+
+  backup:
+    # The database's own image, for a pg_dump of the same major version as the server.
+    image: ghcr.io/luiacuaniello/perspectivegraph-postgres:v1.35.1 # x-release-please-version
+    container_name: perspective-backup
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    # As you, the user who ran prod-init: the dumps in ./backups are then yours to copy off
+    # the machine, without root.
+    user: "${BACKUP_UID:?run scripts/prod-init.sh, which writes BACKUP_UID into .env}:${BACKUP_GID:?run scripts/prod-init.sh}"
+    entrypoint: ["sh", "/usr/local/bin/pg-backup.sh"]
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:-perspective}
+      PGDATABASE: ${POSTGRES_DB:-perspectivegraph}
+      BACKUP_HOURS: ${BACKUP_HOURS:-24}
+      BACKUP_KEEP: ${BACKUP_KEEP:-14}
+    volumes:
+      - ./deploy/backup/pg-backup.sh:/usr/local/bin/pg-backup.sh:ro
+      - ./backups:/backups
+    secrets:
+      - postgres_password
+    healthcheck:
+      # Unhealthy when the newest dump is older than BACKUP_HOURS + 1h: a backup that
+      # silently stopped shows in `docker compose ps`.
+      test: ["CMD", "sh", "/usr/local/bin/pg-backup.sh", "check"]
+      interval: 5m
+      timeout: 10s
+      start_period: 30m
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: ["app"]
+
+volumes:
+  perspective-natsdata:
+  perspective-caddy-data:
+  perspective-caddy-config:
+
+secrets:
+  nats_password:
+    file: ./secrets/nats_password
+  export_signing_key:
+    file: ./secrets/export_signing_key
