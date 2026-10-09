@@ -1,0 +1,51 @@
+{{- if include "perspectivegraph.readsCluster" . }}
+{{- /*
+  What the Kubernetes connector may read of the cluster the chart is installed in: get and
+  list on exactly the kinds the k8s collector reads, and the one config map it reads -
+  EKS's aws-auth - by name. Not secrets, not config maps in general, and no verb that
+  writes. internal/connector/kubernetes keeps its list of kinds and this one in step with a
+  test, because a kind read but not granted fails the pull, and one granted but not read is
+  access nothing uses.
+
+  Cluster-scoped, so the name carries the namespace: two releases of the same name in two
+  namespaces would otherwise share, and fight over, one ClusterRole.
+*/}}
+{{- $name := printf "%s-%s-cluster-reader" .Release.Namespace (include "perspectivegraph.fullname" .) | trunc 63 | trimSuffix "-" }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "perspectivegraph.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+rules:
+  - apiGroups: [""]
+    resources: [pods, services, serviceaccounts, nodes]
+    verbs: [get, list]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: [get, list]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [roles, clusterroles, rolebindings, clusterrolebindings]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [aws-auth]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "perspectivegraph.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "perspectivegraph.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

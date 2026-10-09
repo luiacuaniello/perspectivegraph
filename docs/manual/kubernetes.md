@@ -269,6 +269,10 @@ helm install perspective deploy/helm/perspectivegraph \
   reads the account with, through an EKS Pod Identity association on
   `<release>-perspectivegraph-backend` or an IRSA annotation in `serviceAccount.annotations`
   ([the role](integrations.md#the-read-only-role)).
+  The one exception is the Kubernetes connector (`connectors.enabled={kubernetes}`), which
+  reads the cluster through its API: then the backend alone mounts a token, and the chart
+  grants its account `get`/`list` on what the connector reads - never secrets, nothing that
+  writes ([the Kubernetes connector](integrations.md#kubernetes-the-cluster-the-engine-runs-in)).
 - **The bus and the database authenticate on their own.** The bundled NATS requires a
   user and a password the chart generates into a Secret and hands the backend, so a pod
   that can reach port 4222 cannot publish events past the ingest signature check. The

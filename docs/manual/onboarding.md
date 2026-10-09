@@ -353,6 +353,12 @@ curl -sS -X POST "$INGEST_URL/ingest/falco" -H 'Content-Type: application/json' 
 
 ### Kubernetes topology (auto-discovered exposure)
 
+**Installed with the Helm chart, the engine can read its own cluster instead:** add
+`kubernetes` to `connectors.enabled` and set `connectors.kubernetes.clusterName`, and the
+backend pulls everything below on its own schedule - no dump to post
+([the Kubernetes connector](integrations.md#kubernetes-the-cluster-the-engine-runs-in)). A
+dump is for a cluster the engine does not run in.
+
 Post a raw cluster dump and PerspectiveGraph discovers the exposure topology -
 `Ingress ──ROUTES_TO──▶ Service ──EXPOSES──▶ Pod ──ASSUMES──▶ ServiceAccount
 ──ASSUMES──▶ Role` - with no hand-stitched ids. Pods carry their image ref, so
@@ -876,7 +882,9 @@ own cadence:
   with a read-only role - [the role, ready to deploy](integrations.md#the-read-only-role).
   For Custodian, run it on a cron and send the bundle with `perspectivegraph ingest custodian`.
   Re-sending is idempotent (deterministic ids + upserts).
-- **Discovery (daily cron):** dump `kubectl get -o json` and send it with
+- **Kubernetes:** the cluster the engine runs in is read by the Kubernetes connector
+  (`connectors.enabled={kubernetes}`). Any other cluster: dump `kubectl get -o json` on a
+  daily cron there and send it with
   `perspectivegraph ingest -cluster <name> -snapshot cluster:<name> k8s -`. Each re-send is
   idempotent, so drift in exposure surfaces as new/closed paths between runs.
 - **Runtime (continuous):** point falcosidekick's HTTP output at

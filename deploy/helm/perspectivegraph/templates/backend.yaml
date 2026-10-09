@@ -32,7 +32,13 @@ spec:
       # credentials. Both hand the pod a token of their own, scoped to AWS; the Kubernetes
       # API token is not mounted, because the backend never calls the API.
       serviceAccountName: {{ include "perspectivegraph.serviceAccountName" . }}
+      {{- if include "perspectivegraph.readsCluster" . }}
+      {{- /* Except with the Kubernetes connector, which reads the cluster through the API
+           with this token - read-only, as kubernetes-reader.yaml grants it. */}}
+      automountServiceAccountToken: true
+      {{- else }}
       automountServiceAccountToken: false
+      {{- end }}
       {{- with .Values.podSecurityContext }}
       # fsGroup makes the persistence PVC writable by the nonroot backend (else the
       # first governance-state write fails); runAsNonRoot pins the distroless guarantee.

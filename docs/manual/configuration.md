@@ -178,7 +178,7 @@ Suppressions, tickets, red-team verdicts and posture history. Each lives in memo
 
 | Setting | What it does |
 |---|---|
-| `CONNECTORS_ENABLED`<br>Default: none<br>Helm: `connectors.enabled` | `aws`, `azure`, or both, comma-separated. Empty: data arrives only by ingestion. |
+| `CONNECTORS_ENABLED`<br>Default: none<br>Helm: `connectors.enabled` | `aws`, `azure`, `kubernetes`, comma-separated. Empty: data arrives only by ingestion. |
 | `CONNECTOR_INTERVAL`<br>Default: `15m`<br>Helm: `connectors.interval` | How often each connector reads. |
 | `CONNECTOR_TIMEOUT`<br>Default: `2m`<br>Helm: `connectors.timeout` | The longest one read may take. |
 | `CONNECTOR_TENANT`<br>Default: the default tenant<br>Helm: `connectors.tenant` | The tenant whose graph the connectors feed. |
@@ -188,6 +188,10 @@ Suppressions, tickets, red-team verdicts and posture history. Each lives in memo
 | `AWS_FIXTURES_DIR`<br>Default: none<br>Helm: `connectors.aws.fixturesDir` | Where `fixtures` mode reads from. |
 | `AZURE_CONNECTOR_MODE`<br>Default: `fixtures`<br>Helm: `connectors.azure.mode` | Only `fixtures` is built so far. |
 | `AZURE_FIXTURES_DIR`<br>Default: none<br>Helm: `connectors.azure.fixturesDir` | Where `fixtures` mode reads from. |
+| `K8S_CONNECTOR_MODE`<br>Default: `incluster`<br>Helm: `connectors.kubernetes.mode` | `incluster` reads the cluster the backend runs in, with its service account (the chart grants it read access); `fixtures` reads a kubectl dump from disk. |
+| `K8S_CLUSTER_NAME`<br>Default: none<br>Helm: `connectors.kubernetes.clusterName` | **Required for the Kubernetes connector.** Names repeat across clusters; on EKS it must be the EKS cluster's name, so its objects meet the AWS connector's. |
+| `K8S_AWS_ACCOUNT`<br>Default: none<br>Helm: `connectors.kubernetes.awsAccount` | On EKS, the account the nodes run in, so a pod's escape to its node meets the instance the AWS connector reads. |
+| `K8S_FIXTURES_DIR`<br>Default: none<br>Helm: `connectors.kubernetes.fixturesDir` | Where `fixtures` mode reads `k8s-sample.json` from. |
 
 ## Threat intelligence
 

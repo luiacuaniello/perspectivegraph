@@ -562,6 +562,28 @@
               "type": "string"
             }
           }
+        },
+        "kubernetes": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "incluster",
+                "fixtures"
+              ]
+            },
+            "clusterName": {
+              "type": "string"
+            },
+            "awsAccount": {
+              "type": "string"
+            },
+            "fixturesDir": {
+              "type": "string"
+            }
+          }
         }
       }
     },

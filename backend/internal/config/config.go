@@ -304,6 +304,17 @@ type Config struct {
 	AzureConnectorMode string
 	AzureFixturesDir   string
 
+	// Kubernetes connector. K8SConnectorMode is "incluster" (default - the cluster the
+	// backend runs in, read with its service account) or "fixtures" (a kubectl dump on
+	// disk). K8SClusterName names the cluster, and is required: names repeat across
+	// clusters, and on EKS the name is how its objects meet the AWS account's.
+	// K8SAWSAccount is the AWS account its nodes run in, on EKS, so a pod's escape to its
+	// node meets the instance the AWS connector read.
+	K8SConnectorMode string
+	K8SClusterName   string
+	K8SAWSAccount    string
+	K8SFixturesDir   string
+
 	// CORS: browser origins allowed to call the API cross-origin. Defaults to the
 	// local Vite dev server + the docker-compose dashboard. Set to "*" to allow any
 	// origin (not recommended), or to your dashboard's real origin in production.
@@ -484,6 +495,11 @@ func Load() Config {
 
 		AzureConnectorMode: getenv("AZURE_CONNECTOR_MODE", "fixtures"),
 		AzureFixturesDir:   getenv("AZURE_FIXTURES_DIR", ""),
+
+		K8SConnectorMode: getenv("K8S_CONNECTOR_MODE", "incluster"),
+		K8SClusterName:   getenv("K8S_CLUSTER_NAME", ""),
+		K8SAWSAccount:    getenv("K8S_AWS_ACCOUNT", ""),
+		K8SFixturesDir:   getenv("K8S_FIXTURES_DIR", ""),
 
 		CORSAllowedOrigins:   getlist("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000"),
 		TrustedProxyCIDRs:    getlist("TRUSTED_PROXY_CIDRS", ""),
