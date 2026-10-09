@@ -25,6 +25,22 @@ set -euo pipefail
 MIRROR=https://mirror.gcr.io
 conf=/etc/docker/daemon.json
 
+# The runner signs in to Docker Hub (as "githubactions"), and with credentials for docker.io
+# the daemon does not use a mirror at all: every pull went straight to Docker Hub and met the
+# 429, mirror configured or not. Measured on Docker 28.0.4, the runner's, with Docker Hub
+# unreachable: the same pull succeeds through the mirror without them and fails with them.
+# These jobs read public images and push nothing, so they need no credentials: drop Docker
+# Hub's from the client's configuration, and keep the rest of it (its plugins, other hosts).
+client="${DOCKER_CONFIG:-$HOME/.docker}/config.json"
+if [ -s "$client" ]; then
+  jq '(.auths // {}) as $a
+      | .auths = ($a | with_entries(select(.key | test("docker\\.io") | not)))
+      | if .credHelpers then .credHelpers |= with_entries(select(.key | test("docker\\.io") | not)) else . end
+      | del(.credsStore)' "$client" >"$client.new"
+  mv "$client.new" "$client"
+  echo "ci-docker-mirror: Docker Hub credentials dropped from $client"
+fi
+
 # The runner's daemon already has a configuration of its own; add to it, do not replace it.
 current='{}'
 if sudo test -s "$conf"; then current=$(sudo cat "$conf"); fi
