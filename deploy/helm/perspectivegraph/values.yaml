@@ -168,6 +168,62 @@ postgres:
     enabled: true
     size: 5Gi
     storageClass: ""
+  # PostgreSQL run by the CloudNativePG operator, for a production database inside the
+  # cluster: a primary with streaming replicas and automatic failover, TLS the backend
+  # verifies (sslmode verify-full against the operator's CA), and - with the Barman Cloud
+  # plugin - continuous backups to object storage with point-in-time recovery. It is what
+  # the bundled pod above is not, and the answer on AWS and GCP, whose managed PostgreSQL
+  # services do not offer Apache AGE.
+  #
+  # Install the operator first, once per cluster (https://cloudnative-pg.io); the chart
+  # creates a Cluster resource and refuses to render without the API to receive it. When
+  # enabled, the bundled pod is not deployed whatever postgres.enabled says, and the
+  # backend connects as auth.user to auth.database with the password the operator
+  # generates (Secret <release>-perspectivegraph-pg-app) - auth.password is not used.
+  # docs/manual/kubernetes.md walks through it.
+  cloudnativepg:
+    enabled: false
+    # 1 primary + (instances - 1) replicas. 2 survives the loss of a node; 3 keeps a
+    # replica while one is being rebuilt.
+    instances: 2
+    # The database image. Empty repository and tag: the same image as the bundled
+    # database above - PostgreSQL 17 + Apache AGE 1.7.0 on Alpine, rebuilt every release at
+    # zero findings. The operator does not need its own Debian images, only the PostgreSQL
+    # binaries on the PATH; it runs this one as its postgres user, uid and gid 999. To run
+    # another build - one of the operator's images with AGE added, say - set repository and
+    # tag, and the uid and gid its postgres user has (26 in the operator's images).
+    image:
+      repository: "" # empty = postgres.image.repository
+      tag: "" # empty = postgres.image.tag, then the chart's appVersion
+      # The PostgreSQL major version inside the image. The operator needs it stated - it
+      # will not guess it from a release tag - and refuses to change it on a running
+      # cluster, since a major upgrade is a data migration. Change it only with an image
+      # built for that version.
+      major: 17
+      uid: 999
+      gid: 999
+    storage:
+      size: 10Gi
+      storageClass: "" # empty = the cluster's default StorageClass
+    resources: {}
+    # Extra PostgreSQL parameters, e.g. { max_connections: "200" }. age is added to
+    # shared_preload_libraries by the chart; the backend needs it preloaded because its
+    # role is not a superuser and cannot LOAD the library itself.
+    parameters: {}
+    # Where the operator runs. With networkPolicy.enabled, only the operator (status port),
+    # the cluster's own instances (replication) and the backend may reach the database.
+    operatorNamespace: cnpg-system
+    # Annotations for the service account the database pods run as - on EKS, the IAM role
+    # the backups write to S3 with: { eks.amazonaws.com/role-arn: arn:aws:iam::…:role/… }.
+    serviceAccountAnnotations: {}
+    backup:
+      # The name of a barmancloud.cnpg.io/v1 ObjectStore in this namespace: the bucket,
+      # and how to authenticate to it. Empty: no backups - which is not a production
+      # database. Needs the Barman Cloud plugin installed next to the operator.
+      objectStore: ""
+      # A full base backup on this schedule (six-field cron: seconds first); the WAL is
+      # archived continuously in between, so a restore can stop at any moment.
+      schedule: "0 0 3 * * *"
 
 # In-cluster NATS JetStream (event bus). To bring your own set enabled=false
 # and point externalUrl at it (e.g. nats://my-nats.internal:4222, or tls://… with

@@ -208,12 +208,16 @@ jobs:
 
       # `restricted` is the Pod Security Standard most clusters this lands in enforce, and
       # a pod that misses one of its fields is refused admission rather than merely being
-      # less hardened - so this is a compatibility gate as much as a security one. Both
-      # value sets are checked: the demo defaults and the production overlay.
+      # less hardened - so this is a compatibility gate as much as a security one. The demo
+      # defaults and the production overlay are checked, each also with the database handed
+      # to CloudNativePG - a render that needs the operator's API, which --api-versions
+      # declares here because no cluster is there to answer.
       - name: Admissible (restricted PSS) and self-healing (probes)
         run: |
           set -euo pipefail
-          for values in "" "-f deploy/helm/perspectivegraph/values-production.yaml"; do
+          cnpg="--api-versions postgresql.cnpg.io/v1/Cluster --set postgres.cloudnativepg.enabled=true"
+          prod="-f deploy/helm/perspectivegraph/values-production.yaml"
+          for values in "" "$prod" "$cnpg" "$cnpg $prod"; do
             # shellcheck disable=SC2086
             helm template pg deploy/helm/perspectivegraph $values \
               | python3 scripts/chart-check.py
@@ -311,7 +315,7 @@ jobs:
   # nothing exercised. This does not reach the declared floor - kind cannot boot a node
   # that old - so it brackets what is actually supportable instead of pretending.
   chart-install:
-    name: Helm install (kind ${{ matrix.k8s }})
+    name: Helm install (kind ${{ matrix.k8s }}${{ matrix.database == 'cloudnativepg' && ', CloudNativePG' || '' }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -322,6 +326,12 @@ jobs:
             node: kindest/node:v1.33.12@sha256:3f5c8443c620245e4d355cfe09e96a91ead32ceaa569d3f1ca9edf0cb2fe2ff4
           - k8s: v1.36.1
             node: kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5
+          # The database run by the CloudNativePG operator instead of the bundled pod: the
+          # script installs the operator, and deletes the primary to prove a write still
+          # lands. One Kubernetes version is enough - what varies here is the operator.
+          - k8s: v1.36.1
+            node: kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5
+            database: cloudnativepg
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
 
@@ -359,6 +369,7 @@ jobs:
       - name: Install the chart and wait for every pod
         env:
           NODE_IMAGE: ${{ matrix.node }}
+          DATABASE: ${{ matrix.database || 'bundled' }}
         run: |
           kind version | grep -q '^kind v0\.31\.0 ' || { echo "wrong kind on PATH: $(kind version)"; exit 1; }
           bash scripts/chart-install.sh

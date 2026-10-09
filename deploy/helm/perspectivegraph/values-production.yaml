@@ -43,7 +43,10 @@ backend:
   waitImage: busybox:1.37@sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028
 
 # Bring your own managed, encrypted Postgres with the Apache AGE extension (the
-# bundled demo image has no TLS, so it cannot satisfy sslMode: verify-full).
+# bundled demo image has no TLS, so it cannot satisfy sslMode: verify-full) - or, where no
+# managed service offers AGE (AWS, GCP), add --set postgres.cloudnativepg.enabled=true and
+# the CloudNativePG operator runs it in the cluster, replicated and with verified TLS;
+# externalHost and the password below are then not used (docs/manual/kubernetes.md).
 postgres:
   enabled: false
   externalHost: db.internal # REQUIRED: change to your managed instance

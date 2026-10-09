@@ -11,7 +11,7 @@
   forge and an AI provider, and nothing here would know their addresses. A CNI that does
   not enforce NetworkPolicy ignores all of this, which is why NATS also authenticates.
 */}}
-{{- if .Values.postgres.enabled }}
+{{- if include "perspectivegraph.bundledPostgres" . }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

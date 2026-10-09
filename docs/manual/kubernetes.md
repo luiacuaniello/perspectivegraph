@@ -39,7 +39,8 @@ Bring your own Postgres/NATS by disabling the bundled ones and pointing the char
 the external endpoints. Read
 [the database matrix](../OPERATIONS.md#3-the-database-postgresql--apache-age) before you
 pick one: Apache AGE is a managed offering on Azure only, so on AWS and GCP "external"
-means an instance you run.
+means an instance you run - or one the chart hands to CloudNativePG, the
+[next section](#a-production-database-cloudnativepg).
 
 ```bash
 helm install perspective deploy/helm/perspectivegraph \
@@ -54,6 +55,134 @@ The external Postgres must have the [Apache AGE](https://age.apache.org/)
 extension installed and the graph created (see
 [`deploy/postgres/init-age.sql`](../../deploy/postgres/init-age.sql)). All knobs:
 [`deploy/helm/perspectivegraph/values.yaml`](../../deploy/helm/perspectivegraph/values.yaml).
+
+## A production database: CloudNativePG
+
+The bundled Postgres is one pod: no replica, no TLS, no backups. On AWS and GCP no managed
+PostgreSQL offers Apache AGE, so the chart can hand the database to
+[CloudNativePG](https://cloudnative-pg.io), the Kubernetes operator for PostgreSQL. The
+database stays inside your cluster, and the operator runs it:
+
+- **A primary and replicas, with failover.** `instances` (default 2) is one primary plus
+  streaming replicas. When the primary is lost, the operator promotes a replica and moves
+  the `-rw` Service the backend connects through; the backend reconnects on its own.
+  Measured on kind with the primary killed: the replica was promoted in 21 seconds and the
+  next write landed 4 seconds later, with no backend restart. A primary shut down politely
+  is another matter - the operator waits up to three minutes for clients to disconnect, and
+  the backend's pool does not - so for maintenance promote a replica first
+  (`kubectl cnpg promote`), rather than deleting the primary's pod.
+- **TLS the backend verifies.** The connection uses `sslmode=verify-full` against the CA
+  the operator issues, mounted into the backend: a pod that took over the address could
+  not pose as the database.
+- **Backups with point-in-time recovery**, through the operator's Barman Cloud plugin: the
+  WAL is archived continuously to object storage and a base backup is taken on a schedule,
+  so a restore can stop at any moment rather than at the last backup.
+- **The engine's own requirements, set for you.** AGE is preloaded, because the backend's
+  role is not a superuser and cannot load it; the bootstrap creates the extension and the
+  grants [the database section](../OPERATIONS.md#what-the-engine-needs-of-it) lists, and the
+  backend creates its graph, so it owns the schema.
+
+The operator runs **the same image as the bundled database**,
+`ghcr.io/luiacuaniello/perspectivegraph-postgres`: PostgreSQL 17 and Apache AGE on Alpine,
+rebuilt every release, with no known vulnerability - no finding of any severity, fixed or
+not, when the 1.35.1 image was scanned. The operator does not need its own Debian images,
+only the PostgreSQL binaries on the PATH, so there is no second image to trust. The chart
+runs it as the image's postgres user (uid and gid 999, `image.uid`/`image.gid`), and names it
+through an `ImageCatalog` that states the major version (`image.major`, 17): the operator
+otherwise reads the version off the tag, and this image is tagged with the release.
+
+**1. Install the operator**, once per cluster:
+
+```bash
+kubectl apply --server-side -f \
+  https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v1.30.1/cnpg-1.30.1.yaml
+```
+
+**2. For backups**, install the [Barman Cloud plugin](https://cloudnative-pg.io/plugin-barman-cloud/)
+next to it (it needs cert-manager) and describe the bucket in an `ObjectStore`. On EKS the
+database pods can write to S3 with an IAM role instead of keys:
+
+```yaml
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: perspectivegraph-backups
+spec:
+  retentionPolicy: "30d"
+  configuration:
+    destinationPath: s3://my-bucket/perspectivegraph
+    s3Credentials:
+      inheritFromIAMRole: true
+    wal:
+      compression: gzip
+```
+
+**3. Install the chart** with the database handed over:
+
+```bash
+helm install perspective oci://ghcr.io/luiacuaniello/charts/perspectivegraph \
+  -f values-production.yaml \
+  --set postgres.cloudnativepg.enabled=true \
+  --set postgres.cloudnativepg.backup.objectStore=perspectivegraph-backups \
+  --set-string 'postgres.cloudnativepg.serviceAccountAnnotations.eks\.amazonaws\.com/role-arn=arn:aws:iam::111111111111:role/perspectivegraph-backups'
+```
+
+`postgres.cloudnativepg.enabled` replaces the bundled pod whatever `postgres.enabled` says,
+and the backend's credentials come from the Secret the operator generates, so neither
+`postgres.auth.password` nor a `POSTGRES_PASSWORD` in `secrets.existingSecret` is used.
+`instances`, `storage.size`, `storage.storageClass`, `resources` and `parameters` size it;
+[`values.yaml`](../../deploy/helm/perspectivegraph/values.yaml) has every value. With
+`networkPolicy.enabled`, the database pods accept only the backend, each other
+(replication) and the operator's namespace (`operatorNamespace`, default `cnpg-system`).
+Without `backup.objectStore` there are no backups, and the release notes say so.
+
+**4. Restore** by bootstrapping a new cluster from the `ObjectStore`
+([recovery](https://cloudnative-pg.io/docs/1.30/recovery/)). Two lines matter beyond the
+operator's own example: the new cluster must preload AGE, and must run as the image's uid,
+or it starts but cannot read what it restored. `serverName` is the cluster the backups came
+from:
+
+```yaml
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: perspective-restored
+spec:
+  instances: 1
+  imageCatalogRef: {apiGroup: postgresql.cnpg.io, kind: ImageCatalog, name: perspective-perspectivegraph-pg, major: 17}
+  postgresUID: 999
+  postgresGID: 999
+  postgresql:
+    shared_preload_libraries: [age]
+  storage: {size: 10Gi}
+  bootstrap:
+    recovery:
+      source: origin
+      # recoveryTarget: {targetTime: "2026-10-09T13:00:00Z"}   # stop at a moment instead
+  externalClusters:
+    - name: origin
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          barmanObjectName: perspectivegraph-backups
+          serverName: perspective-perspectivegraph-pg
+```
+
+Checked end to end on kind, with an S3-compatible store standing in for the bucket: the
+chart's schedule took the first base backup and archived the WAL continuously; a write made
+after that backup came back in a cluster restored from the store - so the WAL is replayed,
+not just the backup copied - with AGE loaded and the graph's schema still the backend's.
+
+**What stays yours:** the storage class and size, upgrading the operator, the bucket and its
+retention, and rehearsing that restore. The graph itself can be rebuilt by re-ingesting the
+feeds; with `GOVERNANCE_BACKEND=postgres` the suppressions, tickets, history and audit chain
+live in this database too, and those cannot.
+
+`DATABASE=cloudnativepg bash scripts/chart-install.sh` checks all of this on a throwaway kind
+cluster, and CI runs it on every pull request: it installs the operator, waits for a
+primary and a replica, checks that the backend's session is encrypted and that it owns its
+graph, then deletes the primary and checks that a write still reaches the graph through the
+replica the operator promoted.
 
 ## Local cluster (Docker Desktop / kind / minikube) + SSO demo
 

@@ -54,6 +54,11 @@ the chart value that sets it.
 
 The graph lives in PostgreSQL with the Apache AGE extension. [Operations](../OPERATIONS.md#3-the-database-postgresql--apache-age) says where you can get one; most managed services do not offer AGE.
 
+With `postgres.cloudnativepg.enabled`, the chart sets these itself: the host is the
+operator's `-rw` Service, the password comes from the Secret the operator generates, the
+mode is `verify-full`, and libpq's own `PGSSLROOTCERT` points the driver at the operator's CA
+([Kubernetes](kubernetes.md#a-production-database-cloudnativepg)).
+
 | Setting | What it does |
 |---|---|
 | `POSTGRES_HOST`<br>Default: `localhost`<br>Helm: `postgres.externalHost` | The database host. The chart uses its own Postgres unless `postgres.enabled=false`. |
