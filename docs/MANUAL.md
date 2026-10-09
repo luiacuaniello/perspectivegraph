@@ -17,6 +17,7 @@ source of that site: a change to either is a change to both.
 | [Scoring and priority](manual/scoring.md) | How a route gets its probability, how honest that probability is, and what decides which route to fix first. |
 | [Accuracy: calibration and validation](manual/accuracy.md) | How the engine grades its own scores against real outcomes, and what it does with the result. |
 | [Quick start](manual/quick-start.md) | Running the stack, feeding it sample data, and seeing the first attack path. |
+| [Connect your own infrastructure](manual/connect-your-own.md) | Where to run it for your AWS accounts and Kubernetes clusters - a laptop, one machine, EKS or any cluster - and how each reaches it. |
 | [Attack paths in the pull request](manual/ci-gate.md) | The merge gate - GitHub Action, CLI and Trivy plugin - and what a developer sees on the pull request. |
 | [Sources and integrations](manual/integrations.md) | Agentless connectors, topology discovery, supply-chain provenance, identity resolution and threat intelligence. |
 | [Working the findings](manual/working-the-findings.md) | Remediation and detection-as-code, the choke-point optimizer, triage and suppression, and trends over time. |
