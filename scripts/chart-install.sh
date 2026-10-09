@@ -74,7 +74,26 @@ trap cleanup EXIT
 
 kind delete cluster --name "$CLUSTER" >/dev/null 2>&1 || true
 ok "creating cluster on ${NODE_IMAGE%%@*}"
-kind create cluster --name "$CLUSTER" --image "$NODE_IMAGE" --wait 180s >/dev/null
+# In CI, Docker Hub's images come through a mirror (scripts/ci-docker-mirror.sh sets
+# REGISTRY_MIRROR), and the node needs it as much as the runner: NATS and the chart's wait
+# image are pulled by the node's own containerd, not by the runner's daemon. containerd reads
+# a registry's hosts.toml from config_path, which kind leaves unset, so the cluster is
+# created with it. Without REGISTRY_MIRROR, as on a laptop, the cluster is kind's default.
+kind_config=()
+if [ -n "${REGISTRY_MIRROR:-}" ]; then
+  cfg="$(mktemp)"
+  printf '%s\n' 'kind: Cluster' 'apiVersion: kind.x-k8s.io/v1alpha4' 'containerdConfigPatches:' \
+    '  - |-' '    [plugins."io.containerd.grpc.v1.cri".registry]' \
+    '      config_path = "/etc/containerd/certs.d"' >"$cfg"
+  kind_config=(--config "$cfg")
+fi
+kind create cluster --name "$CLUSTER" --image "$NODE_IMAGE" ${kind_config[@]+"${kind_config[@]}"} --wait 180s >/dev/null
+if [ -n "${REGISTRY_MIRROR:-}" ]; then
+  printf 'server = "https://registry-1.docker.io"\n\n[host."%s"]\n  capabilities = ["pull", "resolve"]\n' "$REGISTRY_MIRROR" |
+    docker exec -i "${CLUSTER}-control-plane" sh -c \
+      'mkdir -p /etc/containerd/certs.d/docker.io && cat >/etc/containerd/certs.d/docker.io/hosts.toml'
+  ok "the node pulls Docker Hub's images through $REGISTRY_MIRROR"
+fi
 
 # The chart points at the published database image for the release it belongs to, which
 # does not exist yet for the commit under test. Build it and hand it to the node.
@@ -323,12 +342,9 @@ if [ "$CONNECTOR" = "kubernetes" ]; then
   # The routes through the workload to cluster-admin, one per line.
   admin_routes() {
     curl -s -X POST http://localhost:18080/graphql -H 'Content-Type: application/json' \
-      -d '{"query":"{ attackPaths(limit:200){ nodes { name } } }"}' | python3 -c '
-import json, sys
-for p in json.load(sys.stdin)["data"]["attackPaths"]:
-    names = [n["name"] for n in p["nodes"]]
-    if "cluster-admin" in names and "shop/web-sa" in names:
-        print(" -> ".join(names))'
+      -d '{"query":"{ attackPaths(limit:200){ nodes { name } } }"}' |
+      jq -r '.data.attackPaths[] | [.nodes[].name]
+             | select(index("cluster-admin") and index("shop/web-sa")) | join(" -> ")'
   }
   route=""
   for _ in $(seq 1 36); do route=$(admin_routes); [ -n "$route" ] && break; sleep 5; done
