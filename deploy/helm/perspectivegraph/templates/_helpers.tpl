@@ -14,6 +14,48 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
 {{- end -}}
 
+{{/* A credential for the chart's Secret: the value given, or - with secrets.generate - the
+     one this release already holds, or a new one. Kept across upgrades the way the database
+     and NATS passwords are, by reading the Secret back; "hex" is 64 hex characters (256
+     bits: the raw form of STORE_ENCRYPTION_KEY and EXPORT_SIGNING_KEY), "admin-token" one
+     of those as an admin bearer token. Without secrets.generate an empty value stays
+     empty, so a default render is what it always was.
+     Called with (list $ "KEY" value "hex"|"admin-token"). */}}
+{{- define "perspectivegraph.generated" -}}
+{{- $root := index . 0 -}}
+{{- $key := index . 1 -}}
+{{- $explicit := index . 2 -}}
+{{- $kind := index . 3 -}}
+{{- if $explicit -}}
+{{- $explicit -}}
+{{- else if $root.Values.secrets.generate -}}
+{{- $existing := lookup "v1" "Secret" $root.Release.Namespace (printf "%s-secrets" (include "perspectivegraph.fullname" $root)) -}}
+{{- if and $existing $existing.data (index $existing.data $key) -}}
+{{- index $existing.data $key | b64dec -}}
+{{- else if eq $kind "admin-token" -}}
+{{- printf "%s:admin" (randAlphaNum 64 | sha256sum) -}}
+{{- else -}}
+{{- randAlphaNum 64 | sha256sum -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/* Whether the chart generates the credentials (secrets.generate, and no existingSecret
+     to take them from instead). */}}
+{{- define "perspectivegraph.generatesSecrets" -}}
+{{- if and .Values.secrets.generate (not .Values.secrets.existingSecret) -}}yes{{- end -}}
+{{- end -}}
+
+{{/* The backend's service account: the chart's own unless serviceAccount.create is off,
+     then the one named, or the namespace's default. */}}
+{{- define "perspectivegraph.serviceAccountName" -}}
+{{- if .Values.serviceAccount.create -}}
+{{- .Values.serviceAccount.name | default (printf "%s-backend" (include "perspectivegraph.fullname" .)) -}}
+{{- else -}}
+{{- .Values.serviceAccount.name | default "default" -}}
+{{- end -}}
+{{- end -}}
+
 {{/* Where the database comes from. Three answers, and every template that cares asks
      these two helpers rather than reading postgres.enabled: CloudNativePG wins when it is
      enabled - one switch, not two that must agree - then the bundled pod, then an
@@ -70,7 +112,7 @@ nats://{{ include "perspectivegraph.natsHost" . }}:4222
      Secret this chart cannot read". Kept in one place because it is asked from two
      surfaces - the ingress and the Service type - and two copies would drift. */}}
 {{- define "perspectivegraph.credentialsConfigured" -}}
-{{- if or .Values.secrets.existingSecret .Values.ingress.allowUnauthenticated -}}
+{{- if or .Values.secrets.existingSecret .Values.ingress.allowUnauthenticated (include "perspectivegraph.generatesSecrets" .) -}}
 yes
 {{- else if and (or .Values.auth.apiTokens .Values.auth.oidc.jwksUrl) (or .Values.ingest.hmacSecret .Values.ingest.hmacSecrets) -}}
 yes

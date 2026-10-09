@@ -17,6 +17,27 @@ digest, take the backup, stage it.
 
 ---
 
+## 1.36.0
+
+### Helm: the backend runs as its own service account, and no pod mounts an API token
+
+**Affects you if** you deploy with the Helm chart and bound a cloud role to the namespace's
+`default` service account - an IRSA annotation on it, or an EKS Pod Identity association
+naming it - so that the AWS connector could read the account.
+
+The backend now runs as `<release>-perspectivegraph-backend`, a service account the chart
+creates (`serviceAccount.create`, on by default), so a role bound to it reaches the backend
+and nothing else in the namespace. A role bound to `default` no longer reaches the backend:
+the connector reads with the node's role, or not at all, and `GET /connectors` reports the
+error. No pod in the chart mounts a Kubernetes API token any longer either - none of them
+calls the API - so every pod is replaced on upgrade.
+
+What to do, if you bound a role to `default`: move it. Either recreate the EKS Pod Identity
+association with `--service-account <release>-perspectivegraph-backend`, or put the IRSA
+annotation in `serviceAccount.annotations` (and the service account's name in the role's
+trust policy). To keep the old binding instead, set `serviceAccount.create=false` and
+`serviceAccount.name=default`.
+
 ## 1.35.0
 
 ### Terraform plans: load balancers, ECS, API Gateway, EKS and network ACLs are read

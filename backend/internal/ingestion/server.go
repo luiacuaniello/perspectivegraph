@@ -22,6 +22,10 @@ import (
 
 const maxIngestBody = 32 << 20 // 32 MiB
 
+// MaxBody is the largest report the ingestion endpoint accepts, for senders that check
+// before they send (perspectivegraph ingest) rather than learn it from a 413.
+const MaxBody = maxIngestBody
+
 // Publisher pushes normalized events onto the bus (implemented by broker.Broker).
 type Publisher interface {
 	Publish(ctx context.Context, ev ontology.Event) error

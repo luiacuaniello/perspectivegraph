@@ -33,7 +33,7 @@ curl -s localhost:8081/connectors | jq   # per-connector health: last run, last 
 
 # Live (read-only): assume a cross-account role and pull EC2 + IAM
 CONNECTORS_ENABLED=aws AWS_CONNECTOR_MODE=sdk AWS_REGION=us-east-1 \
-  AWS_ROLE_ARN=arn:aws:iam::<account>:role/perspectivegraph-readonly
+  AWS_ROLE_ARN=arn:aws:iam::<account>:role/PerspectiveGraphReadOnly
 # grant only: ec2:Describe*, iam:GetAccountAuthorizationDetails, iam:ListInstanceProfiles,
 # iam:GetPolicy + iam:GetPolicyVersion (to resolve permissions-boundary documents),
 # eks:ListClusters, eks:ListAccessEntries, eks:ListAssociatedAccessPolicies,
@@ -45,13 +45,14 @@ CONNECTORS_ENABLED=aws AWS_CONNECTOR_MODE=sdk AWS_REGION=us-east-1 \
 # (all covered by the AWS-managed SecurityAudit policy)
 # plus, for EKS Pod Identity, which SecurityAudit does not cover:
 # eks:ListPodIdentityAssociations, eks:DescribePodIdentityAssociation
+# - deploy/aws has this role ready to deploy; see "The read-only role" below.
 
 # Multi-account: one role per account, comma-separated, pulled in a single pass.
 CONNECTORS_ENABLED=aws AWS_CONNECTOR_MODE=sdk AWS_REGION=us-east-1 \
-  AWS_ROLE_ARN=arn:aws:iam::111111111111:role/perspectivegraph-readonly,arn:aws:iam::222222222222:role/perspectivegraph-readonly
+  AWS_ROLE_ARN=arn:aws:iam::111111111111:role/PerspectiveGraphReadOnly,arn:aws:iam::222222222222:role/PerspectiveGraphReadOnly
 
 # See what the live connector discovers before wiring it in (describe-* only):
-AWS_REGION=us-east-1 ROLE_ARN=arn:aws:iam::<account>:role/perspectivegraph-readonly \
+AWS_REGION=us-east-1 ROLE_ARN=arn:aws:iam::<account>:role/PerspectiveGraphReadOnly \
   make validate-aws       # internet-exposed seeds vs SG-open-but-suppressed, with reasons
 ```
 
@@ -72,6 +73,41 @@ cluster-admin outright, `AmazonEKSAdminPolicy` and `AmazonEKSEditPolicy` read se
 there. Neither shows in the cluster's own objects. Without the two Pod Identity permissions
 the connector logs a warning and still reads the access entries. For these to meet the
 cluster's dump, send the dump with `?cluster=<the EKS cluster name>`.
+
+### The read-only role
+
+[`deploy/aws`](../../deploy/aws/readonly-role.cfn.yaml) has the role the connector reads
+with, as CloudFormation ([`readonly-role.cfn.yaml`](../../deploy/aws/readonly-role.cfn.yaml))
+and as a Terraform module ([`deploy/aws/terraform`](../../deploy/aws/terraform/main.tf)) -
+the same role either way: the AWS-managed `SecurityAudit` policy, the two Pod Identity reads
+it lacks, and nothing that writes. Deploy it in every account to be read. The one choice is
+who may assume it:
+
+| The backend runs | Set | Then |
+|---|---|---|
+| On EKS, in the same account | `TrustEksPodIdentity=true` (Terraform: `trust_eks_pod_identity`) | Associate the role with the chart's service account, `<release>-perspectivegraph-backend`. No `AWS_ROLE_ARN`. |
+| Anywhere else: a VM, another account, a CI job | `TrustedPrincipalArn`, the role or user it runs as (`trusted_principal_arns`) | `AWS_ROLE_ARN` is the role's ARN. |
+| Across several accounts | In each account, `TrustedPrincipalArn` is the backend's own role; on that role, `AssumableRoleArns` lists them (`assumable_role_arns`) | `AWS_ROLE_ARN` lists them all, comma-separated. |
+
+```bash
+aws cloudformation deploy --stack-name perspectivegraph-readonly \
+  --template-file deploy/aws/readonly-role.cfn.yaml --capabilities CAPABILITY_NAMED_IAM \
+  --parameter-overrides TrustEksPodIdentity=true
+aws eks create-pod-identity-association --cluster-name <cluster> --namespace <namespace> \
+  --service-account <release>-perspectivegraph-backend --role-arn <the stack's RoleArn output>
+```
+
+There is no external ID: it guards a third party that assumes roles for many customers, and
+the engine is your own. IRSA works as well - annotate the service account
+(`serviceAccount.annotations` in the chart) and let the role trust the cluster's OIDC
+provider instead.
+
+Checked on a real account, at no cost (IAM only): a hub role and a target role from the
+template, with the connector reading the account as the hub through the target; the target
+refusing anyone but the hub; IAM's policy simulator denying every write tried - creating a
+user, attaching a policy, launching an instance, opening a security group, writing an
+object, changing a function's code - and allowing every read the connector makes; and the
+Terraform module producing the same role.
 
 **Lambda and ECS.** The connector reads each Lambda function's URL, resource policy, role and
 tags, so a function anyone can invoke is an entry point leading into its execution role, and

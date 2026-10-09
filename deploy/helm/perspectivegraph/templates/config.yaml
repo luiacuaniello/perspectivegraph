@@ -1,4 +1,4 @@
-{{- if and .Values.secrets.create (not .Values.secrets.existingSecret) }}
+{{- if and (or .Values.secrets.create .Values.secrets.generate) (not .Values.secrets.existingSecret) }}
 # Skipped when secrets.existingSecret is set: bring your own Secret (External
 # Secrets / Sealed Secrets / Vault) carrying these keys, and the backend reads it.
 apiVersion: v1
@@ -12,14 +12,24 @@ stringData:
   POSTGRES_PASSWORD: {{ include "perspectivegraph.postgresPassword" . | quote }}
   GITHUB_TOKEN: {{ .Values.github.token | quote }}
   GITLAB_TOKEN: {{ .Values.gitlab.token | quote }}
+  {{- /* An admin token is generated only when OIDC is not the way in, and the single
+       ingest secret only when per-tenant ones are not set. */}}
+  {{- if .Values.auth.oidc.jwksUrl }}
   API_TOKENS: {{ .Values.auth.apiTokens | quote }}
+  {{- else }}
+  API_TOKENS: {{ include "perspectivegraph.generated" (list . "API_TOKENS" .Values.auth.apiTokens "admin-token") | quote }}
+  {{- end }}
+  {{- if .Values.ingest.hmacSecrets }}
   INGEST_HMAC_SECRET: {{ .Values.ingest.hmacSecret | quote }}
+  {{- else }}
+  INGEST_HMAC_SECRET: {{ include "perspectivegraph.generated" (list . "INGEST_HMAC_SECRET" .Values.ingest.hmacSecret "hex") | quote }}
+  {{- end }}
   INGEST_HMAC_SECRETS: {{ .Values.ingest.hmacSecrets | quote }}
   TICKET_WEBHOOK_URL: {{ .Values.ticket.webhookUrl | quote }}
   ANTHROPIC_API_KEY: {{ .Values.ai.apiKey | quote }}
   HF_TOKEN: {{ .Values.ai.hf.token | quote }}
-  STORE_ENCRYPTION_KEY: {{ .Values.crypto.storeEncryptionKey | quote }}
-  EXPORT_SIGNING_KEY: {{ .Values.crypto.exportSigningKey | quote }}
+  STORE_ENCRYPTION_KEY: {{ include "perspectivegraph.generated" (list . "STORE_ENCRYPTION_KEY" .Values.crypto.storeEncryptionKey "hex") | quote }}
+  EXPORT_SIGNING_KEY: {{ include "perspectivegraph.generated" (list . "EXPORT_SIGNING_KEY" .Values.crypto.exportSigningKey "hex") | quote }}
 ---
 {{- end }}
 apiVersion: v1

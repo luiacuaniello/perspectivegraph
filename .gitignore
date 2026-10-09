@@ -57,3 +57,9 @@ node_modules.nosync/
 
 # The gate writes its machine-readable verdict here when run with -json.
 verdict.json
+
+# Terraform working files, should anyone init or apply the role module in place
+# (deploy/aws/terraform). State can hold account details; it never belongs in the repo.
+deploy/aws/terraform/.terraform/
+deploy/aws/terraform/.terraform.lock.hcl
+deploy/aws/terraform/*.tfstate*

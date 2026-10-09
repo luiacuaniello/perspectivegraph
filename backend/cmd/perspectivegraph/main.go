@@ -68,7 +68,7 @@ import (
 // the command actually exists.
 var subcommands = []string{
 	"andprobe", "awscollect", "gate", "genload", "genverdicts", "healthz",
-	"importverdicts", "ingestreal", "mcp", "redteam", "verify-audit",
+	"importverdicts", "ingest", "ingestreal", "mcp", "redteam", "verify-audit",
 }
 
 func main() {
@@ -152,6 +152,17 @@ func main() {
 	if len(os.Args) >= 2 && os.Args[1] == "andprobe" {
 		if err := runAndProbe(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "andprobe:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Send one scanner report to a running engine, signed the way its ingestion endpoint
+	// requires - what a CI job or a cron job calls instead of curl and openssl. See
+	// runIngest. Exits when done.
+	if len(os.Args) >= 2 && os.Args[1] == "ingest" {
+		if err := runIngest(os.Args[2:], os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "ingest:", err)
 			os.Exit(1)
 		}
 		return

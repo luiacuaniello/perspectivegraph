@@ -19,6 +19,9 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: postgres
     spec:
+      # No Kubernetes API token: nothing in this pod calls the API, and a token mounted by
+      # default is a credential an attacker inside the container gets for free.
+      automountServiceAccountToken: false
       # The `restricted` Pod Security Standard, minus readOnlyRootFilesystem - which it
       # does not require, and which this container DOES need (the bundled Postgres writes
       # its data directory).

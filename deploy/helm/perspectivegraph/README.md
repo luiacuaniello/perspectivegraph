@@ -77,7 +77,10 @@ helm install perspectivegraph ./perspectivegraph \
   --set postgres.externalHost=db.internal --set ingress.host=pg.example.com
 ```
 
-Create the Secret first: the production file lists the keys it expects. On AWS or GCP, where
+Create the Secret first: the production file lists the keys it expects. Or let the chart
+generate them, with `--set secrets.existingSecret="" --set secrets.generate=true` and the
+database's own password (`postgres.auth.password`): it keeps them across upgrades, and the
+release notes say how to read the admin token back. On AWS or GCP, where
 no managed PostgreSQL offers AGE, add `--set postgres.cloudnativepg.enabled=true` instead of
 `postgres.externalHost` to have the CloudNativePG operator run the database in the cluster.
 
@@ -89,6 +92,8 @@ no managed PostgreSQL offers AGE, add `--set postgres.cloudnativepg.enabled=true
 | `auth.anonymousRole` | empty | `viewer` publishes the install read-only, like the live demo: visitors can look around and every change is refused. Set `backend.trustedProxyCidrs` to your ingress controller's pod network as well, so rate limits apply to each visitor rather than to all of them at once. |
 | `postgres.enabled` | `true` | The bundled database, meant for trying things out. In production, set it to `false` and point `postgres.externalHost` (or `postgres.dsn`) at your own PostgreSQL+AGE. |
 | `postgres.cloudnativepg.enabled` | `false` | Hands the database to the [CloudNativePG](https://cloudnative-pg.io) operator, installed beforehand: a primary with replicas and failover, TLS the backend verifies, and continuous backups to object storage when `backup.objectStore` names a Barman Cloud `ObjectStore`. The answer on AWS and GCP, where no managed PostgreSQL offers AGE. Replaces the bundled database; see [the guide](https://docs.a3thinker.it/manual/kubernetes/#a-production-database-cloudnativepg). |
+| `secrets.generate` | `false` | Fills every credential left empty with a generated one, kept across upgrades: an admin API token (unless OIDC is set), the ingest HMAC secret, the encryption and signing keys. With `values-production.yaml`, add `--set secrets.existingSecret="" --set secrets.generate=true` to install without preparing a Secret - plus `postgres.auth.password`, which only your database knows, unless `postgres.cloudnativepg.enabled` runs it. Not for `helm template` (Argo CD, Flux), which would draw new values every render. |
+| `serviceAccount` | created | The backend's own service account, with no Kubernetes API token mounted (no pod in the chart mounts one). On EKS, bind the AWS connector's read-only role to it with EKS Pod Identity, or IRSA via `serviceAccount.annotations`; `deploy/aws` in the repository has the role. |
 | `postgres.auth.password` | generated | Empty gives the bundled database a random password, kept across upgrades; an existing install keeps the one it has. Required for an external database. With `helm template` (Argo CD, Flux) set it, or use `secrets.existingSecret`: a render without the cluster cannot keep a generated one. |
 | `nats.auth` | on, generated | The bundled NATS requires `nats.auth.user` and a password generated into its own Secret (or `nats.auth.password` / `nats.auth.existingSecret`), and the backend presents them - without it any pod could publish events past the ingest signature check. An external NATS gets credentials only when you set them. |
 | `nats.persistence.enabled` | `true` | A volume for the event stream, so queued events and dead letters survive a NATS restart. |

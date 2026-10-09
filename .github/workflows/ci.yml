@@ -217,7 +217,8 @@ jobs:
           set -euo pipefail
           cnpg="--api-versions postgresql.cnpg.io/v1/Cluster --set postgres.cloudnativepg.enabled=true"
           prod="-f deploy/helm/perspectivegraph/values-production.yaml"
-          for values in "" "$prod" "$cnpg" "$cnpg $prod"; do
+          generated="--set secrets.existingSecret= --set secrets.generate=true --set postgres.auth.password=ci"
+          for values in "" "$prod" "$cnpg" "$cnpg $prod" "$prod $generated"; do
             # shellcheck disable=SC2086
             helm template pg deploy/helm/perspectivegraph $values \
               | python3 scripts/chart-check.py
@@ -373,6 +374,34 @@ jobs:
         run: |
           kind version | grep -q '^kind v0\.31\.0 ' || { echo "wrong kind on PATH: $(kind version)"; exit 1; }
           bash scripts/chart-install.sh
+
+  # deploy/aws holds the read-only role the AWS connector reads with, as CloudFormation and
+  # as a Terraform module - files nothing else in the build touches, so a typo in either
+  # would ship and surface only in someone's account. Both are checked here; a live deploy
+  # in a real account is not, because it needs one.
+  aws-templates:
+    name: AWS role templates
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+
+      - run: python3 -m pip install --quiet --require-hashes -r scripts/requirements-cfn.txt
+
+      - name: CloudFormation (cfn-lint)
+        run: cfn-lint deploy/aws/readonly-role.cfn.yaml
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+
+      - name: Terraform (fmt, validate)
+        working-directory: deploy/aws/terraform
+        run: |
+          terraform fmt -check -diff
+          terraform init -backend=false -input=false
+          terraform validate
 
   frontend:
     name: Frontend (React)
