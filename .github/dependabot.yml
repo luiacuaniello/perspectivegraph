@@ -178,14 +178,16 @@ updates:
       caddy-images:
         patterns: ["*"]
 
-  # ...and Caddy itself with its dependencies (deploy/caddy/go.mod): a Caddy release, or a fix
-  # in one of the modules it uses, arrives as a pull request without waiting for the other.
+  # ...and Caddy itself (deploy/caddy/go.mod): its releases, and only those. Its own
+  # dependencies stay at the versions the Caddy release was tested with - "all" here opened
+  # one pull request moving fifty of them at once - except where a fix needs more, which
+  # Trivy's scan of the image reports in CI, as it did for golang.org/x/net.
   - package-ecosystem: gomod
     directory: /deploy/caddy
     schedule:
       interval: weekly
     allow:
-      - dependency-type: all
+      - dependency-type: direct
     commit-message:
       prefix: "chore(deps)"
     groups:

@@ -1,0 +1,11 @@
+# Advisories OSV reports against this module that do not affect it. OpenSSF Scorecard's
+# Vulnerabilities check reads this file; each entry says why, and
+# backend/internal/config/osvignore_test.go fails if the reason stops being true.
+#
+# Module-level scanners flag a dependency whenever ANY package in it is advised against.
+# Trivy, which CI runs on the built image, reads the binary's own module list instead.
+
+[[IgnoredVulns]]
+id = "GO-2026-5932"
+ignoreUntil = 2027-03-16
+reason = "golang.org/x/crypto/openpgp is unmaintained and unsafe by design, and the advisory covers every x/crypto version, so no upgrade clears it. Caddy never compiles it: of x/crypto it uses the TLS, OCSP, ssh, bcrypt, argon2 and scrypt packages and their internals. Re-check by the date above."

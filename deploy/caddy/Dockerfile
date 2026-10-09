@@ -13,8 +13,8 @@
 #     whenever this project takes a Go release;
 #   * the source is main.go and go.mod beside this file: Caddy's own main package, with
 #     go.mod deciding every dependency's version. It requires exactly what Caddy 2.11.7
-#     does except where a fix needed more, and Dependabot proposes Caddy releases and
-#     dependency fixes alike. go.sum pins every module's hash.
+#     does except where a fix needed more - which Trivy's scan of this image reports in
+#     CI - and Dependabot proposes Caddy's releases. go.sum pins every module's hash.
 #
 # The official image's Alpine userland is gone with it: it carried a High of its own, in zlib.
 FROM golang:1.27.2-alpine@sha256:85dc1069ac644ea3c527b177303a406eb3358192816cd7f9e5848eb658851673 AS build
