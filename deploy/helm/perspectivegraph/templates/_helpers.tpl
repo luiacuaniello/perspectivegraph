@@ -14,18 +14,35 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
 {{- end -}}
 
+{{/* Where the database comes from. Three answers, and every template that cares asks
+     these two helpers rather than reading postgres.enabled: CloudNativePG wins when it is
+     enabled - one switch, not two that must agree - then the bundled pod, then an
+     external endpoint the operator supplies. Each returns "yes" or nothing. */}}
+{{- define "perspectivegraph.cnpg" -}}
+{{- if .Values.postgres.cloudnativepg.enabled -}}yes{{- end -}}
+{{- end -}}
+{{- define "perspectivegraph.bundledPostgres" -}}
+{{- if and .Values.postgres.enabled (not .Values.postgres.cloudnativepg.enabled) -}}yes{{- end -}}
+{{- end -}}
+{{/* The CloudNativePG Cluster's name. The operator derives the rest from it: the
+     <name>-rw Service that always points at the primary, <name>-app holding the
+     application role's credentials, <name>-ca holding the CA that signs the server. */}}
+{{- define "perspectivegraph.cnpgCluster" -}}{{ include "perspectivegraph.fullname" . | trunc 60 | trimSuffix "-" }}-pg{{- end -}}
+
 {{/* Component service names. postgresHost/postgresPort and natsUrl resolve to
      the bundled in-cluster service when enabled, or to the operator-supplied
      external endpoint when the bundled component is disabled. */}}
 {{- define "perspectivegraph.postgresHost" -}}
-{{- if .Values.postgres.enabled -}}
+{{- if include "perspectivegraph.cnpg" . -}}
+{{- include "perspectivegraph.cnpgCluster" . }}-rw
+{{- else if .Values.postgres.enabled -}}
 {{- include "perspectivegraph.fullname" . }}-postgres
 {{- else -}}
 {{- required "postgres.externalHost is required when postgres.enabled=false" .Values.postgres.externalHost -}}
 {{- end -}}
 {{- end -}}
 {{- define "perspectivegraph.postgresPort" -}}
-{{- if .Values.postgres.enabled -}}5432{{- else -}}{{ .Values.postgres.externalPort | default 5432 }}{{- end -}}
+{{- if or (include "perspectivegraph.cnpg" .) .Values.postgres.enabled -}}5432{{- else -}}{{ .Values.postgres.externalPort | default 5432 }}{{- end -}}
 {{- end -}}
 {{- define "perspectivegraph.natsHost" -}}{{ include "perspectivegraph.fullname" . }}-nats{{- end -}}
 {{- define "perspectivegraph.natsUrl" -}}
@@ -114,7 +131,10 @@ yes
      it needs the password it actually has. */}}
 {{- define "perspectivegraph.postgresPassword" -}}
 {{- $name := printf "%s-secrets" (include "perspectivegraph.fullname" .) -}}
-{{- if .Values.postgres.enabled -}}
+{{- if include "perspectivegraph.cnpg" . -}}
+{{- /* Nothing: under CloudNativePG the operator generates the password and the backend
+     reads it from <cluster>-app, so a value here would be one nobody uses. */ -}}
+{{- else if .Values.postgres.enabled -}}
 {{- include "perspectivegraph.stableSecret" (list . $name "POSTGRES_PASSWORD" .Values.postgres.auth.password) -}}
 {{- else if or .Values.postgres.auth.password .Values.postgres.dsn -}}
 {{- .Values.postgres.auth.password -}}

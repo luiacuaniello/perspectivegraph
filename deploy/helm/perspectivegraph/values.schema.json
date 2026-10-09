@@ -307,6 +307,86 @@
               "type": "string"
             }
           }
+        },
+        "cloudnativepg": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "instances": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "image": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "repository": {
+                  "type": "string"
+                },
+                "tag": {
+                  "type": "string"
+                },
+                "major": {
+                  "type": "integer",
+                  "minimum": 13
+                },
+                "uid": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "gid": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "storage": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "size": {
+                  "type": "string"
+                },
+                "storageClass": {
+                  "type": "string"
+                }
+              }
+            },
+            "resources": {
+              "type": "object"
+            },
+            "parameters": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "operatorNamespace": {
+              "type": "string",
+              "minLength": 1
+            },
+            "serviceAccountAnnotations": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "backup": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "objectStore": {
+                  "type": "string"
+                },
+                "schedule": {
+                  "type": "string"
+                }
+              }
+            }
+          }
         }
       }
     },

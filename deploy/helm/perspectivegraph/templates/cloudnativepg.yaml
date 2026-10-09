@@ -1,0 +1,170 @@
+{{- if include "perspectivegraph.cnpg" . }}
+{{- /*
+  The graph database, run by the CloudNativePG operator instead of as the chart's single
+  demo pod. The chart declares what it needs - PostgreSQL with Apache AGE preloaded, a
+  database the backend's role owns, the grants AGE asks for - and the operator does the
+  running: replicas, failover, TLS, and backups when an ObjectStore is named.
+
+  The backend's role is not a superuser, so it cannot LOAD the library: age is preloaded
+  instead, and the backend detects that on its first query. It creates its own graph, so
+  it owns the graph's schema; a graph created here, by the superuser, would refuse the
+  backend's first write. docs/OPERATIONS.md section 3 explains both.
+*/}}
+{{- if .Values.postgres.dsn }}
+{{- fail "postgres.dsn is set together with postgres.cloudnativepg.enabled: the backend would follow the DSN and never reach the cluster the chart creates. Unset postgres.dsn - under CloudNativePG the chart builds the connection itself." }}
+{{- end }}
+{{- if not (.Capabilities.APIVersions.Has "postgresql.cnpg.io/v1/Cluster") }}
+{{- fail "postgres.cloudnativepg.enabled needs the CloudNativePG operator: the cluster does not serve postgresql.cnpg.io/v1 Cluster. Install the operator first (https://cloudnative-pg.io/docs/installation_upgrade). Rendering with `helm template` for Argo CD or Flux, pass --api-versions postgresql.cnpg.io/v1/Cluster" }}
+{{- end }}
+{{- $cnpg := .Values.postgres.cloudnativepg }}
+# The image, declared through a catalog rather than spec.imageName. The operator reads the
+# PostgreSQL major version off an imageName's tag and refuses one that does not start with
+# it - and this image is tagged like the others, with the release (v1.36.0), or with a
+# digest. A catalog states the major version instead, so the tag stays the project's.
+apiVersion: postgresql.cnpg.io/v1
+kind: ImageCatalog
+metadata:
+  name: {{ include "perspectivegraph.cnpgCluster" . }}
+  labels:
+    {{- include "perspectivegraph.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  images:
+    - major: {{ $cnpg.image.major }}
+      image: "{{ $cnpg.image.repository | default .Values.postgres.image.repository }}:{{ $cnpg.image.tag | default .Values.postgres.image.tag | default (printf "v%s" .Chart.AppVersion) }}"
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ include "perspectivegraph.cnpgCluster" . }}
+  labels:
+    {{- include "perspectivegraph.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  instances: {{ $cnpg.instances }}
+  imageCatalogRef:
+    apiGroup: postgresql.cnpg.io
+    kind: ImageCatalog
+    name: {{ include "perspectivegraph.cnpgCluster" . }}
+    major: {{ $cnpg.image.major }}
+  # The image's own postgres user. The operator defaults to 26, its Debian images' uid;
+  # the bundled image's is 999, and PostgreSQL refuses a data directory owned by anyone else.
+  postgresUID: {{ $cnpg.image.uid }}
+  postgresGID: {{ $cnpg.image.gid }}
+  # The labels every pod and Service the operator creates for this cluster carries, so
+  # they are found with the rest of the release.
+  inheritedMetadata:
+    labels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: postgres
+  postgresql:
+    shared_preload_libraries:
+      - age
+    {{- with $cnpg.parameters }}
+    parameters:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+  bootstrap:
+    initdb:
+      database: {{ .Values.postgres.auth.database }}
+      owner: {{ .Values.postgres.auth.user }}
+      # Run once, as the superuser, in the application database. CREATE EXTENSION is the
+      # only step that needs one; the grants are what docs/OPERATIONS.md lists for a role
+      # that is not a superuser.
+      postInitApplicationSQL:
+        - CREATE EXTENSION IF NOT EXISTS age
+        - GRANT USAGE ON SCHEMA ag_catalog TO {{ .Values.postgres.auth.user | quote }}
+        - GRANT SELECT ON ag_catalog.ag_graph, ag_catalog.ag_label TO {{ .Values.postgres.auth.user | quote }}
+  storage:
+    size: {{ $cnpg.storage.size }}
+    {{- with $cnpg.storage.storageClass }}
+    storageClass: {{ . }}
+    {{- end }}
+  {{- with $cnpg.resources }}
+  resources:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with $cnpg.serviceAccountAnnotations }}
+  serviceAccountTemplate:
+    metadata:
+      annotations:
+        {{- toYaml . | nindent 8 }}
+  {{- end }}
+  {{- with $cnpg.backup.objectStore }}
+  # Continuous WAL archiving through the Barman Cloud plugin: with the scheduled base
+  # backups below, a restore can stop at any moment, not only at the last backup.
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: {{ . }}
+  {{- end }}
+{{- if $cnpg.backup.objectStore }}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: {{ include "perspectivegraph.cnpgCluster" . }}-base
+  labels:
+    {{- include "perspectivegraph.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  schedule: {{ $cnpg.backup.schedule | quote }}
+  # The first base backup is taken now rather than at the next scheduled time: until one
+  # exists, the archived WAL has nothing to be replayed onto.
+  immediate: true
+  backupOwnerReference: self
+  cluster:
+    name: {{ include "perspectivegraph.cnpgCluster" . }}
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+{{- end }}
+{{- if .Values.networkPolicy.enabled }}
+---
+# The same rule as for the bundled database - only the backend has business with it -
+# plus the two parties the operator's design adds: the cluster's own instances, which
+# stream from the primary, and the operator, which manages each instance through its
+# status port.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "perspectivegraph.cnpgCluster" . }}
+  labels:
+    {{- include "perspectivegraph.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: {{ include "perspectivegraph.cnpgCluster" . }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: backend
+        {{- with .Values.networkPolicy.postgresFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        - port: 5432
+          protocol: TCP
+    - from:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: {{ include "perspectivegraph.cnpgCluster" . }}
+      ports:
+        - port: 5432
+          protocol: TCP
+        - port: 8000
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $cnpg.operatorNamespace }}
+      ports:
+        - port: 8000
+          protocol: TCP
+{{- end }}
+{{- end }}

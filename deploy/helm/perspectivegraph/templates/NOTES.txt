@@ -5,7 +5,13 @@ Components:
   {{- if .Values.frontend.enabled }}
   • dashboard (frontend)
   {{- end }}
-  {{- if .Values.postgres.enabled }}
+  {{- if include "perspectivegraph.cnpg" . }}
+  • PostgreSQL + Apache AGE (graph core), run by CloudNativePG: {{ .Values.postgres.cloudnativepg.instances }} instance(s), cluster {{ include "perspectivegraph.cnpgCluster" . }}
+  {{- if not .Values.postgres.cloudnativepg.backup.objectStore }}
+    NO BACKUPS: postgres.cloudnativepg.backup.objectStore is empty. Replicas survive a lost
+    node, not a dropped table or a deleted namespace.
+  {{- end }}
+  {{- else if .Values.postgres.enabled }}
   • PostgreSQL + Apache AGE (graph core)
   {{- end }}
   {{- if .Values.nats.enabled }}

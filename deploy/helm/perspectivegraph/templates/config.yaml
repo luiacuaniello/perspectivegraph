@@ -35,7 +35,11 @@ data:
   POSTGRES_DB: {{ .Values.postgres.auth.database | quote }}
   # Empty sslMode → disable for the bundled in-cluster Postgres, require for an
   # external one (override with postgres.sslMode, e.g. verify-full).
-  POSTGRES_SSLMODE: {{ .Values.postgres.sslMode | default (ternary "disable" "require" .Values.postgres.enabled) | quote }}
+  {{- /* And verify-full under CloudNativePG: the backend holds the operator's CA, mounted
+       from <cluster>-ca. A template comment, so existing releases render unchanged. */}}
+  {{- $sslDefault := ternary "disable" "require" .Values.postgres.enabled }}
+  {{- if include "perspectivegraph.cnpg" . }}{{ $sslDefault = "verify-full" }}{{ end }}
+  POSTGRES_SSLMODE: {{ .Values.postgres.sslMode | default $sslDefault | quote }}
   AGE_GRAPH_NAME: {{ .Values.postgres.graph | quote }}
   NATS_URL: {{ include "perspectivegraph.natsUrl" . | quote }}
   NATS_STREAM: {{ .Values.nats.stream | quote }}
@@ -152,7 +156,7 @@ data:
   # where a prefix can be removed and checkpointed; the file-backed chain is rotated.
   AUDIT_RETENTION: {{ .Values.auditRetention | quote }}
 {{- end }}
-{{- if .Values.postgres.enabled }}
+{{- if include "perspectivegraph.bundledPostgres" . }}
 ---
 apiVersion: v1
 kind: ConfigMap

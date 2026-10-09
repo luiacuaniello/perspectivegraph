@@ -161,20 +161,23 @@ act on everywhere, and it is worth settling before anything else in this runbook
 | Where | AGE | What it costs you |
 |---|---|---|
 | **Azure Database for PostgreSQL flexible server** | **yes** (PostgreSQL 16 and below) | The only managed service that ships it. Turned on with two server parameters (recipe below). Not available on PostgreSQL 17, and AGE is excluded from Azure's in-place major-version upgrade |
+| **CloudNativePG** in your cluster - `postgres.cloudnativepg.enabled` in the chart | yes | Replicas, failover, verified TLS and backups to object storage, run by the operator. The storage, the operator's upgrades and restore drills are yours ([Kubernetes](manual/kubernetes.md#a-production-database-cloudnativepg)) |
 | **Self-managed** on Kubernetes or a VM | yes | Backups, failover, patching and TLS become yours. The `apache/age` image, or the one this project builds in `deploy/postgres`, already preloads the extension |
 | **AWS RDS / Aurora PostgreSQL** | **no** | Not on the extension allow-list. Requests go to `rds-postgres-extensions-request@amazon.com` |
 | **Google Cloud SQL / AlloyDB** | **no** | Not in the supported-extensions list |
 | The bundled `perspectivegraph-postgres` container | yes | **Demo only.** Not sized, backed up or tuned for production, whatever its vulnerability report says |
 
-So on AWS and GCP today the honest choice is to run Postgres+AGE yourself. One thing makes
-that a smaller decision than it looks: the graph is **derived** state - every node and edge
+So on AWS and GCP today the honest choice is to run Postgres+AGE yourself - on Kubernetes,
+under CloudNativePG, which the chart sets up. One thing makes that a smaller decision than it
+looks: the graph is **derived** state - every node and edge
 is reconstructible by re-ingesting the feeds - so a lost database is a re-seed rather than a
 data-loss event (§4). Losing it costs you history, not the map.
 
 ### What the engine needs of it
 
-Tested against **PostgreSQL 16 + AGE 1.6.0** - the digest-pinned image the demo and the CI
-integration job both run. Other combinations are not tested here.
+Tested against **PostgreSQL 17 + AGE 1.7.0** - the images the chart deploys, bundled and
+under CloudNativePG, and the one the CI integration job runs. Other combinations are not
+tested here.
 
 **The role does not need to be a superuser.** These grants are enough:
 
@@ -218,9 +221,11 @@ succeed, it fails with a privilege error.
 
 ### Self-managed
 
-Run `ghcr.io/luiacuaniello/perspectivegraph-postgres` (or `apache/age`, or your own build
-of the extension) as a StatefulSet, under a
-PostgreSQL operator with that image, or on a VM. Whatever you pick, the list of things you
+On Kubernetes, the chart can hand the database to the CloudNativePG operator, which takes
+most of the list below off you - see
+[A production database: CloudNativePG](manual/kubernetes.md#a-production-database-cloudnativepg).
+Otherwise run `ghcr.io/luiacuaniello/perspectivegraph-postgres` (or `apache/age`, or your own
+build of the extension) as a StatefulSet, under another PostgreSQL operator, or on a VM. Whatever you pick, the list of things you
 have just taken on is the same, and none of it is optional for production: backups with a
 tested restore (§4), a replica and a failover path, patching for both PostgreSQL and AGE,
 TLS, and monitoring. §4 covers backup and restore; the demo image is not a starting point
