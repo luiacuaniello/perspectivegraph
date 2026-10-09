@@ -31,3 +31,7 @@ Thank you to everyone whose work is in this repository:
   function anyone can invoke
   ([#316](https://github.com/luiacuaniello/perspectivegraph/pull/316)), one for each way it
   can be open: a function URL without authentication, or a function policy open to anyone.
+  And the documentation checks
+  ([#333](https://github.com/luiacuaniello/perspectivegraph/pull/333)): a Markdown file added
+  under `docs/` but left off the site now fails the build, and the relative links in the
+  Markdown the site does not publish, the chart's README among them, are checked too.
