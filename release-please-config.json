@@ -28,6 +28,10 @@
         },
         {
           "type": "generic",
+          "path": "docs/manual/connect-your-own.md"
+        },
+        {
+          "type": "generic",
           "path": "docs/OPERATIONS.md"
         },
         {

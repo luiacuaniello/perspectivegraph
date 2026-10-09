@@ -65,6 +65,7 @@ export default defineConfig({
             "overview",
             "manual/concepts",
             "manual/quick-start",
+            "manual/connect-your-own",
             { label: "Live demo", link: "https://demo.a3thinker.it", attrs: { target: "_blank", rel: "noopener" } },
             "evaluation",
           ],

@@ -3,9 +3,11 @@
 *Part of the [PerspectiveGraph manual](../MANUAL.md).* Pointing it at your own environment, source by source, until the first path appears.
 
 PerspectiveGraph does **not** scan your infrastructure - it *correlates* the
-output of the scanners you already run. There are no agents and nothing pulls:
-your CI/cron runs the tools and **POSTs** their reports to the ingest webhook.
-This runbook is the minimum a tester needs to light up a real attack path.
+output of the scanners you already run. There are no agents. Two sources are read by the
+engine itself, read-only: AWS accounts (the AWS connector) and the Kubernetes cluster it is
+installed in (the Kubernetes connector) - [connecting your own](connect-your-own.md) says where
+each applies. Everything else your CI or cron runs and **POSTs** to the ingest endpoint, and
+that is what this runbook covers, source by source: the minimum to light up a real attack path.
 
 Set these once for every snippet below:
 
@@ -24,9 +26,12 @@ export SLUG=acme/payments-api               # forge "owner/repo" (for PR comment
   `make up` (just **Postgres+AGE** + **NATS**) then `make run-backend`. OpenSearch
   and `THREATINTEL=on` are optional. With `make up-full`, `INGEST_URL` is
   `http://localhost:8081` and `API_URL` is `http://localhost:8080`.
-- Network: the tester's CI/cron can reach `INGEST_URL`. ⚠️ **The ingest and API
-  endpoints have no authentication in this MVP** - keep them on an isolated
-  network or behind an authenticating reverse proxy. Single-tenant.
+- Network: the tester's CI/cron can reach `INGEST_URL`. ⚠️ **`make up-full` and `make demo`
+  run open** - no credential on the API or the ingest endpoint, bound to `127.0.0.1` - which
+  is right for a laptop and wrong for anything else. A deployment others reach requires
+  both, and with `PG_ENV=production` the backend refuses to start without them: see
+  [Authentication](#authentication) below, or let `make prod-init` or the chart's
+  `secrets.generate` create them ([connecting your own](connect-your-own.md)).
 - You can run **Trivy, Semgrep, Cloud Custodian, Falco** against the target, and
   add one **CI step** for build provenance.
 - You can **tag** your sensitive data stores (this is what makes them targets -

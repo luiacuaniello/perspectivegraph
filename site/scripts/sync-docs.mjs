@@ -40,6 +40,7 @@ export const PAGES = {
   "docs/MANUAL.md": "manual",
   "docs/manual/concepts.md": "manual/concepts",
   "docs/manual/quick-start.md": "manual/quick-start",
+  "docs/manual/connect-your-own.md": "manual/connect-your-own",
   "docs/manual/how-it-works.md": "manual/how-it-works",
   "docs/manual/scoring.md": "manual/scoring",
   "docs/manual/accuracy.md": "manual/accuracy",
