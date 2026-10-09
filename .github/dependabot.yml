@@ -162,8 +162,7 @@ updates:
 
   # The single-VM recipe's Caddy: the Go toolchain it is compiled with and the distroless
   # base it runs on - the image in front of the internet. The Go version is held to the
-  # backend's for the reason given above, so only patches and digests flow here too. Caddy's
-  # own version is CADDY_VERSION in that Dockerfile, which Dependabot does not read.
+  # backend's for the reason given above, so only patches and digests flow here too.
   - package-ecosystem: docker
     directory: /deploy/caddy
     schedule:
@@ -177,4 +176,18 @@ updates:
           - version-update:semver-minor
     groups:
       caddy-images:
+        patterns: ["*"]
+
+  # ...and Caddy itself with its dependencies (deploy/caddy/go.mod): a Caddy release, or a fix
+  # in one of the modules it uses, arrives as a pull request without waiting for the other.
+  - package-ecosystem: gomod
+    directory: /deploy/caddy
+    schedule:
+      interval: weekly
+    allow:
+      - dependency-type: all
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      caddy-modules:
         patterns: ["*"]
