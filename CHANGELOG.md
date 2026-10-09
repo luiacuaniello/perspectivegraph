@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.35.1](https://github.com/luiacuaniello/perspectivegraph/compare/v1.35.0...v1.35.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* **go:** build with Go 1.27.2, which fixes eleven standard library vu… ([#334](https://github.com/luiacuaniello/perspectivegraph/issues/334)) ([7d23c0c](https://github.com/luiacuaniello/perspectivegraph/commit/7d23c0ce017164c558829f100b0859640e77f2ec))
+
 ## [1.35.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.34.0...v1.35.0) (2026-10-08)
 
 
