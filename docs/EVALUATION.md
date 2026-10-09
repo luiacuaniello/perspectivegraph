@@ -19,9 +19,11 @@ inside a large organisation, so start them on day one and run the stages while t
 
 1. **A PostgreSQL with the Apache AGE extension.** This is the one that surprises people:
    **AWS RDS/Aurora and Google Cloud SQL do not offer AGE**, so on those clouds you run
-   the database yourself. Azure Database for PostgreSQL flexible server does offer it.
-   Settle this first - [OPERATIONS §3](OPERATIONS.md#3-the-database-postgresql--apache-age)
-   is the matrix and the recipes.
+   the database yourself - on Kubernetes the chart hands it to the CloudNativePG operator,
+   and on one machine `make prod-init` runs and backs up the bundled one. Azure Database for
+   PostgreSQL flexible server does offer it. Settle this first -
+   [OPERATIONS §3](OPERATIONS.md#3-the-database-postgresql--apache-age) is the matrix and
+   the recipes.
 2. **A read-only cloud role.** Everything the AWS connector calls is inside the AWS-managed
    `SecurityAudit` policy. Nothing is ever written.
 3. **A decision about who may see the output.** The graph is a map of how to attack you, so
@@ -69,8 +71,11 @@ unreachable, and one seed and confirmed it really is exposed.
 
 ## Stage 2 - a day, the first real deployment
 
-Now it needs somewhere to live (§ the three long poles) and something to correlate. Deploy,
-then feed it what your scanners already produce - it does not scan anything itself:
+Now it needs somewhere to live (§ the three long poles) and something to correlate.
+[Connecting your own infrastructure](manual/connect-your-own.md) has a complete recipe for each
+place it can live - one machine, EKS, any other cluster - with the AWS account and the clusters
+connected. With a database of your own, the chart takes it like this; then feed it what your
+scanners already produce - it does not scan anything itself:
 
 ```bash
 # The hardened profile ships inside the chart - pull it once, edit it, keep it under

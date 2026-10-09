@@ -263,6 +263,7 @@ and the version it was asked of.
 ## Documentation
 
 - [Concepts in plain words](docs/manual/concepts.md) - route, score, interval, priority, outcome, calibration: the words the dashboard uses
+- [Connect your own infrastructure](docs/manual/connect-your-own.md) - your AWS accounts and Kubernetes clusters, from a laptop, one machine, EKS or any cluster
 - [Manual](docs/MANUAL.md) - architecture, scoring, every integration, deployment, and the runbook for your own environment
 - [Evaluation](docs/EVALUATION.md) - trying it on your own estate, in stages that each end in an answer
 - [Positioning](docs/POSITIONING.md) - what is claimed, what is **not**, and how to check
