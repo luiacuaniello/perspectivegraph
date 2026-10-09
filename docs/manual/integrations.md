@@ -154,6 +154,46 @@ on the instance's real IMDS posture: `HttpTokens=required` (IMDSv2) makes a blin
 insufficient, while IMDSv1 hands the credentials to a single GET. Cloud Custodian prices the
 same hop from the same field, so the two feeds agree on it.
 
+### Kubernetes: the cluster the engine runs in
+
+With `kubernetes` in `CONNECTORS_ENABLED`, the backend reads the cluster it is installed in
+on the connectors' schedule - the topology, RBAC and, on EKS, the bridges into the AWS
+account that [a posted dump](onboarding.md#kubernetes-topology-auto-discovered-exposure)
+carries - with no cron job and nothing to post. It reads what that dump holds: pods,
+services, service accounts, nodes, ingresses, roles and cluster roles with their bindings,
+and EKS's `aws-auth` map. It assembles the same List `kubectl get … -A -o json` writes and
+hands it to the same collector, so what it finds is what the dump finds.
+
+```bash
+helm install perspective oci://ghcr.io/luiacuaniello/charts/perspectivegraph \
+  --set 'connectors.enabled={kubernetes}' \
+  --set connectors.kubernetes.clusterName=prod-eu     # on EKS: the EKS cluster's name
+```
+
+- **Access.** The chart binds a ClusterRole to the backend's service account: `get` and
+  `list` on those kinds, `get` on the one config map by name, and nothing else - not
+  secrets, not config maps in general, no verb that writes. A test keeps the role and the
+  connector's list of kinds the same. It is the one case in which the backend mounts a
+  Kubernetes API token; it reads the API with it, verifying the server against the
+  cluster's CA, and re-reads the token on every pull because Kubernetes rotates it.
+- **The name.** `clusterName` is required: names repeat across clusters, and on EKS it is
+  how the cluster's objects meet the AWS connector's Pod Identity associations and access
+  entries. `awsAccount` names the account its nodes run in, so a pod's escape to its node
+  meets the instance the AWS connector reads.
+- **What disappears.** A pull that read every kind is a complete snapshot of the cluster
+  (`cluster:<name>`, the scope a posted dump declares with `?snapshot=`), so a pod, binding
+  or service account that is gone leaves the graph at the next pull. A pull that could not
+  read a kind - a 403 from a role edited by hand - still adds and refreshes what it read,
+  but retracts nothing, and `GET /connectors` reports the kind it was refused.
+- **Other clusters.** It reads the cluster it runs in. For another one, send its dump with
+  `perspectivegraph ingest -cluster <name> -snapshot cluster:<name> k8s -` from a job there.
+
+Checked on a kind cluster with nothing posted to the engine: a workload behind an Ingress,
+whose service account was bound to `cluster-admin`, came out of the connector's pulls as
+*Ingress → Service → pod → service account → cluster-admin*; deleting the binding took the
+path off the board at the next pull; and the backend's account could list pods but neither
+read a secret nor create a pod.
+
 ## Topology discovery (no hand-stitched IDs)
 
 `make seed-discovery` posts a raw Kubernetes dump (`kubectl get … -o json`), a

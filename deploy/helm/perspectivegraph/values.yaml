@@ -316,6 +316,17 @@ connectors:
   azure:
     mode: fixtures
     fixturesDir: ""
+  # Reads the cluster the chart is installed in ("kubernetes" in enabled): the chart binds
+  # a ClusterRole to the backend's service account granting get/list on what the k8s
+  # collector reads - pods, services, service accounts, nodes, ingresses, roles and their
+  # bindings, and EKS's aws-auth map - never secrets, and mounts that account's token in
+  # the backend alone. clusterName is required; on EKS, the EKS cluster's name. awsAccount,
+  # on EKS, is the account the nodes run in.
+  kubernetes:
+    mode: incluster
+    clusterName: ""
+    awsAccount: ""
+    fixturesDir: ""
 
 # AI-native layer. apiKey (Anthropic/Claude) is the preferred backend and enables
 # /ai/* (NL query, exec summary, path explain). hf.* is the free, OpenAI-compatible

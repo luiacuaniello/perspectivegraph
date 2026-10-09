@@ -14,11 +14,17 @@
 #
 #   NODE_IMAGE=kindest/node:v1.33.12  bash scripts/chart-install.sh
 #   DATABASE=cloudnativepg            the database run by the CloudNativePG operator
+#   CONNECTOR=kubernetes              the backend reads the cluster it runs in
 #   KEEP=1                            leaves the cluster up for inspection
 #
 # DATABASE=cloudnativepg installs the operator, lets it run a primary and a replica, and
 # then does the one thing a production database is for: it deletes the primary and checks
 # that a write still reaches the graph, through the replica the operator promoted.
+#
+# CONNECTOR=kubernetes deploys a workload behind an Ingress whose service account is bound
+# to cluster-admin, posts nothing, and checks that the backend's own pulls of the cluster
+# find the route - then deletes the binding and checks the route is retracted, and that the
+# backend's account could list pods but neither read secrets nor create pods.
 set -euo pipefail
 
 CLUSTER="${CLUSTER:-perspectivegraph-chart}"
@@ -32,6 +38,11 @@ CHART="deploy/helm/perspectivegraph"
 RELEASE="${RELEASE:-chartprobe}"
 KEEP="${KEEP:-0}"
 DATABASE="${DATABASE:-bundled}"
+CONNECTOR="${CONNECTOR:-}"
+case "$CONNECTOR" in
+  ""|kubernetes) ;;
+  *) echo "chart-install: CONNECTOR must be empty or kubernetes, not '$CONNECTOR'" >&2; exit 2 ;;
+esac
 # The operator, pinned to a release and to the bytes of its manifest: a checksum, not just
 # a version, because the manifest is cluster-admin YAML fetched from a release CDN.
 CNPG_VERSION=1.30.1
@@ -127,10 +138,68 @@ else
            --set postgres.image.tag=charttest)
 fi
 
-ok "helm install with default values (database: $DATABASE)"
+# Never empty: bash 3.2, macOS's, refuses "${CONN_ARGS[@]}" on an empty array under set -u.
+# The placeholder sets the default it already has.
+CONN_ARGS=(--set backend.logLevel=info)
+if [ "$CONNECTOR" = "kubernetes" ]; then
+  ok "a workload behind an Ingress whose service account is bound to cluster-admin"
+  kc apply -f - >/dev/null <<'YAML'
+apiVersion: v1
+kind: Namespace
+metadata: {name: shop}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: web-sa, namespace: shop}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: web-sa-admin}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-admin}
+subjects: [{kind: ServiceAccount, name: web-sa, namespace: shop}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: web, namespace: shop}
+spec:
+  selector: {matchLabels: {app: web}}
+  template:
+    metadata: {labels: {app: web}}
+    spec:
+      serviceAccountName: web-sa
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 65534, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: web
+          image: busybox:1.37@sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028
+          command: ["sh", "-c", "sleep 3600"]
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: web, namespace: shop}
+spec: {selector: {app: web}, ports: [{port: 80}]}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata: {name: web, namespace: shop}
+spec:
+  rules:
+    - host: shop.example.com
+      http:
+        paths:
+          - {path: /, pathType: Prefix, backend: {service: {name: web, port: {number: 80}}}}
+YAML
+  kc -n shop rollout status deploy/web --timeout=180s >/dev/null || die "the workload never ran"
+  CONN_ARGS=(--set 'connectors.enabled={kubernetes}' --set connectors.kubernetes.clusterName=chartprobe
+             --set connectors.interval=20s --set backend.analyzerInterval=10s)
+fi
+
+ok "helm install with default values (database: $DATABASE${CONNECTOR:+, connector: $CONNECTOR})"
 if ! helm install "$RELEASE" "$CHART" \
       --kube-context "kind-$CLUSTER" \
       "${DB_ARGS[@]}" \
+      "${CONN_ARGS[@]}" \
       --set backend.image.repository=perspectivegraph-backend \
       --set backend.image.tag=charttest \
       --set frontend.image.repository=perspectivegraph-dashboard \
@@ -238,6 +307,38 @@ else
   restarts_after=$(kc get pods -l app.kubernetes.io/component=backend -o jsonpath='{.items[0].status.containerStatuses[0].restartCount}')
   [ "$restarts_after" = "$restarts_before" ] || die "the backend restarted during the failover ($restarts_before -> $restarts_after)"
   ok "a write after the failover reached $promoted, and the backend did not restart"
+fi
+
+if [ "$CONNECTOR" = "kubernetes" ]; then
+  as="system:serviceaccount:default:${RELEASE}-perspectivegraph-backend"
+  [ "$(kc auth can-i list pods --all-namespaces --as "$as")" = yes ] || die "the backend's account cannot list pods"
+  [ "$(kc auth can-i get secrets --all-namespaces --as "$as" || true)" = no ] || die "the backend's account can read secrets"
+  [ "$(kc auth can-i create pods --all-namespaces --as "$as" || true)" = no ] || die "the backend's account can create pods"
+  ok "the backend's account lists pods, and can neither read secrets nor create pods"
+
+  kc port-forward "svc/${RELEASE}-perspectivegraph-backend" 18080:8080 >/dev/null 2>&1 &
+  pf=$!
+  trap 'kill $pf 2>/dev/null; cleanup' EXIT
+  for _ in $(seq 1 30); do curl -s -o /dev/null http://localhost:18080/healthz && break; sleep 1; done
+  # The routes through the workload to cluster-admin, one per line.
+  admin_routes() {
+    curl -s -X POST http://localhost:18080/graphql -H 'Content-Type: application/json' \
+      -d '{"query":"{ attackPaths(limit:200){ nodes { name } } }"}' | python3 -c '
+import json, sys
+for p in json.load(sys.stdin)["data"]["attackPaths"]:
+    names = [n["name"] for n in p["nodes"]]
+    if "cluster-admin" in names and "shop/web-sa" in names:
+        print(" -> ".join(names))'
+  }
+  route=""
+  for _ in $(seq 1 36); do route=$(admin_routes); [ -n "$route" ] && break; sleep 5; done
+  [ -n "$route" ] || die "the connector's pulls never produced the route through shop/web-sa to cluster-admin"
+  ok "found with nothing posted: $(echo "$route" | head -1)"
+  kc delete clusterrolebinding web-sa-admin >/dev/null
+  gone=""
+  for _ in $(seq 1 36); do [ -z "$(admin_routes)" ] && { gone=1; break; }; sleep 5; done
+  [ -n "$gone" ] || die "the route outlived the binding it ran through"
+  ok "binding deleted: the next pull retracted the route"
 fi
 
 # The bus must refuse a client without credentials: events on it are trusted, and the

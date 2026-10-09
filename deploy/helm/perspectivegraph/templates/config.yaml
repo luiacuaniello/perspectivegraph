@@ -140,6 +140,14 @@ data:
   AWS_ROLE_ARN: {{ .Values.connectors.aws.roleArn | quote }}
   AZURE_CONNECTOR_MODE: {{ .Values.connectors.azure.mode | quote }}
   AZURE_FIXTURES_DIR: {{ .Values.connectors.azure.fixturesDir | quote }}
+  K8S_CONNECTOR_MODE: {{ .Values.connectors.kubernetes.mode | quote }}
+  {{- if has "kubernetes" .Values.connectors.enabled }}
+  K8S_CLUSTER_NAME: {{ required "connectors.kubernetes.clusterName is required with the kubernetes connector: names repeat across clusters, and on EKS it must be the EKS cluster's name" .Values.connectors.kubernetes.clusterName | quote }}
+  {{- else }}
+  K8S_CLUSTER_NAME: {{ .Values.connectors.kubernetes.clusterName | quote }}
+  {{- end }}
+  K8S_AWS_ACCOUNT: {{ .Values.connectors.kubernetes.awsAccount | quote }}
+  K8S_FIXTURES_DIR: {{ .Values.connectors.kubernetes.fixturesDir | quote }}
   # AI-native layer. The keys (Anthropic + HF token) are in the Secret; these are
   # non-secret tuning for Anthropic (Claude) and the HuggingFace fallback.
   ANTHROPIC_MODEL: {{ .Values.ai.model | quote }}

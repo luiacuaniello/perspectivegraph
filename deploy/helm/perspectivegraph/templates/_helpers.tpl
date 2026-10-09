@@ -46,6 +46,13 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
 {{- if and .Values.secrets.generate (not .Values.secrets.existingSecret) -}}yes{{- end -}}
 {{- end -}}
 
+{{/* Whether the backend reads the cluster it runs in: the Kubernetes connector, in its
+     incluster mode. Only then does the backend get read access to the cluster, and a
+     Kubernetes API token to use it with. */}}
+{{- define "perspectivegraph.readsCluster" -}}
+{{- if and (has "kubernetes" .Values.connectors.enabled) (eq (.Values.connectors.kubernetes.mode | default "incluster") "incluster") -}}yes{{- end -}}
+{{- end -}}
+
 {{/* The backend's service account: the chart's own unless serviceAccount.create is off,
      then the one named, or the namespace's default. */}}
 {{- define "perspectivegraph.serviceAccountName" -}}

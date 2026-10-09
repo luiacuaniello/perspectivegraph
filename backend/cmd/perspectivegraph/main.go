@@ -34,6 +34,7 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/connector"
 	awsconn "github.com/luiacuaniello/perspectivegraph/internal/connector/aws"
 	azureconn "github.com/luiacuaniello/perspectivegraph/internal/connector/azure"
+	k8sconn "github.com/luiacuaniello/perspectivegraph/internal/connector/kubernetes"
 	"github.com/luiacuaniello/perspectivegraph/internal/coverage"
 	"github.com/luiacuaniello/perspectivegraph/internal/cryptostore"
 	"github.com/luiacuaniello/perspectivegraph/internal/exportsign"
@@ -1078,6 +1079,19 @@ func buildConnectors(ctx context.Context, cfg config.Config, pub connector.Publi
 				continue
 			}
 			slog.Info("azure connector enabled", "mode", c.Mode())
+			conns = append(conns, c)
+		case "kubernetes":
+			c, err := k8sconn.NewFromConfig(k8sconn.Config{
+				Mode:        cfg.K8SConnectorMode,
+				Cluster:     cfg.K8SClusterName,
+				Account:     cfg.K8SAWSAccount,
+				FixturesDir: cfg.K8SFixturesDir,
+			})
+			if err != nil {
+				slog.Error("kubernetes connector disabled", "err", err)
+				continue
+			}
+			slog.Info("kubernetes connector enabled", "mode", c.Mode(), "cluster", cfg.K8SClusterName)
 			conns = append(conns, c)
 		default:
 			slog.Warn("unknown connector, skipping", "name", name)

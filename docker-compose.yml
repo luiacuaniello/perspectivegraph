@@ -266,6 +266,12 @@ services:
       AWS_ROLE_ARN: ${AWS_ROLE_ARN:-}
       AZURE_CONNECTOR_MODE: ${AZURE_CONNECTOR_MODE:-fixtures}
       AZURE_FIXTURES_DIR: ${AZURE_FIXTURES_DIR:-}
+      # The Kubernetes connector reads the cluster the backend runs in, so under Compose
+      # only its fixtures mode applies; a cluster is sent with `perspectivegraph ingest`.
+      K8S_CONNECTOR_MODE: ${K8S_CONNECTOR_MODE:-incluster}
+      K8S_CLUSTER_NAME: ${K8S_CLUSTER_NAME:-}
+      K8S_AWS_ACCOUNT: ${K8S_AWS_ACCOUNT:-}
+      K8S_FIXTURES_DIR: ${K8S_FIXTURES_DIR:-}
       # Dev workflow (GitHub): PR comment + merge-gate status + remediation-as-PR.
       # Empty token → dry-run (logged, not posted).
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
