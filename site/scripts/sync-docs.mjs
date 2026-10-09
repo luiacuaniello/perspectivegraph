@@ -49,6 +49,7 @@ export const PAGES = {
   "docs/manual/ai-and-mcp.md": "manual/ai-and-mcp",
   "docs/manual/onboarding.md": "manual/onboarding",
   "docs/manual/security.md": "manual/security",
+  "docs/manual/configuration.md": "manual/configuration",
   "docs/manual/kubernetes.md": "manual/kubernetes",
   "docs/manual/running.md": "manual/running",
   "docs/OPERATIONS.md": "operations",
