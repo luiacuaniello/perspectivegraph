@@ -18,6 +18,13 @@ on:
       - "GOVERNANCE.md"
       - "docs/**"
       - "site/**"
+      - "deploy/helm/perspectivegraph/README.md"
+      - "deploy/observability/README.md"
+      - "deploy/redteam-lab/README.md"
+      - "backend/testdata/cloudgoat/README.md"
+      - "CODE_OF_CONDUCT.md"
+      - "MAINTAINERS.md"
+      - ".github/**/*.md"
       - ".github/workflows/docs.yml"
   pull_request:
     paths:
@@ -30,6 +37,13 @@ on:
       - "GOVERNANCE.md"
       - "docs/**"
       - "site/**"
+      - "deploy/helm/perspectivegraph/README.md"
+      - "deploy/observability/README.md"
+      - "deploy/redteam-lab/README.md"
+      - "backend/testdata/cloudgoat/README.md"
+      - "CODE_OF_CONDUCT.md"
+      - "MAINTAINERS.md"
+      - ".github/**/*.md"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -72,6 +86,13 @@ jobs:
       # each with its reason and a date it must be reviewed by (scripts/audit.mjs).
       - name: npm audit (high/critical)
         run: node scripts/audit.mjs
+      # Check relative links in Markdown not published by the documentation site.
+      # Offline mode checks local files without requiring external network access.
+      - name: Check links in unpublished Markdown
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
+        with:
+          args: --offline "./deploy/helm/perspectivegraph/README.md" "./deploy/observability/README.md" "./deploy/redteam-lab/README.md" "./backend/testdata/cloudgoat/README.md" "./site/README.md" "./CODE_OF_CONDUCT.md" "./MAINTAINERS.md" "./.github/PULL_REQUEST_TEMPLATE.md" "./.github/ISSUE_TEMPLATE/bug_report.md" "./.github/ISSUE_TEMPLATE/feature_request.md"
+          fail: true
       - name: Build (fails on a broken internal link or anchor)
         run: npm run build
       - if: github.event_name != 'pull_request'
