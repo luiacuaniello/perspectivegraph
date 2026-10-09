@@ -44,11 +44,26 @@ curl -s $API_URL/healthz      # → ok
 If the backend runs with auth enabled (it should, outside a laptop), every
 request must be signed/authorized - otherwise you get `401`.
 
-- **Ingest** (`INGEST_HMAC_SECRET` set): sign the request with HMAC-SHA256 (v2) and
-  send the signature with the time you signed it. The signed text is five lines -
-  `v2`, the unix time, the method, the path, the query, then the hex SHA-256 of the body -
-  with the query's parameters **sorted by name** and URL-encoded as sent. A reusable
-  helper:
+- **Ingest** (`INGEST_HMAC_SECRET` set): every report must be signed. The binary does it -
+  `perspectivegraph ingest <source> <file>`, the same release binary as the server (and as
+  the `gate`), signs each request afresh, retries a 429 or a 5xx with a new signature, and
+  with `-wait` returns only once the report is in the graph:
+
+  ```bash
+  export INGEST_URL=https://pg.example.com INGEST_HMAC_SECRET=...   # or INGEST_HMAC_SECRET_FILE
+  perspectivegraph ingest -slug acme/payments-api -sha "$GITHUB_SHA" -pr 42 trivy report.json
+  kubectl get ingress,service,pod,serviceaccount,role,clusterrole,rolebinding,clusterrolebinding -A -o json \
+    | perspectivegraph ingest -cluster prod-eu -snapshot cluster:prod-eu k8s -
+  ```
+
+  `-repo`, `-slug`, `-sha`, `-pr`, `-account`, `-cluster` and `-snapshot` are the query
+  parameters the endpoint reads, and `-tenant` selects a per-tenant secret. It sends only
+  the v2 signature, so it needs an engine of 1.20 or later.
+
+  Without the binary, sign with HMAC-SHA256 (v2) yourself and send the signature with the
+  time you signed it. The signed text is five lines - `v2`, the unix time, the method, the
+  path, the query, then the hex SHA-256 of the body - with the query's parameters **sorted
+  by name** and URL-encoded as sent. A reusable helper:
 
   ```bash
   export INGEST_HMAC_SECRET=...   # the shared secret
@@ -68,7 +83,8 @@ request must be signed/authorized - otherwise you get `401`.
   Each signature is accepted once, within five minutes of its timestamp - sign every
   request afresh. The v1 form (`X-PerspectiveGraph-Signature: sha256=` + the HMAC of the
   body alone) is still accepted unless `INGEST_HMAC_ACCEPT_V1=false`; the `gate`
-  subcommand, the GitHub Action and the Postman collection send both.
+  subcommand, the GitHub Action and the Postman collection send both, and
+  `perspectivegraph ingest` sends v2 alone.
 
 - **API** (`API_TOKENS` set): send `Authorization: Bearer <viewer-token>` on
   every GraphQL request. The in-browser playground is disabled when auth is on.
@@ -852,15 +868,17 @@ Work down this list; it is almost always one of these:
 A pilot is a few manual POSTs; production is the scanners wired to fire on their
 own cadence:
 
-- **CI (per PR / per build):** add the Trivy + build-provenance + Semgrep POSTs
-  as a job step after you build the image, passing `?slug=&pr=&sha=` from the CI
-  context. PR comments then land only on findings that sit on a real path.
-- **Cloud (hourly/daily cron):** run Custodian, assemble the bundle, POST to
-  `/ingest/custodian`. Re-posting is idempotent (deterministic ids + upserts).
-- **Discovery (daily cron):** dump `kubectl get -o json`, the AWS `describe-*`
-  bundle and `aws iam get-account-authorization-details`, POST to `/ingest/k8s`,
-  `/ingest/cloudnet` and `/ingest/iam`. Each re-post is idempotent, so drift in
-  exposure or IAM escalation surfaces as new/closed paths between runs.
+- **CI (per PR / per build):** after you build the image, send the Trivy, build-provenance
+  and Semgrep reports with `perspectivegraph ingest -slug … -pr … -sha …`, taking the
+  values from the CI context. PR comments then land only on findings that sit on a real
+  path.
+- **Cloud:** the AWS connector reads the account on its own schedule (`CONNECTORS_ENABLED=aws`)
+  with a read-only role - [the role, ready to deploy](integrations.md#the-read-only-role).
+  For Custodian, run it on a cron and send the bundle with `perspectivegraph ingest custodian`.
+  Re-sending is idempotent (deterministic ids + upserts).
+- **Discovery (daily cron):** dump `kubectl get -o json` and send it with
+  `perspectivegraph ingest -cluster <name> -snapshot cluster:<name> k8s -`. Each re-send is
+  idempotent, so drift in exposure surfaces as new/closed paths between runs.
 - **Runtime (continuous):** point falcosidekick's HTTP output at
   `/ingest/falco`.
 

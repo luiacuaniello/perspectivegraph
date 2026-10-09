@@ -29,22 +29,36 @@ Reach the dashboard and API:
   {{- end }}
 {{- end }}
 
-Feed a scanner report (example, with PR context for the commenter):
-  curl -XPOST "http://<ingest-host>/ingest/semgrep?repo=app&slug=acme/app&pr=42" \
-    -H 'Content-Type: application/json' --data-binary @semgrep.json
+Feed a scanner report (example, with PR context for the commenter) - the release binary
+signs it when ingestion requires a signature (INGEST_HMAC_SECRET):
+  INGEST_URL=http://<ingest-host> perspectivegraph ingest -repo app -slug acme/app -pr 42 semgrep semgrep.json
 
 {{- if not .Values.github.token }}
 
 NOTE: no github.token set - the PR commenter runs in dry-run (logs only).
 {{- end }}
-{{- if not .Values.auth.apiTokens }}
+{{- if include "perspectivegraph.generatesSecrets" . }}
+
+Credentials were generated into Secret {{ include "perspectivegraph.secretName" . }}, and are kept across upgrades:
+  {{- if not .Values.auth.oidc.jwksUrl }}
+  admin API token:  kubectl -n {{ .Release.Namespace }} get secret {{ include "perspectivegraph.secretName" . }} -o jsonpath='{.data.API_TOKENS}' | base64 -d | cut -d: -f1
+  {{- end }}
+  {{- if not .Values.ingest.hmacSecrets }}
+  ingest secret:    kubectl -n {{ .Release.Namespace }} get secret {{ include "perspectivegraph.secretName" . }} -o jsonpath='{.data.INGEST_HMAC_SECRET}' | base64 -d
+  {{- end }}
+  Back the Secret up: STORE_ENCRYPTION_KEY in it is the only key to the encrypted stores and
+  the audit log. A render without the cluster (helm template, Argo CD, Flux) would draw new
+  values - there, use secrets.existingSecret instead.
+{{- end }}
+{{- if not (or .Values.auth.apiTokens .Values.auth.oidc.jwksUrl .Values.secrets.existingSecret (include "perspectivegraph.generatesSecrets" .)) }}
 
 ⚠  SECURITY: auth.apiTokens is empty - the API and ingestion are UNAUTHENTICATED.
    PerspectiveGraph is a map of how to attack the org: anyone who can reach the
    Service/Ingress can read every attack path and write suppressions/tickets.
    Before exposing this beyond a trusted cluster, set a token, e.g.
      --set auth.apiTokens="$(openssl rand -hex 16):admin"
-   and sign ingestion with --set ingest.hmacSecret=...
+   and sign ingestion with --set ingest.hmacSecret=... - or let the chart generate
+   both with --set secrets.generate=true.
 {{- end }}
 {{- if not .Values.persistence.enabled }}
 

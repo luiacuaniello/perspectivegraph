@@ -27,6 +27,12 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: backend
     spec:
+      # Its own service account, so a cloud role can be bound to the backend alone: an IAM
+      # role through EKS Pod Identity or IRSA, which is how the AWS connector gets its
+      # credentials. Both hand the pod a token of their own, scoped to AWS; the Kubernetes
+      # API token is not mounted, because the backend never calls the API.
+      serviceAccountName: {{ include "perspectivegraph.serviceAccountName" . }}
+      automountServiceAccountToken: false
       {{- with .Values.podSecurityContext }}
       # fsGroup makes the persistence PVC writable by the nonroot backend (else the
       # first governance-state write fails); runAsNonRoot pins the distroless guarantee.

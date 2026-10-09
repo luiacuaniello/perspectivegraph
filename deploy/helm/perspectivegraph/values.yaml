@@ -362,6 +362,34 @@ ticket:
 secrets:
   create: true
   existingSecret: ""
+  # Fill every credential left empty with a generated one, kept across upgrades: an admin
+  # API token (unless OIDC is set), the ingest HMAC secret, the at-rest encryption key and
+  # the export signing key. It is what lets `helm install -f values-production.yaml` start
+  # without a Secret prepared by hand - add --set secrets.existingSecret="" so the chart
+  # creates its own, and postgres.auth.password, which only an external database knows
+  # (under postgres.cloudnativepg the operator generates it). The release notes say how to
+  # read them back.
+  #
+  # Only for `helm install` and `helm upgrade`, which can read the Secret they wrote. A
+  # render without the cluster - `helm template`, Argo CD, Flux - draws new values every
+  # time, and a new encryption key leaves the encrypted stores unreadable: there, keep the
+  # credentials in secrets.existingSecret instead.
+  generate: false
+
+# The backend's service account. Its own by default, holding no Kubernetes API token, so
+# that a cloud role can be bound to the backend and nothing else - on EKS, the read-only
+# IAM role the AWS connector reads the account with:
+#   EKS Pod Identity: aws eks create-pod-identity-association --cluster-name <cluster>
+#     --namespace <namespace> --service-account <release>-perspectivegraph-backend
+#     --role-arn <role>
+#   IRSA:             annotations: { eks.amazonaws.com/role-arn: <role> }
+# deploy/aws has the role, as CloudFormation and as Terraform.
+serviceAccount:
+  create: true
+  # Empty: <release>-perspectivegraph-backend when created, the namespace's default
+  # otherwise.
+  name: ""
+  annotations: {}
 
 # A default install is UNAUTHENTICATED - acceptable only inside a trusted cluster
 # for a demo. PerspectiveGraph is a map of how to attack the org, so for ANY

@@ -1,0 +1,130 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  PerspectiveGraph read-only role - what the AWS connector reads an account with. The
+  AWS-managed SecurityAudit policy, plus the two EKS Pod Identity reads it does not
+  include, and nothing that writes. Deploy it in every account to be read.
+
+# Who may assume the role decides how it is used; set at least one:
+#
+#   TrustEksPodIdentity=true   the backend runs on EKS in THIS account, and an EKS Pod
+#                              Identity association hands it this role directly (the
+#                              chart's service account is <release>-perspectivegraph-backend).
+#                              No AWS_ROLE_ARN needed.
+#   TrustedPrincipalArn=...    the backend runs elsewhere - another account, a VM, a CI job -
+#                              with credentials of its own, and assumes this role with
+#                              AWS_ROLE_ARN. Name the role or user it runs as. (No external
+#                              ID: that guards a third party assuming roles for many
+#                              customers, and the backend is yours.)
+#
+# Several accounts: deploy this in each with TrustedPrincipalArn set to the backend's own
+# role (the one in the cluster's account, trusting EKS Pod Identity), and list the roles it
+# creates in that hub's AssumableRoleArns, so the hub may assume them. AWS_ROLE_ARN then
+# takes them all, comma-separated.
+#
+#   aws cloudformation deploy --stack-name perspectivegraph-readonly \
+#     --template-file deploy/aws/readonly-role.cfn.yaml --capabilities CAPABILITY_NAMED_IAM \
+#     --parameter-overrides TrustEksPodIdentity=true
+
+Parameters:
+  RoleName:
+    Type: String
+    Default: PerspectiveGraphReadOnly
+    Description: The role's name.
+  TrustEksPodIdentity:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Trust EKS Pod Identity in this account, for a backend running on EKS here.
+  TrustedPrincipalArn:
+    Type: String
+    Default: ""
+    Description: >-
+      ARN of the role or user the backend runs as, when it assumes this role with
+      AWS_ROLE_ARN (another account, a VM, a CI job). Empty trusts no such principal.
+  AssumableRoleArns:
+    Type: CommaDelimitedList
+    Default: ""
+    Description: >-
+      For a hub role: the read-only roles in OTHER accounts this one may assume, so one
+      backend reads several accounts. Empty grants none.
+
+Rules:
+  SomeoneMayAssumeIt:
+    Assertions:
+      - Assert: !Or
+          - !Equals [!Ref TrustEksPodIdentity, "true"]
+          - !Not [!Equals [!Ref TrustedPrincipalArn, ""]]
+        AssertDescription: Set TrustEksPodIdentity=true, TrustedPrincipalArn, or both - a role nobody can assume reads nothing.
+
+Conditions:
+  TrustPodIdentity: !Equals [!Ref TrustEksPodIdentity, "true"]
+  TrustPrincipal: !Not [!Equals [!Ref TrustedPrincipalArn, ""]]
+  IsHub: !Not [!Equals [!Join ["", !Ref AssumableRoleArns], ""]]
+
+Resources:
+  ReadOnlyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref RoleName
+      Description: PerspectiveGraph - read-only access for the attack-path engine's AWS connector.
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - !If
+            - TrustPodIdentity
+            - Sid: EksPodIdentity
+              Effect: Allow
+              Principal:
+                Service: pods.eks.amazonaws.com
+              Action: [sts:AssumeRole, sts:TagSession]
+              # Only pods in this account's clusters, not another account's association.
+              Condition:
+                StringEquals:
+                  aws:SourceAccount: !Ref AWS::AccountId
+            - !Ref AWS::NoValue
+          - !If
+            - TrustPrincipal
+            - Sid: BackendPrincipal
+              Effect: Allow
+              Principal:
+                AWS: !Ref TrustedPrincipalArn
+              Action: sts:AssumeRole
+            - !Ref AWS::NoValue
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/SecurityAudit
+      Policies:
+        - PolicyName: perspectivegraph-eks-pod-identity-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Which IAM role each EKS service account gets out as: the bridge from a pod
+              # to the account. SecurityAudit reads access entries but not these.
+              - Sid: EksPodIdentityRead
+                Effect: Allow
+                Action:
+                  - eks:ListPodIdentityAssociations
+                  - eks:DescribePodIdentityAssociation
+                Resource: "*"
+      Tags:
+        - Key: app
+          Value: perspectivegraph
+
+  HubAssumePolicy:
+    Type: AWS::IAM::RolePolicy
+    Condition: IsHub
+    Properties:
+      RoleName: !Ref ReadOnlyRole
+      PolicyName: perspectivegraph-assume-readonly-roles
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AssumeTheOtherAccountsReadOnlyRoles
+            Effect: Allow
+            Action: sts:AssumeRole
+            Resource: !Ref AssumableRoleArns
+
+Outputs:
+  RoleArn:
+    Description: AWS_ROLE_ARN for the backend (connectors.aws.roleArn in the chart), or the role for an EKS Pod Identity association.
+    Value: !GetAtt ReadOnlyRole.Arn

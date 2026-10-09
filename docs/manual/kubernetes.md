@@ -251,6 +251,24 @@ helm install perspective deploy/helm/perspectivegraph \
   where every replica reads the same rows. The audit log stays a single-writer hash
   chain, so the chart **refuses to render with `backend.replicas > 1`** while persistence
   is on - scale-out would split-brain it.
+- **`secrets.generate`** - the chart fills every credential left empty with a generated one
+  and keeps it across upgrades, the way it keeps the database and NATS passwords: an admin
+  API token (unless OIDC is set), the ingest HMAC secret, the at-rest encryption key and the
+  export signing key. With it, `-f values-production.yaml --set secrets.existingSecret=""
+  --set secrets.generate=true` installs a production instance with no Secret prepared by
+  hand - plus the database's password (`postgres.auth.password`), which only the database
+  knows, or `postgres.cloudnativepg.enabled=true`, whose operator generates its own. The
+  release notes print how to read the token and the ingest secret back. Back
+  the Secret up: the encryption key in it is the only key to the encrypted stores. It is for
+  `helm install` and `helm upgrade` only - a render without the cluster (`helm template`,
+  Argo CD, Flux) draws new values every time, so there keep the credentials in
+  `secrets.existingSecret`.
+- **The backend's own service account** (`serviceAccount`), with no Kubernetes API token
+  mounted - nor in any other pod of the chart, since none of them calls the API. A cloud
+  role is bound to it and to nothing else: on EKS, the read-only role the AWS connector
+  reads the account with, through an EKS Pod Identity association on
+  `<release>-perspectivegraph-backend` or an IRSA annotation in `serviceAccount.annotations`
+  ([the role](integrations.md#the-read-only-role)).
 - **The bus and the database authenticate on their own.** The bundled NATS requires a
   user and a password the chart generates into a Secret and hands the backend, so a pod
   that can reach port 4222 cannot publish events past the ingest signature check. The

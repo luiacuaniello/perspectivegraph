@@ -106,6 +106,9 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: frontend
     spec:
+      # No Kubernetes API token: nothing in this pod calls the API, and a token mounted by
+      # default is a credential an attacker inside the container gets for free.
+      automountServiceAccountToken: false
       # Pod Security Standards `restricted` refuses a pod without these, and a cluster
       # enforcing it is common wherever this would be deployed - so without them the
       # dashboard is not merely unhardened, it is unschedulable. fsGroup is what makes the

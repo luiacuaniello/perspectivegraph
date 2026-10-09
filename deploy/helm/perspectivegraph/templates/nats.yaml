@@ -55,6 +55,9 @@ spec:
         # Secrets. After changing nats.auth.password, restart NATS and the backend.
         checksum/config: {{ printf "%s|%s" .Values.nats.auth.user (toString .Values.nats.auth.enabled) | sha256sum }}
     spec:
+      # No Kubernetes API token: nothing in this pod calls the API, and a token mounted by
+      # default is a credential an attacker inside the container gets for free.
+      automountServiceAccountToken: false
       # The `restricted` Pod Security Standard, minus readOnlyRootFilesystem - which it
       # does not require, and which this container DOES need (JetStream writes its store).
       #

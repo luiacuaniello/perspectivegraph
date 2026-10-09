@@ -9,8 +9,12 @@
 #
 # SECRETS: this file holds NO secrets. It points `secrets.existingSecret` at a
 # Secret you manage (External Secrets / Sealed Secrets / Vault) carrying the keys
-# listed below. To let the chart create the Secret instead, set
-# `secrets.existingSecret: ""` and pass each value with --set (never commit them).
+# listed below - the way that works under Argo CD and Flux too. To let the chart create
+# the Secret instead, set `secrets.existingSecret: ""` and either pass each value with
+# --set (never commit them), or add `secrets.generate: true` and the chart generates every
+# one left empty, keeping them across `helm upgrade` - all but the database's password,
+# which only the database knows (postgres.auth.password; under postgres.cloudnativepg the
+# operator generates it).
 
 backend:
   # Refuse to start unless both the API and ingest are authenticated.
