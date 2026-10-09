@@ -22,6 +22,7 @@ source of that site: a change to either is a change to both.
 | [Working the findings](manual/working-the-findings.md) | Remediation and detection-as-code, the choke-point optimizer, triage and suppression, and trends over time. |
 | [AI assistant and MCP](manual/ai-and-mcp.md) | Asking the attack surface questions in plain language, and letting an agent query it. |
 | [Security, authentication and hardening](manual/security.md) | Data hygiene, tenants and SSO, authentication and audit, and hardening the containers and the application. |
+| [Configuration reference](manual/configuration.md) | Every setting the backend reads: its default, the Helm value that sets it, and which ones production needs. |
 | [Deploy to Kubernetes](manual/kubernetes.md) | The Helm chart, a local cluster with the SSO demo, and hardening a real deployment. |
 | [Running it: freshness, backup and scaling](manual/running.md) | Keeping the graph fresh, backing it up and restoring it, and scaling the analyzer. |
 | [Onboarding runbook](manual/onboarding.md) | Pointing it at your own environment, source by source, until the first path appears. |

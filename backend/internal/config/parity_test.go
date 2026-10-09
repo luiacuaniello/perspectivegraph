@@ -158,6 +158,46 @@ func TestEnvExampleDoesNotAdvertiseDeadKeys(t *testing.T) {
 	}
 }
 
+// The configuration reference is the page an operator actually reads - .env.example is a
+// file in the repository, the manual is what the documentation site publishes - so it is a
+// surface too, held to the same source both ways. A key missing from it is a setting nobody
+// finds; a row for a key the backend stopped reading is a promise the software no longer
+// keeps. A key counts as documented only where a table row opens with it - the name, then
+// its default and Helm value under it - not by being mentioned in prose.
+func TestConfigurationReferenceDocumentsEveryKey(t *testing.T) {
+	root := repoRoot(t)
+	doc := mustRead(t, root, "docs", "manual", "configuration.md")
+
+	documented := map[string]bool{}
+	for _, m := range regexp.MustCompile("(?m)^\\| `([A-Z0-9_]+)`<br>Default: ").FindAllStringSubmatch(doc, -1) {
+		documented[m[1]] = true
+	}
+
+	var missing []string
+	for _, k := range keysReadByTheBackend(t) {
+		if !documented[k] {
+			missing = append(missing, k)
+		}
+	}
+	if len(missing) > 0 {
+		t.Errorf("docs/manual/configuration.md has no row for %d key(s) the backend reads:\n  %s",
+			len(missing), strings.Join(missing, "\n  "))
+	}
+
+	live := liveConfigKeys(t)
+	var dead []string
+	for k := range documented {
+		if !live[k] {
+			dead = append(dead, k)
+		}
+	}
+	if len(dead) > 0 {
+		sort.Strings(dead)
+		t.Errorf("docs/manual/configuration.md documents %d key(s) the backend no longer reads:\n  %s",
+			len(dead), strings.Join(dead, "\n  "))
+	}
+}
+
 // Every secret must be reachable through <KEY>_FILE, or the Docker and Kubernetes paths
 // that avoid putting credentials in the environment cannot cover it.
 func TestEverySecretAcceptsAFileVariant(t *testing.T) {
