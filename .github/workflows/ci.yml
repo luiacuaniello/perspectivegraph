@@ -56,8 +56,20 @@ jobs:
       # It did exactly that - staticcheck 0.8 raised its floor to Go 1.26 and, with
       # GOTOOLCHAIN=local, the step failed to build the tool rather than the code. Bump
       # this deliberately, alongside the toolchain.
+      #
+      # 0.8.1 is built against golang.org/x/tools v0.51.0 instead of run as it ships: its
+      # own x/tools reads export data up to version 4, Go 1.27.2 writes version 5, and
+      # every package failed to import (dominikh/go-tools#1832). Go back to
+      # `go run honnef.co/go/tools/cmd/staticcheck@<version> ./...` once a release carries
+      # the newer x/tools. Both versions are pinned, and the checksum database verifies
+      # them as it does any other module.
       - name: staticcheck
-        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+        run: |
+          tools="$(mktemp -d)"
+          (cd "$tools" && go mod init staticcheck \
+            && go get honnef.co/go/tools/cmd/staticcheck@v0.8.1 golang.org/x/tools@v0.51.0 \
+            && go build -o staticcheck honnef.co/go/tools/cmd/staticcheck)
+          "$tools/staticcheck" ./...
 
   secrets:
     name: Secret scan (gitleaks)
