@@ -29,7 +29,8 @@
 
 services:
   caddy:
-    # Built here: the official binary on distroless (deploy/caddy/Dockerfile says why).
+    # Built here: Caddy's release compiled with this project's Go, on distroless
+    # (deploy/caddy/Dockerfile says why).
     build:
       context: ./deploy/caddy
     image: perspectivegraph-caddy:local

@@ -44,8 +44,9 @@ make prod-init DOMAIN=perspectivegraph.example.com
    (`docker-compose.yml`, the published images, the secrets overlay and
    [`docker-compose.vm.yml`](../../docker-compose.vm.yml)), and who owns the backups. From
    then on `docker compose` in this directory needs no `-f` flags.
-3. **Starts it** and waits until the dashboard answers through Caddy. The first certificate
-   takes a few seconds once the name resolves to the machine.
+3. **Starts it** and waits until the dashboard answers through Caddy. The first time, it
+   also compiles Caddy - about a minute, with Go's toolchain image pulled once - and the
+   first certificate takes a few seconds once the name resolves to the machine.
 
 It prints where everything is. Run it again whenever you like: it keeps what exists.
 
@@ -59,7 +60,7 @@ It prints where everything is. Run it again whenever you like: it keeps what exi
 
 | Container | Image | Listens |
 |---|---|---|
-| `caddy` | built here from [`deploy/caddy`](../../deploy/caddy/Dockerfile): the official Caddy binary on distroless, non-root | **80, 443** - the only published ports |
+| `caddy` | built here from [`deploy/caddy`](../../deploy/caddy/Dockerfile): Caddy's release compiled with this project's Go, on distroless, non-root | **80, 443** - the only published ports |
 | `frontend` | the release's dashboard | inside the stack |
 | `backend` | the release's engine, `PG_ENV=production` | inside: the API (8080) and the ingest endpoint (8081) |
 | `postgres` | the release's PostgreSQL + AGE | inside |
