@@ -13,7 +13,16 @@
 //     its last commit its "last updated" date.
 // The front page is the site's own (landing/index.mdx): it only points into these pages.
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -54,6 +63,24 @@ export const PAGES = {
   "ADOPTERS.md": "adopters",
   "GOVERNANCE.md": "governance",
 };
+
+const UNPUBLISHED = new Set([]);
+
+const docs = readdirSync(join(REPO, "docs"), {
+  recursive: true,
+  withFileTypes: true,
+})
+  .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
+  .map((entry) => normalize(join(entry.parentPath, entry.name)).split("\\").join("/"))
+  .map((file) => file.slice(REPO.length + 1));
+
+const orphaned = docs.filter((file) => !PAGES[file] && !UNPUBLISHED.has(file));
+
+if (orphaned.length) {
+  throw new Error(
+    `docs/ contains Markdown files that are not published in PAGES: ${orphaned.join(", ")}`,
+  );
+}
 
 // A page outside docs/ is rebuilt and link-checked only when the workflow's path filter
 // names it, so one missing from the filter is published once and then never checked again.
