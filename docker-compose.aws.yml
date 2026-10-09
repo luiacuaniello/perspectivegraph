@@ -1,0 +1,60 @@
+# Your AWS account, read live, from an engine running on your machine.
+#
+# On EC2 or EKS nothing here is needed: the AWS SDK finds the instance's role, or the
+# pod's, by itself. Everywhere else - a laptop, a VM in another cloud, a server in a rack -
+# the backend has no credentials of its own, and the base file passes it none. This
+# override hands it yours, read-only, and turns the connector to the live SDK:
+#
+#   AWS_PROFILE=<profile> AWS_REGION=<region> make up-aws
+#
+# which checks the credentials can be read (scripts/up-aws.sh), then runs the published,
+# signed images with this file on top. The first pull runs as the backend starts; watch it
+# with `curl -s localhost:8081/connectors`.
+#
+# WHERE THE CREDENTIALS COME FROM - the SDK's own chain, the same as the AWS CLI's:
+#
+#   * Your ~/.aws, mounted read-only: a profile with keys, a profile that assumes a role,
+#     or an SSO profile you have logged in with (`aws sso login`). The mount is read-only,
+#     so the backend cannot refresh an SSO session itself: when GET /connectors reports an
+#     expired token, log in again on the host.
+#   * Credentials already in your environment - AWS_ACCESS_KEY_ID and the rest, as
+#     aws-vault, granted or `aws configure export-credentials` leave them. As for the CLI,
+#     they win over the profile.
+#
+# READ-ONLY IS UP TO THE CREDENTIALS. The connector only calls Describe, List and Get, but
+# a profile that can write is one that can write. Deploy the role in deploy/aws with
+# TrustedPrincipalArn set to the identity you read as, and set AWS_ROLE_ARN to it: the
+# backend then assumes that role and holds nothing more than SecurityAudit.
+#
+# ON LINUX, the backend runs as uid 65532 and a bind mount keeps the host's owners and
+# modes, so ~/.aws/credentials (600, yours) is a file it cannot open. scripts/up-aws.sh
+# checks this before starting and prints the fix: an ACL granting that one uid read access,
+# `setfacl -m u:65532:r ~/.aws/config ~/.aws/credentials`. Docker Desktop (macOS, Windows)
+# maps ownership for you, which is why this only shows on Linux.
+services:
+  backend:
+    environment:
+      CONNECTORS_ENABLED: ${CONNECTORS_ENABLED:-aws}
+      AWS_CONNECTOR_MODE: sdk
+      # Read by the SDK, not by the engine's configuration: these are the variables the AWS
+      # CLI reads too, with the same meaning.
+      AWS_PROFILE: ${AWS_PROFILE:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      # Named outright rather than left to $HOME, which is only right for as long as the
+      # image's user keeps the home directory it has today.
+      AWS_CONFIG_FILE: /home/nonroot/.aws/config
+      AWS_SHARED_CREDENTIALS_FILE: /home/nonroot/.aws/credentials
+    volumes:
+      # Under the home directory rather than anywhere else, because that is where the SDK
+      # looks for an SSO session's cached token (~/.aws/sso/cache), with no variable to
+      # point it elsewhere.
+      - type: bind
+        source: ${AWS_CONFIG_DIR:-~/.aws}
+        target: /home/nonroot/.aws
+        read_only: true
+        bind:
+          # A missing directory is an error, not an empty one Docker creates as root in
+          # your home directory.
+          create_host_path: false

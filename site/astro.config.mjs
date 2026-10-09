@@ -79,7 +79,7 @@ export default defineConfig({
         },
         {
           label: "Run it",
-          items: ["manual/configuration", "manual/kubernetes", "manual/security", "manual/running", "operations", "scale", "upgrading"],
+          items: ["manual/configuration", "manual/single-vm", "manual/kubernetes", "manual/security", "manual/running", "operations", "scale", "upgrading"],
         },
         {
           label: "Reference",

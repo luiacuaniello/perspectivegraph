@@ -381,6 +381,26 @@ jobs:
           kind version | grep -q '^kind v0\.31\.0 ' || { echo "wrong kind on PATH: $(kind version)"; exit 1; }
           bash scripts/chart-install.sh
 
+  # The single-VM recipe (make prod-init: docker-compose.vm.yml behind Caddy) run the way an
+  # operator runs it, and on Linux on purpose: Compose mounts secrets with the host's owners
+  # and modes, which decide whether the containers can open them at all - and Docker Desktop
+  # maps ownership away, so a laptop cannot show it. It checks TLS, the API and NATS
+  # credentials, a signed ingest through Caddy, a backup, and a restore of that backup. The
+  # script is the command a contributor runs (make prod-smoke), not a CI-only path.
+  prod-smoke:
+    name: Single-VM recipe (prod-init, TLS, backup, restore)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      # For the CLI the check signs its reports with, built from this commit.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.2"
+          cache-dependency-path: backend/go.sum
+      - name: Run the recipe end to end
+        run: bash scripts/prod-smoke.sh
+
   # deploy/aws holds the read-only role the AWS connector reads with, as CloudFormation and
   # as a Terraform module - files nothing else in the build touches, so a typo in either
   # would ship and surface only in someone's account. Both are checked here; a live deploy
@@ -573,6 +593,7 @@ jobs:
           docker build -t perspectivegraph-backend:ci backend
           docker build -t perspectivegraph-dashboard:ci frontend
           docker build -t perspectivegraph-postgres:ci deploy/postgres
+          docker build -t perspectivegraph-caddy:ci deploy/caddy
       # Installed from a SHA-pinned action rather than curling an install script off
       # a moving branch and piping it to a shell. The old form re-fetched whatever
       # `main` happened to contain at that moment and executed it in CI: a scanner
@@ -589,6 +610,6 @@ jobs:
       # here now, so it is scanned here now.
       - name: Scan images
         run: |
-          for img in perspectivegraph-backend:ci perspectivegraph-dashboard:ci perspectivegraph-postgres:ci; do
+          for img in perspectivegraph-backend:ci perspectivegraph-dashboard:ci perspectivegraph-postgres:ci perspectivegraph-caddy:ci; do
             trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$img"
           done

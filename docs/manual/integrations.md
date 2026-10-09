@@ -154,6 +154,31 @@ on the instance's real IMDS posture: `HttpTokens=required` (IMDSv2) makes a blin
 insufficient, while IMDSv1 hands the credentials to a single GET. Cloud Custodian prices the
 same hop from the same field, so the two feeds agree on it.
 
+### From your own machine: `make up-aws`
+
+On EC2 or EKS the backend finds the instance's or the pod's role by itself. Anywhere else - a
+laptop, a VM in another cloud - it has no credentials of its own, and
+[`docker-compose.aws.yml`](../../docker-compose.aws.yml) hands it yours, read-only:
+
+```bash
+AWS_PROFILE=<profile> AWS_REGION=eu-west-1 make up-aws
+AWS_PROFILE=<profile> AWS_REGION=eu-west-1 \
+  AWS_ROLE_ARN=arn:aws:iam::<account>:role/PerspectiveGraphReadOnly make up-aws   # read as the role
+```
+
+It mounts `~/.aws` read-only - a profile with keys, one that assumes a role, or an SSO profile
+you have logged in with - and passes credentials already in the environment (`aws-vault`,
+`granted`, `aws configure export-credentials`), which win over the profile as they do for the
+AWS CLI. Before starting it checks that the profile exists and that the backend can read the
+files; then it waits for the first pull and prints its outcome. Assume the role above rather
+than reading as yourself: the connector only reads, but a profile that can write is one that
+can write.
+
+On Linux the backend's user (uid 65532) cannot open a credentials file that is yours and 600,
+which is how `aws configure` writes it - a bind mount keeps the host's owners and modes, where
+Docker Desktop maps them. The check says so and prints the fix, an ACL for that one uid:
+`setfacl -m u:65532:x ~/.aws` and `setfacl -m u:65532:r ~/.aws/config ~/.aws/credentials`.
+
 ### Kubernetes: the cluster the engine runs in
 
 With `kubernetes` in `CONNECTORS_ENABLED`, the backend reads the cluster it is installed in

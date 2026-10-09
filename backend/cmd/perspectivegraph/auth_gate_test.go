@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -120,6 +122,25 @@ func TestSecretGateRefusesAnUnreadableSecretFile(t *testing.T) {
 func TestSecretGatePassesWhenNothingFailed(t *testing.T) {
 	if err := checkSecretConfig(config.Config{}); err != nil {
 		t.Fatalf("refused a configuration with no secret errors: %v", err)
+	}
+}
+
+// The unreadable file is the cause, so it is what the refusal names - even when the
+// credential it held is one production requires. Checked after the production gate, a 600
+// API_TOKENS_FILE on Linux (the backend is uid 65532) stopped the process with "no API
+// credential is configured": measured, and the operator had configured one.
+func TestAnUnreadableSecretIsReportedBeforeTheCredentialItLeavesMissing(t *testing.T) {
+	t.Setenv("PG_ENV", "production")
+	t.Setenv("API_TOKENS", "")
+	t.Setenv("API_TOKENS_FILE", filepath.Join(t.TempDir(), "api_tokens"))
+	t.Setenv("INGEST_HMAC_SECRET", "configured")
+
+	err := run(context.Background(), config.Load())
+	if err == nil {
+		t.Fatal("started in production with an unreadable token file")
+	}
+	if !strings.Contains(err.Error(), "API_TOKENS_FILE") {
+		t.Errorf("the refusal does not name the file that could not be read: %v", err)
 	}
 }
 

@@ -50,6 +50,7 @@ export const PAGES = {
   "docs/manual/onboarding.md": "manual/onboarding",
   "docs/manual/security.md": "manual/security",
   "docs/manual/configuration.md": "manual/configuration",
+  "docs/manual/single-vm.md": "manual/single-vm",
   "docs/manual/kubernetes.md": "manual/kubernetes",
   "docs/manual/running.md": "manual/running",
   "docs/OPERATIONS.md": "operations",

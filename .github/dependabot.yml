@@ -159,3 +159,16 @@ updates:
     groups:
       compose-images:
         patterns: ["*"]
+
+  # The single-VM recipe's Caddy: the official image, for its binary, and the distroless
+  # base it runs on. Caddy ships security fixes in patch releases, and this image is the
+  # one in front of the internet.
+  - package-ecosystem: docker
+    directory: /deploy/caddy
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      caddy-images:
+        patterns: ["*"]

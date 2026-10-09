@@ -11,7 +11,7 @@ next section lists what changes when real findings go into the graph.
 
 | You run it with | Where the settings go |
 |---|---|
-| Docker Compose | A `.env` file next to `docker-compose.yml`. Copy [`.env.example`](../../.env.example) (every key, with the reasons behind it) or, for production, [`.env.production.example`](../../.env.production.example). `docker-compose.yml` passes every key on this page to the backend; a variable set in the shell wins over the file. |
+| Docker Compose | A `.env` file next to `docker-compose.yml`. Copy [`.env.example`](../../.env.example) (every key, with the reasons behind it) or, for production, [`.env.production.example`](../../.env.production.example) - or let `make prod-init` write it ([production on one machine](single-vm.md)). `docker-compose.yml` passes every key on this page to the backend; a variable set in the shell wins over the file. |
 | Helm | The chart's values - the **Helm** column below. [`values-production.yaml`](../../deploy/helm/perspectivegraph/values-production.yaml) is the production starting point, and [`values-ha.yaml`](../../deploy/helm/perspectivegraph/values-ha.yaml) adds replicas. |
 | The binary | Environment variables. The backend also reads a `.env` in its working directory and in the parent. |
 
@@ -21,6 +21,17 @@ holding the value, so it never enters the process environment, where `docker ins
 [`docker-compose.secrets.yml`](../../docker-compose.secrets.yml) mounts them; under Helm,
 `secrets.existingSecret` names a Secret you manage. A `_FILE` that is set but unreadable stops
 the backend at startup rather than leaving it without the credential.
+
+**Compose recipes.** A few variables are read by the compose files themselves rather than by
+the backend:
+
+| Variable | Read by | What it does |
+|---|---|---|
+| `DOMAIN` | [`docker-compose.vm.yml`](../../docker-compose.vm.yml) | The name Caddy serves and obtains a certificate for; also the default of `CORS_ALLOWED_ORIGINS` and `DASHBOARD_URL` (`https://<DOMAIN>`). Required there. |
+| `BACKUP_UID`, `BACKUP_GID` | `docker-compose.vm.yml` | The user the backup service writes `./backups` as. `make prod-init` sets them to whoever ran it. |
+| `BACKUP_HOURS`, `BACKUP_KEEP` | `docker-compose.vm.yml` | A dump every `BACKUP_HOURS` (default 24), the newest `BACKUP_KEEP` kept (default 14). |
+| `AWS_PROFILE`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` | [`docker-compose.aws.yml`](../../docker-compose.aws.yml) | Your AWS credentials for the live connector, passed to the AWS SDK as the AWS CLI reads them. |
+| `AWS_CONFIG_DIR` | `docker-compose.aws.yml` | The directory mounted read-only as the backend's `~/.aws` (default `~/.aws`). |
 
 ## The minimum for production
 
