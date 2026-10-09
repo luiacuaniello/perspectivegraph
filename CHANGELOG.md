@@ -9,6 +9,16 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.36.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.35.1...v1.36.0) (2026-10-09)
+
+
+### Features
+
+* **chart:** run the database under CloudNativePG ([#338](https://github.com/luiacuaniello/perspectivegraph/issues/338)) ([3a887ac](https://github.com/luiacuaniello/perspectivegraph/commit/3a887ac730fc9ad84d9b9bbe6980e909509ab49e))
+* **connector:** read the Kubernetes cluster the engine runs in ([#341](https://github.com/luiacuaniello/perspectivegraph/issues/341)) ([484bcfd](https://github.com/luiacuaniello/perspectivegraph/commit/484bcfd597f1741f462c22085f26c743f9eaa141))
+* deploy the AWS read-only role, generate the chart's credentials, sign ingests from the CLI ([#340](https://github.com/luiacuaniello/perspectivegraph/issues/340)) ([5dccf39](https://github.com/luiacuaniello/perspectivegraph/commit/5dccf39fccc73f275f80175f715ea16cf735a5a9))
+* production on one machine (make prod-init) and live AWS reads f… ([#342](https://github.com/luiacuaniello/perspectivegraph/issues/342)) ([e459320](https://github.com/luiacuaniello/perspectivegraph/commit/e4593203ad93a6fda7846816cda2b8766494f26a))
+
 ## [1.35.1](https://github.com/luiacuaniello/perspectivegraph/compare/v1.35.0...v1.35.1) (2026-10-09)
 
 

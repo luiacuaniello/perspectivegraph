@@ -102,7 +102,7 @@ services:
 
   backup:
     # The database's own image, for a pg_dump of the same major version as the server.
-    image: ghcr.io/luiacuaniello/perspectivegraph-postgres:v1.35.1 # x-release-please-version
+    image: ghcr.io/luiacuaniello/perspectivegraph-postgres:v1.36.0 # x-release-please-version
     container_name: perspective-backup
     security_opt:
       - no-new-privileges:true

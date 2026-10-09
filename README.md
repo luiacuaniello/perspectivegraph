@@ -84,7 +84,7 @@ On Kubernetes, the chart is an
 
 ```bash
 helm install perspectivegraph oci://ghcr.io/luiacuaniello/charts/perspectivegraph \
-  --version 1.35.1 # x-release-please-version
+  --version 1.36.0 # x-release-please-version
 ```
 
 On one machine - a VM with Docker and a DNS name - one command sets up TLS, generated
@@ -214,7 +214,7 @@ to find and cut routes; don't put its percentage in front of a board. If you run
 [tell us how it went](https://github.com/luiacuaniello/perspectivegraph/discussions/286).
 [Positioning](docs/POSITIONING.md) spells out what is and isn't claimed.
 
-**What is measured today, as of v1.35.1.** <!-- x-release-please-version -->
+**What is measured today, as of v1.36.0.** <!-- x-release-please-version -->
 `make bench-cloudgoat` grades the engine in CI on four
 [CloudGoat-shaped scenarios](backend/testdata/cloudgoat/README.md):
 
