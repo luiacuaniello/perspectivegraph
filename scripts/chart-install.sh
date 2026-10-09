@@ -147,11 +147,21 @@ for p in json.load(sys.stdin)["items"]:
   die "helm install failed"
 fi
 
+# Helm cannot wait for what the operator creates: its pods are not part of the release. So
+# under CloudNativePG wait for the cluster itself first, or a replica still joining reads as
+# a failure here.
+if [ "$DATABASE" = "cloudnativepg" ]; then
+  kc wait --for=condition=Ready "cluster/${RELEASE}-perspectivegraph-pg" --timeout=300s >/dev/null \
+    || die "the CloudNativePG cluster never became ready"
+fi
+
 # --wait already gates on readiness; assert it separately so a chart that stops declaring
-# probes cannot make this pass by having nothing to wait for.
-not_ready=$(kubectl --context "kind-$CLUSTER" get pods \
+# probes cannot make this pass by having nothing to wait for. Succeeded is a finished Job -
+# the operator initialises the database and joins each replica with one - not a pod that
+# failed to run.
+not_ready=$(kc get pods \
   -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{"\n"}{end}' \
-  | grep -v ' Running$' || true)
+  | grep -v -E ' (Running|Succeeded)$' || true)
 [ -z "$not_ready" ] || die "pods not Running:\n$not_ready"
 
 # The database is the reason this image is built here at all: prove the extension is
