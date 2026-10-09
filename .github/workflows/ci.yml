@@ -113,7 +113,8 @@ jobs:
       # Docker Hub rate-limits the runners' shared addresses ("429 Too Many Requests"); its
       # images come through Google's mirror instead, by the digests they are pinned to.
       - name: Pull Docker Hub images through mirror.gcr.io
-        run: bash scripts/ci-docker-mirror.sh
+        # By path from the workspace: some jobs run their steps from backend/.
+        run: bash "$GITHUB_WORKSPACE/scripts/ci-docker-mirror.sh" "$GITHUB_WORKSPACE/deploy/postgres/Dockerfile"
 
       - name: Build and start the Postgres+AGE image this release ships
         working-directory: .
@@ -347,7 +348,8 @@ jobs:
       # Docker Hub rate-limits the runners' shared addresses ("429 Too Many Requests"); its
       # images come through Google's mirror instead, by the digests they are pinned to.
       - name: Pull Docker Hub images through mirror.gcr.io
-        run: bash scripts/ci-docker-mirror.sh
+        # By path from the workspace: some jobs run their steps from backend/.
+        run: bash "$GITHUB_WORKSPACE/scripts/ci-docker-mirror.sh"
 
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
@@ -404,7 +406,8 @@ jobs:
       # Docker Hub rate-limits the runners' shared addresses ("429 Too Many Requests"); its
       # images come through Google's mirror instead, by the digests they are pinned to.
       - name: Pull Docker Hub images through mirror.gcr.io
-        run: bash scripts/ci-docker-mirror.sh
+        # By path from the workspace: some jobs run their steps from backend/.
+        run: bash "$GITHUB_WORKSPACE/scripts/ci-docker-mirror.sh" "$GITHUB_WORKSPACE/docker-compose.yml" "$GITHUB_WORKSPACE/deploy/caddy/Dockerfile"
       # For the CLI the check signs its reports with, built from this commit.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -603,7 +606,8 @@ jobs:
       # Docker Hub rate-limits the runners' shared addresses ("429 Too Many Requests"); its
       # images come through Google's mirror instead, by the digests they are pinned to.
       - name: Pull Docker Hub images through mirror.gcr.io
-        run: bash scripts/ci-docker-mirror.sh
+        # By path from the workspace: some jobs run their steps from backend/.
+        run: bash "$GITHUB_WORKSPACE/scripts/ci-docker-mirror.sh" "$GITHUB_WORKSPACE/backend/Dockerfile" "$GITHUB_WORKSPACE/frontend/Dockerfile" "$GITHUB_WORKSPACE/deploy/postgres/Dockerfile" "$GITHUB_WORKSPACE/deploy/caddy/Dockerfile"
       - name: Build images
         run: |
           docker build -t perspectivegraph-backend:ci backend
