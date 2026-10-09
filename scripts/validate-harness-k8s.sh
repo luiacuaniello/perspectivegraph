@@ -30,7 +30,7 @@ INGEST_URL=${INGEST_URL:-http://localhost:8081}
 API_URL=${API_URL:-http://localhost:8080}
 ANALYZER_WAIT=${ANALYZER_WAIT:-35}
 DELETE_CLUSTER=${DELETE_CLUSTER:-}
-GO=${GO:-go}; export GOTOOLCHAIN=${GOTOOLCHAIN:-go1.27.1}
+GO=${GO:-go}; export GOTOOLCHAIN=${GOTOOLCHAIN:-go1.27.2}
 sfx() { [ -n "$SUFFIX" ] && echo "-$SUFFIX" || echo ""; }
 S="$(sfx)"
 WEBAPP="webapp$S"; READER="reader$S"; SECRET="crown-secret$S"

@@ -32,7 +32,7 @@ log="$(mktemp -t pg-fuzz.XXXXXX)"
 trap 'rm -f "$log"' EXIT
 
 echo "→ fuzzing ${TARGET} for ${FUZZTIME} with ${PARALLEL} workers…"
-GOTOOLCHAIN="${GOTOOLCHAIN:-go1.27.1}" CGO_ENABLED=0 \
+GOTOOLCHAIN="${GOTOOLCHAIN:-go1.27.2}" CGO_ENABLED=0 \
   go test "$PKG" -run '^$' -fuzz "^${TARGET}\$" -fuzztime "$FUZZTIME" -parallel "$PARALLEL" 2>&1 | tee "$log"
 status="${PIPESTATUS[0]}"
 

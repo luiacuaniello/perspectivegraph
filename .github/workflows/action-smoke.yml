@@ -224,7 +224,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.1"
+          go-version: "1.27.2"
           cache-dependency-path: backend/go.sum
 
       # Local mode is newer than the last release, so the released binary cannot run it.
@@ -355,7 +355,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.1"
+          go-version: "1.27.2"
           cache-dependency-path: backend/go.sum
 
       - name: Build the gate from this commit
@@ -447,7 +447,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.1"
+          go-version: "1.27.2"
           cache-dependency-path: backend/go.sum
 
       # Local mode is newer than the last release, so the released binary cannot run it.
