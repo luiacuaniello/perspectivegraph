@@ -161,8 +161,10 @@ refuted it once. Its own *security* is measured less independently, and this sec
 exists to say by how much rather than let the automated gates imply more than they show.
 
 - **Independent security audit.** The code passes `govulncheck`, `gosec`, CodeQL,
-  `gitleaks`, Trivy and `staticcheck` on every build, and the container images publish
-  zero critical or high findings - but every one of those is a tool looking for known
+  `gitleaks`, Trivy and `staticcheck` on every build, and the images this project builds
+  publish zero critical or high findings (the chart also runs NATS's own image, whose
+  findings are fixed by NATS's releases and show in the chart's report until the next one
+  is taken) - but every one of those is a tool looking for known
   shapes. Nothing here has been read by a security engineer who did not write it. For a
   tool whose output is a map of how to breach an organisation, that is the largest open
   assurance gap, and it is the one an adopting security team is most likely to ask about.

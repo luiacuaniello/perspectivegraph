@@ -70,7 +70,7 @@ Empty refuses every real write. The pairing matters: the allowlist bounds where 
 engine *asks* to write, the token scope bounds what the forge *lets* it write, and
 neither alone is sufficient.
 
-Two ready-to-use hardened profiles apply all of the above:
+Three ready-to-use hardened profiles apply the settings above:
 
 - **Kubernetes (recommended):** `deploy/helm/perspectivegraph/values-production.yaml` -
   auth + ingest HMAC on, external Postgres+AGE with `sslMode: verify-full`, TLS at the
@@ -96,9 +96,17 @@ Two ready-to-use hardened profiles apply all of the above:
   [manual](manual/kubernetes.md)). From a git checkout instead, swap the
   `oci://…` reference for `deploy/helm/perspectivegraph`.
 
-- **Docker Compose (single host / on-prem):** `.env.production.example` (copy to `.env`,
+- **One machine (a VM with Docker and a DNS name):** `make prod-init DOMAIN=<name>` - every
+  credential generated as a file, TLS from Caddy with a certificate it renews, an
+  authenticated bus, the governance state in the database, and a dump every day whose
+  restore CI runs on every change. [Production on one machine](manual/single-vm.md) is the
+  procedure around it. It runs the bundled database, so it is the profile for an estate one
+  machine can hold, not for one that needs a database you can fail over.
+
+- **Docker Compose, assembled by hand:** `.env.production.example` (copy to `.env`,
   fill in, `chmod 600`) plus the `docker-compose.prod.yml` override for the in-app TLS cert
-  mount.
+  mount - for when the backend serves TLS itself with a certificate of yours, or the
+  pieces above are ones you already run.
 
   ```bash
   cp .env.production.example .env   # then fill it in and: chmod 600 .env
