@@ -33,7 +33,7 @@ For your own account, today, with nothing deployed: Docker, a clone of the repos
 release, and an AWS profile.
 
 ```bash
-git clone --branch v1.36.0 https://github.com/luiacuaniello/perspectivegraph.git # x-release-please-version
+git clone --branch v1.37.0 https://github.com/luiacuaniello/perspectivegraph.git # x-release-please-version
 cd perspectivegraph
 AWS_PROFILE=<profile> AWS_REGION=eu-west-1 make up-aws
 ```
@@ -144,7 +144,7 @@ IRSA works too: let the role trust the cluster's OIDC provider instead, and put 
 
 ```bash
 helm pull oci://ghcr.io/luiacuaniello/charts/perspectivegraph --untar \
-  --version 1.36.0 # x-release-please-version
+  --version 1.37.0 # x-release-please-version
 helm install perspective oci://ghcr.io/luiacuaniello/charts/perspectivegraph \
   --namespace perspectivegraph --create-namespace \
   -f perspectivegraph/values-production.yaml \
@@ -159,7 +159,7 @@ helm install perspective oci://ghcr.io/luiacuaniello/charts/perspectivegraph \
   --set ingress.tls.enabled=true \
   --set-string 'ingress.annotations.cert-manager\.io/cluster-issuer=letsencrypt-prod' \
   --set backend.trustedProxyCidrs=10.0.0.0/16 \
-  --version 1.36.0 # x-release-please-version
+  --version 1.37.0 # x-release-please-version
 ```
 
 What each line does:

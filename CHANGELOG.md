@@ -9,6 +9,18 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.37.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.36.0...v1.37.0) (2026-10-10)
+
+
+### Features
+
+* **cli:** help and version, and a running engine names its release ([#352](https://github.com/luiacuaniello/perspectivegraph/issues/352)) ([e289ab4](https://github.com/luiacuaniello/perspectivegraph/commit/e289ab444d5a1fa57f6267ee6dc05a17d99c2c08))
+
+
+### Bug Fixes
+
+* **vm:** build the single-VM Caddy with golang.org/x/net 0.60.0 ([#350](https://github.com/luiacuaniello/perspectivegraph/issues/350)) ([e271cdc](https://github.com/luiacuaniello/perspectivegraph/commit/e271cdcb0b52c1198ae5f8b2107b27cca332bb79))
+
 ## [1.36.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.35.1...v1.36.0) (2026-10-09)
 
 

@@ -29,7 +29,7 @@ replicated database with continuous backups.
 ## Install
 
 ```bash
-git clone --branch v1.36.0 https://github.com/luiacuaniello/perspectivegraph.git # x-release-please-version
+git clone --branch v1.37.0 https://github.com/luiacuaniello/perspectivegraph.git # x-release-please-version
 cd perspectivegraph
 make prod-init DOMAIN=perspectivegraph.example.com
 ```
