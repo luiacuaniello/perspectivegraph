@@ -11,12 +11,14 @@ import (
 	"database/sql"
 	"encoding/pem"
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -63,22 +65,30 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
 )
 
-// subcommands is what the binary answers to, for the "unknown subcommand" message at the
-// bottom of main. A test keeps it in step with the dispatch above it, because a list that
-// silently drifts is worse than no list: it tells someone their spelling was wrong when
-// the command actually exists.
-var subcommands = []string{
-	"andprobe", "awscollect", "gate", "genload", "genverdicts", "healthz",
-	"importverdicts", "ingest", "ingestreal", "mcp", "redteam", "verify-audit",
-}
-
 func main() {
+	// What someone types first at a binary they have just downloaded. `help <command>` is
+	// that command's -h, so it is rewritten into one and dispatched below with the rest.
+	if len(os.Args) >= 2 && (os.Args[1] == "help" || helpFlag(os.Args[1])) {
+		if os.Args[1] != "help" || len(os.Args) == 2 || os.Args[2] == "help" || os.Args[2] == "version" {
+			printUsage(os.Stdout)
+			return
+		}
+		os.Args = []string{os.Args[0], os.Args[2], "-h"}
+	}
+	if len(os.Args) >= 2 && (os.Args[1] == "version" || versionFlag(os.Args[1])) {
+		fmt.Println(versionLine())
+		return
+	}
+
 	// Operator utility: verify the audit log's hash chain and exit. Dispatching on the
 	// subcommand alone - not on it plus an argument - is deliberate: `verify-audit` with
 	// nothing after it used to fall through every other case and START THE SERVER, so a
 	// typo in a verification step became a running process nobody meant to launch.
 	if len(os.Args) >= 2 && os.Args[1] == "verify-audit" {
 		if err := runVerifyAudit(os.Args[2:], os.Stdout); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return
+			}
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -90,8 +100,7 @@ func main() {
 	// running stack. See runGenload for flags. Exits when done.
 	if len(os.Args) >= 2 && os.Args[1] == "genload" {
 		if err := runGenload(os.Args[2:]); err != nil {
-			fmt.Fprintln(os.Stderr, "genload:", err)
-			os.Exit(1)
+			fail("genload", err)
 		}
 		return
 	}
@@ -101,8 +110,7 @@ func main() {
 	// development without real vulnerable infra. See runGenverdicts. Exits when done.
 	if len(os.Args) >= 2 && os.Args[1] == "genverdicts" {
 		if err := runGenverdicts(os.Args[2:]); err != nil {
-			fmt.Fprintln(os.Stderr, "genverdicts:", err)
-			os.Exit(1)
+			fail("genverdicts", err)
 		}
 		return
 	}
@@ -130,8 +138,7 @@ func main() {
 	// calibration loop with no custom integration. See runImportVerdicts. Exits done.
 	if len(os.Args) >= 2 && os.Args[1] == "importverdicts" {
 		if err := runImportVerdicts(os.Args[2:]); err != nil {
-			fmt.Fprintln(os.Stderr, "importverdicts:", err)
-			os.Exit(1)
+			fail("importverdicts", err)
 		}
 		return
 	}
@@ -141,8 +148,7 @@ func main() {
 	// on-ramp to calibrating on real data. See runIngestReal. Exits when done.
 	if len(os.Args) >= 2 && os.Args[1] == "ingestreal" {
 		if err := runIngestReal(os.Args[2:]); err != nil {
-			fmt.Fprintln(os.Stderr, "ingestreal:", err)
-			os.Exit(1)
+			fail("ingestreal", err)
 		}
 		return
 	}
@@ -152,8 +158,7 @@ func main() {
 	// counts the AND candidates on critical paths. See runAndProbe. Exits when done.
 	if len(os.Args) >= 2 && os.Args[1] == "andprobe" {
 		if err := runAndProbe(os.Args[2:]); err != nil {
-			fmt.Fprintln(os.Stderr, "andprobe:", err)
-			os.Exit(1)
+			fail("andprobe", err)
 		}
 		return
 	}
@@ -163,8 +168,7 @@ func main() {
 	// runIngest. Exits when done.
 	if len(os.Args) >= 2 && os.Args[1] == "ingest" {
 		if err := runIngest(os.Args[2:], os.Stdin, os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, "ingest:", err)
-			os.Exit(1)
+			fail("ingest", err)
 		}
 		return
 	}
@@ -175,8 +179,7 @@ func main() {
 	// check. See runAwsCollect. Exits when done.
 	if len(os.Args) >= 2 && os.Args[1] == "awscollect" {
 		if err := runAwsCollect(os.Args[2:]); err != nil {
-			fmt.Fprintln(os.Stderr, "awscollect:", err)
-			os.Exit(1)
+			fail("awscollect", err)
 		}
 		return
 	}
@@ -186,8 +189,7 @@ func main() {
 	// Read-only dry runs; creates nothing. See runRedteam. Exits when done.
 	if len(os.Args) >= 2 && os.Args[1] == "redteam" {
 		if err := runRedteam(os.Args[2:]); err != nil {
-			fmt.Fprintln(os.Stderr, "redteam:", err)
-			os.Exit(1)
+			fail("redteam", err)
 		}
 		return
 	}
@@ -196,8 +198,7 @@ func main() {
 	// stdout is the protocol channel, so this must return before any logging starts.
 	if len(os.Args) >= 2 && os.Args[1] == "mcp" {
 		if err := runMCP(os.Args[2:]); err != nil {
-			fmt.Fprintln(os.Stderr, "mcp:", err)
-			os.Exit(1)
+			fail("mcp", err)
 		}
 		return
 	}
@@ -206,6 +207,12 @@ func main() {
 	// distroless image (no shell, no curl) be probed with `perspectivegraph
 	// healthz` from a Docker HEALTHCHECK / compose healthcheck.
 	if len(os.Args) >= 2 && os.Args[1] == "healthz" {
+		if len(os.Args) > 2 && helpFlag(os.Args[2]) {
+			// It takes no flags, and probing a server because someone asked what it does
+			// would answer a different question.
+			fmt.Println("usage: perspectivegraph healthz - GET /healthz on API_ADDR (over TLS when TLS_CERT_FILE and TLS_KEY_FILE are set); exit 0 on a 200, 1 otherwise")
+			return
+		}
 		if err := healthCheck(); err != nil {
 			fmt.Fprintln(os.Stderr, "healthz:", err)
 			os.Exit(1)
@@ -228,6 +235,11 @@ func main() {
 
 	cfg := config.Load()
 	setupLogging(cfg.LogLevel, cfg.LogFormat)
+	// The first line of every log, and a series on /metrics: which release this is. A
+	// report of a problem either names its version or cannot be answered, and the image
+	// tag is not always in front of whoever is reading the logs.
+	slog.Info("perspectivegraph starting", "version", buildVersion(), "go", runtime.Version())
+	metrics.BuildInfo.WithLabelValues(buildVersion(), runtime.Version()).Set(1)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

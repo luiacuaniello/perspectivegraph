@@ -18,6 +18,14 @@ var (
 	// default-registry surprises) and still ship Go runtime + process metrics.
 	reg = prometheus.NewRegistry()
 
+	// BuildInfo is the gauge that is always 1 and whose labels say what is running - the
+	// Prometheus convention for telling which release answered a scrape, and for watching
+	// a rollout reach every replica.
+	BuildInfo = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "perspectivegraph_build_info",
+		Help: "Always 1; the labels name the release and the Go toolchain of the running binary.",
+	}, []string{"version", "goversion"})
+
 	IngestEvents = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "perspectivegraph_ingest_events_total",
 		Help: "Events accepted at the ingest webhook, by source collector.",
@@ -182,6 +190,7 @@ func init() {
 	reg.MustRegister(
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+		BuildInfo,
 		IngestEvents, IngestNodes, IngestEdges,
 		NormalizeEvents, BrokerDeadLettered, BrokerConnected,
 		AnalyzerPasses, AnalyzerPassSeconds, AnalyzerCriticalPaths,

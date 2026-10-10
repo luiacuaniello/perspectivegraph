@@ -25,9 +25,10 @@ can build on it and know what a version bump means.
    **breaking** (**major**).
 2. **Ingest event contract.** The JSON accepted by `POST /ingest/events` - the
    `ontology.Event` / `Node` / `Edge` shape - and the scanner endpoints
-   `POST /ingest/<source>` (trivy, semgrep, custodian, falco, k8s, cloudnet, iam, sso,
-   build, supplychain, dataclass), together with the optional query parameters those
-   endpoints read (`repo`, `slug`, `pr`, `sha`, `account`). New *optional* fields and
+   `POST /ingest/<source>` (`trivy`, `semgrep`, `custodian`, `falco`, `build`, `k8s`,
+   `cloudnet`, `iam`, `supplychain`, `sso`, `dataclass`, `eks`, `lambda`, `apigateway`),
+   together with the optional query parameters those endpoints read (`repo`, `slug`,
+   `pr`, `sha`, `account`, `cluster`, `snapshot`). New *optional* fields and
    parameters are minor; removing or renaming one, or changing its meaning, is breaking.
    The node-label and edge-type **vocabulary is closed** (listed in
    [`pkg/ontology/labels.go`](../backend/pkg/ontology/labels.go) and in
@@ -40,9 +41,18 @@ can build on it and know what a version bump means.
    [`.env.example`](../.env.example). A new opt-in knob with a safe default is minor;
    renaming or removing a variable, or changing a default in a way that alters behavior, is
    breaking.
-5. **CLI.** The documented subcommands and their core flags: `healthz`, `verify-audit`
-   (`<file>` or `-postgres`), `ingestreal`, `importverdicts`, `awscollect`, `genload`,
-   `genverdicts`.
+5. **CLI.** The subcommands `perspectivegraph help` lists, and their documented flags:
+   `gate`, `ingest`, `redteam`, `mcp`, `awscollect`, `verify-audit` (`<file>` or
+   `-postgres`), `healthz`, `importverdicts`, `ingestreal`, `andprobe`, `genload`,
+   `genverdicts`, `version` and `help`. For `gate` the **exit code** is part of it,
+   because a pipeline branches on nothing else: `0` clean, `1` blocked, `2` not
+   analysed, `3` the gate itself failed. A new subcommand or flag is minor; removing or
+   renaming one, or changing what an exit code means, is breaking.
+6. **The merge gate's action.** The inputs and outputs of [`action.yml`](../action.yml),
+   as used through the floating major tag (`luiacuaniello/perspectivegraph@v1`), and the
+   `terraform` source the gate reads beside the scanner ones. A new input with a default
+   that keeps the behaviour is minor; removing or renaming an input or an output, or
+   changing a default so that a pipeline's verdict changes, is breaking.
 
 ## Not covered (may change without a major bump)
 
@@ -79,8 +89,15 @@ cd backend && UPDATE_SCHEMA=1 go test ./internal/api -run TestGraphQLSchemaSnaps
 Review the resulting diff: an additive change is fine on a minor bump; a removal, rename, or
 narrowing is breaking and waits for a major.
 
-The other stable surfaces (event contract, endpoints, config, CLI) are governed by this
-policy and by code review; extending the machine guard to them is tracked as follow-up work.
+For the ingest endpoints and the CLI, a test holds this document to the binary:
+`TestAPIStabilityNamesWhatTheBinaryAnswersTo` (`backend/cmd/perspectivegraph`) fails when a
+scanner endpoint or a subcommand exists and is not named above, so the list cannot fall
+behind what ships. Configuration is held the same way against
+[the reference](manual/configuration.md) and `.env.example` (`backend/internal/config`).
+
+What those surfaces *mean* - the event contract's fields, a flag's behaviour, the action's
+inputs - is governed by this policy and by code review; extending the machine guard to
+them is tracked as follow-up work.
 
 ## Raising a compatibility concern
 

@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help chart-install up up-full up-demo up-aws prod-init prod-restore prod-smoke demo demo-build demo-run up-search down logs run-backend build-backend test bench bench-cloudgoat mcp reachability-lab-aws redteam-aws boundary-lab-aws entrypoints-lab-aws public-access-lab-aws terraform-lab-aws tidy run-frontend install-frontend lockfile docs-site seed seed-discovery seed-load clean
+.PHONY: help chart-install up up-full up-demo up-aws prod-init prod-restore prod-smoke demo demo-needs demo-build demo-run up-search down logs run-backend build-backend test bench bench-cloudgoat mcp reachability-lab-aws redteam-aws boundary-lab-aws entrypoints-lab-aws public-access-lab-aws terraform-lab-aws tidy run-frontend install-frontend lockfile docs-site seed seed-discovery seed-load clean
 
 # CGO is disabled so the Go binaries link statically (Go's pure-Go DNS resolver
 # instead of the system one). This also sidesteps a macOS system-linker bug on
@@ -22,11 +22,18 @@ up-full:
 up-demo:
 	docker compose -f docker-compose.yml -f docker-compose.demo.yml --profile app up -d
 
-## demo: the wedge in ~90s - published images, seeded, with the top attack path + its fix (needs jq)
-demo: up-demo demo-run
+## demo: the engine in ~90s - published images, seeded, with the top attack path + its fix (needs Docker, curl and jq)
+demo: demo-needs up-demo demo-run
 
 ## demo-build: the same demo, but built from this working tree (for contributors)
-demo-build: up-full demo-run
+demo-build: demo-needs up-full demo-run
+
+# Said before anything starts: without jq or curl the seed fails where nobody is looking,
+# and the demo ends ninety seconds later on an empty answer.
+demo-needs:
+	@for tool in docker curl jq; do \
+	  command -v $$tool >/dev/null 2>&1 || { echo "make demo needs $$tool on your PATH, and did not find it"; exit 1; }; \
+	done
 
 demo-run:
 	@echo ""
@@ -34,11 +41,18 @@ demo-run:
 	@$(MAKE) --no-print-directory seed          >/dev/null 2>&1 || true
 	@$(MAKE) --no-print-directory seed-discovery >/dev/null 2>&1 || true
 	@printf "→ correlating findings into reachable attack paths"
-	@for i in $$(seq 1 30); do \
+	@n=0; for i in $$(seq 1 30); do \
 	  n=$$(curl -s -X POST http://localhost:8080/graphql -H 'Content-Type: application/json' \
 	    -d '{"query":"{ attackPaths(limit:1){ id } }"}' 2>/dev/null | jq -r '.data.attackPaths | length' 2>/dev/null); \
 	  if [ "$$n" = "1" ]; then break; fi; printf "."; sleep 3; \
-	done; echo ""
+	done; echo ""; \
+	if [ "$$n" != "1" ]; then \
+	  echo ""; \
+	  echo "No attack path appeared within 90 seconds, so there is nothing to show."; \
+	  echo "The backend's log says why:   docker compose logs backend | tail -40"; \
+	  echo "What the seed was answered:   make seed"; \
+	  exit 1; \
+	fi
 	@echo ""
 	@echo "════════ TOP ATTACK PATH  (internet → crown jewel, ranked) ════════"
 	@curl -s -X POST http://localhost:8080/graphql -H 'Content-Type: application/json' \

@@ -36,11 +36,20 @@ adding one is a bounded piece of work, not a rewrite.
   What is still open is **discovery** - enumerating the accounts with
   `organizations:ListAccounts` instead of listing their roles - and it is gated on having
   an Organization to build against. *(not started)*
-- **GCP live connector.** No GCP today. The ontology and analyzer are
-  provider-neutral; this is a new collector against the GCP asset APIs. *(not started)*
-- **Azure live connector.** Azure exists as fixtures only - the mapper is there, the
-  live SDK transport is not. Promoting it to live is smaller than GCP because the
-  shape already exists. *(scaffolded)*
+- **OpenStack connector.** Much of Europe's public cloud runs on OpenStack, and we know
+  of no open attack-path tool that reads it. One read-only connector covers those
+  providers: Nova servers, Neutron ports, security groups, routers and floating IPs for
+  reachability; Keystone role assignments and application credentials for identity -
+  mapped onto the existing ontology, so the analyzer and the scoring run unchanged.
+  OpenStack offers a tenant no policy simulator, so there is no free oracle to grade it
+  against as there is on AWS: what the engine claims there has to be checked by trying
+  it. *(not started)*
+- **GCP and Azure: read a graph that already maps them.**
+  [Cartography](https://github.com/cartography-cncf/cartography) collects both, and
+  collecting them again here would be work spent on what exists. The plan is to read its
+  graph into this ontology rather than to write two more collectors. Azure exists here
+  as fixtures only - a mapper with no live transport - and that stays the place to
+  start for anyone who wants a native connector instead. *(not started)*
 
 ## IAM depth
 
@@ -62,13 +71,20 @@ precision is left on the table.
   false positive into a miss. The lab is now the regression test: it runs the engine and
   AWS side by side and fails on any disagreement. *(done - the oracle measured it, and
   measures it still)*
-- **SCP evaluation.** Service Control Policies can deny what an identity policy
-  allows, and the engine doesn't see them - so it can surface an escalation an SCP
-  blocks. Needs Organizations data (see above), which gates it. *(not started)*
-- **Condition keys and NotAction/NotResource.** Deliberately out of scope: condition
-  keys can't be evaluated without request context, so the engine treats an Allow as
-  unconditional and over-reports rather than misses. This is documented in the IAM
-  package, and is a design boundary, not a bug to fix.
+- **SCP and RCP evaluation.** Service Control Policies can deny what an identity policy
+  allows, and Resource Control Policies what a resource policy allows. The engine reads
+  neither, so it can surface an escalation or an access that a guardrail blocks -
+  `redteam -compare` shows where on an account that has them, because AWS's evaluator
+  applies SCPs. Needs Organizations data (see above), which gates it; AWS's policy
+  simulator does not evaluate RCPs, so those have to be settled with real requests.
+  *(not started)*
+- **Condition keys.** Deliberately not evaluated: a condition cannot be decided without
+  the request's context, so an `Allow` under one counts as granted, and a `Deny` under
+  one is not applied, with what it might block reported as unverified. A `Deny` confined
+  to specific resources, or written with `NotAction`, is ignored for the same reason:
+  each of these over-reports rather than misses. `NotAction` and `NotResource` on an
+  `Allow` are read, since 1.28.3. This is documented in the IAM package, and is a design
+  boundary, not a bug to fix.
 
 ## Empirical calibration
 
@@ -117,22 +133,25 @@ attacked - from an authority independent of the engine.
 ## Scale
 
 The core pathfinding is polynomial and bounded - one shortest path per seed/jewel
-pair, ~270ms for a 10k-node / 45k-edge graph on a laptop. The ceiling is not the
-algorithm, it's the analysis architecture.
+pair, about a quarter of a second for a 10k-node / 45k-edge graph on a laptop
+([measured](docs/SCALE.md#how-the-cost-grows)). The ceiling is not the algorithm, it's
+the analysis architecture.
 
 - **Event-driven incremental analysis.** Today every pass recomputes the whole graph
   from scratch: pathfinding, the Monte Carlo risk simulation, and the what-if
   remediation checks. Cost is `O(graph size) x O(1/interval)` regardless of how little
-  changed, and the Monte Carlo plus per-fix what-if simulation dominate at scale (a
-  mid-size estate already pushes remediation verification into tens of seconds). The
+  changed, and the Monte Carlo simulation dominates it: 3.0 s for a pass's 2,000
+  iterations on a 4,000-node graph ([measured](docs/SCALE.md#simulating-risk)). The
   fix is to recompute only what a graph delta actually affects. Incremental
   *snapshotting* exists (it cuts the fetch cost); incremental *analysis* does not.
   This is the real work behind "excellent performance at very high node counts", and
   it is not done. *(not started)*
-- **Bounded remediation verification.** The what-if proof re-runs a full simulation
-  per fix. Fetching it lazily (done) stops it blocking the dashboard, but the
-  underlying cost is unchanged; a delta-based what-if would fix it at the root.
-  *(partially mitigated)*
+- **Bounded remediation verification.** The what-if proof re-runs the simulation per
+  fix. It now reads only the point estimate, on random draws shared between the "before"
+  and the "after" - 0.08 s where it took 9.6 s, on that same graph - and is fetched
+  lazily, so it no longer blocks the dashboard. It is still a simulation over the whole
+  graph for each fix; a delta-based what-if would make it proportional to what the fix
+  touches. *(mitigated; the root cause is the item above)*
 
 ## Assurance
 
@@ -162,8 +181,9 @@ exists to say by how much rather than let the automated gates imply more than th
   because that is what it is: performed by the author of the code, so it shares the code's
   blind spots by construction. It does not close the item above. *(done - and not a
   substitute)*
-- **OSS-Fuzz enrolment.** The parse boundary is already fuzzed - 14 targets, seeded on
-  every build and explored weekly by
+- **OSS-Fuzz enrolment.** The parse boundary is already fuzzed - a target for every
+  collector's parser, in `backend/internal/ingestion/fuzz`, and for the redaction and
+  policy-unescaping code beside them - seeded on every build and explored weekly by
   [`.github/workflows/fuzz.yml`](.github/workflows/fuzz.yml). OSS-Fuzz would add the two
   things a self-hosted schedule cannot: CPU-months instead of minutes, and findings
   produced by infrastructure that is not the maintainer's. The targets exist, so this is

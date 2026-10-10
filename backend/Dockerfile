@@ -10,6 +10,10 @@ FROM --platform=$BUILDPLATFORM golang:1.27.2-alpine@sha256:85dc1069ac644ea3c527b
 # Supplied by buildx per target image; defaulted so a plain `docker build` still works.
 ARG TARGETOS=linux
 ARG TARGETARCH
+# The release this image is, linked into the binary so that it can say so: in `version`,
+# in the first line of its log, in perspectivegraph_build_info, and to an MCP client. The
+# release workflow passes the tag; any other build leaves it empty and says "dev".
+ARG VERSION=""
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -19,7 +23,7 @@ COPY . .
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -trimpath -ldflags="-s -w" -o /out/perspectivegraph ./cmd/perspectivegraph
+    go build -trimpath -ldflags="-s -w -X main.releaseVersion=${VERSION}" -o /out/perspectivegraph ./cmd/perspectivegraph
 
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 COPY --from=build /out/perspectivegraph /perspectivegraph

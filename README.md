@@ -112,10 +112,11 @@ is - so a lower-scoring route can outrank a higher-scoring one.
 | Why the route is P1, one probability with its range, and every hop with what it lets the attacker do and where its probability came from. | Whether the engine's own scores held up against recorded outcomes - and whether there are enough of them to say. |
 
 *The screenshots are `make demo` with **seeded** verdicts: `make seed-validation` records
-synthetic outcomes on 8 of the 14 routes, the way a BAS run tests part of an estate, which is why
+synthetic outcomes on part of the routes, the way a BAS run tests part of an estate, which is why
 the calibration panel has something to show - and why it still says **not enough outcomes yet**:
-8 is far short of the 30 a verdict needs (leaning "calibrated on average": the engine predicted
-58% where 50% held up). A fresh install and the [public demo](https://demo.a3thinker.it) report
+the handful it records is far short of the 30 a verdict needs. The counts in the pictures are
+those of the release they were taken on; the sample data has grown since, so yours differ by a
+route or two. A fresh install and the [public demo](https://demo.a3thinker.it) report
 **insufficient data** instead, until real outcomes exist. The public demo runs on one free VM, so
 treat it as best-effort.*
 
@@ -234,12 +235,14 @@ caught one false positive, a permissions boundary the engine ignored; it is fixe
 puts bucket policies and function URLs to AWS the same way; its first run caught four errors,
 also fixed. `make public-access-lab-aws` does it, for free, for Block Public Access set on the
 whole account, and `make terraform-lab-aws` applies the Terraform plans the merge gate judged and
-asks the internet whether each one opened a way in. Each of these labs writes what it found into the build, and the dashboard's
-Accuracy page shows it under *Checked against AWS*: every question, AWS's answer, the engine's,
-and the version it was asked of.
+asks the internet whether each one opened a way in. Each of these labs writes what it found
+into the build, and the dashboard's Accuracy page shows it under *Checked against AWS*: every
+question, AWS's answer, the engine's, and the version it was asked of.
 
-- **Clouds.** AWS is live and verified against a real account, cross-account `AssumeRole`
-  included. Azure is fixtures only, and there is no GCP connector.
+- **Clouds.** AWS is live and verified against a real account; reading several accounts in
+  one pass is exercised on fixtures, not yet against real ones. Azure is fixtures only, and
+  there is no connector for GCP or for OpenStack: the [roadmap](ROADMAP.md#coverage) says
+  what is planned for each.
 - **Interface.** The GraphQL schema is frozen and drift-guarded, so a breaking change comes with
   a major version, never in a patch: [API stability](docs/API-STABILITY.md).
 - **Deployment.** The backend is distroless and non-root on a read-only root filesystem, the
