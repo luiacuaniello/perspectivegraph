@@ -8,7 +8,7 @@
 # and Caddy 2.11.7 requires golang.org/x/net v0.59.0, against which five HTTP/2 advisories
 # are filed (CVE-2026-78669 among them) that v0.60.0 fixes. The second was a finding about
 # the module more than about the binary - compiled with Go 1.27, x/net's HTTP/2 serves
-# through the standard library's, fixed in 1.27.2 (docs/UPGRADING.md, 1.36.1) - but a build
+# through the standard library's, fixed in 1.27.2 (docs/UPGRADING.md, 1.37.0) - but a build
 # that needs that argument every time it is scanned is not one to hand an operator. So:
 #
 #   * the toolchain is the backend's Go, and TestGoVersionIsConsistentEverywhereItIsNamed

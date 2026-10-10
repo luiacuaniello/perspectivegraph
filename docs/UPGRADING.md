@@ -17,7 +17,7 @@ digest, take the backup, stage it.
 
 ---
 
-## 1.36.1
+## 1.37.0
 
 ### Single VM: Caddy is built with golang.org/x/net 0.60.0, and a scan of it is clean
 

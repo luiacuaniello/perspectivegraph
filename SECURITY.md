@@ -137,7 +137,9 @@ GitHub release), and carry a **SLSA build-provenance** attestation. Verify befor
 run them:
 
 ```bash
-IMG=ghcr.io/luiacuaniello/perspectivegraph:v0.3.0
+# The release you run; the dashboard and database images (perspectivegraph-dashboard,
+# perspectivegraph-postgres) verify the same way.
+IMG=ghcr.io/luiacuaniello/perspectivegraph:v1.37.0 # x-release-please-version
 ID_RE="^https://github.com/luiacuaniello/perspectivegraph/.github/workflows/"
 ISSUER=https://token.actions.githubusercontent.com
 
