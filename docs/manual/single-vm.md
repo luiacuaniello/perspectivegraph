@@ -198,6 +198,14 @@ and restarts what changed. It never uses `docker compose up --build`: that would
 backend, the dashboard and the database from source on this machine and tag each build with
 the release's own name, so an unsigned local image would run under the name of the signed one.
 
+Upgrade through `make prod-init` rather than `docker compose up -d` alone: Caddy's image is
+built on this machine, not pulled, so only a build replaces it. What the running one was
+built from - its Go, and every module with its version:
+
+```bash
+docker compose exec caddy caddy build-info
+```
+
 ## How this is checked
 
 [`scripts/prod-smoke.sh`](../../scripts/prod-smoke.sh) runs the whole recipe in a scratch
