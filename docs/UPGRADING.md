@@ -17,6 +17,47 @@ digest, take the backup, stage it.
 
 ---
 
+## 1.36.1
+
+### Single VM: Caddy is built with golang.org/x/net 0.60.0, and a scan of it is clean
+
+**Affects you if** you run the single-VM recipe (`make prod-init`) from 1.36.0 - above all
+if you scan what you run. Nothing else contains Caddy: neither the Helm chart nor the other
+compose files use it.
+
+The recipe compiles Caddy on your machine, and 1.36.0 compiled release 2.11.7 with the
+dependencies that release names - among them `golang.org/x/net` v0.59.0. Five HTTP/2
+advisories are filed against that version (GO-2026-6603, -6610, -6611, -6612 and -6617;
+three of them let a client crash or exhaust a server), and a scanner reports them on that
+build: Trivy by the module's version, `govulncheck` by the names of the functions Caddy
+calls.
+
+What runs is narrower than what they report. Compiled with Go 1.27, `golang.org/x/net/http2`
+serves and dials through the standard library's HTTP/2, and its own server and client are
+left out of the build by their build tags. The recipe compiles with Go 1.27.2, which has all
+five fixed. Checked on the binary 1.36.0 builds: it holds no symbol of `x/net`'s HTTP/2
+server, and the standard library's in its place. What it does hold of the code the fixes
+touch - `x/net`'s frame reader and its wrapper around the standard client - is not what
+answers HTTP/2 on port 443.
+
+So no way to exploit these against the recipe as shipped is known - and it is fixed anyway,
+because the answer to a scanner's finding should not be an argument about build tags. No
+Caddy release moves that dependency yet, so the recipe now builds Caddy from a module of its
+own, [`deploy/caddy/go.mod`](../deploy/caddy/go.mod): what Caddy 2.11.7 requires, except
+`golang.org/x/net` v0.60.0. Trivy scans the image built from it on every change.
+
+What to do: upgrade as [the recipe describes](manual/single-vm.md#upgrade) - check out the
+release and run `make prod-init`, which rebuilds Caddy's image and replaces its container.
+The certificates, the credentials and `.env` are kept. `docker compose up -d` on its own is
+not enough: Caddy's image is built on your machine, not pulled, so without the build the old
+one keeps running. To see what the running Caddy was built from:
+
+```bash
+docker compose exec caddy caddy build-info | grep golang.org/x/net
+```
+
+The line names `v0.60.0` once the upgrade is done.
+
 ## 1.36.0
 
 ### Helm: the backend runs as its own service account, and no pod mounts an API token

@@ -2,11 +2,14 @@
 # project's Go, on distroless.
 #
 # Built rather than taken from the official image, because a Caddy release is built once and
-# stays as it was built. Twice in one day that left a High in the binary with no newer Caddy
-# to move to: 2.11.7's official binary is Go 1.26.8, with two standard-library CVEs
+# stays as it was built. Twice in one day that left the image failing its scan with no newer
+# Caddy to move to: 2.11.7's official binary is Go 1.26.8, with two standard-library CVEs
 # (CVE-2026-78667 in net/http, CVE-2026-97031 in crypto/tls) that Go 1.26.9 and 1.27.2 fix;
-# and Caddy 2.11.7 requires golang.org/x/net v0.59.0, with CVE-2026-78669 (HTTP/2) that
-# v0.60.0 fixes. So:
+# and Caddy 2.11.7 requires golang.org/x/net v0.59.0, against which five HTTP/2 advisories
+# are filed (CVE-2026-78669 among them) that v0.60.0 fixes. The second was a finding about
+# the module more than about the binary - compiled with Go 1.27, x/net's HTTP/2 serves
+# through the standard library's, fixed in 1.27.2 (docs/UPGRADING.md, 1.36.1) - but a build
+# that needs that argument every time it is scanned is not one to hand an operator. So:
 #
 #   * the toolchain is the backend's Go, and TestGoVersionIsConsistentEverywhereItIsNamed
 #     keeps this pin, and go.mod's, in step with the rest - the standard library is patched
