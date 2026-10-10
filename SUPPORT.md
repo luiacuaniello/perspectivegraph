@@ -26,7 +26,9 @@ closed, and "how do I model a shared VPC" is a thing other people search for lat
 
 Four lines that turn most reports into something answerable on the first reply:
 
-1. **The version** - the image digest or tag, or `git rev-parse HEAD` if you built it.
+1. **The version** - what `perspectivegraph version` prints, or the first line of the
+   backend's log (`perspectivegraph starting version=...`); before 1.37, the image tag or
+   digest, or `git rev-parse HEAD` if you built it.
 2. **Which stack** - `make demo`, Docker Compose, or Helm on a real cluster - and the
    graph backend (in-memory or Apache AGE), because several behaviours differ between them.
 3. **What you expected and what happened**, ideally as the request you sent and the

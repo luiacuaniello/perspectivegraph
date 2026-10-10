@@ -137,6 +137,11 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # The backend links its release into the binary (backend/Dockerfile), so that the
+          # image can say which one it is. Until 1.37 only the downloadable binaries were
+          # stamped, and the image answered "dev" - to an MCP client among others, which is
+          # how the image is listed in the MCP Registry.
+          build-args: ${{ matrix.name == 'backend' && format('VERSION={0}', inputs.tag) || '' }}
           provenance: false # a portable SLSA attestation is attached below instead
           sbom: false # an SPDX SBOM is generated + attested below
 

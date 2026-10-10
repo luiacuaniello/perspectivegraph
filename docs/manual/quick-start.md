@@ -2,7 +2,7 @@
 
 *Part of the [PerspectiveGraph manual](../MANUAL.md).* Running the stack, feeding it sample data, and seeing the first attack path.
 
-**See the wedge in ~90 seconds** - bring up the stack, seed it, and watch the
+**See it in ~90 seconds** - bring up the stack, seed it, and watch the
 findings correlate into the top ranked attack path with its fix:
 
 ```bash

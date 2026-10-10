@@ -27,7 +27,7 @@ If it involves ingestion, the source + a minimal sample payload helps a lot.
 ## Environment
 
 - Deploy: `docker compose` / Helm (k8s) / host dev loop (`make run-backend`)
-- Version / commit: <!-- git describe --tags, or the release tag -->
+- Version: <!-- what `perspectivegraph version` prints, or the first line of the backend's log; the image tag otherwise -->
 - Graph store: bundled Apache AGE / external Postgres+AGE / in-memory
 - OS + Docker/k8s version (if relevant):
 

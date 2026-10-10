@@ -416,6 +416,34 @@ jobs:
       - name: Run the recipe end to end
         run: bash scripts/prod-smoke.sh
 
+  # `make demo` is the first command in the README, and no job ran it: the one above starts
+  # the same published images but feeds them nothing, so a renamed sample file or a changed
+  # query would have shown a newcomer an empty answer under "TOP ATTACK PATH" with every
+  # check green. It runs here as written, and fails unless the seed turns into a route.
+  # On a release pull request the images it names do not exist yet; compose then builds
+  # them from this tree, which is slower and checks the same thing.
+  demo:
+    name: Quick start (make demo)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      - name: Pull Docker Hub images through mirror.gcr.io
+        run: bash "$GITHUB_WORKSPACE/scripts/ci-docker-mirror.sh" "$GITHUB_WORKSPACE/docker-compose.yml"
+      - name: make demo
+        run: make demo
+      - name: The dashboard serves the routes, through its own proxy
+        run: |
+          set -euo pipefail
+          curl -fsS -o /dev/null http://localhost:3000/
+          n=$(curl -fsS -X POST http://localhost:3000/graphql -H 'Content-Type: application/json' \
+                -d '{"query":"{ attackPaths(limit:50){ id } }"}' | jq '.data.attackPaths | length')
+          echo "attack paths through the dashboard: $n"
+          test "$n" -ge 1
+      - name: The backend's log, if it failed
+        if: failure()
+        run: docker compose logs backend | tail -80
+
   # deploy/aws holds the read-only role the AWS connector reads with, as CloudFormation and
   # as a Terraform module - files nothing else in the build touches, so a typo in either
   # would ship and surface only in someone's account. Both are checked here; a live deploy

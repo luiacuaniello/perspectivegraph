@@ -313,6 +313,10 @@ Pin to a signed, digest-referenced image and verify it before rollout (see
 
 - `GET /healthz` - liveness/readiness (the container HEALTHCHECK uses the `healthz`
   subcommand; distroless has no shell).
+- **Which release is running**: the first line of the backend's log
+  (`perspectivegraph starting version=vX.Y.Z`, from 1.37), `perspectivegraph version` in the
+  container, and `perspectivegraph_build_info{version,goversion}` on `/metrics` - one series
+  per replica, so a rollout that has not reached all of them shows as two versions.
 - `GET /metrics` - Prometheus metrics: `perspectivegraph_connector_*`,
   `perspectivegraph_analyzer_*`, ingest and auth counters, and
   `perspectivegraph_broker_connected` (0 while the bus is reconnecting).
