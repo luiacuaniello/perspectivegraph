@@ -302,7 +302,7 @@ type ProfileScore {
 type Query {
   aiEnabled: Boolean
   applications: [String]
-  attackPaths(app: String, limit: Int): [AttackPath]
+  attackPaths(app: String, limit: Int, offset: Int): [AttackPath]
   calibration: Calibration
   calibrationTrend(points: Int): [CalibrationTrendPoint]
   graph(app: String, limit: Int, offset: Int): GraphView

@@ -33,6 +33,7 @@ import (
 	"io"
 	"os"
 	"runtime/debug"
+	"strings"
 	"sync"
 )
 
@@ -99,11 +100,17 @@ type ToolAnnotations struct {
 // Tool is one callable capability. InputSchema is JSON Schema: it is the contract
 // the agent plans against, so it carries the real constraints (bounds, enums)
 // rather than accepting anything and failing at call time.
+//
+// OutputSchema is the other half of that contract: the fields a result carries and what
+// each one means. Without it an agent learns a tool's result by calling it, and plans the
+// next call on field names it has guessed. A tool that declares one also returns its
+// result as structuredContent - see callTool.
 type Tool struct {
-	Name        string           `json:"name"`
-	Description string           `json:"description"`
-	InputSchema map[string]any   `json:"inputSchema"`
-	Annotations *ToolAnnotations `json:"annotations,omitempty"`
+	Name         string           `json:"name"`
+	Description  string           `json:"description"`
+	InputSchema  map[string]any   `json:"inputSchema"`
+	OutputSchema map[string]any   `json:"outputSchema,omitempty"`
+	Annotations  *ToolAnnotations `json:"annotations,omitempty"`
 
 	// Call runs the tool. The returned string is what the model reads, so it should
 	// be compact and self-describing - JSON the model can quote back, not prose.
@@ -222,7 +229,20 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) map[strin
 	if err != nil {
 		return toolResult(err.Error(), true)
 	}
-	return toolResult(out, false)
+	res := toolResult(out, false)
+	// A tool that declares an output schema owes the client the result as an object, not
+	// only as text to parse. The text stays: clients older than structured results read
+	// that, and the two are the same bytes, so they cannot disagree.
+	if tool.OutputSchema != nil && isJSONObject(out) {
+		res["structuredContent"] = json.RawMessage(out)
+	}
+	return res
+}
+
+// isJSONObject reports whether s is one JSON object - the only shape structuredContent
+// may take.
+func isJSONObject(s string) bool {
+	return strings.HasPrefix(strings.TrimSpace(s), "{") && json.Valid([]byte(s))
 }
 
 // call runs a tool and converts a panic into an error.

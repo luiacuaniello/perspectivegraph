@@ -77,6 +77,24 @@ integration is `simulate_fix` - it re-runs the whole simulation with the given e
 reports what actually changes, settling "would this help" with a deterministic counterfactual
 instead of an argument.
 
+Every tool says what it returns as well as what it takes: an `outputSchema` naming each field
+and what it means, and the result as `structuredContent` beside the text. A client can hold a
+result to it, and an agent does not plan its next call on a field name it guessed. The schemas
+are kept by hand next to the queries, so a test runs each tool against the real engine and fails
+on a field returned and not declared, or declared and not returned.
+
+Three things an agent would otherwise find out by getting them wrong:
+
+- **`list_attack_paths` returns a page.** `nextOffset` is set when more routes exist, and passed
+  back as `offset` it returns the next ones. Suppressed routes are listed too, marked
+  `suppressed`. An engine that predates paging still serves the first page, and says so when
+  asked for the second.
+- **`routes_to_target` returns each route with its hops.** The engine ranks the best route from
+  each entry point to each target; the alternates this tool finds are in no ranking, so
+  `explain_attack_path` cannot look them up. Their hops go straight to `simulate_fix`.
+- **A failed call says whether to try again.** A refused token will be refused again and only
+  whoever launched the server can change it; a rate limit and an engine that is down pass.
+
 The surface is **read-only**: nothing suppresses a path, opens a PR or records a verdict,
 because an agent that can silently accept a risk is a liability rather than a feature. Every
 tool declares that on the wire (`readOnlyHint`), so a host can decide what to run unattended

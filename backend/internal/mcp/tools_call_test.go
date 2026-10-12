@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -117,7 +118,165 @@ func TestExplainAttackPathReportsAnUnknownID(t *testing.T) {
 	}
 }
 
+// The engine has no route-by-id query, so the tool reads the ranking until it finds the
+// id. It used to read the first 500 routes and stop: route 501 of a large estate was
+// "not currently open" while list_attack_paths was showing it.
+func TestExplainAttackPathLooksPastTheFirstPage(t *testing.T) {
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Query string `json:"query"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		asked = append(asked, body.Query)
+		if strings.Contains(body.Query, "offset:") {
+			_, _ = w.Write([]byte(`{"data":{"attackPaths":[{"id":"the-one-wanted","score":0.4}]}}`))
+			return
+		}
+		rows := make([]string, explainPage) // a full first page of other routes
+		for i := range rows {
+			rows[i] = fmt.Sprintf(`{"id":"other-%d"}`, i)
+		}
+		_, _ = w.Write([]byte(`{"data":{"attackPaths":[` + strings.Join(rows, ",") + `]}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	out, err := callTool(t, NewAPI(srv.URL, ""), "explain_attack_path", map[string]any{"path_id": "the-one-wanted"})
+	if err != nil {
+		t.Fatalf("a route on the second page was not found: %v", err)
+	}
+	if !strings.Contains(out, `"id":"the-one-wanted"`) {
+		t.Errorf("the wrong route came back: %s", out)
+	}
+	if len(asked) != 2 || !strings.Contains(asked[1], fmt.Sprintf("offset: %d", explainPage)) {
+		t.Errorf("want the second page asked for after a full first one, got %d queries: %v", len(asked), asked)
+	}
+	// The first page carries no offset: an engine older than paging rejects the argument,
+	// and nearly every call ends on that page.
+	if strings.Contains(asked[0], "offset") {
+		t.Errorf("the first page was asked for with an offset an old engine would reject: %s", asked[0])
+	}
+}
+
+// ── list_attack_paths ───────────────────────────────────────────────────────
+
+const threePaths = `{"attackPaths":[{"id":"p1"},{"id":"p2"},{"id":"p3"}]}`
+
+// A limit with no way past it is a wall: the model sees the top of the ranking and cannot
+// tell whether that is all of it. The tool asks the engine for one route more than the
+// model asked for, and says whether there was one.
+func TestListAttackPathsSaysWhetherThereIsAnotherPage(t *testing.T) {
+	f := newFakeEngine(t, threePaths)
+	out, err := callTool(t, f.api(""), "list_attack_paths", map[string]any{"limit": float64(2)})
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	var page struct {
+		AttackPaths []map[string]any `json:"attackPaths"`
+		Offset      int              `json:"offset"`
+		NextOffset  *int             `json:"nextOffset"`
+	}
+	if err := json.Unmarshal([]byte(out), &page); err != nil {
+		t.Fatalf("output is not the page object: %v\n%s", err, out)
+	}
+	if len(page.AttackPaths) != 2 || page.AttackPaths[1]["id"] != "p2" {
+		t.Errorf("want the two routes asked for, the look-ahead one dropped, got %v", page.AttackPaths)
+	}
+	if page.NextOffset == nil || *page.NextOffset != 2 {
+		t.Errorf("a third route exists, so nextOffset must be 2, got %v in %s", page.NextOffset, out)
+	}
+	if !strings.Contains(f.lastQuery, "limit: 3") || strings.Contains(f.lastQuery, "offset") {
+		t.Errorf("the first page should ask for limit+1 and send no offset: %s", f.lastQuery)
+	}
+
+	// The last page: fewer routes than limit+1 came back, so there is nothing after it.
+	out, err = callTool(t, f.api(""), "list_attack_paths", map[string]any{"limit": float64(5), "offset": float64(2), "app": "payments-api"})
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if !strings.Contains(out, `"nextOffset":null`) || !strings.Contains(out, `"offset":2`) {
+		t.Errorf("the last page must say so with a null nextOffset: %s", out)
+	}
+	for _, want := range []string{"limit: 6", "offset: 2", `app: "payments-api"`} {
+		if !strings.Contains(f.lastQuery, want) {
+			t.Errorf("the query lost %q: %s", want, f.lastQuery)
+		}
+	}
+}
+
+// No routes is an answer, and it reads as an empty list. The engine sends null for an
+// empty ranking, which a model reads as "the tool returned nothing".
+func TestListAttackPathsReturnsNoRoutesAsAnEmptyList(t *testing.T) {
+	f := newFakeEngine(t, `{"attackPaths":null}`)
+	out, err := callTool(t, f.api(""), "list_attack_paths", nil)
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if !strings.Contains(out, `"attackPaths":[]`) {
+		t.Errorf("no routes should read as an empty list, got %s", out)
+	}
+}
+
+// Glama and the registry run the newest tool against whatever engine an operator has. One
+// that predates paging rejects the argument, and the raw rejection reads as a bug in the
+// tool rather than as something the model can route around.
+func TestListAttackPathsExplainsAnEngineTooOldToPage(t *testing.T) {
+	f := newFakeEngine(t, `null`)
+	f.errors = `[{"message":"Unknown argument \"offset\" on field \"attackPaths\" of type \"Query\"."}]`
+	_, err := callTool(t, f.api(""), "list_attack_paths", map[string]any{"offset": float64(20)})
+	if err == nil {
+		t.Fatal("an engine that cannot page returned no error")
+	}
+	for _, want := range []string{"too old", "app", "routes_to_target"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error does not say %q, so the model has no way forward: %v", want, err)
+		}
+	}
+}
+
 // ── the remaining tools ─────────────────────────────────────────────────────
+
+// The engine indents its replies for people. A tool that hands them on as they are makes
+// the model read the indentation, and pay for it, on every call.
+func TestAToolHandsOnTheAnswerWithoutItsIndentation(t *testing.T) {
+	f := newFakeEngine(t, "{\n  \"remediationPlan\": [\n    {\n      \"title\": \"Scope down the role\"\n    }\n  ]\n}")
+	out, err := callTool(t, f.api(""), "list_fixes", nil)
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if want := `{"remediationPlan":[{"title":"Scope down the role"}]}`; out != want {
+		t.Errorf("got  %q\nwant %q", out, want)
+	}
+}
+
+// The engine computes a triage priority for the ranked routes only. Asked for here, it came
+// back 0 on every route and reached the model as a fact. The hops are what this tool has to
+// return: an alternate route is in no ranking, so explain_attack_path cannot supply them.
+func TestRoutesToTargetAsksForTheHopsAndNoPriority(t *testing.T) {
+	f := newFakeEngine(t, `{"kShortestPaths":[]}`)
+	if _, err := callTool(t, f.api(""), "routes_to_target", map[string]any{"target": "payments-admin"}); err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if !strings.Contains(f.lastQuery, "steps") || !strings.Contains(f.lastQuery, "weightBasis") {
+		t.Errorf("the query does not ask for each route's hops: %s", f.lastQuery)
+	}
+	if strings.Contains(f.lastQuery, "priority") {
+		t.Errorf("the query asks for a priority the engine does not compute for these routes: %s", f.lastQuery)
+	}
+}
+
+// get_posture is where an agent starts, so it is where the names the other tools take
+// have to be: `app` was a parameter with no way to learn a valid value.
+func TestPostureListsTheApplicationNames(t *testing.T) {
+	f := newFakeEngine(t, `{"posture":{"activePaths":3},"applications":["payments-api"]}`)
+	out, err := callTool(t, f.api(""), "get_posture", nil)
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if !strings.Contains(f.lastQuery, "applications") || !strings.Contains(out, "payments-api") {
+		t.Errorf("the application names did not reach the model\nasked: %s\ngot:   %s", f.lastQuery, out)
+	}
+}
 
 func TestListFixesQueriesTheRemediationPlan(t *testing.T) {
 	f := newFakeEngine(t, `{"remediationPlan":[{"title":"Scope down IAM role","kind":"terraform","pathCount":4,"coveragePct":0.31}]}`)
@@ -146,6 +305,22 @@ func TestSimulateFixAsksWhatIf(t *testing.T) {
 	}
 	if !strings.Contains(out, "riskReduction") && !strings.Contains(out, "removedEdges") {
 		t.Errorf("output does not report the effect of the cut: %s", out)
+	}
+	// The type was read from the arguments and never sent: the cut above removed every
+	// relationship from edge-alb to payments, not the one it named.
+	if !strings.Contains(f.lastQuery, `type: "EXPOSES"`) {
+		t.Errorf("the relationship type was dropped, so the cut is broader than asked: %s", f.lastQuery)
+	}
+
+	// Without a type the cut is every relationship between the two nodes, and no empty
+	// type may be sent in its place: the engine would look for a relationship named "".
+	if _, err := callTool(t, f.api(""), "simulate_fix", map[string]any{
+		"cuts": []any{map[string]any{"from": "edge-alb", "to": "payments"}},
+	}); err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if strings.Contains(f.lastQuery, "type:") {
+		t.Errorf("a cut with no type sent one anyway: %s", f.lastQuery)
 	}
 }
 
@@ -236,6 +411,42 @@ func TestUnreachableEngineIsExplained(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unreachable") || !strings.Contains(err.Error(), "127.0.0.1:1") {
 		t.Errorf("error does not say what was unreachable: %v", err)
+	}
+	if !strings.Contains(err.Error(), "retry once") {
+		t.Errorf("error does not say whether trying again can help: %v", err)
+	}
+}
+
+// "HTTP 401" is a number; what a model needs is its next move. A refused token will be
+// refused again and only the user can change it; a rate limit and a failing engine pass.
+// Told nothing, an agent retries the first in a loop and gives up on the others.
+func TestAFailedCallSaysWhatToDoNext(t *testing.T) {
+	for _, c := range []struct {
+		status int
+		want   []string
+		never  string
+	}{
+		{http.StatusUnauthorized, []string{"401", "will not help", "API_TOKEN"}, "retry once"},
+		{http.StatusForbidden, []string{"403", "will not help"}, "retry once"},
+		{http.StatusTooManyRequests, []string{"429", "wait", "repeat"}, "will not help"},
+		{http.StatusServiceUnavailable, []string{"503", "retry once"}, "will not help"},
+		{http.StatusBadRequest, []string{"400", "will fail again"}, "retry once"},
+	} {
+		f := newFakeEngine(t, `{}`)
+		f.status = c.status
+		_, err := callTool(t, f.api(""), "list_fixes", nil)
+		if err == nil {
+			t.Errorf("HTTP %d produced no error", c.status)
+			continue
+		}
+		for _, want := range c.want {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("HTTP %d: the error does not say %q: %v", c.status, want, err)
+			}
+		}
+		if strings.Contains(err.Error(), c.never) {
+			t.Errorf("HTTP %d: the error gives the wrong advice (%q): %v", c.status, c.never, err)
+		}
 	}
 }
 

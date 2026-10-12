@@ -1033,8 +1033,9 @@ func (a *API) Schema() (graphql.Schema, error) {
 				Type:        graphql.NewList(pathType),
 				Description: "Critical attack paths from the latest analysis pass, ranked by composite triage priority (P1 first), so limit:N is the actionable Top-N. Optionally scoped to one application and capped.",
 				Args: graphql.FieldConfigArgument{
-					"app":   &graphql.ArgumentConfig{Type: graphql.String, Description: "Only paths touching this application (repo_slug or app tag)."},
-					"limit": &graphql.ArgumentConfig{Type: graphql.Int, DefaultValue: 0},
+					"app":    &graphql.ArgumentConfig{Type: graphql.String, Description: "Only paths touching this application (repo_slug or app tag)."},
+					"limit":  &graphql.ArgumentConfig{Type: graphql.Int, DefaultValue: 0, Description: "Return at most this many paths; 0 (the default) returns them all."},
+					"offset": &graphql.ArgumentConfig{Type: graphql.Int, DefaultValue: 0, Description: "Skip this many paths from the top of the ranking before limit applies, so offset += limit pages through it. Past the end is an empty list."},
 				},
 				Resolve: func(p graphql.ResolveParams) (any, error) {
 					paths := a.shownPaths(p.Context)
@@ -1047,6 +1048,11 @@ func (a *API) Schema() (graphql.Schema, error) {
 							}
 						}
 						paths = filtered
+					}
+					// After the scope, before the cap: a page is a window on the ranking the
+					// caller asked for, not on the whole environment's.
+					if offset, _ := p.Args["offset"].(int); offset > 0 {
+						paths = paths[min(offset, len(paths)):]
 					}
 					if limit, _ := p.Args["limit"].(int); limit > 0 && limit < len(paths) {
 						paths = paths[:limit]

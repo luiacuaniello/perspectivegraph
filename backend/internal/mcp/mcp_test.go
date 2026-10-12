@@ -197,7 +197,23 @@ func TestToolDescriptionsCarryNoConcatenationDebris(t *testing.T) {
 			t.Errorf("%s description carries %q from its Go source: %s", tl.Name, m, tl.Description)
 		}
 		walk(tl.Name, "inputSchema", tl.InputSchema)
+		walk(tl.Name, "outputSchema", wire(t, tl.OutputSchema))
 	}
+}
+
+// wire is a schema as a client receives it: through JSON, so every list is a []any
+// whatever Go type built it.
+func wire(t *testing.T, schema map[string]any) map[string]any {
+	t.Helper()
+	b, err := json.Marshal(schema)
+	if err != nil {
+		t.Fatalf("schema does not encode: %v", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatalf("schema does not decode: %v", err)
+	}
+	return out
 }
 
 // A parameter without a description is a guess the model has to make: what `k` counts,
@@ -250,12 +266,13 @@ func TestToolsQueryTheEngine(t *testing.T) {
 		t.Errorf("get_posture returned %q", out)
 	}
 
-	// A limit above the schema's ceiling is clamped, not forwarded.
+	// A limit above the schema's ceiling is clamped, not forwarded. One more than the
+	// ceiling goes on the wire: the extra route is how the tool learns another page exists.
 	if _, err := listPaths(api).Call(context.Background(), map[string]any{"limit": float64(9999)}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(lastQuery, "limit: 100") {
-		t.Errorf("limit should clamp to 100, query was: %s", lastQuery)
+	if !strings.Contains(lastQuery, "limit: 101") {
+		t.Errorf("limit should clamp to 100 (101 asked of the engine), query was: %s", lastQuery)
 	}
 
 	// An engine-side rejection becomes a message the model can act on.
@@ -269,6 +286,65 @@ func TestJSONStringEscapesModelInput(t *testing.T) {
 	// Model-supplied strings reach the GraphQL query text, so they are encoded.
 	if got := jsonString(`a" b\`); got != `"a\" b\\"` {
 		t.Errorf("jsonString = %s", got)
+	}
+}
+
+// ── output schemas ──────────────────────────────────────────────────────────
+
+// A tool that says what it takes and not what it returns leaves an agent to plan its next
+// call on field names it has guessed. Every tool declares its result, as the object MCP
+// requires an output schema to be. Whether the declaration is TRUE is checked where a real
+// engine can answer: TestEveryMCPToolReturnsWhatItDeclares, in package api.
+func TestEveryToolDeclaresWhatItReturns(t *testing.T) {
+	for _, tl := range Tools(NewAPI("http://example.invalid", "")) {
+		out := wire(t, tl.OutputSchema)
+		if out == nil {
+			t.Errorf("%s: no outputSchema - its result is documented nowhere a client can read", tl.Name)
+			continue
+		}
+		if out["type"] != "object" {
+			t.Errorf("%s: outputSchema type is %v; MCP requires an object", tl.Name, out["type"])
+		}
+		if props, _ := out["properties"].(map[string]any); len(props) == 0 {
+			t.Errorf("%s: outputSchema declares no fields", tl.Name)
+		}
+	}
+}
+
+// The schema is a promise about structuredContent, so a tool that declares one has to
+// send it - and send the text too, which is all an older client reads. The two must be
+// the same result.
+func TestADeclaredResultIsSentAsAnObjectAndAsText(t *testing.T) {
+	answer := func(text string, err error) func(context.Context, map[string]any) (string, error) {
+		return func(context.Context, map[string]any) (string, error) { return text, err }
+	}
+	declared := obj(map[string]any{"n": map[string]any{"type": "integer"}})
+	srv := testServer(
+		Tool{Name: "declared", InputSchema: obj(nil), OutputSchema: declared, Call: answer(`{"n":1}`, nil)},
+		Tool{Name: "undeclared", InputSchema: obj(nil), Call: answer(`{"n":1}`, nil)},
+		Tool{Name: "failing", InputSchema: obj(nil), OutputSchema: declared, Call: answer("", fmt.Errorf("the engine is down"))},
+	)
+	call := func(name string) map[string]any {
+		t.Helper()
+		got := converse(t, srv, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"`+name+`","arguments":{}}}`)
+		return got[0]["result"].(map[string]any)
+	}
+
+	res := call("declared")
+	structured, ok := res["structuredContent"].(map[string]any)
+	if !ok || structured["n"] != float64(1) {
+		t.Errorf("a tool with an output schema must return structuredContent, got %v", res["structuredContent"])
+	}
+	if text := res["content"].([]any)[0].(map[string]any)["text"]; text != `{"n":1}` {
+		t.Errorf("the text an older client reads changed: %v", text)
+	}
+	if _, ok := call("undeclared")["structuredContent"]; ok {
+		t.Error("a tool that declares no output schema must not send structuredContent")
+	}
+	// An error is a message for the model, not a result: it has no fields to declare.
+	failed := call("failing")
+	if _, ok := failed["structuredContent"]; ok || failed["isError"] != true {
+		t.Errorf("a failed call must be an error with no structuredContent, got %v", failed)
 	}
 }
 
