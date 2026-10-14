@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.38.1](https://github.com/luiacuaniello/perspectivegraph/compare/v1.38.0...v1.38.1) (2026-10-14)
+
+
+### Bug Fixes
+
+* **chart:** take NATS 2.15.1, and build on distroless Debian 13 ([#356](https://github.com/luiacuaniello/perspectivegraph/issues/356)) ([bc58ae5](https://github.com/luiacuaniello/perspectivegraph/commit/bc58ae5517e783815b189b3c8ea7d884678a6e45))
+
 ## [1.38.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.37.0...v1.38.0) (2026-10-12)
 
 
