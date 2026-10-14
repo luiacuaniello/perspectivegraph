@@ -24,16 +24,32 @@ MIN="${1:-80}"
 cd "$(dirname "$0")/../backend"
 
 profile="$(mktemp -t pg-cover.XXXXXX)"
-trap 'rm -f "$profile"' EXIT
+log="$(mktemp -t pg-cover-log.XXXXXX)"
+trap 'rm -f "$profile" "$log"' EXIT
 
 echo "→ running tests with cross-package coverage attribution…"
-GOTOOLCHAIN="${GOTOOLCHAIN:-go1.27.2}" CGO_ENABLED=0 \
-  # -count=1 disables the test cache. Without it the gate can report a stale number:
-  # a package whose integration tests skipped earlier (database down, env var unset)
-  # keeps that degraded result in the cache, and the gate happily grades it. That
-  # cost real time once already - it looked exactly like a 3-point regression. CI
-  # starts with an empty cache, so this only ever slows a local run.
-  go test ./... -coverpkg=./... -coverprofile="$profile" -timeout 900s -count=1 >/dev/null
+# -count=1 disables the test cache. Without it the gate can report a stale number: a
+# package whose integration tests skipped earlier (database down, env var unset) keeps
+# that degraded result in the cache, and the gate happily grades it. That cost real time
+# once already - it looked exactly like a 3-point regression. CI starts with an empty
+# cache, so this only ever slows a local run.
+#
+# The comment used to sit between these variables and the command, after a line
+# continuation: the continuation ran into the comment, the variables were assigned in the
+# shell and never reached `go test`. CI sets both in the job, which hid it.
+#
+# The output goes to a file rather than /dev/null. When a test fails there is no coverage
+# to grade, and which test failed is the one thing worth printing - thrown away, a failure
+# ended the job with an exit code and nothing else in the log.
+if ! GOTOOLCHAIN="${GOTOOLCHAIN:-go1.27.2}" CGO_ENABLED=0 \
+  go test ./... -coverpkg=./... -coverprofile="$profile" -timeout 900s -count=1 >"$log" 2>&1; then
+  echo "  FAIL: the tests did not pass, so there is no coverage to grade. What failed:" >&2
+  # Without -v, go test prints a line per passing package and the full output of a failing
+  # test, so dropping the passing lines - and the coverage line of each package without
+  # tests - leaves the failures.
+  grep -vE '^(ok |\?   |[[:space:]]+[^[:space:]]+[[:space:]]+coverage: )' "$log" >&2 || true
+  exit 1
+fi
 
 awk -v min="$MIN" '
 NR > 1 {
