@@ -9,9 +9,9 @@
     "preview": "astro preview"
   },
   "dependencies": {
-    "@astrojs/starlight": "^0.42.5",
-    "astro": "^7.3.6",
-    "starlight-links-validator": "^0.26.0"
+    "@astrojs/starlight": "^0.42.6",
+    "astro": "^7.3.8",
+    "starlight-links-validator": "^0.27.0"
   },
   "overrides": {
     "postcss-selector-parser": "^7.1.6"
