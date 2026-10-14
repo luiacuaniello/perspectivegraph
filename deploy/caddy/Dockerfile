@@ -20,7 +20,7 @@
 #     CI - and Dependabot proposes Caddy's releases. go.sum pins every module's hash.
 #
 # The official image's Alpine userland is gone with it: it carried a High of its own, in zlib.
-FROM golang:1.27.2-alpine@sha256:85dc1069ac644ea3c527b177303a406eb3358192816cd7f9e5848eb658851673 AS build
+FROM golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS build
 WORKDIR /src
 COPY go.mod go.sum main.go ./
 # Caddy reads its version from the build information of the module that requires it, so
