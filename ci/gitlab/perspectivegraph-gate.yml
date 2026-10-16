@@ -1,0 +1,206 @@
+# PerspectiveGraph merge-request security gate.
+#
+# Include this file from .gitlab-ci.yml. Configure the server credentials or
+# local estate inputs as appropriate for your project.
+#
+# PERSPECTIVEGRAPH_VERSION must be pinned to a released version that publishes
+# the Linux archive and Sigstore checksum bundle.
+
+variables:
+  PERSPECTIVEGRAPH_VERSION: ""
+  PERSPECTIVEGRAPH_MODE: "server"
+  PERSPECTIVEGRAPH_API: ""
+  PERSPECTIVEGRAPH_TOKEN: ""
+  PERSPECTIVEGRAPH_INGEST: ""
+  PERSPECTIVEGRAPH_HMAC_SECRET: ""
+  PERSPECTIVEGRAPH_ESTATE: ""
+  PERSPECTIVEGRAPH_AWS_REGION: ""
+  PERSPECTIVEGRAPH_AWS_ROLE: ""
+  PERSPECTIVEGRAPH_SOURCE: "trivy"
+  PERSPECTIVEGRAPH_REPORT: ""
+  PERSPECTIVEGRAPH_MAX_CRITICAL: "0"
+  PERSPECTIVEGRAPH_TIMEOUT: "5m"
+  PERSPECTIVEGRAPH_ALLOW_UNKNOWN: "false"
+
+perspectivegraph:gate:
+  stage: test
+  image: alpine:3.22
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - when: never
+  before_script:
+    - apk add --no-cache bash ca-certificates coreutils curl jq tar cosign
+  script:
+    - |
+      bash <<'BASH'
+      set -euo pipefail
+
+      : "${CI_PROJECT_PATH:?This job must run in a GitLab merge-request pipeline}"
+      : "${CI_COMMIT_SHA:?CI_COMMIT_SHA is required}"
+      : "${CI_MERGE_REQUEST_IID:?CI_MERGE_REQUEST_IID is required}"
+
+      case "$PERSPECTIVEGRAPH_VERSION" in
+        ""|latest|main)
+          echo "ERROR: Set PERSPECTIVEGRAPH_VERSION to a pinned release version." >&2
+          exit 3
+          ;;
+      esac
+
+      case "$PERSPECTIVEGRAPH_MODE" in
+        server)
+          if [ -z "$PERSPECTIVEGRAPH_API" ]; then
+            echo "ERROR: PERSPECTIVEGRAPH_API is required in server mode." >&2
+            exit 3
+          fi
+          ;;
+        local)
+          if [ -z "$PERSPECTIVEGRAPH_ESTATE" ] && [ -z "$PERSPECTIVEGRAPH_AWS_REGION" ]; then
+            echo "ERROR: local mode requires PERSPECTIVEGRAPH_ESTATE or PERSPECTIVEGRAPH_AWS_REGION." >&2
+            exit 3
+          fi
+          if [ -n "$PERSPECTIVEGRAPH_ESTATE" ] && [ ! -f "$PERSPECTIVEGRAPH_ESTATE" ]; then
+            echo "ERROR: PERSPECTIVEGRAPH_ESTATE is not a file in this job: $PERSPECTIVEGRAPH_ESTATE" >&2
+            exit 3
+          fi
+          ;;
+        *)
+          echo "ERROR: PERSPECTIVEGRAPH_MODE must be server or local." >&2
+          exit 3
+          ;;
+      esac
+
+      version="${PERSPECTIVEGRAPH_VERSION#v}"
+      case "$(uname -m)" in
+        x86_64)
+          arch="amd64"
+          ;;
+        aarch64|arm64)
+          arch="arm64"
+          ;;
+        *)
+          echo "ERROR: Unsupported runner architecture: $(uname -m)" >&2
+          exit 3
+          ;;
+      esac
+      archive="perspectivegraph_linux_${arch}.tar.gz"
+      base_url="https://github.com/luiacuaniello/perspectivegraph/releases/download/v${version}"
+      workdir="$(mktemp -d)"
+      trap 'rm -rf "$workdir"' EXIT
+      cd "$workdir"
+
+      echo "Downloading PerspectiveGraph ${version} release assets..."
+      curl --fail --silent --show-error --location --retry 3 \
+        "$base_url/$archive" -o "$archive"
+      curl --fail --silent --show-error --location --retry 3 \
+        "$base_url/SHA256SUMS" -o SHA256SUMS
+      curl --fail --silent --show-error --location --retry 3 \
+        "$base_url/SHA256SUMS.sigstore.json" -o SHA256SUMS.sigstore.json
+
+      echo "Verifying the release checksum signature..."
+      cosign verify-blob \
+        --bundle SHA256SUMS.sigstore.json \
+        --certificate-identity-regexp 'https://github.com/luiacuaniello/perspectivegraph/.*' \
+        --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+        SHA256SUMS
+
+      echo "Verifying the binary archive checksum..."
+      grep -F "  $archive" SHA256SUMS | sha256sum -c -
+
+      tar -xzf "$archive"
+      chmod +x perspectivegraph
+      bin="$workdir/perspectivegraph"
+
+      # gate -h exits nonzero by design. Capture output and check the expected
+      # flag rather than interpreting the help command's exit code.
+      set +e
+      timeout 30 "$bin" gate -h >"$workdir/gate-help.txt" 2>&1
+      help_rc=$?
+      set -e
+      if ! grep -q -- '-max-critical' "$workdir/gate-help.txt"; then
+        echo "ERROR: This release does not expose a usable gate command." >&2
+        cat "$workdir/gate-help.txt" >&2
+        exit 3
+      fi
+
+      args=(gate -slug "$CI_PROJECT_PATH" -sha "$CI_COMMIT_SHA"
+        -pr "$CI_MERGE_REQUEST_IID" -timeout "$PERSPECTIVEGRAPH_TIMEOUT"
+        -max-critical "$PERSPECTIVEGRAPH_MAX_CRITICAL" -json)
+
+      if [ "$PERSPECTIVEGRAPH_ALLOW_UNKNOWN" = "true" ]; then
+        args+=(-allow-unknown)
+      fi
+
+      if [ -n "$PERSPECTIVEGRAPH_REPORT" ]; then
+        args+=(-report "$PERSPECTIVEGRAPH_REPORT" -source "$PERSPECTIVEGRAPH_SOURCE")
+      fi
+
+      if [ "$PERSPECTIVEGRAPH_MODE" = "local" ]; then
+        args+=(-local)
+        if [ -n "$PERSPECTIVEGRAPH_ESTATE" ]; then
+          args+=(-estate "$PERSPECTIVEGRAPH_ESTATE")
+        fi
+        if [ -n "$PERSPECTIVEGRAPH_AWS_REGION" ]; then
+          args+=(-aws-region "$PERSPECTIVEGRAPH_AWS_REGION")
+        fi
+        if [ -n "$PERSPECTIVEGRAPH_AWS_ROLE" ]; then
+          args+=(-aws-role "$PERSPECTIVEGRAPH_AWS_ROLE")
+        fi
+      else
+        args+=(-api "$PERSPECTIVEGRAPH_API")
+        if [ -n "$PERSPECTIVEGRAPH_TOKEN" ]; then
+          args+=(-token "$PERSPECTIVEGRAPH_TOKEN")
+        fi
+        if [ -n "$PERSPECTIVEGRAPH_INGEST" ]; then
+          args+=(-ingest "$PERSPECTIVEGRAPH_INGEST")
+        fi
+        if [ -n "$PERSPECTIVEGRAPH_HMAC_SECRET" ]; then
+          args+=(-hmac-secret "$PERSPECTIVEGRAPH_HMAC_SECRET")
+        fi
+      fi
+
+      echo "Running PerspectiveGraph gate for ${CI_PROJECT_PATH}@${CI_COMMIT_SHA} (MR !${CI_MERGE_REQUEST_IID})..."
+      set +e
+      "$bin" "${args[@]}" >"$workdir/verdict.json" 2>&1
+      gate_rc=$?
+      set -e
+
+      cat "$workdir/verdict.json"
+
+      # Report the actual verdict from the JSON, not only the exit code:
+      # -allow-unknown changes UNKNOWN's exit code to zero.
+      if jq -e --arg maxCritical "$PERSPECTIVEGRAPH_MAX_CRITICAL" '
+        (.analysed == false) or
+        (((.incomplete // "") != "") and ((.criticalPaths // 0) <= ($maxCritical | tonumber)))
+      ' "$workdir/verdict.json" >/dev/null 2>&1; then
+        verdict="UNKNOWN"
+      elif [ "$gate_rc" -eq 1 ]; then
+        verdict="BLOCKED"
+      elif [ "$gate_rc" -eq 2 ]; then
+        verdict="UNKNOWN"
+      elif [ "$gate_rc" -eq 0 ]; then
+        verdict="CLEAN"
+      else
+        verdict="ERROR"
+      fi
+
+      echo "PerspectiveGraph verdict: $verdict (exit code: $gate_rc)"
+
+      case "$gate_rc" in
+        0)
+          exit 0
+          ;;
+        1)
+          echo "Critical attack path threshold exceeded." >&2
+          exit 1
+          ;;
+        2)
+          echo "UNKNOWN: analysis was incomplete; failing closed by default." >&2
+          exit 2
+          ;;
+        *)
+          echo "Gate execution failed." >&2
+          exit 3
+          ;;
+      esac
+
+      BASH
