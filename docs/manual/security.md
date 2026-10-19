@@ -264,8 +264,9 @@ The images and the compose stack are built to the bar you'd expect in a review:
 - **Tiny, reproducible images.** The backend is a multi-stage build → a static
   (CGO-off, `-trimpath`, stripped) binary on `distroless/static:nonroot` - **~14 MB,
   no shell, no package manager, no root.** The dashboard is a Vite build served by
-  nginx-alpine. Every base image (incl. Postgres/AGE, NATS, OpenSearch) is **pinned
-  by SHA-256 digest**, not a floating tag - reproducible and tamper-evident.
+  nginx on `alpine-slim`, without the optional modules. Every base image (incl.
+  Postgres/AGE, NATS, OpenSearch) is **pinned by SHA-256 digest**, not a floating tag -
+  reproducible and tamper-evident.
 - **Least privilege at runtime.** Every compose service sets
   `no-new-privileges:true`; the backend additionally runs `read_only: true`,
   `cap_drop: [ALL]`, non-root, with a `tmpfs` `/tmp` - it writes nothing to disk.

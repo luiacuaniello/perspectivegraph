@@ -32,15 +32,18 @@ RUN npm ci --no-audit --no-fund
 COPY . .
 RUN npm run build
 
-FROM nginx:1.31.6-alpine@sha256:df221db836e1754089190208cee7eeda94f233197056426eda74a43ab1abeac2
+FROM nginx:1.31.6-alpine-slim@sha256:f761b94f2cb9e8e05e2943d5f773609596113ef69b54e2433a996d109a8f78b7
 # Base is pinned by digest for reproducibility; apk upgrade patches any OS-package
 # CVEs disclosed since that digest was built (e.g. openssl/libxml2), so the image
 # stays current without waiting on a base rebuild. Keeps the Trivy CI gate green.
-# We also drop curl + its dependency chain (libcurl/nghttp2/c-ares/…): this is a
-# static-file server (nginx serves the built SPA) and the healthcheck uses wget,
-# so curl is unused weight - and removing it clears CVEs in curl that alpine has
-# no fixed version for yet, shrinking the attack surface instead of carrying them.
-RUN apk upgrade --no-cache && apk del curl
+#
+# The -slim variant, because this is a static-file server (nginx serves the built SPA,
+# and the healthcheck uses busybox's wget): no config here or in the Helm chart loads a
+# module. The full -alpine image adds five of them (acme, geoip, image-filter, njs, xslt)
+# and everything they pull in - 71 packages against 21, curl among them - and every one
+# is a CVE that can fail this image's scan without being code it runs: libexpat and
+# libX11, both High against 1.38.1, came in through libgd, which only image-filter needs.
+RUN apk upgrade --no-cache
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80
