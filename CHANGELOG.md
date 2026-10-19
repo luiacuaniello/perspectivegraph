@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.38.2](https://github.com/luiacuaniello/perspectivegraph/compare/v1.38.1...v1.38.2) (2026-10-19)
+
+
+### Bug Fixes
+
+* **dashboard:** build on nginx alpine-slim, clearing two High CVEs ([#367](https://github.com/luiacuaniello/perspectivegraph/issues/367)) ([0ca4419](https://github.com/luiacuaniello/perspectivegraph/commit/0ca441978e6b12ec89b32b82ac737ef0a5ecabc6))
+
 ## [1.38.1](https://github.com/luiacuaniello/perspectivegraph/compare/v1.38.0...v1.38.1) (2026-10-14)
 
 
