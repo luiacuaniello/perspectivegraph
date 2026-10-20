@@ -14,7 +14,7 @@
 # through scripts/node-image.sh, so the bump Dependabot proposes here is complete. The tag
 # is the exact version, not `24-alpine`: a floating tag moves the Node version under an
 # unchanged-looking line, and nothing reading it could say which Node it is.
-FROM --platform=$BUILDPLATFORM node:24.21.0-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS build
+FROM --platform=$BUILDPLATFORM node:24.22.0-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f AS build
 WORKDIR /app
 COPY package*.json ./
 # `npm ci`, never `npm install`: it installs exactly what package-lock.json pins and
@@ -32,7 +32,7 @@ RUN npm ci --no-audit --no-fund
 COPY . .
 RUN npm run build
 
-FROM nginx:1.31.6-alpine-slim@sha256:f761b94f2cb9e8e05e2943d5f773609596113ef69b54e2433a996d109a8f78b7
+FROM nginx:1.31.7-alpine-slim@sha256:ebd058041a732a2b2dc0b606e34572dd8e0034de6a4aa4d50d8c13a240ac6005
 # Base is pinned by digest for reproducibility; apk upgrade patches any OS-package
 # CVEs disclosed since that digest was built (e.g. openssl/libxml2), so the image
 # stays current without waiting on a base rebuild. Keeps the Trivy CI gate green.
