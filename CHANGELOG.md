@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.38.3](https://github.com/luiacuaniello/perspectivegraph/compare/v1.38.2...v1.38.3) (2026-10-21)
+
+
+### Bug Fixes
+
+* build with Go 1.27.3 for the crypto/x509 advisory GO-2026-6809 ([#374](https://github.com/luiacuaniello/perspectivegraph/issues/374)) ([ada08e5](https://github.com/luiacuaniello/perspectivegraph/commit/ada08e549c6fc1908a192bb98b9706ed63fad83d))
+
 ## [1.38.2](https://github.com/luiacuaniello/perspectivegraph/compare/v1.38.1...v1.38.2) (2026-10-19)
 
 
