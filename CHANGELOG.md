@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.39.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.38.3...v1.39.0) (2026-10-21)
+
+
+### Features
+
+* **ci:** add a GitLab merge-request gate template ([#366](https://github.com/luiacuaniello/perspectivegraph/issues/366)) ([539655b](https://github.com/luiacuaniello/perspectivegraph/commit/539655b64342f52b9e7e8027a73777ad4c3af7bc))
+
 ## [1.38.3](https://github.com/luiacuaniello/perspectivegraph/compare/v1.38.2...v1.38.3) (2026-10-21)
 
 
