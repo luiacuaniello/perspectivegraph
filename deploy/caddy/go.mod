@@ -2,7 +2,7 @@ module github.com/luiacuaniello/perspectivegraph/deploy/caddy
 
 go 1.27.0
 
-toolchain go1.27.2
+toolchain go1.27.3
 
 require github.com/caddyserver/caddy/v2 v2.11.7
 

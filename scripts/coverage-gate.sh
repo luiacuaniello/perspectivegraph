@@ -41,7 +41,7 @@ echo "→ running tests with cross-package coverage attribution…"
 # The output goes to a file rather than /dev/null. When a test fails there is no coverage
 # to grade, and which test failed is the one thing worth printing - thrown away, a failure
 # ended the job with an exit code and nothing else in the log.
-if ! GOTOOLCHAIN="${GOTOOLCHAIN:-go1.27.2}" CGO_ENABLED=0 \
+if ! GOTOOLCHAIN="${GOTOOLCHAIN:-go1.27.3}" CGO_ENABLED=0 \
   go test ./... -coverpkg=./... -coverprofile="$profile" -timeout 900s -count=1 >"$log" 2>&1; then
   echo "  FAIL: the tests did not pass, so there is no coverage to grade. What failed:" >&2
   # Without -v, go test prints a line per passing package and the full output of a failing

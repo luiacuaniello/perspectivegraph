@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.3"
           cache-dependency-path: backend/go.sum
       - run: go build ./...
       - run: go vet ./...
@@ -135,7 +135,7 @@ jobs:
           echo "::error::Postgres never became ready"; docker logs postgres; exit 1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.3"
           cache-dependency-path: backend/go.sum
       # The contract test creates the AGE extension + graph itself; just run it.
       # JetStream cannot be a service container: GitHub gives no way to pass the -js
@@ -370,7 +370,7 @@ jobs:
       # pinned one is the one on PATH rather than trusting PATH order.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.3"
           cache: false
 
       - name: Install kind v0.31.0
@@ -411,7 +411,7 @@ jobs:
       # For the CLI the check signs its reports with, built from this commit.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.3"
           cache-dependency-path: backend/go.sum
       - name: Run the recipe end to end
         run: bash scripts/prod-smoke.sh
@@ -569,7 +569,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.3"
           cache-dependency-path: backend/go.sum
 
       # --ignore our own module: its licence is this repository's (LICENSE lives at the
