@@ -9,6 +9,14 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.39.1](https://github.com/luiacuaniello/perspectivegraph/compare/v1.39.0...v1.39.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* escape asset names in generated fixes, refresh image bases ([#377](https://github.com/luiacuaniello/perspectivegraph/issues/377)) ([e34f7d6](https://github.com/luiacuaniello/perspectivegraph/commit/e34f7d643dcccfab53df2d0391f489dc18d56ce4))
+* key search and history reads by the normalized tenant ([#379](https://github.com/luiacuaniello/perspectivegraph/issues/379)) ([1c944ff](https://github.com/luiacuaniello/perspectivegraph/commit/1c944ffe871f1cf0bb2412c8e14ae7fe7a73ab6e))
+
 ## [1.39.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.38.3...v1.39.0) (2026-10-21)
 
 
