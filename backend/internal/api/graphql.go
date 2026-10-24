@@ -185,6 +185,13 @@ func tenantOf(ctx context.Context) string {
 	return auth.PrincipalFromContext(ctx).Tenant
 }
 
+// graphTenantOf is the caller's tenant as the graph and the analyzer key it, normalized:
+// "Acme-Corp" in a token is "acme_corp" there. What the analyzer writes - the history -
+// is under this form, and read back under the token's own spelling it found nothing.
+func graphTenantOf(ctx context.Context) string {
+	return graph.NormalizeTenant(tenantOf(ctx))
+}
+
 // auditView records a *read* of the sensitive "attack map" - the ranked paths,
 // the raw graph, or an export - to the tamper-evident audit log, so a deployment
 // can answer "who viewed (or exfiltrated) which attack paths". The tool itself is
@@ -520,7 +527,7 @@ func (a *API) Schema() (graphql.Schema, error) {
 				Type:        graphql.String,
 				Description: "When this path was first observed (RFC3339). Null until history has recorded a pass.",
 				Resolve: func(p graphql.ResolveParams) (any, error) {
-					if rec, ok := a.history.Get(tenantOf(p.Context), p.Source.(analyzer.AttackPath).ID); ok {
+					if rec, ok := a.history.Get(graphTenantOf(p.Context), p.Source.(analyzer.AttackPath).ID); ok {
 						return rec.FirstSeen.UTC().Format(time.RFC3339), nil
 					}
 					return nil, nil
@@ -530,7 +537,7 @@ func (a *API) Schema() (graphql.Schema, error) {
 				Type:        graphql.Int,
 				Description: "How long this path has been continuously open, in seconds (since first_seen of the current occurrence).",
 				Resolve: func(p graphql.ResolveParams) (any, error) {
-					if rec, ok := a.history.Get(tenantOf(p.Context), p.Source.(analyzer.AttackPath).ID); ok {
+					if rec, ok := a.history.Get(graphTenantOf(p.Context), p.Source.(analyzer.AttackPath).ID); ok {
 						return int(time.Since(rec.FirstSeen).Seconds()), nil
 					}
 					return nil, nil
@@ -540,7 +547,7 @@ func (a *API) Schema() (graphql.Schema, error) {
 				Type:        graphql.Int,
 				Description: "How many times this path resolved and then came back - a flapping/regression signal.",
 				Resolve: func(p graphql.ResolveParams) (any, error) {
-					if rec, ok := a.history.Get(tenantOf(p.Context), p.Source.(analyzer.AttackPath).ID); ok {
+					if rec, ok := a.history.Get(graphTenantOf(p.Context), p.Source.(analyzer.AttackPath).ID); ok {
 						return rec.Reopens, nil
 					}
 					return 0, nil
@@ -1339,7 +1346,7 @@ func (a *API) Schema() (graphql.Schema, error) {
 				},
 				Resolve: func(p graphql.ResolveParams) (any, error) {
 					limit, _ := p.Args["points"].(int)
-					return a.history.CalibrationTrend(tenantOf(p.Context), limit), nil
+					return a.history.CalibrationTrend(graphTenantOf(p.Context), limit), nil
 				},
 			},
 			"history": &graphql.Field{
@@ -1349,7 +1356,7 @@ func (a *API) Schema() (graphql.Schema, error) {
 					"points": &graphql.ArgumentConfig{Type: graphql.Int, DefaultValue: 200, Description: "How many recent trend samples to return (most recent last)."},
 				},
 				Resolve: func(p graphql.ResolveParams) (any, error) {
-					tenant := tenantOf(p.Context)
+					tenant := graphTenantOf(p.Context)
 					limit, _ := p.Args["points"].(int)
 					return historyView{
 						Trend:      a.history.Trend(tenant, limit),

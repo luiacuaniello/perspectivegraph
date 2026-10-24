@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/luiacuaniello/perspectivegraph/internal/graph"
 	"github.com/luiacuaniello/perspectivegraph/internal/httpx"
 	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
 )
@@ -62,12 +63,14 @@ type OpenSearch struct {
 
 func (o *OpenSearch) Enabled() bool { return true }
 
-// indexFor returns the per-tenant index name.
+// indexFor returns the per-tenant index name, from the tenant normalized as the graph
+// store's is. In an OpenSearch path an index name is an expression - "*" matches every
+// index, "a,b" names two - and a search runs under the caller's tenant as its token
+// stated it, so a tenant of "*" used to search every tenant's assets. Ingest already
+// indexed under the normalized name, which also left a tenant like "Acme" searching an
+// index nobody writes.
 func (o *OpenSearch) indexFor(tenant string) string {
-	if tenant == "" {
-		tenant = "default"
-	}
-	return o.prefix + "-" + tenant
+	return o.prefix + "-" + graph.NormalizeTenant(tenant)
 }
 
 // Index bulk-upserts nodes keyed by their graph id (idempotent re-indexing).
