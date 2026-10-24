@@ -21,7 +21,7 @@
 # This matters beyond the badge: Artifact Hub's rating is set by the HIGHEST severity
 # present and ignores the count entirely (critical=F, high=D, medium=C, low=B), so the
 # only thing that moves it is eliminating a severity class, not reducing findings.
-FROM postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73 AS build
+FROM postgres:17-alpine@sha256:eee6c6e1b0894fa4fe0075eb054af9fd1cf39a35321c2d4110626cfe506411fb AS build
 
 # Build dependencies live only in this stage; the final image inherits none of them.
 RUN apk add --no-cache build-base flex bison perl curl
@@ -73,16 +73,16 @@ RUN set -eux; \
     cp "$(pg_config --pkglibdir)/age.so" "/out$(pg_config --pkglibdir)/"; \
     cp "$(pg_config --sharedir)/extension/age"* "/out$(pg_config --sharedir)/extension/"
 
-FROM postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
+FROM postgres:17-alpine@sha256:eee6c6e1b0894fa4fe0075eb054af9fd1cf39a35321c2d4110626cfe506411fb
 
 COPY --from=build /out/ /
 
 # Three changes, each of which the scan or the cluster requires:
 #
-# 1. `apk upgrade` clears the base's own backlog. At the pin above that was 28 findings,
-#    every one of them with a fix published - openssl 3.5.7->3.5.8 and libuuid
-#    2.42.1->2.42.3. Leaving them would keep this image at a D for packages Alpine had
-#    already patched.
+# 1. `apk upgrade` clears the base's own backlog. At the first pin of this base that was
+#    28 findings, every one of them with a fix published - openssl 3.5.7->3.5.8 and
+#    libuuid 2.42.1->2.42.3. Leaving them would keep this image at a D for packages Alpine
+#    had already patched.
 #
 # 2. `gosu` exists only so the entrypoint can start as root and drop to postgres. This
 #    image sets USER below and the chart sets runAsNonRoot, so that branch is never taken

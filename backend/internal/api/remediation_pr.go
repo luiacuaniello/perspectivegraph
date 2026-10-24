@@ -66,8 +66,10 @@ func (a *API) openRemediationPR(w http.ResponseWriter, r *http.Request) {
 
 	files := make([]action.PRFile, 0, len(suggestions))
 	var body strings.Builder
-	fmt.Fprintf(&body, "Automated remediation for attack path `%s` → **%s** (exploit score %.0f%%).\n\n",
-		path.ID, path.Target().Name, path.Score*100)
+	// The target's name is the environment's, and the PR is opened under the engine's name:
+	// it goes in as code, and the title gets one bounded line of it.
+	fmt.Fprintf(&body, "Automated remediation for attack path %s → %s (exploit score %.0f%%).\n\n",
+		remediationpkg.CodeSpan(path.ID), remediationpkg.CodeSpan(path.Target().Name), path.Score*100)
 	body.WriteString("Cutting any one edge breaks the path. This PR adds:\n\n")
 	for _, s := range suggestions {
 		files = append(files, action.PRFile{Path: s.Filename, Content: s.Content})
@@ -78,7 +80,7 @@ func (a *API) openRemediationPR(w http.ResponseWriter, r *http.Request) {
 	prURL, err := a.prOpener.OpenPR(r.Context(), action.OpenPRRequest{
 		Slug:   slug,
 		Branch: "perspectivegraph/fix-" + branchID(path.ID),
-		Title:  "PerspectiveGraph: remediate path to " + path.Target().Name,
+		Title:  "PerspectiveGraph: remediate path to " + safeName(path.Target().Name),
 		Body:   body.String(),
 		Files:  files,
 	})

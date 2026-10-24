@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/analyzer"
 	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
@@ -289,16 +290,16 @@ type HintRule struct {
 var HintRegistry = []HintRule{
 	{ontology.LabelCVE, func(n ontology.Node) string {
 		if fv := propStr(n, "fixed_version"); fv != "" {
-			return fmt.Sprintf("Upgrade the affected dependency to `%s` to remediate **%s**.", fv, n.Name)
+			return fmt.Sprintf("Upgrade the affected dependency to %s to remediate %s.", CodeSpan(fv), CodeSpan(n.Name))
 		}
-		return fmt.Sprintf("Patch or remove the dependency affected by **%s**.", n.Name)
+		return fmt.Sprintf("Patch or remove the dependency affected by %s.", CodeSpan(n.Name))
 	}},
 	{ontology.LabelWeakness, func(n ontology.Node) string {
 		msg := propStr(n, "message")
 		if msg == "" {
 			msg = "Fix the flagged code weakness"
 		}
-		return msg + location(n)
+		return OneLine(msg) + location(n)
 	}},
 	{ontology.LabelSecret, func(n ontology.Node) string {
 		return fmt.Sprintf("Rotate the exposed credential and remove it%s; load it from a secret manager instead.", location(n))
@@ -309,7 +310,7 @@ var HintRegistry = []HintRule{
 		}
 		// No artifact for this one: the right trust policy names the principals that
 		// truly need the role, which only its owner knows.
-		return fmt.Sprintf("**%s** can be assumed by anyone: restrict its trust policy (AssumeRolePolicyDocument) to the principals that need it, or add a condition such as `aws:PrincipalOrgID`.", n.Name)
+		return fmt.Sprintf("%s can be assumed by anyone: restrict its trust policy (AssumeRolePolicyDocument) to the principals that need it, or add a condition such as `aws:PrincipalOrgID`.", CodeSpan(n.Name))
 	}},
 }
 
@@ -335,12 +336,12 @@ func location(n ontology.Node) string {
 		return ""
 	}
 	if line, ok := n.Properties["line"].(float64); ok && line > 0 {
-		return fmt.Sprintf(" (`%s:%d`)", path, int(line))
+		return fmt.Sprintf(" (%s)", CodeSpan(fmt.Sprintf("%s:%d", path, int(line))))
 	}
 	if line, ok := n.Properties["line"].(int); ok && line > 0 {
-		return fmt.Sprintf(" (`%s:%d`)", path, line)
+		return fmt.Sprintf(" (%s)", CodeSpan(fmt.Sprintf("%s:%d", path, line)))
 	}
-	return fmt.Sprintf(" (`%s`)", path)
+	return fmt.Sprintf(" (%s)", CodeSpan(path))
 }
 
 // closePublicAccess is the fix for a crown jewel open to anyone. For a bucket it is
@@ -356,13 +357,13 @@ func closePublicAccess(n ontology.Node) (Suggestion, bool) {
 # public ACL and bucket-policy grant on it; a grant that must stay public belongs on a
 # bucket that holds nothing sensitive.
 resource "aws_s3_bucket_public_access_block" "perspective_block_public_%s" {
-  bucket                  = %q
+  bucket                  = %s
   block_public_acls       = true
   ignore_public_acls      = true
   block_public_policy     = true
   restrict_public_buckets = true
 }
-`, n.Name, name, n.Name)
+`, n.Name, name, hclString(n.Name))
 	return Suggestion{
 		Title:     "Block public access to " + n.Name,
 		Kind:      "terraform",
@@ -400,11 +401,11 @@ func closePublicLambda(lambda, role ontology.Node) Suggestion {
 		content += fmt.Sprintf(`# The graph does not say how anyone can invoke this function%s.
 # Check both ways, and apply the fix below that matches:
 #
-#   aws lambda get-function-url-config --function-name %q
-#   aws lambda get-policy --function-name %q
+#   aws lambda get-function-url-config --function-name %s
+#   aws lambda get-policy --function-name %s
 
 # If the function URL's authorization_type is "NONE":
-`, recorded, lambda.Name, lambda.Name) + lambdaURLFix(lambda.Name) + `
+`, recorded, shellArg(lambda.Name), shellArg(lambda.Name)) + lambdaURLFix(lambda.Name) + `
 # If the function policy lets principal "*" invoke the function:
 ` + lambdaPolicyFix
 	}
@@ -443,8 +444,8 @@ func lambdaURLFix(function string) string {
 #
 # For example:
 #
-#   aws lambda remove-permission --function-name %q --statement-id <STATEMENT_ID>
-`, function)
+#   aws lambda remove-permission --function-name %s --statement-id <STATEMENT_ID>
+`, shellArg(function))
 }
 
 // lambdaPolicyFix narrows a function policy that lets any AWS principal invoke it.
@@ -527,7 +528,7 @@ func iamScopeDown(role ontology.Node) Suggestion {
 #   aws iam detach-role-policy --role-name %s --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
 resource "aws_iam_role_policy" "perspective_least_privilege_%s" {
   name = "%s-least-privilege"
-  role = %q
+  role = %s
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -537,7 +538,7 @@ resource "aws_iam_role_policy" "perspective_least_privilege_%s" {
     }]
   })
 }
-`, role.Name, role.Name, name, name, role.Name)
+`, role.Name, shellArg(role.Name), name, name, hclString(role.Name))
 
 	return Suggestion{
 		Title:     "Scope down IAM role " + role.Name,
@@ -554,17 +555,17 @@ func dataStorePolicy(role, store ontology.Node) Suggestion {
 # Tighten the resource policy / role permissions so this principal can no longer reach the data store.
 resource "aws_iam_role_policy" "perspective_revoke_%s_%s" {
   name = "revoke-%s-access"
-  role = %q
+  role = %s
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
       Effect   = "Deny"
       Action   = "*"
-      Resource = "*" # TODO: scope to %s's ARN
+      Resource = "*" # TODO: scope to the ARN of %q
     }]
   })
 }
-`, role.Name, store.Name, sanitize(role.Name), name, name, role.Name, store.Name)
+`, role.Name, store.Name, sanitize(role.Name), name, name, hclString(role.Name), store.Name)
 
 	return Suggestion{
 		Title:     fmt.Sprintf("Revoke %s access to %s", role.Name, store.Name),
@@ -597,7 +598,7 @@ func privescDeny(p ontology.Node) Suggestion {
 # primitive on %s %q so it can no longer reach admin-equivalent access.%s
 resource "%s" "perspective_block_privesc_%s" {
   name = "%s-block-privesc"
-  %s = %q
+  %s = %s
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -613,7 +614,7 @@ resource "%s" "perspective_block_privesc_%s" {
     }]
   })
 }
-`, kind, p.Name, trustNote, resourceType, name, name, attr, p.Name)
+`, kind, p.Name, trustNote, resourceType, name, name, attr, hclString(p.Name))
 
 	return Suggestion{
 		Title:     "Block privilege escalation for " + p.Name,
@@ -683,14 +684,15 @@ func networkSegment(from, to ontology.Node) Suggestion {
 # ports/protocols instead of the whole security group.
 resource "aws_security_group_rule" "perspective_segment_%s_to_%s" {
   type                     = "ingress"
-  description              = "Tightened by PerspectiveGraph: %s should not freely reach %s"
+  description              = %s
   security_group_id        = "REPLACE_WITH_%s_SG_ID"
   source_security_group_id = "REPLACE_WITH_%s_SG_ID"
   protocol                 = "tcp"
   from_port                = 0    # TODO: only the ports this dependency needs
   to_port                  = 0
 }
-`, from.Name, to.Name, from.Name, to.Name, a, z, from.Name, to.Name, z, a)
+`, from.Name, to.Name, from.Name, to.Name, a, z,
+		hclString("Tightened by PerspectiveGraph: "+from.Name+" should not freely reach "+to.Name), z, a)
 
 	return Suggestion{
 		Title:     fmt.Sprintf("Segment %s ↛ %s", from.Name, to.Name),
@@ -715,6 +717,61 @@ func k8sName(s string) string {
 		out = strings.Trim(out[:63], "-")
 	}
 	return out
+}
+
+// hclString renders s as one HCL quoted string, for a name that comes from the
+// environment. Go's %q is not one: it leaves "${" and "%{" alone, which HCL reads as the
+// start of a template interpolation or directive, and it writes escapes such as \x00
+// that HCL does not have. Here a line break, a quote or a backslash stays inside the
+// string, and "${" and "%{" are doubled, so they stand for themselves.
+func hclString(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for i, r := range s {
+		switch {
+		case r == '"' || r == '\\':
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		case r == '\n':
+			b.WriteString(`\n`)
+		case r == '\r':
+			b.WriteString(`\r`)
+		case r == '\t':
+			b.WriteString(`\t`)
+		case (r == '$' || r == '%') && strings.HasPrefix(s[i+1:], "{"):
+			b.WriteRune(r)
+			b.WriteRune(r)
+		case !unicode.IsPrint(r) && r <= 0xFFFF:
+			fmt.Fprintf(&b, `\u%04X`, r)
+		case !unicode.IsPrint(r):
+			fmt.Fprintf(&b, `\U%08X`, r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+// shellSafe is every character AWS allows in an IAM or Lambda name, plus the separators
+// of an ARN: none of them means anything to a shell inside double quotes.
+const shellSafe = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+=,.@_-:/"
+
+// shellArg renders s as one shell word, for a command a comment shows for someone to
+// copy. A name AWS would accept is double-quoted as it always was. Anything else is
+// single-quoted, so nothing in it expands when the line is pasted into a shell, and kept
+// to one line, so it cannot end the comment it sits in.
+func shellArg(s string) string {
+	if s != "" && strings.Trim(s, shellSafe) == "" {
+		return `"` + s + `"`
+	}
+	s = strings.Map(func(r rune) rune {
+		if !unicode.IsPrint(r) {
+			return '?'
+		}
+		return r
+	}, s)
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // sanitize makes a node name safe for use in k8s/terraform identifiers.

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/analyzer"
+	remediationpkg "github.com/luiacuaniello/perspectivegraph/internal/remediation"
 	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
 )
 
@@ -48,7 +49,7 @@ func RenderPath(p analyzer.AttackPath) string {
 
 	for i, n := range p.Nodes {
 		indent := strings.Repeat("   ", i)
-		fmt.Fprintf(&b, "%s%s [%s] %s%s\n", indent, connector(i), n.Label, n.Name, badges(n))
+		fmt.Fprintf(&b, "%s%s [%s] %s%s\n", indent, connector(i), n.Label, remediationpkg.OneLine(n.Name), badges(n))
 		if i < len(p.Steps) {
 			st := p.Steps[i]
 			fmt.Fprintf(&b, "%s   └─%s (p=%.2f)─▶\n", indent, st.EdgeType, st.Probability)

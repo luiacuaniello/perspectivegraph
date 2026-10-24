@@ -219,11 +219,11 @@ func commentBody(p analyzer.AttackPath, v impact.Verdict) string {
 	}
 	fmt.Fprintf(&b, "This change sits on a **verified attack path** "+
 		"(exploit likelihood **%.0f%%**) from an internet-exposed entry point "+
-		"to a sensitive asset (`%s`).\n\n", p.Score*100, p.Target().Name)
+		"to a sensitive asset (%s).\n\n", p.Score*100, remediationpkg.CodeSpan(p.Target().Name))
 	switch v.Change {
 	case impact.Introduced:
-		fmt.Fprintf(&b, "**This change opens it:** nothing led from `%s` to `%s` before it.\n\n",
-			p.Source().Name, p.Target().Name)
+		fmt.Fprintf(&b, "**This change opens it:** nothing led from %s to %s before it.\n\n",
+			remediationpkg.CodeSpan(p.Source().Name), remediationpkg.CodeSpan(p.Target().Name))
 	case impact.Worsened:
 		fmt.Fprintf(&b, "**This change makes it likelier:** %.0f%% before it, %.0f%% now.\n\n",
 			v.PreviousScore*100, p.Score*100)
@@ -233,20 +233,22 @@ func commentBody(p analyzer.AttackPath, v impact.Verdict) string {
 			"a pull request. It runs through this change, so it counts.\n\n")
 	}
 
-	b.WriteString("**Path**\n```\n")
-	b.WriteString(strings.TrimLeft(RenderPath(p), "\n"))
-	b.WriteString("```\n\n")
+	path := strings.TrimLeft(RenderPath(p), "\n")
+	fence := strings.Repeat("`", max(3, remediationpkg.LongestRun(path, '`')+1))
+	b.WriteString("**Path**\n" + fence + "\n")
+	b.WriteString(path)
+	b.WriteString(fence + "\n\n")
 
 	if fixes := remediationpkg.Hints(p); len(fixes) > 0 {
 		b.WriteString("**Suggested remediation**\n")
 		for _, f := range fixes {
-			fmt.Fprintf(&b, "- %s\n", f)
+			fmt.Fprintf(&b, "- %s\n", remediationpkg.OneLine(f))
 		}
 		b.WriteString("\n")
 	}
 
-	fmt.Fprintf(&b, "<sub>Posted by PerspectiveGraph · path `%s`. Cut any one edge on the path "+
-		"to break it - you don't have to fix every finding.</sub>\n", p.ID)
+	fmt.Fprintf(&b, "<sub>Posted by PerspectiveGraph · path %s. Cut any one edge on the path "+
+		"to break it - you don't have to fix every finding.</sub>\n", remediationpkg.CodeSpan(p.ID))
 	return b.String()
 }
 

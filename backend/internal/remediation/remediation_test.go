@@ -212,7 +212,7 @@ func TestOnlyAnOpenRoleGetsTheTrustHint(t *testing.T) {
 		Properties: map[string]any{ontology.PropPublicAccess: true}}
 	closed := ontology.Node{ID: "IAM_Role:closed", Label: ontology.LabelIAMRole, Name: "closed"}
 	hints := Hints(analyzer.AttackPath{Nodes: []ontology.Node{open, closed}})
-	if len(hints) != 1 || !strings.Contains(hints[0], "**open** can be assumed by anyone") {
+	if len(hints) != 1 || !strings.Contains(hints[0], "`open` can be assumed by anyone") {
 		t.Errorf("hints = %q, want one for the open role only", hints)
 	}
 }
