@@ -235,7 +235,7 @@ nats:
   # That userland was twenty of this image's twenty-three findings, two of them high; what
   # is left is the binary itself. A broker reachable from every workload in the namespace
   # is a poor place to keep a shell and a package manager it never uses.
-  image: nats:2.15.1-scratch@sha256:3af42719041e578167e4f14c67a01d2fdc3c2ee4a228ca8315c6c0e18e15fdac
+  image: nats:2.15.1-scratch@sha256:8f8ed346c804fdee1c675071adacd51e7b53c4417cf67f3c8f8ea593348d4605
   stream: PERSPECTIVE
   subject: perspective.events.*
   # How long an event may wait unprocessed, and how long a dead-lettered one is kept.
