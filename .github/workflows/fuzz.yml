@@ -65,10 +65,12 @@ jobs:
       # The wrapper swallows ONLY a clean expiry with no reproducer on disk; a crash, a
       # seed-corpus failure, or anything it cannot explain still fails.
       - name: Fuzz ${{ matrix.target }}
-        run: >
-          scripts/fuzz-target.sh
-          '${{ matrix.target }}'
-          '${{ inputs.fuzztime || '3m' }}'
+        # Through the environment, not spliced into the script: an expression expanded
+        # inside `run:` becomes shell text before the shell sees it.
+        env:
+          TARGET: ${{ matrix.target }}
+          FUZZTIME: ${{ inputs.fuzztime || '3m' }}
+        run: scripts/fuzz-target.sh "$TARGET" "$FUZZTIME"
 
       - name: Upload crasher on failure
         if: failure()

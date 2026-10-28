@@ -89,13 +89,14 @@ updates:
   # critical and ten highs that were all fixed upstream, and the Artifact Hub security
   # report was the first thing to say so.
   #
-  # Coverage, stated honestly: the Dockerfiles below are certain. The chart's values.yaml
-  # is picked up because its postgres and nats entries are plain `image: <ref>` strings,
-  # which the docker parser deep-fetches from YAML; the first-party ones are
-  # repository/tag maps and are skipped, correctly - release-please owns those. Whether
-  # docker-compose.yml is fetched depends on the ecosystem's YAML matching, so it is
-  # listed but not relied upon: check that a bump there actually arrives before trusting
-  # it, and until then the compose pins are reviewed by hand alongside the chart.
+  # Coverage, stated honestly: the Dockerfiles below are certain, and
+  # TestEveryDockerfileIsWatchedByDependabot fails when one is added without an entry
+  # (deploy/postgres had none until 1.39.2). The chart's values.yaml is picked up because
+  # its postgres and nats entries are plain `image: <ref>` strings, which the docker parser
+  # deep-fetches from YAML; the first-party ones are repository/tag maps and are skipped,
+  # correctly - release-please owns those. A `docker` entry on / was meant for the compose
+  # file and never opened a pull request: that ecosystem reads Dockerfiles, and there is
+  # none at the root. The compose files have an entry of their own, `docker-compose`.
   - package-ecosystem: docker
     directory: /backend
     schedule:
@@ -150,12 +151,39 @@ updates:
       chart-images:
         patterns: ["*"]
 
+  # The bundled Postgres: Alpine's postgres image with Apache AGE compiled against it.
+  # Patches and rebuilt digests flow; a major does not, because AGE is built for one
+  # Postgres major and moving to the next needs the data directory migrated - an upgrade
+  # with notes of its own, not a dependency bump.
   - package-ecosystem: docker
+    directory: /deploy/postgres
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    ignore:
+      - dependency-name: postgres
+        update-types:
+          - version-update:semver-major
+    groups:
+      postgres-images:
+        patterns: ["*"]
+  # The compose files' third-party images, which nothing else watches: OpenSearch and the
+  # SSO profile's Keycloak. Left out are nats and busybox, whose pins the chart's entry
+  # above moves, and which TestNATSImageIsTheSameEverywhere and the chart's image-list
+  # check hold equal across files - a second, compose-only bump of them could only fail
+  # those checks - and this project's own images, which release-please moves.
+  - package-ecosystem: docker-compose
     directory: /
     schedule:
       interval: weekly
     commit-message:
       prefix: "chore(deps)"
+    ignore:
+      - dependency-name: nats
+      - dependency-name: busybox
+      - dependency-name: "ghcr.io/luiacuaniello/*"
+      - dependency-name: "perspectivegraph*"
     groups:
       compose-images:
         patterns: ["*"]

@@ -34,6 +34,11 @@ jobs:
             build-mode: manual
           - language: javascript-typescript
             build-mode: none
+          # The workflows themselves. They hold the tokens that sign and publish every
+          # release, and CodeQL reads them for an event's text reaching a shell, untrusted
+          # code checked out with write access, and artifacts trusted across runs.
+          - language: actions
+            build-mode: none
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
