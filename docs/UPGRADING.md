@@ -49,6 +49,55 @@ than 1.20 signs v1 only. The GitHub Action runs the newest release unless its `v
 pins one, and the GitLab template the one `PERSPECTIVEGRAPH_VERSION` names: a pin older than
 1.20 has to move.
 
+### With several tenants, an OIDC token has to name its own
+
+**Affects you if** you sign users in with OIDC and configure a tenant besides the default -
+in `INGEST_HMAC_SECRETS`, `API_TOKENS` or `CONNECTOR_TENANT`.
+
+A token without the tenant claim (`OIDC_TENANT_CLAIM`, `tenant` unless renamed) used to be
+read as the default tenant's. With one tenant that is right; with several, the default is a
+tenant like the others, and a subject the IdP failed to place in one read its graph. Such a
+token is now refused with `401`, and the engine logs once which claim it is missing. A
+single-tenant deployment is unaffected.
+
+What to do: have the IdP mint the claim for every user, including `default` for the default
+tenant's users, before you upgrade.
+
+### Two names for one tenant, or two ingest secrets for one, stop the engine
+
+**Affects you if** your configuration spells a tenant two ways that differ in more than
+case - `acme-corp` and `acme.corp`, across `INGEST_HMAC_SECRETS`, `API_TOKENS` and
+`CONNECTOR_TENANT` - or gives one tenant two ingest secrets (`Acme:s1,acme:s2`, or
+`INGEST_HMAC_SECRET` together with `default:` in `INGEST_HMAC_SECRETS`).
+
+Tenant names are normalized to `[a-z0-9_]`, so those names were already one graph: two
+customers named that way read each other's attack paths, and the second ingest secret
+silently replaced the first, so a sender signing with it was refused. The engine now
+refuses to start and names both entries.
+
+What to do: spell each tenant one way, best already in `[a-z0-9_]`, and give each one
+ingest secret.
+
+### Production refuses a passphrase as STORE_ENCRYPTION_KEY
+
+**Affects you if** `PG_ENV=production` and `STORE_ENCRYPTION_KEY` is anything but 64 hex
+characters. The Helm chart's generated key and `make prod-init` are 64 hex characters, so
+only a key someone typed is affected.
+
+A passphrase becomes the key through a single SHA-256, so whoever holds an encrypted backup
+can test guesses at hashing speed. The engine now refuses to start with one in production,
+and warns about one elsewhere.
+
+What to do: to keep the stores already encrypted readable, set the passphrase's SHA-256 as
+the key - it is the same key, written out:
+
+```bash
+printf %s "$PASSPHRASE" | sha256sum | cut -d' ' -f1
+```
+
+On macOS use `shasum -a 256` in place of `sha256sum`. That makes the strength of the key the strength of the
+passphrase, no more: for a new deployment, generate one with `openssl rand -hex 32`.
+
 ## 1.37.0
 
 ### Single VM: Caddy is built with golang.org/x/net 0.60.0, and a scan of it is clean

@@ -67,6 +67,21 @@ func TestCheckProductionConfig(t *testing.T) {
 			name: "SSO counts as an API credential",
 			cfg:  config.Config{Env: "production", OIDCJWKSURL: "https://idp/jwks", IngestHMACSecrets: "t:s"},
 		},
+		{
+			name: "production with a passphrase as the store key refuses to start",
+			cfg: config.Config{Env: "production", APITokens: "tok:admin", IngestHMACSecret: "s",
+				StoreEncryptionKey: "correct horse battery staple"},
+			wantErr: "STORE_ENCRYPTION_KEY is a passphrase",
+		},
+		{
+			name: "production with a raw 64-hex store key proceeds",
+			cfg: config.Config{Env: "production", APITokens: "tok:admin", IngestHMACSecret: "s",
+				StoreEncryptionKey: strings.Repeat("ab", 32)},
+		},
+		{
+			name: "a passphrase outside production is warned about, not refused",
+			cfg:  config.Config{Env: "demo", StoreEncryptionKey: "correct horse battery staple"},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

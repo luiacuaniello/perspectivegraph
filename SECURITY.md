@@ -123,7 +123,8 @@ full trust-boundary and asset analysis and the operator checklist. The controls 
   support expiry and `sha256$`-hashed-at-rest storage).
 - **`INGEST_HMAC_SECRET`** - signed ingestion so scanner data can't be forged.
 - **`STORE_ENCRYPTION_KEY`** - AES-256-GCM at-rest encryption of the governance
-  stores and the audit log.
+  stores and the audit log, with a random key of 64 hex characters (a production
+  deployment refuses a passphrase).
 - **`EXPORT_SIGNING_KEY`** - Ed25519-signed OSCAL/SIEM exports a consumer can verify.
 - **`AUDIT_LOG_PATH`** - tamper-evident, hash-chained audit log of reads and writes
   (verify with `perspectivegraph verify-audit <file>`, or `verify-audit -postgres` when

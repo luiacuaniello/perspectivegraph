@@ -189,6 +189,22 @@ type tokenEntry struct {
 	expiry    time.Time // zero = no expiry
 }
 
+// Tenants lists the tenants the store's tokens name, each once, as they are written.
+func (ts *TokenStore) Tenants() []string {
+	if ts == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, e := range ts.entries {
+		if t := e.principal.Tenant; !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 // Len reports how many usable tokens the store holds - entries that parsed, named a
 // known role and have not expired. It exists so a caller can tell "no credential was
 // configured" apart from "a credential was configured and none of it survived parsing",

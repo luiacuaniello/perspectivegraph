@@ -9,10 +9,12 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -58,13 +60,19 @@ type JWTConfig struct {
 	// someone is, not that they may read a map of how to attack the organisation.
 	// Granting everyone the IdP admits a role has to be a decision somebody makes.
 	DefaultRole Role
+
+	// RequireTenant refuses a token that names no tenant. It is set when the deployment
+	// serves more than one: there the default tenant is a tenant like the others, and a
+	// subject the IdP did not place in one would otherwise read the default tenant's graph.
+	RequireTenant bool
 }
 
 // JWTAuthenticator verifies RS256 JWTs against a cached JWKS and maps the
 // claims to a Principal.
 type JWTAuthenticator struct {
-	cfg  JWTConfig
-	keys *jwksCache
+	cfg            JWTConfig
+	keys           *jwksCache
+	warnedNoTenant atomic.Bool
 }
 
 func NewJWTAuthenticator(cfg JWTConfig) *JWTAuthenticator {
@@ -112,6 +120,12 @@ func (j *JWTAuthenticator) Authenticate(r *http.Request) (Principal, bool) {
 	tenant := DefaultTenant
 	if v, ok := claims[j.cfg.TenantClaim].(string); ok && v != "" {
 		tenant = v
+	} else if j.cfg.RequireTenant {
+		if j.warnedNoTenant.CompareAndSwap(false, true) {
+			slog.Warn("OIDC token refused: it names no tenant, and this deployment serves several. Set the claim "+
+				"in the IdP for every user - \"default\" for the default tenant's", "claim", j.cfg.TenantClaim)
+		}
+		return Principal{}, false
 	}
 	sub, _ := claims["sub"].(string)
 	if sub == "" {

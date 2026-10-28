@@ -44,6 +44,18 @@ func Nop() Sealer { return nopSealer{} }
 
 type aeadSealer struct{ gcm cipher.AEAD }
 
+// IsPassphrase reports whether key is a passphrase rather than a raw key: anything but
+// 64 hex characters. New turns a passphrase into the key with a single SHA-256, so an
+// attacker holding an encrypted backup can test guesses at hashing speed - which is why a
+// production deployment refuses one.
+func IsPassphrase(key string) bool {
+	if key == "" {
+		return false
+	}
+	b, err := hex.DecodeString(key)
+	return err != nil || len(b) != 32
+}
+
 // New returns an AES-256-GCM sealer derived from key, or the Nop sealer when key
 // is empty. A 64-hex-char key is used as the raw 32-byte key; any other non-empty
 // value is treated as a passphrase and stretched to 32 bytes with SHA-256.

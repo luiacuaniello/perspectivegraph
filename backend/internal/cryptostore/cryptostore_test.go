@@ -2,6 +2,9 @@ package cryptostore
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"strings"
 	"testing"
 )
 
@@ -87,5 +90,46 @@ func TestWrongKeyFails(t *testing.T) {
 	sealed, _ := a.Seal([]byte("data"))
 	if _, err := b.Open(sealed); err == nil {
 		t.Fatal("Open with the wrong key must fail")
+	}
+}
+
+// A production deployment refuses a passphrase, and the way out it offers has to keep what
+// is already encrypted readable: the SHA-256 of the passphrase, written as 64 hex
+// characters, is the same key - so a store sealed under the passphrase opens under it.
+func TestThePassphrasesHashOpensWhatThePassphraseSealed(t *testing.T) {
+	const pass = "correct horse battery staple"
+	sum := sha256.Sum256([]byte(pass))
+	hexKey := hex.EncodeToString(sum[:])
+
+	for key, want := range map[string]bool{
+		"":                      false,
+		pass:                    true,
+		hexKey:                  false,
+		strings.ToUpper(hexKey): false,
+		hexKey[:63]:             true,
+		hexKey + "00":           true,
+		strings.Repeat("z", 64): true,
+		hexKey[:62] + "\n":      true,
+	} {
+		if got := IsPassphrase(key); got != want {
+			t.Errorf("IsPassphrase(%q) = %v, want %v", key, got, want)
+		}
+	}
+
+	byPass, err := New(pass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := []byte(`{"suppressions":[]}`)
+	sealed, err := byPass.Seal(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byHex, err := New(hexKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := byHex.Open(sealed); err != nil || !bytes.Equal(out, in) {
+		t.Fatalf("the passphrase's SHA-256 as a hex key did not open what the passphrase sealed: %q, %v", out, err)
 	}
 }

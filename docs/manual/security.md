@@ -29,6 +29,14 @@ That's the load-bearing security claim, so it's **proven by an end-to-end test**
 doesn't break the boundary), with per-tenant + per-app + role (viewer/operator/
 admin) RBAC on top.
 
+Two rules keep a principal from landing in a tenant it was not given. Once a tenant
+besides the default is configured - in `INGEST_HMAC_SECRETS`, `API_TOKENS` or
+`CONNECTOR_TENANT` - an OIDC token that names no tenant is refused rather than read as the
+default tenant's, so the default tenant's users carry the claim too (`tenant: default`).
+And because tenant names are normalized to `[a-z0-9_]`, the engine refuses to start when
+two configured names become one: `acme-corp` and `acme.corp` would otherwise share a graph,
+and the second ingest secret would replace the first.
+
 Login is **runtime, not baked in**. The dashboard reads a public `GET /auth/config`
 (auth mode + the IdP's public coordinates - no secrets) and renders the right gate,
 so a *single* build serves an open, token-secured, or SSO-secured backend with no
@@ -309,7 +317,9 @@ Beyond the container surface, the backend itself is built defensively:
   encrypts the governance stores (suppressions/tickets/validations/history) **and
   the audit log** with AES-256-GCM, so a stolen volume or backup doesn't hand over
   the attack map plus who-viewed-it in plaintext. (Reads pre-encryption files
-  transparently - a one-way migration.)
+  transparently - a one-way migration.) Use a random key of 64 hex characters: a
+  passphrase becomes the key through a single SHA-256, so whoever holds a backup can
+  test guesses at hashing speed, and `PG_ENV=production` refuses one.
 - **Signed exports.** With `EXPORT_SIGNING_KEY` (Ed25519) the OSCAL/SIEM exports
   carry a detached signature (`X-PerspectiveGraph-Signature`); a consumer fetches
   the public key at **`GET /export/pubkey`** and verifies integrity + origin.

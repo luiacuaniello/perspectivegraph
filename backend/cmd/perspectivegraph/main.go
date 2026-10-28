@@ -293,6 +293,16 @@ func checkProductionConfig(cfg config.Config) error {
 			"GraphQL endpoint open. Each entry is token:role[:tenant[:YYYY-MM-DD]] and role is viewer or admin, " +
 			"e.g. API_TOKENS=s3cr3t:admin. Check the startup warnings for which entry was rejected")
 	}
+	// A passphrase becomes the store key through a single SHA-256, so whoever holds an
+	// encrypted backup can test guesses at hashing speed. Converting keeps every store
+	// readable, because the SHA-256 of the passphrase IS the key it was encrypting with.
+	if cryptostore.IsPassphrase(cfg.StoreEncryptionKey) {
+		return errors.New("PG_ENV=production but STORE_ENCRYPTION_KEY is a passphrase, which becomes the key " +
+			"through a single SHA-256 - whoever holds an encrypted backup can test guesses at hashing speed. Set " +
+			"a random key of 64 hex characters (openssl rand -hex 32). To keep the stores already encrypted with " +
+			"the passphrase readable, set its SHA-256 instead - the 64 hex characters printf %s \"$PASSPHRASE\" | " +
+			"sha256sum prints: it is the same key, written out")
+	}
 	// Ingest is the write side: an open one lets anyone inject nodes and edges, which
 	// fabricates attack paths that do not exist or buries ones that do.
 	if cfg.IngestHMACSecret == "" && cfg.IngestHMACSecrets == "" {
@@ -368,6 +378,10 @@ func run(parent context.Context, cfg config.Config) error {
 		return err
 	}
 	if err := checkAuthConfig(cfg); err != nil {
+		return err
+	}
+	tokens := auth.NewTokenStore(cfg.APITokens)
+	if err := checkTenantNames(cfg, tokens); err != nil {
 		return err
 	}
 
@@ -494,6 +508,11 @@ func run(parent context.Context, cfg config.Config) error {
 	}
 	if sealer.Enabled() {
 		slog.Info("at-rest encryption: governance stores + audit log are AES-256-GCM encrypted")
+	}
+	if cryptostore.IsPassphrase(cfg.StoreEncryptionKey) {
+		slog.Warn("STORE_ENCRYPTION_KEY is a passphrase: it becomes the key through a single SHA-256, so an " +
+			"encrypted backup can be attacked at hashing speed. Use 64 hex characters (openssl rand -hex 32); " +
+			"PG_ENV=production refuses a passphrase")
 	}
 
 	// Ed25519 export signing: OSCAL/SIEM exports leave the trust boundary, so a
@@ -751,20 +770,28 @@ func run(parent context.Context, cfg config.Config) error {
 			"role", r.String(), "writes", "still admin-only (403)")
 	}
 
+	// With more than one tenant configured, an OIDC token has to say which is its own.
+	requireTenant := servesSeveralTenants(cfg, tokens)
+	if requireTenant && cfg.OIDCJWKSURL != "" {
+		slog.Info("OIDC: several tenants are configured, so a token without the tenant claim is refused",
+			"claim", cmp.Or(cfg.OIDCTenantClaim, "tenant"))
+	}
+
 	// The iss/aud fail-closed rule is enforced by checkAuthConfig, before this
 	// function runs and before the process touches any dependency.
 	authn := auth.Chain{
-		auth.NewTokenStore(cfg.APITokens),
+		tokens,
 		auth.NewJWTAuthenticator(auth.JWTConfig{
-			JWKSURL:     cfg.OIDCJWKSURL,
-			Issuer:      cfg.OIDCIssuer,
-			Audience:    cfg.OIDCAudience,
-			RoleClaim:   cfg.OIDCRoleClaim,
-			GroupsClaim: cfg.OIDCGroupsClaim,
-			TenantClaim: cfg.OIDCTenantClaim,
-			AppsClaim:   cfg.OIDCAppsClaim,
-			GroupRoles:  groupRoles,
-			DefaultRole: defaultRole,
+			JWKSURL:       cfg.OIDCJWKSURL,
+			Issuer:        cfg.OIDCIssuer,
+			Audience:      cfg.OIDCAudience,
+			RoleClaim:     cfg.OIDCRoleClaim,
+			GroupsClaim:   cfg.OIDCGroupsClaim,
+			TenantClaim:   cfg.OIDCTenantClaim,
+			AppsClaim:     cfg.OIDCAppsClaim,
+			GroupRoles:    groupRoles,
+			DefaultRole:   defaultRole,
+			RequireTenant: requireTenant,
 		}),
 		// Last: a presented credential is decided by the authenticators above, so a
 		// wrong or expired token fails instead of falling back to anonymous.
@@ -1187,6 +1214,69 @@ func hmacSecrets(cfg config.Config) map[string]string {
 		}
 	}
 	return secrets
+}
+
+// configuredTenants lists every tenant the configuration names, as written: the per-tenant
+// ingest secrets, the API tokens and the connectors' tenant.
+func configuredTenants(cfg config.Config, tokens *auth.TokenStore) []string {
+	var out []string
+	for _, entry := range strings.Split(cfg.IngestHMACSecrets, ",") {
+		if tenant, secret, ok := strings.Cut(strings.TrimSpace(entry), ":"); ok && tenant != "" && secret != "" {
+			out = append(out, tenant)
+		}
+	}
+	out = append(out, tokens.Tenants()...)
+	if cfg.ConnectorTenant != "" {
+		out = append(out, cfg.ConnectorTenant)
+	}
+	return out
+}
+
+// servesSeveralTenants reports whether the configuration names a tenant besides the
+// default. There, a token that names no tenant cannot be read as the default tenant's.
+func servesSeveralTenants(cfg config.Config, tokens *auth.TokenStore) bool {
+	for _, t := range configuredTenants(cfg, tokens) {
+		if graph.NormalizeTenant(t) != graph.DefaultTenant {
+			return true
+		}
+	}
+	return false
+}
+
+// checkTenantNames refuses two names that become one tenant. The engine keys a tenant's
+// graph, its ingest secret and its analysis by the normalized name ([a-z0-9_]), so
+// "acme-corp" and "acme.corp" are one graph: two customers named that way would read each
+// other's attack paths, and the second ingest secret silently replaced the first. A
+// difference of case alone is the same name written twice, and stays accepted.
+func checkTenantNames(cfg config.Config, tokens *auth.TokenStore) error {
+	// Two ingest secrets for one tenant, in any case, are never meant: the second replaces
+	// the first, and whoever signs with the first is refused.
+	secretOf := map[string]string{}
+	if cfg.IngestHMACSecret != "" {
+		secretOf[graph.DefaultTenant] = "INGEST_HMAC_SECRET"
+	}
+	for _, entry := range strings.Split(cfg.IngestHMACSecrets, ",") {
+		if tenant, secret, ok := strings.Cut(strings.TrimSpace(entry), ":"); ok && tenant != "" && secret != "" {
+			n := graph.NormalizeTenant(tenant)
+			if prev, dup := secretOf[n]; dup {
+				return fmt.Errorf("two ingest secrets for tenant %q - %s and %q in INGEST_HMAC_SECRETS: the second "+
+					"would replace the first, and a sender signing with the first would be refused", n, prev, tenant)
+			}
+			secretOf[n] = fmt.Sprintf("%q in INGEST_HMAC_SECRETS", tenant)
+		}
+	}
+
+	spelling := map[string]string{}
+	for _, t := range configuredTenants(cfg, tokens) {
+		n := graph.NormalizeTenant(t)
+		if prev, ok := spelling[n]; ok && !strings.EqualFold(strings.TrimSpace(prev), strings.TrimSpace(t)) {
+			return fmt.Errorf("tenants %q and %q are one tenant to the engine - both become %q, so they would "+
+				"share one graph and one ingest secret. Spell each tenant one way, best in lower case with "+
+				"[a-z0-9_] only, in INGEST_HMAC_SECRETS, API_TOKENS and CONNECTOR_TENANT", prev, t, n)
+		}
+		spelling[n] = t
+	}
+	return nil
 }
 
 // authInfoFromConfig builds the public auth config the dashboard's login gate

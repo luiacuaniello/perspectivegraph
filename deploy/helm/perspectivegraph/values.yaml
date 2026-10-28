@@ -353,6 +353,7 @@ scrubIngest: true
 # At-rest encryption of the file-backed governance stores + detached signatures
 # on graph exports. Both are secrets; empty ⇒ plaintext on disk / unsigned
 # exports. Generate with e.g. --set crypto.storeEncryptionKey="$(openssl rand -hex 32)".
+# A passphrase instead of 64 hex characters is refused with backend.env: production.
 crypto:
   storeEncryptionKey: ""
   exportSigningKey: ""
@@ -448,7 +449,8 @@ auth:
     # people; startup logs a warning either way.
     defaultRole: ""
     # Claim names, for directories that namespace them (Auth0, Entra). Empty keeps
-    # role / groups / tenant / apps.
+    # role / groups / tenant / apps. With a tenant besides the default configured, a
+    # token without the tenant claim is refused.
     roleClaim: ""
     groupsClaim: ""
     tenantClaim: ""
