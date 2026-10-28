@@ -9,6 +9,14 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.39.2](https://github.com/luiacuaniello/perspectivegraph/compare/v1.39.1...v1.39.2) (2026-10-28)
+
+
+### Bug Fixes
+
+* **security:** refuse v1 ingest signatures by default ([#389](https://github.com/luiacuaniello/perspectivegraph/issues/389)) ([2f5938e](https://github.com/luiacuaniello/perspectivegraph/commit/2f5938eaa835d2190dc4dd620d1156c80d4e7207))
+* **security:** require the tenant claim and refuse weak store keys ([#393](https://github.com/luiacuaniello/perspectivegraph/issues/393)) ([48cc5cf](https://github.com/luiacuaniello/perspectivegraph/commit/48cc5cf54d6e83266057643936e5a4ca0cb798a7))
+
 ## [1.39.1](https://github.com/luiacuaniello/perspectivegraph/compare/v1.39.0...v1.39.1) (2026-10-24)
 
 
