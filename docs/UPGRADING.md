@@ -17,6 +17,38 @@ digest, take the backup, stage it.
 
 ---
 
+## 1.39.2
+
+### Ingest refuses v1 signatures by default, and the gate no longer sends one
+
+**Affects you if** something posts to the ingest endpoints with a signature of its own
+making that is v1 only (`X-PerspectiveGraph-Signature: sha256=…`, the body alone). The
+`gate` subcommand from 1.20, the GitHub Action, `perspectivegraph ingest` and the Postman
+collection all sign v2 and keep working.
+
+The v1 signature covers the body alone. While the engine accepted it - the default until
+now - a captured request could be sent again at any time, or with `?sha=` changed to put its
+findings, or its lack of them, on another commit. And because the gate signed both, every
+report it posted carried a v1 as well: strip the v2 header from a captured one, and what was
+left was a request the default accepted. `INGEST_HMAC_ACCEPT_V1` now defaults to `false`,
+and the gate sends v2 alone.
+
+What you will see: a sender that signs only v1 gets `401`, with a message naming
+`X-PerspectiveGraph-Signature-V2`, and
+`perspectivegraph_auth_denied_total{surface="ingest",reason="v1_refused"}` counts it. To find
+such a sender before you upgrade, check that this stays at zero on the running version:
+
+```
+sum(increase(perspectivegraph_ingest_signatures_total{version="v1"}[7d]))
+```
+
+What to do: move the sender to v2 - [how to sign](manual/onboarding.md#authentication).
+Until you can, set `INGEST_HMAC_ACCEPT_V1=true` (Helm: `ingest.hmacAcceptV1: true`), and know
+that for as long as it is on, that sender's requests can be replayed. A `gate` binary older
+than 1.20 signs v1 only. The GitHub Action runs the newest release unless its `version` input
+pins one, and the GitLab template the one `PERSPECTIVEGRAPH_VERSION` names: a pin older than
+1.20 has to move.
+
 ## 1.37.0
 
 ### Single VM: Caddy is built with golang.org/x/net 0.60.0, and a scan of it is clean

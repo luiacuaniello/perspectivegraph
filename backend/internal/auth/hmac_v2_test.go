@@ -81,9 +81,9 @@ func TestV2SignatureBindsTimePathAndParameters(t *testing.T) {
 	}
 }
 
-// v1 stays accepted until the operator turns it off - so no sender breaks on upgrade -
-// and is refused once they do.
-func TestV1IsAcceptedUntilTurnedOff(t *testing.T) {
+// v1 binds the body alone, so it is refused unless the operator turns it on for a sender
+// that cannot sign v2 yet - and is accepted once they do.
+func TestV1IsRefusedUnlessTurnedOn(t *testing.T) {
 	body := []byte(`{}`)
 	v1 := func() *http.Request {
 		r := httptest.NewRequest(http.MethodPost, "/ingest/events", bytes.NewReader(body))
@@ -91,11 +91,35 @@ func TestV1IsAcceptedUntilTurnedOff(t *testing.T) {
 		return r
 	}
 	hv, h := v2Verifier(time.Now())
-	if got := status(h, v1()); got != http.StatusAccepted {
-		t.Fatalf("v1 with the default = %d, want 202", got)
-	}
-	hv.WithAcceptV1(false)
 	if got := status(h, v1()); got != http.StatusUnauthorized {
-		t.Fatalf("v1 with INGEST_HMAC_ACCEPT_V1=false = %d, want 401", got)
+		t.Fatalf("v1 with the default = %d, want 401", got)
+	}
+	hv.WithAcceptV1(true)
+	if got := status(h, v1()); got != http.StatusAccepted {
+		t.Fatalf("v1 with INGEST_HMAC_ACCEPT_V1=true = %d, want 202", got)
+	}
+}
+
+// The gate used to sign both, so every report it posted carried a v1 signature as well.
+// Stripping the v2 header from a captured one left a request the default took as v1 -
+// again at any time, and with its commit changed, since v1 does not cover the query.
+func TestAStrippedV2IsNotAcceptedAsV1ByDefault(t *testing.T) {
+	now := time.Now()
+	body := []byte(`{"results":[]}`)
+	const target = "/ingest/trivy?slug=acme%2Fpayments&sha=abc123&pr=42"
+	bothSignatures := func(r *http.Request) { r.Header.Set(SignatureHeader, Sign(v2Secret, body)) }
+
+	_, h := v2Verifier(now)
+	if got := status(h, signedV2(t, now, target, body, bothSignatures)); got != http.StatusAccepted {
+		t.Fatalf("the original request = %d, want 202", got)
+	}
+	replay := signedV2(t, now, target, body, func(r *http.Request) {
+		bothSignatures(r)
+		r.Header.Del(SignatureV2Header)
+		r.Header.Del(TimestampHeader)
+		r.URL.RawQuery = "slug=acme%2Fpayments&sha=0ther&pr=42"
+	})
+	if got := status(h, replay); got != http.StatusUnauthorized {
+		t.Errorf("the captured request, v2 stripped and moved to another commit = %d, want 401", got)
 	}
 }

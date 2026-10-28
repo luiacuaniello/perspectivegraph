@@ -433,11 +433,12 @@ func postGateReport(client *http.Client, base, source, slug, sha, repo, cluster 
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	if secret != "" {
-		// Both signatures: v2 covers the timestamp, the path and the commit parameters, and
-		// an engine that knows it checks only that one; v1 keeps an engine older than v2
-		// accepting the report.
+		// v2 alone: it covers the timestamp, the path and the commit parameters. A v1
+		// signature beside it - the body alone - used to keep an engine older than 1.20
+		// accepting the report, and left every report carrying what a captured one could be
+		// replayed with: strip the v2 header, and an engine still accepting v1 took it, at
+		// any time and for any commit.
 		ts := time.Now().Unix()
-		req.Header.Set(auth.SignatureHeader, auth.Sign(secret, body))
 		req.Header.Set(auth.TimestampHeader, strconv.FormatInt(ts, 10))
 		req.Header.Set(auth.SignatureV2Header, auth.SignV2(secret, ts, http.MethodPost, "/ingest/"+url.PathEscape(source), q, body))
 	}

@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -103,12 +104,20 @@ func TestHMACPerTenant(t *testing.T) {
 	})
 	h := v.Require(audit.Nop{}, next)
 	body := `{"source":"trivy"}`
+	// v2, the signature the default accepts; each request is signed a second apart, so no
+	// case below is refused as a replay of another rather than for what it tests.
+	at := time.Now()
+	sign := func(req *http.Request, secret string) {
+		at = at.Add(time.Second)
+		req.Header.Set(TimestampHeader, strconv.FormatInt(at.Unix(), 10))
+		req.Header.Set(SignatureV2Header, SignV2(secret, at.Unix(), req.Method, req.URL.EscapedPath(), req.URL.Query(), []byte(body)))
+	}
 
 	// correct signature for acme + X-Tenant: acme → 202, principal tenant = acme
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/ingest/trivy", strings.NewReader(body))
 	req.Header.Set(TenantHeader, "acme")
-	req.Header.Set(SignatureHeader, Sign("acme-secret", []byte(body)))
+	sign(req, "acme-secret")
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusAccepted || got != "acme" {
 		t.Errorf("acme signed: code=%d tenant=%q, want 202/acme", rec.Code, got)
@@ -117,7 +126,7 @@ func TestHMACPerTenant(t *testing.T) {
 	// acme's secret used for the default tenant → 401 (tenant isolation)
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/ingest/trivy", strings.NewReader(body))
-	req.Header.Set(SignatureHeader, Sign("acme-secret", []byte(body))) // no X-Tenant → default
+	sign(req, "acme-secret") // no X-Tenant → default
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("cross-tenant secret: got %d, want 401", rec.Code)
@@ -127,7 +136,7 @@ func TestHMACPerTenant(t *testing.T) {
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/ingest/trivy", strings.NewReader(body))
 	req.Header.Set(TenantHeader, "ghost")
-	req.Header.Set(SignatureHeader, Sign("x", []byte(body)))
+	sign(req, "x")
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("unknown tenant: got %d, want 401", rec.Code)

@@ -464,10 +464,9 @@ auth:
 ingest:
   hmacSecret: ""
   hmacSecrets: ""
-  # Keep accepting v1 signatures (the body alone), so no sender breaks on upgrade. Set
-  # false once every sender signs v2: a v1 request can be replayed, and its commit
-  # parameters changed.
-  hmacAcceptV1: true
+  # Accept v1 signatures (the body alone). Off: a v1 request can be replayed, and its
+  # commit parameters changed. Turn it on only for a sender that cannot sign v2 yet.
+  hmacAcceptV1: false
 
 # Durable governance state. The suppression / ticket / red-team-validation /
 # posture-history / audit-log stores are file-backed and single-writer; without a

@@ -118,8 +118,8 @@ Every door is open by default for zero-config local dev - and the backend
   covers the time, the method, the path, the parameters and the body, and each one is
   accepted once within ±5 minutes - so a captured request cannot be replayed, or
   re-attributed to another commit by rewriting `?sha=`. The older
-  `X-PerspectiveGraph-Signature: sha256=<hex>` covers the body alone; it stays accepted
-  until `INGEST_HMAC_ACCEPT_V1=false`.
+  `X-PerspectiveGraph-Signature: sha256=<hex>` covers the body alone; it is refused
+  unless `INGEST_HMAC_ACCEPT_V1=true`.
 - **GraphQL API (read path)** - a bearer credential: a static token mapped to a
   role+tenant, or an **OIDC/JWT** (RS256/384/512 or ES256/384/512, verified against the
   JWKS - each algorithm only with a key of its own kind and curve; `role` and

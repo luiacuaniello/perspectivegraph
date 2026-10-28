@@ -140,7 +140,7 @@ mode is `verify-full`, and libpq's own `PGSSLROOTCERT` points the driver at the 
 |---|---|
 | `INGEST_HMAC_SECRET`<br>Default: none<br>Helm: `ingest.hmacSecret` | *Secret.* Every ingest request must be signed with it ([how to sign](onboarding.md#authentication)). Required with `PG_ENV=production`. |
 | `INGEST_HMAC_SECRETS`<br>Default: none<br>Helm: `ingest.hmacSecrets` | *Secret.* One secret per tenant, `tenant-a:secretA,tenant-b:secretB`; the `X-Tenant` header picks it. |
-| `INGEST_HMAC_ACCEPT_V1`<br>Default: `true`<br>Helm: `ingest.hmacAcceptV1` | Whether the older signature over the body alone is still accepted. It can be replayed: set `false` once `perspectivegraph_ingest_signatures_total{version="v1"}` stays at zero. |
+| `INGEST_HMAC_ACCEPT_V1`<br>Default: `false`<br>Helm: `ingest.hmacAcceptV1` | Whether the older signature over the body alone is accepted. It can be replayed, so it is refused unless set to `true` for a sender that cannot sign v2 yet; `perspectivegraph_ingest_signatures_total{version="v1"}` shows what still sends it. |
 | `INGEST_RATE_RPS`<br>Default: `30`<br>Helm: `auth.ingestRateRps` | Requests per second per client IP on ingestion. `0` disables the limit. |
 | `SCRUB_INGEST`<br>Default: `true`<br>Helm: `scrubIngest` | Redacts credentials that scanner output carries by accident (cloud keys, tokens, private keys) before they reach the graph. |
 

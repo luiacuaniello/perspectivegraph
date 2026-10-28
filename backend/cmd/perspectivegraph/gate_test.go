@@ -113,19 +113,24 @@ func TestGateTreatsAnUndatedVerdictAsStale(t *testing.T) {
 
 // The stamping contract: unless slug and sha reach the ingest webhook, nothing in the
 // graph carries the commit and every later verdict is UNKNOWN. This is also the HMAC
-// path, since a signature computed over the wrong bytes fails closed at the webhook.
+// path: the request goes through the engine's own verifier, as it ships, so a signature
+// over the wrong bytes - or one the default no longer accepts - fails here as it would at
+// the webhook. The gate signs v2 alone: a v1 beside it was what a captured report could
+// be replayed with, once its v2 header was stripped.
 func TestGatePostsPRContextAndSignsTheBody(t *testing.T) {
 	const secret = "shared-secret"
 	body := []byte(`{"Results":[]}`)
 
-	var gotQuery, gotSig, gotPath string
+	var gotQuery, gotPath string
 	var gotBody []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var sentV1 bool
+	verifier := auth.NewHMACVerifier(map[string]string{auth.DefaultTenant: secret}, 1<<20, nil)
+	srv := httptest.NewServer(verifier.Require(nil, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath, gotQuery = r.URL.Path, r.URL.RawQuery
-		gotSig = r.Header.Get(auth.SignatureHeader)
+		_, sentV1 = r.Header[http.CanonicalHeaderKey(auth.SignatureHeader)]
 		gotBody, _ = io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusAccepted)
-	}))
+	})))
 	defer srv.Close()
 
 	_, err := postGateReport(srv.Client(), srv.URL, "trivy", "acme/payments", "abc123", "acme/payments", "", 42, "", secret, body)
@@ -144,8 +149,8 @@ func TestGatePostsPRContextAndSignsTheBody(t *testing.T) {
 	if !bytes.Equal(gotBody, body) {
 		t.Errorf("body was altered in transit: %q", gotBody)
 	}
-	if want := auth.Sign(secret, body); gotSig != want {
-		t.Errorf("signature = %q, want %q", gotSig, want)
+	if sentV1 {
+		t.Error("the gate sent a v1 signature, which a captured report can be replayed with")
 	}
 }
 
@@ -154,7 +159,11 @@ func TestGatePostsPRContextAndSignsTheBody(t *testing.T) {
 func TestGateSendsNoSignatureWithoutASecret(t *testing.T) {
 	var present bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, present = r.Header[http.CanonicalHeaderKey(auth.SignatureHeader)]
+		for _, h := range []string{auth.SignatureHeader, auth.SignatureV2Header} {
+			if _, ok := r.Header[http.CanonicalHeaderKey(h)]; ok {
+				present = true
+			}
+		}
 		w.WriteHeader(http.StatusAccepted)
 	}))
 	defer srv.Close()

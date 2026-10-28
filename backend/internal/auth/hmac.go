@@ -115,16 +115,17 @@ type HMACVerifier struct {
 }
 
 // ips resolves the address recorded in the audit trail. Nil trusts no proxy. v1
-// signatures are accepted until WithAcceptV1(false).
+// signatures are refused unless WithAcceptV1(true).
 func NewHMACVerifier(secrets map[string]string, maxBody int64, ips *clientip.Resolver) *HMACVerifier {
-	return &HMACVerifier{secrets: secrets, maxBody: maxBody, ips: ips, acceptV1: true, now: time.Now,
+	return &HMACVerifier{secrets: secrets, maxBody: maxBody, ips: ips, now: time.Now,
 		seen: map[string]time.Time{}}
 }
 
-// WithAcceptV1 decides whether a request signed only with v1 - the body alone - is still
-// accepted (INGEST_HMAC_ACCEPT_V1). It is, by default, so every sender keeps working
-// through an upgrade; turn it off once they all sign v2, and a captured request can no
-// longer be replayed or re-attributed by stripping its v2 header.
+// WithAcceptV1 decides whether a request signed only with v1 - the body alone - is
+// accepted (INGEST_HMAC_ACCEPT_V1). It is not, by default: a v1 request can be replayed at
+// any time and moved to another commit, and while v1 is accepted, a captured v2 request
+// whose sender also signed v1 is downgraded to it by stripping its v2 header. Turn it on
+// only for a sender that cannot sign v2 yet.
 func (h *HMACVerifier) WithAcceptV1(accept bool) *HMACVerifier {
 	h.acceptV1 = accept
 	return h

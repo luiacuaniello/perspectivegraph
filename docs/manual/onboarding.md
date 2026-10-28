@@ -87,9 +87,8 @@ request must be signed/authorized - otherwise you get `401`.
 
   Each signature is accepted once, within five minutes of its timestamp - sign every
   request afresh. The v1 form (`X-PerspectiveGraph-Signature: sha256=` + the HMAC of the
-  body alone) is still accepted unless `INGEST_HMAC_ACCEPT_V1=false`; the `gate`
-  subcommand, the GitHub Action and the Postman collection send both, and
-  `perspectivegraph ingest` sends v2 alone.
+  body alone) is refused unless `INGEST_HMAC_ACCEPT_V1=true`; the `gate` subcommand, the
+  GitHub Action, the Postman collection and `perspectivegraph ingest` all send v2 alone.
 
 - **API** (`API_TOKENS` set): send `Authorization: Bearer <viewer-token>` on
   every GraphQL request. The in-browser playground is disabled when auth is on.

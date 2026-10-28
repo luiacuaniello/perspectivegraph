@@ -158,8 +158,9 @@ type Config struct {
 	// Auth (optional; open with a warning when unset)
 	IngestHMACSecret  string // HMAC secret for the default tenant
 	IngestHMACSecrets string // per-tenant secrets: "tenant:secret,tenant2:secret2"
-	// IngestHMACAcceptV1 keeps accepting v1 signatures, which cover the body only
-	// (INGEST_HMAC_ACCEPT_V1, default true). Turn it off once every sender signs v2.
+	// IngestHMACAcceptV1 accepts v1 signatures, which cover the body only
+	// (INGEST_HMAC_ACCEPT_V1, default false). Turn it on only for a sender that cannot
+	// sign v2 yet: a v1 request can be replayed, and moved to another commit.
 	IngestHMACAcceptV1 bool
 	APITokens          string // bearer tokens → role[:tenant]: "tok:viewer,tok2:admin:globex"
 
@@ -443,7 +444,7 @@ func Load() Config {
 
 		IngestHMACSecret:   sec.get("INGEST_HMAC_SECRET", ""),
 		IngestHMACSecrets:  sec.get("INGEST_HMAC_SECRETS", ""),
-		IngestHMACAcceptV1: getbool("INGEST_HMAC_ACCEPT_V1", true),
+		IngestHMACAcceptV1: getbool("INGEST_HMAC_ACCEPT_V1", false),
 		APITokens:          sec.get("API_TOKENS", ""),
 
 		OIDCJWKSURL:   getenv("OIDC_JWKS_URL", ""),
