@@ -68,6 +68,24 @@ in their place.
 
 Please give us a reasonable window to ship a fix before any public disclosure.
 
+## How a fix is disclosed
+
+Every confirmed vulnerability gets a GitHub Security Advisory with a CVE, whoever found
+it: a reporter, or the maintainers' own review. The advisory names the versions affected
+and the version that fixes it, so an operator can tell whether a deployment is exposed
+without reading the code. They are listed on the
+[advisories page](https://github.com/luiacuaniello/perspectivegraph/security/advisories).
+
+The release that carries a fix says so where each kind of user looks:
+
+- its release notes link the advisory next to the fix;
+- that version of the Helm chart sets `artifacthub.io/containsSecurityUpdates: "true"`
+  and lists the fix under `artifacthub.io/changes` with `kind: security`, so Artifact Hub
+  marks it as a security update. The next release drops both, or every later version
+  would claim the same fix;
+- the advisory is published with the release, not before: until then it stays a
+  private draft.
+
 ## Scope
 
 **In scope** - vulnerabilities in PerspectiveGraph itself, for example:
