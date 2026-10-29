@@ -63,6 +63,7 @@ export const PAGES = {
   "CONTRIBUTING.md": "contributing",
   "ROADMAP.md": "roadmap",
   "SUPPORT.md": "support",
+  "RELEASES.md": "releases",
   "ADOPTERS.md": "adopters",
   "GOVERNANCE.md": "governance",
 };

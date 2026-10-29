@@ -271,7 +271,7 @@ question, AWS's answer, the engine's, and the version it was asked of.
 - [Evaluation](docs/EVALUATION.md) - trying it on your own estate, in stages that each end in an answer
 - [Positioning](docs/POSITIONING.md) - what is claimed, what is **not**, and how to check
 - [Operations](docs/OPERATIONS.md) · [Threat model](docs/THREAT-MODEL.md) · [Scale](docs/SCALE.md) · [API stability](docs/API-STABILITY.md)
-- [Support](SUPPORT.md) · [Upgrading](docs/UPGRADING.md) · [Roadmap](ROADMAP.md) · [Security](SECURITY.md)
+- [Support](SUPPORT.md) · [Releases](RELEASES.md) · [Upgrading](docs/UPGRADING.md) · [Roadmap](ROADMAP.md) · [Security](SECURITY.md)
 - [Contributing](CONTRIBUTING.md) · [Governance](GOVERNANCE.md) · [Maintainers](MAINTAINERS.md) · [Adopters](ADOPTERS.md)
 
 ## License

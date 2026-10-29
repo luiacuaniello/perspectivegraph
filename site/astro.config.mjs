@@ -88,7 +88,7 @@ export default defineConfig({
         },
         {
           label: "Project",
-          items: ["roadmap", "support", "contributing", "adopters", "governance"],
+          items: ["roadmap", "support", "releases", "contributing", "adopters", "governance"],
         },
       ],
     }),

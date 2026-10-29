@@ -61,6 +61,9 @@ a schedule is in [SUPPORT.md](SUPPORT.md): fixes land on the newest release, sec
 have a clock, and the interface is governed by
 [API stability](docs/API-STABILITY.md) so that upgrading is boring.
 
+How a release is cut, what it publishes and what to do when one fails halfway is in
+[RELEASES.md](RELEASES.md).
+
 ## Security decisions
 
 Vulnerability reports do not go through this process - they go through

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -192,14 +193,52 @@ func TestReferencesThatLoopBackEnd(t *testing.T) {
 // A plan's size is its author's to choose, up to the gate's 32 MiB. Reading it has to grow
 // with its size, not with the square of it: looking up each instance profile's role among
 // all the roles, and each instance's groups among all the groups, once took 3.8 s for a 7 MiB
-// plan and would have taken a minute and a half at the limit. The bound is loose - a tenth
-// of it is what the reader needs - so only the square trips it.
+// plan and would have taken a minute and a half at the limit.
+//
+// Two sizes are compared rather than one timed against a deadline. A deadline measures the
+// machine as much as the code: the 5 s one this replaces failed correct code under load, at
+// 5.3 s, and on a fast machine passed either lookup put back the way it was, at 3.9 s and
+// 4.6 s. Four times the resources take about four times as long to read when reading is
+// linear, and about sixteen when it is quadratic, and a loaded machine slows both sizes
+// alike. Each size is read three times, interleaved, and its fastest read counts, so a burst
+// of load during one read does not decide it either. Measured so, correct code reads about 4
+// to 6 times as long - idle, with every core busy twice over, and emulated on linux/amd64 -
+// and either lookup put back about 13 to 14: 8 fails the regression and nothing else.
 func TestReadingAPlanGrowsWithItsSize(t *testing.T) {
+	small, large := hostilePlan(t, 750), hostilePlan(t, 3000)
+	read := func(raw []byte) time.Duration {
+		runtime.GC() // the previous read's garbage is not this one's cost
+		start := time.Now()
+		if _, err := New().ParseChange(bytes.NewReader(raw), ingestion.Options{EstateKnown: true}); err != nil {
+			t.Fatal(err)
+		}
+		return time.Since(start)
+	}
+	var fastSmall, fastLarge time.Duration
+	for i := 0; i < 3; i++ {
+		if d := read(small); fastSmall == 0 || d < fastSmall {
+			fastSmall = d
+		}
+		if d := read(large); fastLarge == 0 || d < fastLarge {
+			fastLarge = d
+		}
+	}
+	ratio := float64(fastLarge) / float64(fastSmall)
+	if ratio > 8 {
+		t.Errorf("a plan four times the size took %.1f times as long to read (%v against %v, %d KiB against %d KiB): "+
+			"reading grows faster than the plan", ratio, fastLarge, fastSmall, len(large)/1024, len(small)/1024)
+	}
+	t.Logf("read %d KiB in %v and %d KiB in %v: %.1f times", len(small)/1024, fastSmall, len(large)/1024, fastLarge, ratio)
+}
+
+// hostilePlan is a plan with n of each resource, every one naming others the reader has to
+// look up.
+func hostilePlan(t *testing.T, n int) []byte {
+	t.Helper()
 	var res []any
 	add := func(typ, name string, v map[string]any) {
 		res = append(res, map[string]any{"address": typ + "." + name, "mode": "managed", "type": typ, "name": name, "values": v})
 	}
-	const n = 3000
 	for i := 0; i < n; i++ {
 		s := fmt.Sprint(i)
 		add("aws_security_group", "g"+s, map[string]any{"id": "sg-" + s, "name": "g" + s, "ingress": []any{}})
@@ -233,11 +272,5 @@ func TestReadingAPlanGrowsWithItsSize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	start := time.Now()
-	if _, err := New().ParseChange(bytes.NewReader(raw), ingestion.Options{EstateKnown: true}); err != nil {
-		t.Fatal(err)
-	}
-	if took := time.Since(start); took > 5*time.Second {
-		t.Errorf("a %d KiB plan took %v to read", len(raw)/1024, took)
-	}
+	return raw
 }

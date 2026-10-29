@@ -235,7 +235,8 @@ licence named without its text.
   issue or PR.
 - **Commits & releases:** [Conventional Commits](https://www.conventionalcommits.org)
   (`feat:`, `fix:`, `docs:`, `chore:`, …) - they drive the automated CHANGELOG and
-  versioning (release-please). One fact per message line; explain the *why*.
+  versioning (release-please), as [RELEASES.md](RELEASES.md) describes. One fact per
+  message line; explain the *why*.
   Enable the bundled git hooks once so a bad commit message or a stray secret is
   caught before it leaves your machine:
 
