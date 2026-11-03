@@ -6,7 +6,7 @@
 # toolchain under QEMU would produce the same static binary far slower - and emulation is
 # not merely slow: `npm ci` under QEMU/arm64 died with SIGILL and hung a release build for
 # three hours (see frontend/Dockerfile). Nothing here needs to run on the target.
-FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS build
 # Supplied by buildx per target image; defaulted so a plain `docker build` still works.
 ARG TARGETOS=linux
 ARG TARGETARCH
@@ -25,7 +25,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w -X main.releaseVersion=${VERSION}" -o /out/perspectivegraph ./cmd/perspectivegraph
 
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:18f4cc26c9ffa7f20a359298be7deadac5c607c8e03a02b8119f1a5fc2f82c99
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:25ac8f0c3b2334a9eb05452266bd4697864a8c8ef0ef71e5e6480d7f92868329
 COPY --from=build /out/perspectivegraph /perspectivegraph
 EXPOSE 8080 8081
 USER nonroot:nonroot
