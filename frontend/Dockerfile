@@ -14,7 +14,7 @@
 # through scripts/node-image.sh, so the bump Dependabot proposes here is complete. The tag
 # is the exact version, not `24-alpine`: a floating tag moves the Node version under an
 # unchanged-looking line, and nothing reading it could say which Node it is.
-FROM --platform=$BUILDPLATFORM node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS build
+FROM --platform=$BUILDPLATFORM node:24.22.2-alpine@sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85 AS build
 WORKDIR /app
 COPY package*.json ./
 # `npm ci`, never `npm install`: it installs exactly what package-lock.json pins and
