@@ -21,7 +21,7 @@
 # This matters beyond the badge: Artifact Hub's rating is set by the HIGHEST severity
 # present and ignores the count entirely (critical=F, high=D, medium=C, low=B), so the
 # only thing that moves it is eliminating a severity class, not reducing findings.
-FROM postgres:17-alpine@sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b AS build
+FROM postgres:17-alpine@sha256:3540c0362c809df084ffac0ae69fe794515f9de92692f02178bcdce0ef0302ac AS build
 
 # Build dependencies live only in this stage; the final image inherits none of them.
 RUN apk add --no-cache build-base flex bison perl curl
@@ -73,7 +73,7 @@ RUN set -eux; \
     cp "$(pg_config --pkglibdir)/age.so" "/out$(pg_config --pkglibdir)/"; \
     cp "$(pg_config --sharedir)/extension/age"* "/out$(pg_config --sharedir)/extension/"
 
-FROM postgres:17-alpine@sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b
+FROM postgres:17-alpine@sha256:3540c0362c809df084ffac0ae69fe794515f9de92692f02178bcdce0ef0302ac
 
 COPY --from=build /out/ /
 
