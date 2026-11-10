@@ -17,6 +17,31 @@ digest, take the backup, stage it.
 
 ---
 
+## 1.39.3
+
+### Single VM: Caddy is built with klauspost/compress 1.20.4
+
+**Affects you if** you run the single-VM recipe (`make prod-init`). Nothing else contains
+Caddy: neither the Helm chart nor the other compose files use it.
+
+The recipe compiled Caddy 2.11.9 with `github.com/klauspost/compress` v1.20.1, the version
+that release requires. GO-2026-6865 (CVE-2026-116591), a panic on two-block frames in its
+FSE and Huffman coders, is filed against it, and unlike the HTTP/2 advisories of 1.37.0 this
+one is reached: the recipe's Caddyfile compresses responses with `encode zstd gzip`, and
+`govulncheck` traces calls from Caddy into the advised functions. No Caddy release moves the
+dependency yet, so [`deploy/caddy/go.mod`](../deploy/caddy/go.mod) now names v1.20.4, and CI
+runs `govulncheck` on that module as it does on the engine.
+
+What to do: upgrade as [the recipe describes](manual/single-vm.md#upgrade). `make prod-init`
+rebuilds Caddy's image; `docker compose up -d` on its own keeps the old one running. To see
+what the running Caddy was built from:
+
+```bash
+docker compose exec caddy caddy build-info | grep klauspost/compress
+```
+
+The line names `v1.20.4` once the upgrade is done.
+
 ## 1.39.2
 
 ### Ingest refuses v1 signatures by default, and the gate no longer sends one

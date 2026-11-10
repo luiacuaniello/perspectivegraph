@@ -22,7 +22,9 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.27.3"
-          cache-dependency-path: backend/go.sum
+          cache-dependency-path: |
+            backend/go.sum
+            deploy/caddy/go.sum
       - run: go build ./...
       - run: go vet ./...
       - run: go test ./...
@@ -36,6 +38,14 @@ jobs:
         run: go test -count=1 ./internal/config/
       # Supply-chain gate: fail on a vulnerability the code actually reaches.
       - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
+      # The same gate on the Caddy the single-VM recipe builds, a module of its own. There
+      # Dependabot moves Caddy alone, so a fix in one of its dependencies is a bump by hand,
+      # and until this step nothing that could fail said one was due: GO-2026-6865, which
+      # Caddy's zstd compression reaches in klauspost/compress v1.20.1, came to light through
+      # Scorecard.
+      - name: govulncheck (the single-VM recipe's Caddy)
+        working-directory: deploy/caddy
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
       # SAST gate: static security analysis of the tool's OWN source - a security
       # tool should hold itself to the bar it sets. The by-design benign hits
