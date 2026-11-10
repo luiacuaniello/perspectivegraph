@@ -28,6 +28,8 @@ func TestMemoryStoreContract(t *testing.T) {
 	runStoreContract(t, memory.New())
 	assertSweepContract(t, memory.New())
 	assertAGuessNeverReplacesAFact(t, memory.New())
+	assertValuesComeBackAsWritten(t, memory.New())
+	assertEveryShapeOfNodeLands(t, memory.New())
 }
 
 func TestAGEStoreContract(t *testing.T) {
@@ -97,6 +99,8 @@ func TestAGEStoreContract(t *testing.T) {
 	assertPathfinderEquivalence(t, store)
 	assertConcurrentWritersDoNotDuplicate(t, store)
 	assertSweepContract(t, store)
+	assertValuesComeBackAsWritten(t, store)
+	assertEveryShapeOfNodeLands(t, store)
 
 	// A parked edge older than the TTL is dropped by the next write, not landed later.
 	ctx2 := context.Background()
@@ -122,6 +126,137 @@ func TestAGEStoreContract(t *testing.T) {
 			t.Error("an edge parked past the TTL landed when its endpoint finally came")
 		}
 	}
+}
+
+// An id, a name and a property can hold anything a feed sends, and each comes back as it
+// was written: a quote, a backslash, a dollar-quote or a piece of Cypher is stored as text,
+// not run. On AGE every value is bound, never written into the statement, and a property
+// name - which AGE takes only written out - is quoted; this is where that is held to the
+// real database. Each node is written twice, so the update reaches the vertex the create
+// made.
+func assertValuesComeBackAsWritten(t *testing.T, s graph.Store) {
+	t.Helper()
+	ctx := context.Background()
+	from := "hostile:' }) DETACH DELETE n //"
+	to := `hostile:"$$ RETURN 1 $$" \ $pg0123456789abcdef01$ ` + "`tick`\nline ☃"
+	name := `it's a "name" \ $$ ` + "``"
+	props := map[string]any{
+		"plain":             `v'al"ue\ $$ }) RETURN 1 //`,
+		"with space `tick`": "a key with a space and a backtick",
+		"repo-slug/x":       "a key with a dash and a slash",
+		"int":               int64(1_700_000_000),
+		"float":             1.7e9,
+		"neg":               -0.5,
+		"flag":              true,
+	}
+	nodes := []ontology.Node{
+		{ID: from, Label: ontology.LabelAPI, Name: name, Properties: props},
+		{ID: to, Label: ontology.LabelAPI, Name: name, Properties: props},
+	}
+	edge := ontology.Edge{Type: ontology.EdgeConnectsTo, From: from, To: to, ExploitProbability: 0.5, Properties: props}
+	for i := 0; i < 2; i++ {
+		for _, n := range nodes {
+			if err := s.UpsertNode(ctx, n); err != nil {
+				t.Fatalf("upsert %q: %v", n.ID, err)
+			}
+		}
+		if err := s.UpsertEdge(ctx, edge); err != nil {
+			t.Fatalf("upsert edge: %v", err)
+		}
+	}
+
+	snap, err := s.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	same := func(what string, got map[string]any) {
+		t.Helper()
+		for k, want := range props {
+			v, ok := got[k]
+			if !ok {
+				t.Errorf("%s: property %q is missing", what, k)
+				continue
+			}
+			// The stores agree on values, not on Go types: AGE hands every number back
+			// as a float64, the memory store as it was written.
+			if fmt.Sprint(toFloat(v)) != fmt.Sprint(toFloat(want)) {
+				t.Errorf("%s: property %q = %#v, want %#v", what, k, v, want)
+			}
+		}
+	}
+	byID := snap.NodeByID()
+	for _, n := range nodes {
+		got, ok := byID[n.ID]
+		if !ok {
+			t.Errorf("node %q did not come back", n.ID)
+			continue
+		}
+		if got.Name != name {
+			t.Errorf("node %q: name = %q, want %q", n.ID, got.Name, name)
+		}
+		same("node "+n.ID, got.Properties)
+	}
+	found := false
+	for _, e := range snap.Edges {
+		if e.From == from && e.To == to && e.Type == ontology.EdgeConnectsTo {
+			found = true
+			same("edge", e.Properties)
+		}
+	}
+	if !found {
+		t.Errorf("the edge between the two nodes did not come back")
+	}
+}
+
+// An event whose nodes each carry a different property name is as many statements as
+// nodes, none of them reused. On AGE a write transaction keeps at most a cap of statements
+// prepared and runs the rest unprepared; every node still lands, on the create and on the
+// update.
+func assertEveryShapeOfNodeLands(t *testing.T, s graph.Store) {
+	t.Helper()
+	ctx := context.Background()
+	const n = 150
+	nodes := make([]ontology.Node, n)
+	for i := range nodes {
+		nodes[i] = ontology.Node{ID: fmt.Sprintf("shape-%03d", i), Label: ontology.LabelAPI,
+			Properties: map[string]any{fmt.Sprintf("only_on_%03d", i): int64(i)}}
+	}
+	bw, ok := s.(graph.BatchWriter)
+	if !ok {
+		t.Skip("store writes no batches")
+	}
+	for round := 0; round < 2; round++ {
+		if err := bw.UpsertBatch(ctx, nodes, nil); err != nil {
+			t.Fatalf("round %d: %v", round, err)
+		}
+	}
+	snap, err := s.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := snap.NodeByID()
+	for i, want := range nodes {
+		got, ok := byID[want.ID]
+		if !ok {
+			t.Errorf("node %s did not land", want.ID)
+			continue
+		}
+		key := fmt.Sprintf("only_on_%03d", i)
+		if fmt.Sprint(toFloat(got.Properties[key])) != fmt.Sprint(float64(i)) {
+			t.Errorf("node %s: %s = %v, want %d", want.ID, key, got.Properties[key], i)
+		}
+	}
+}
+
+// toFloat reads a number of any width as a float64, and leaves anything else alone.
+func toFloat(v any) any {
+	switch x := v.(type) {
+	case int:
+		return float64(x)
+	case int64:
+		return float64(x)
+	}
+	return v
 }
 
 // Several backend replicas share one consumer, so two events that mention the same

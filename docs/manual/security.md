@@ -295,11 +295,14 @@ The images and the compose stack are built to the bar you'd expect in a review:
 
 Beyond the container surface, the backend itself is built defensively:
 
-- **Cypher injection defense (AGE store).** Values are wrapped in a *randomized*
-  dollar-quote tag a value provably can't contain, single-quote-escaped, and
-  labels/edge-types are validated against the ontology allowlist (graph names
-  against a strict identifier pattern) - so attacker-influenceable scanner output
-  (image tags, IAM role names, file paths) can never break out into SQL.
+- **Cypher injection defense (AGE store).** No value is written into a Cypher
+  statement: ids, names, property values and timestamps are bound as parameters, so
+  attacker-influenceable scanner output (image tags, IAM role names, file paths) is
+  never parsed as Cypher or SQL. What AGE cannot take as a parameter stays in the text,
+  bounded: labels and edge types are validated against the ontology allowlist, graph
+  names against a strict identifier pattern, and property names are backtick-quoted
+  with any backtick escaped. A test writes hostile values and property names through a
+  real AGE database and reads them back unchanged.
 - **Per-IP rate limiting.** Token-bucket caps on the ingest webhook and the API
   (`INGEST_RATE_RPS` / `API_RATE_RPS`) blunt floods before any work is done.
 - **Transport timeouts.** Both HTTP servers set explicit `ReadHeader`/`Read`/

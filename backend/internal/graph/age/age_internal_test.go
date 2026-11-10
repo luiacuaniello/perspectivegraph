@@ -1,12 +1,15 @@
 package age
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 
 	"github.com/lib/pq"
+	"github.com/luiacuaniello/perspectivegraph/pkg/ontology"
 )
 
 // The four ways `LOAD 'age'` can go, and what each one has to mean. This is the
@@ -74,18 +77,23 @@ func TestIsInsufficientPrivilege(t *testing.T) {
 	}
 }
 
+// A body gets the fixed tag, so the same statement has the same text - unless it contains
+// that tag, which only a property name can; then it gets one it does not contain.
 func TestDollarTagAvoidsCollision(t *testing.T) {
-	// A body that contains a fixed tag must not get that tag back.
-	body := `RETURN '$pgdeadbeef$ injection'`
-	tag, err := dollarTag(body)
-	if err != nil {
-		t.Fatalf("dollarTag: %v", err)
+	if tag, err := dollarTag("MATCH (n) WHERE n.id = $id RETURN 1"); err != nil || tag != "$pg$" {
+		t.Errorf("an ordinary body got %q, %v; want the fixed $pg$", tag, err)
 	}
-	if !strings.HasPrefix(tag, "$pg") || !strings.HasSuffix(tag, "$") {
-		t.Errorf("unexpected tag shape: %q", tag)
-	}
-	if strings.Contains(body, tag) {
-		t.Errorf("tag %q occurs in body - would allow breakout", tag)
+	for _, body := range []string{"SET n += {`x$pg$y`: $v1}", `RETURN '$pgdeadbeef$ $pg$'`} {
+		tag, err := dollarTag(body)
+		if err != nil {
+			t.Fatalf("dollarTag: %v", err)
+		}
+		if !strings.HasPrefix(tag, "$pg") || !strings.HasSuffix(tag, "$") {
+			t.Errorf("unexpected tag shape: %q", tag)
+		}
+		if strings.Contains(body, tag) {
+			t.Errorf("tag %q occurs in body %q - would allow breakout", tag, body)
+		}
 	}
 }
 
@@ -102,12 +110,88 @@ func TestNewStoreRejectsBadGraphName(t *testing.T) {
 	}
 }
 
-func TestCypherQuoteEscapes(t *testing.T) {
-	// Single quotes and backslashes must be escaped so a value can't break out
-	// of the Cypher string literal.
-	got := cypherQuote(`a'b\c`)
-	if got != `'a\'b\\c'` {
-		t.Errorf("cypherQuote = %q", got)
+// No value reaches the Cypher text. Whatever an id, a name or a property holds - a quote,
+// a backslash, a dollar-quote, a Cypher clause - the statement refers to it by name, and
+// it travels in the parameter map exactly as it was written.
+func TestNoValueIsWrittenIntoTheCypher(t *testing.T) {
+	s := &Store{graph: "g"}
+	hostile := []string{
+		`x' }) DETACH DELETE n //`,
+		`name $$ RETURN 1 $$`,
+		`$pg0123456789abcdef01$`,
+		`back\slash "double" 'single'`,
+		"tick ` }) //\nnewline",
+	}
+	ns, err := s.nodeSQL(ontology.Node{ID: hostile[0], Label: ontology.LabelContainer, Name: hostile[1],
+		Properties: map[string]any{"a": hostile[2], "b": hostile[3], "c": hostile[4]}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An inferred edge, so the statement that keeps a stated one is built too.
+	es, err := s.edgeSQL(ontology.Edge{Type: ontology.EdgeConnectsTo, From: hostile[3], To: hostile[4], ExploitProbability: 0.5,
+		Properties: map[string]any{"a": hostile[0], ontology.PropResolutionMethod: hostile[1], ontology.PropLastSeen: int64(1_700_000_000)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, q := range map[string]cypherStmt{"node update": ns.update, "node create": ns.create, "edge keep": es.keep, "edge upsert": es.upsert} {
+		var params map[string]any
+		if err := json.Unmarshal([]byte(q.params), &params); err != nil {
+			t.Fatalf("%s: parameters are not a JSON map: %v\n%s", name, err, q.params)
+		}
+		bound := map[string]bool{}
+		for _, v := range params {
+			if s, ok := v.(string); ok {
+				bound[s] = true
+			}
+		}
+		for _, v := range hostile {
+			if strings.Contains(q.sql, v) {
+				t.Errorf("%s: the value %q is written into the statement:\n%s", name, v, q.sql)
+			}
+		}
+		if !bound[hostile[3]] {
+			t.Errorf("%s: %q is not among the bound values %v", name, hostile[3], params)
+		}
+	}
+}
+
+// A value is bound by the rules it was once written into the Cypher by, so what is stored
+// keeps its type: an integer stays an integer, a float a float, and a list is its JSON text.
+// A number agtype cannot hold fails the write rather than storing something else.
+func TestAgtypeValueKeepsTheTypeTheLiteralHad(t *testing.T) {
+	for _, c := range []struct {
+		in   any
+		want string
+	}{
+		{nil, "null"},
+		{true, "true"},
+		{`a"b\c`, `"a\"b\\c"`},
+		{1.7e9, "1.7e+09"}, // json.Marshal writes 1700000000, which agtype reads as an integer
+		{3.0, "3"},
+		{-0.5, "-0.5"},
+		{7, "7"},
+		{int64(1_700_000_000), "1700000000"},
+		{json.Number("12"), "12"},
+		{[]string{"a"}, `"[\"a\"]"`},
+	} {
+		got, err := agtypeValue(c.in)
+		if err != nil || got != c.want {
+			t.Errorf("agtypeValue(%#v) = %q, %v; want %q", c.in, got, err, c.want)
+		}
+	}
+	for _, bad := range []any{math.NaN(), math.Inf(1), json.Number("1} RETURN 1 //")} {
+		if got, err := agtypeValue(bad); err == nil {
+			t.Errorf("agtypeValue(%#v) = %q, want an error", bad, got)
+		}
+	}
+}
+
+// A property name is the one thing from the data still written into the Cypher - AGE
+// takes a map only as a literal - so a backtick in it is doubled, which is how Cypher
+// escapes one inside a quoted name.
+func TestCypherKeyEscapesABacktick(t *testing.T) {
+	if got := cypherKey("a`b c"); got != "`a``b c`" {
+		t.Errorf("cypherKey = %s", got)
 	}
 }
 

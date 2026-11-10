@@ -6,17 +6,25 @@
 // How the library gets loaded depends on the server, and that difference decides
 // whether this store works on a managed PostgreSQL at all - see resolveLoadMode.
 //
-// Injection model. AGE cannot bind labels/edge-types as parameters and its
-// agtype value binding is awkward, so values are inlined into the Cypher text.
-// Three layers keep that safe:
+// Injection model. No value is written into the Cypher text. Every id, name, property
+// value and timestamp a statement uses is bound: the statement refers to it as $id or
+// $v3, and the values travel in one agtype map passed to cypher() as $1 (cypherStmt).
+// What the text still holds is what AGE cannot take as a parameter:
 //
-//   - the Cypher body is wrapped in a *randomized* dollar-quote tag ($pg<rand>$)
-//     that a value cannot contain, so a value can never break out to the SQL
-//     layer (the previous fixed $perspective$ tag was forgeable);
-//   - string values are single-quoted and escaped by cypherQuote, so they can't
-//     break out of the Cypher string literal;
-//   - labels and edge types are validated against the ontology allowlist, and
-//     the graph name against a strict identifier pattern, before interpolation.
+//   - labels and edge types, which are validated against the ontology allowlist, and
+//     the graph name, against a strict identifier pattern;
+//   - property names. AGE accepts a property map only as a literal - `SET n += $props`
+//     and `CREATE (n $props)` are refused - so a map is written out with its keys
+//     backtick-quoted (cypherKey) and its values bound: {`name`: $v0};
+//   - the bounds of the path search, which are integers in positions Cypher does not
+//     allow a parameter.
+//
+// The Cypher body is wrapped in a dollar-quote tag it does not contain (dollarTag), so
+// nothing in it can end the quoted text early.
+//
+// Holding no value is also what makes the statements cheap. The thousands an event writes
+// are a handful of texts, one per label or edge type and set of property names, so a write
+// transaction prepares each text once and runs it for every element (writeTx).
 package age
 
 import (
@@ -28,6 +36,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"regexp"
 	"sort"
 	"strconv"
@@ -174,10 +183,9 @@ func (s *Store) ensureGraph(ctx context.Context) error {
 		return fmt.Errorf("ping postgres: %w", err)
 	}
 	return s.withAGE(ctx, func(tx *sql.Tx) error {
-		// Graph name is identifier-validated; safe to interpolate.
-		_, err := tx.ExecContext(ctx, fmt.Sprintf(
-			`SELECT create_graph('%s') WHERE NOT EXISTS (SELECT 1 FROM ag_catalog.ag_graph WHERE name = '%s')`,
-			s.graph, s.graph))
+		_, err := tx.ExecContext(ctx,
+			`SELECT create_graph($1) WHERE NOT EXISTS (SELECT 1 FROM ag_catalog.ag_graph WHERE name = $2)`,
+			s.graph, s.graph)
 		return err
 	})
 }
@@ -188,11 +196,11 @@ func (s *Store) Ping(ctx context.Context) error {
 	}
 	// Confirm AGE is installed and the graph exists.
 	return s.withAGE(ctx, func(tx *sql.Tx) error {
-		q, err := s.cypherSQL(`RETURN 1`, `v agtype`)
+		q, err := s.cypherSQL(`RETURN 1`, `v agtype`, nil)
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, q)
+		_, err = tx.ExecContext(ctx, q.sql, q.args()...)
 		return err
 	})
 }
@@ -290,15 +298,16 @@ func (s *Store) upsertBatch(ctx context.Context, nodes []ontology.Node, edges []
 		if _, err := tx.ExecContext(ctx, `SET LOCAL enable_hashjoin = off`); err != nil {
 			return err
 		}
+		wtx := newWriteTx(tx)
 		for _, q := range nodeQs {
 			// Update if the vertex exists, create it if not. Under the write lock nothing
 			// else can create it in between, which is what MERGE could not promise.
-			found, err := execReturnsRow(ctx, tx, q.update)
+			found, err := wtx.returnsRow(ctx, q.update)
 			if err != nil {
 				return err
 			}
 			if !found {
-				if _, err := tx.ExecContext(ctx, q.create); err != nil {
+				if err := wtx.exec(ctx, q.create); err != nil {
 					return err
 				}
 			}
@@ -306,12 +315,12 @@ func (s *Store) upsertBatch(ctx context.Context, nodes []ontology.Node, edges []
 		if park {
 			// Edges parked for any node written above get their try first, so this
 			// batch's own copy of the same edge, being newer, is the one that stays.
-			if err := s.landParked(ctx, tx, nodes); err != nil {
+			if err := s.landParked(ctx, wtx, nodes); err != nil {
 				return err
 			}
 		}
 		for i, q := range edgeQs {
-			landed, err := landEdge(ctx, tx, q)
+			landed, err := landEdge(ctx, wtx, q)
 			if err != nil {
 				return err
 			}
@@ -340,7 +349,7 @@ func (s *Store) upsertBatch(ctx context.Context, nodes []ontology.Node, edges []
 
 // nodeStmts is the upsert of one vertex: update returns a row when the vertex existed,
 // and create is run when it did not.
-type nodeStmts struct{ update, create string }
+type nodeStmts struct{ update, create cypherStmt }
 
 // nodeSQL renders the upsert of one vertex with NATIVE agtype properties (so the graph
 // is queryable in Cypher - internet_exposed/crown_jewel drive the DB-side path finder).
@@ -363,17 +372,17 @@ func (s *Store) nodeSQL(n ontology.Node) (nodeStmts, error) {
 	if n.Name != "" {
 		props["name"] = n.Name // omitted when empty → a stub upsert never erases the stored name
 	}
+	// Both statements bind the same values, so they share one set of bindings.
+	b := bindings{"id": n.ID}
 	set := ""
 	if len(props) > 0 {
-		set = " SET n += " + cypherMap(props)
+		set = " SET n += " + propertyMap(props, b)
 	}
-	update, err := s.cypherSQL(fmt.Sprintf(`MATCH (n:%s) WHERE n.id = %s%s RETURN 1`,
-		n.Label, cypherQuote(n.ID), set), `v agtype`)
+	update, err := s.cypherSQL(fmt.Sprintf(`MATCH (n:%s) WHERE n.id = $id%s RETURN 1`, n.Label, set), `v agtype`, b)
 	if err != nil {
 		return nodeStmts{}, err
 	}
-	create, err := s.cypherSQL(fmt.Sprintf(`CREATE (n:%s {id: %s})%s`,
-		n.Label, cypherQuote(n.ID), set), `v agtype`)
+	create, err := s.cypherSQL(fmt.Sprintf(`CREATE (n:%s {id: $id})%s`, n.Label, set), `v agtype`, b)
 	if err != nil {
 		return nodeStmts{}, err
 	}
@@ -383,17 +392,17 @@ func (s *Store) nodeSQL(n ontology.Node) (nodeStmts, error) {
 // edgeStmts is the upsert of one relationship. keep, set only for an inferred edge, runs
 // first and returns a row when a stated edge is already there: a guess never replaces a
 // fact (graph.Supersedes), so it only refreshes the stamp and the upsert is skipped.
-type edgeStmts struct{ keep, upsert string }
+type edgeStmts struct{ keep, upsert cypherStmt }
 
 // landEdge runs one edge's statements and reports whether the edge is in the graph:
 // written, or kept because a stated one was already there.
-func landEdge(ctx context.Context, tx *sql.Tx, q edgeStmts) (bool, error) {
-	if q.keep != "" {
-		if kept, err := execReturnsRow(ctx, tx, q.keep); err != nil || kept {
+func landEdge(ctx context.Context, tx *writeTx, q edgeStmts) (bool, error) {
+	if q.keep.sql != "" {
+		if kept, err := tx.returnsRow(ctx, q.keep); err != nil || kept {
 			return kept, err
 		}
 	}
-	return execReturnsRow(ctx, tx, q.upsert)
+	return tx.returnsRow(ctx, q.upsert)
 }
 
 // edgeSQL renders the upsert of one relationship. It RETURNs a row only when both
@@ -418,21 +427,24 @@ func (s *Store) edgeSQL(e ontology.Edge) (edgeStmts, error) {
 	clearGuess := fmt.Sprintf(` REMOVE e.%s, e.%s`, ontology.PropResolutionMethod, ontology.PropResolutionConfidence)
 	if graph.Inferred(e) {
 		clearGuess = ""
+		kb := bindings{"from": e.From, "to": e.To}
 		stamp := ""
 		if ls, ok := graph.LastSeen(e.Properties); ok {
-			stamp = fmt.Sprintf(` SET e.%s = %d`, ontology.PropLastSeen, ls)
+			kb["ls"] = ls
+			stamp = fmt.Sprintf(` SET e.%s = $ls`, ontology.PropLastSeen)
 		}
 		keep, err := s.cypherSQL(fmt.Sprintf(
-			`MATCH (a)-[e:%s]->(b) WHERE a.id = %s AND b.id = %s AND e.%s IS NULL%s RETURN 1`,
-			e.Type, cypherQuote(e.From), cypherQuote(e.To), ontology.PropResolutionMethod, stamp), `v agtype`)
+			`MATCH (a)-[e:%s]->(b) WHERE a.id = $from AND b.id = $to AND e.%s IS NULL%s RETURN 1`,
+			e.Type, ontology.PropResolutionMethod, stamp), `v agtype`, kb)
 		if err != nil {
 			return edgeStmts{}, err
 		}
 		q.keep = keep
 	}
+	b := bindings{"from": e.From, "to": e.To}
 	upsert, err := s.cypherSQL(fmt.Sprintf(
-		`MATCH (a), (b) WHERE a.id = %s AND b.id = %s MERGE (a)-[e:%s]->(b) SET e += %s%s RETURN 1`,
-		cypherQuote(e.From), cypherQuote(e.To), e.Type, cypherMap(props), clearGuess), `v agtype`)
+		`MATCH (a), (b) WHERE a.id = $from AND b.id = $to MERGE (a)-[e:%s]->(b) SET e += %s%s RETURN 1`,
+		e.Type, propertyMap(props, b), clearGuess), `v agtype`, b)
 	if err != nil {
 		return edgeStmts{}, err
 	}
@@ -440,9 +452,80 @@ func (s *Store) edgeSQL(e ontology.Edge) (edgeStmts, error) {
 	return q, nil
 }
 
-// execReturnsRow runs q and reports whether it produced at least one row.
-func execReturnsRow(ctx context.Context, tx *sql.Tx, q string) (bool, error) {
-	rows, err := tx.QueryContext(ctx, q)
+// writeTx is a transaction that prepares each Cypher statement that binds values once,
+// the first time it meets the text, and runs that prepared statement for every element
+// after. Bound but unprepared, a statement cost lib/pq a second round trip - Parse and
+// Describe, then Bind and Execute - and on an event of 2,000 nodes and edges that made
+// writes about half as slow again as the literals they replaced. Prepared once and reused,
+// they took a third less time than the literals: each text is parsed and planned once,
+// not once per element. PostgreSQL closes the prepared statements with the transaction.
+type writeTx struct {
+	*sql.Tx
+	prepared map[string]*sql.Stmt
+}
+
+// maxPrepared caps the statements one transaction keeps prepared. An event whose elements
+// each carry a different set of property names has as many texts as elements, and none
+// would be reused: past the cap, a new text runs bound but unprepared.
+const maxPrepared = 128
+
+func newWriteTx(tx *sql.Tx) *writeTx {
+	return &writeTx{Tx: tx, prepared: map[string]*sql.Stmt{}}
+}
+
+// stmt returns the prepared statement for sqlText, preparing it the first time - or nil
+// once the cap is reached and sqlText is not among those already prepared.
+func (tx *writeTx) stmt(ctx context.Context, sqlText string) (*sql.Stmt, error) {
+	if st, ok := tx.prepared[sqlText]; ok {
+		return st, nil
+	}
+	if len(tx.prepared) >= maxPrepared {
+		return nil, nil
+	}
+	st, err := tx.PrepareContext(ctx, sqlText)
+	if err != nil {
+		return nil, err
+	}
+	tx.prepared[sqlText] = st
+	return st, nil
+}
+
+// query runs q. A statement that binds nothing runs as it is.
+func (tx *writeTx) query(ctx context.Context, q cypherStmt) (*sql.Rows, error) {
+	if q.params == "" {
+		return tx.QueryContext(ctx, q.sql)
+	}
+	st, err := tx.stmt(ctx, q.sql)
+	if err != nil {
+		return nil, err
+	}
+	if st == nil {
+		return tx.QueryContext(ctx, q.sql, q.params)
+	}
+	return st.QueryContext(ctx, q.params)
+}
+
+// exec runs q for its effect.
+func (tx *writeTx) exec(ctx context.Context, q cypherStmt) error {
+	if q.params == "" {
+		_, err := tx.ExecContext(ctx, q.sql)
+		return err
+	}
+	st, err := tx.stmt(ctx, q.sql)
+	if err != nil {
+		return err
+	}
+	if st == nil {
+		_, err = tx.ExecContext(ctx, q.sql, q.params)
+		return err
+	}
+	_, err = st.ExecContext(ctx, q.params)
+	return err
+}
+
+// returnsRow runs q and reports whether it produced at least one row.
+func (tx *writeTx) returnsRow(ctx context.Context, q cypherStmt) (bool, error) {
+	rows, err := tx.query(ctx, q)
 	if err != nil {
 		return false, err
 	}
@@ -511,7 +594,7 @@ func (s *Store) preparePending(ctx context.Context) error {
 // landParked retries the parked edges naming any of these nodes, and drops edges parked
 // longer than graph.PendingEdgeTTL. An edge that still cannot land is parked again with
 // its original time, so an unrelated node arriving does not keep it alive.
-func (s *Store) landParked(ctx context.Context, tx *sql.Tx, nodes []ontology.Node) error {
+func (s *Store) landParked(ctx context.Context, tx *writeTx, nodes []ontology.Node) error {
 	t := s.pendingRef()
 	// #nosec G202 -- t is two quoted identifiers built from a validated graph name
 	expired, err := tx.QueryContext(ctx, `DELETE FROM `+t+` WHERE parked_at < now() - make_interval(secs => $1)
@@ -534,7 +617,7 @@ func (s *Store) landParked(ctx context.Context, tx *sql.Tx, nodes []ontology.Nod
 		return err
 	}
 	// An edge that waited out the TTL is gone for good; so is the record of who sent it.
-	if err := s.forgetOrigins(ctx, tx, gone); err != nil {
+	if err := s.forgetOrigins(ctx, tx.Tx, gone); err != nil {
 		return err
 	}
 	if len(nodes) == 0 {
@@ -582,7 +665,7 @@ func (s *Store) landParked(ctx context.Context, tx *sql.Tx, nodes []ontology.Nod
 		}
 		if !landed {
 			at := r.at
-			if err := s.parkEdge(ctx, tx, r.edge, &at); err != nil {
+			if err := s.parkEdge(ctx, tx.Tx, r.edge, &at); err != nil {
 				return err
 			}
 		}
@@ -676,17 +759,17 @@ func (s *Store) lockForWrite(ctx context.Context, tx *sql.Tx) error {
 func (s *Store) Snapshot(ctx context.Context) (graph.Snapshot, error) {
 	var snap graph.Snapshot
 	nodeQ, err := s.cypherSQL(`MATCH (n) RETURN n.id, label(n), n.name, properties(n)`,
-		`id agtype, label agtype, name agtype, props agtype`)
+		`id agtype, label agtype, name agtype, props agtype`, nil)
 	if err != nil {
 		return snap, err
 	}
 	edgeQ, err := s.cypherSQL(`MATCH (a)-[e]->(b) RETURN type(e), a.id, b.id, properties(e)`,
-		`etype agtype, src agtype, dst agtype, props agtype`)
+		`etype agtype, src agtype, dst agtype, props agtype`, nil)
 	if err != nil {
 		return snap, err
 	}
 	err = s.withAGE(ctx, func(tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx, nodeQ)
+		rows, err := tx.QueryContext(ctx, nodeQ.sql, nodeQ.args()...)
 		if err != nil {
 			return fmt.Errorf("query nodes: %w", err)
 		}
@@ -710,7 +793,7 @@ func (s *Store) Snapshot(ctx context.Context) (graph.Snapshot, error) {
 		}
 		rows.Close()
 
-		erows, err := tx.QueryContext(ctx, edgeQ)
+		erows, err := tx.QueryContext(ctx, edgeQ.sql, edgeQ.args()...)
 		if err != nil {
 			return fmt.Errorf("query edges: %w", err)
 		}
@@ -742,20 +825,19 @@ func (s *Store) Snapshot(ctx context.Context) (graph.Snapshot, error) {
 // Cypher) - they predate stamping and are already in the consumer's full snapshot.
 func (s *Store) SnapshotSince(ctx context.Context, since int64) (graph.Delta, error) {
 	var d graph.Delta
-	nodeQ, err := s.cypherSQL(
-		fmt.Sprintf(`MATCH (n) WHERE n.last_seen >= %d RETURN n.id, label(n), n.name, properties(n)`, since),
-		`id agtype, label agtype, name agtype, props agtype`)
+	b := bindings{"since": since}
+	nodeQ, err := s.cypherSQL(`MATCH (n) WHERE n.last_seen >= $since RETURN n.id, label(n), n.name, properties(n)`,
+		`id agtype, label agtype, name agtype, props agtype`, b)
 	if err != nil {
 		return d, err
 	}
-	edgeQ, err := s.cypherSQL(
-		fmt.Sprintf(`MATCH (a)-[e]->(b) WHERE e.last_seen >= %d RETURN type(e), a.id, b.id, properties(e)`, since),
-		`etype agtype, src agtype, dst agtype, props agtype`)
+	edgeQ, err := s.cypherSQL(`MATCH (a)-[e]->(b) WHERE e.last_seen >= $since RETURN type(e), a.id, b.id, properties(e)`,
+		`etype agtype, src agtype, dst agtype, props agtype`, b)
 	if err != nil {
 		return d, err
 	}
 	err = s.withAGE(ctx, func(tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx, nodeQ)
+		rows, err := tx.QueryContext(ctx, nodeQ.sql, nodeQ.args()...)
 		if err != nil {
 			return fmt.Errorf("query nodes: %w", err)
 		}
@@ -779,7 +861,7 @@ func (s *Store) SnapshotSince(ctx context.Context, since int64) (graph.Delta, er
 		}
 		rows.Close()
 
-		erows, err := tx.QueryContext(ctx, edgeQ)
+		erows, err := tx.QueryContext(ctx, edgeQ.sql, edgeQ.args()...)
 		if err != nil {
 			return fmt.Errorf("query edges: %w", err)
 		}
@@ -849,13 +931,16 @@ func (s *Store) CriticalPaths(ctx context.Context, maxHops int) ([]graph.RawPath
 	if maxHops > 32 {
 		maxHops = 32 // keep variable-length enumeration bounded
 	}
+	// The bounds are integers in places Cypher takes no parameter: the length of a
+	// variable-length pattern and LIMIT. Both are ints in Go, so only digits can reach
+	// the text.
 	inner := fmt.Sprintf(
 		`MATCH p=(a)-[*1..%d]->(b) `+
 			// The network verdict, where there is one, decides exposure (ontology.Node.InternetExposed).
 			`WHERE (coalesce(a.network_exposed, a.internet_exposed) = true OR a.credential_exposed = true OR a.public_access = true) `+
 			`AND b.crown_jewel = true AND id(a) <> id(b) `+
 			`RETURN nodes(p), relationships(p) LIMIT %d`, maxHops, maxPathsReturned)
-	q, err := s.cypherSQL(inner, `ns agtype, rs agtype`)
+	q, err := s.cypherSQL(inner, `ns agtype, rs agtype`, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -865,7 +950,7 @@ func (s *Store) CriticalPaths(ctx context.Context, maxHops int) ([]graph.RawPath
 		if _, err := tx.ExecContext(ctx, "SET LOCAL statement_timeout = "+pathStatementTimeoutMs); err != nil {
 			return err
 		}
-		rows, err := tx.QueryContext(ctx, q)
+		rows, err := tx.QueryContext(ctx, q.sql, q.args()...)
 		if err != nil {
 			return err
 		}
@@ -897,25 +982,21 @@ func (s *Store) CriticalPaths(ctx context.Context, maxHops int) ([]graph.RawPath
 // is null (not true), so un-stamped elements are left alone. Deleting a node also
 // detaches it (DETACH DELETE), so its edges go with it.
 func (s *Store) Prune(ctx context.Context, before time.Time) (graph.PruneStats, error) {
-	cutoff := before.Unix() // an int64 - safe to inline, no injection surface
+	b := bindings{"cutoff": before.Unix()}
 
-	countNodes, err := s.cypherSQL(
-		fmt.Sprintf("MATCH (n) WHERE n.last_seen < %d RETURN count(n)", cutoff), `c agtype`)
+	countNodes, err := s.cypherSQL("MATCH (n) WHERE n.last_seen < $cutoff RETURN count(n)", `c agtype`, b)
 	if err != nil {
 		return graph.PruneStats{}, err
 	}
-	countEdges, err := s.cypherSQL(
-		fmt.Sprintf("MATCH ()-[e]->() WHERE e.last_seen < %d RETURN count(e)", cutoff), `c agtype`)
+	countEdges, err := s.cypherSQL("MATCH ()-[e]->() WHERE e.last_seen < $cutoff RETURN count(e)", `c agtype`, b)
 	if err != nil {
 		return graph.PruneStats{}, err
 	}
-	delEdges, err := s.cypherSQL(
-		fmt.Sprintf("MATCH ()-[e]->() WHERE e.last_seen < %d DELETE e", cutoff), `a agtype`)
+	delEdges, err := s.cypherSQL("MATCH ()-[e]->() WHERE e.last_seen < $cutoff DELETE e", `a agtype`, b)
 	if err != nil {
 		return graph.PruneStats{}, err
 	}
-	delNodes, err := s.cypherSQL(
-		fmt.Sprintf("MATCH (n) WHERE n.last_seen < %d DETACH DELETE n", cutoff), `a agtype`)
+	delNodes, err := s.cypherSQL("MATCH (n) WHERE n.last_seen < $cutoff DETACH DELETE n", `a agtype`, b)
 	if err != nil {
 		return graph.PruneStats{}, err
 	}
@@ -938,16 +1019,17 @@ func (s *Store) Prune(ctx context.Context, before time.Time) (graph.PruneStats, 
 		// Count what's stale before deleting (DETACH DELETE removes a node's
 		// remaining edges silently; the edge count captures edges stale in their
 		// own right). Then delete edges, then nodes.
-		if stats.Nodes, err = scanCount(ctx, tx, countNodes); err != nil {
+		wtx := newWriteTx(tx)
+		if stats.Nodes, err = scanCount(ctx, wtx, countNodes); err != nil {
 			return err
 		}
-		if stats.Edges, err = scanCount(ctx, tx, countEdges); err != nil {
+		if stats.Edges, err = scanCount(ctx, wtx, countEdges); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, delEdges); err != nil {
+		if err := wtx.exec(ctx, delEdges); err != nil {
 			return fmt.Errorf("prune edges: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, delNodes); err != nil {
+		if err := wtx.exec(ctx, delNodes); err != nil {
 			return fmt.Errorf("prune nodes: %w", err)
 		}
 		if stats.Nodes+stats.Edges > 0 {
@@ -963,9 +1045,20 @@ func (s *Store) Prune(ctx context.Context, before time.Time) (graph.PruneStats, 
 
 // scanCount runs a Cypher `RETURN count(...)` query and reads the single agtype
 // integer it returns.
-func scanCount(ctx context.Context, tx *sql.Tx, query string) (int, error) {
+func scanCount(ctx context.Context, tx *writeTx, q cypherStmt) (int, error) {
+	rows, err := tx.query(ctx, q)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
 	var raw string
-	if err := tx.QueryRowContext(ctx, query).Scan(&raw); err != nil {
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, err
+		}
+		return 0, sql.ErrNoRows
+	}
+	if err := rows.Scan(&raw); err != nil {
 		return 0, err
 	}
 	n, err := strconv.Atoi(strings.TrimSpace(raw))
@@ -1205,20 +1298,62 @@ func (s *Store) withAGE(ctx context.Context, fn func(*sql.Tx) error) error {
 
 // ── safe-SQL helpers ────────────────────────────────────────────────
 
-// cypherSQL wraps a Cypher body in a cypher() call against this store's graph,
-// using a randomized dollar-quote tag the body provably cannot contain.
-func (s *Store) cypherSQL(inner, asSpec string) (string, error) {
-	tag, err := dollarTag(inner)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("SELECT * FROM cypher('%s', %s %s %s) AS (%s)",
-		s.graph, tag, inner, tag, asSpec), nil
+// cypherStmt is one cypher() call. Its SQL holds no value - only the fixed Cypher, the
+// property names, the ontology's labels and edge types and the validated graph name -
+// and params is the agtype map of the values, bound to $1.
+type cypherStmt struct {
+	sql    string
+	params string // empty when the statement binds nothing
 }
 
-// dollarTag returns a `$pg<rand>$` Postgres dollar-quote tag that does not occur
-// in body, so body can never terminate the quoted literal early.
+// args are the arguments to run the statement with.
+func (q cypherStmt) args() []any {
+	if q.params == "" {
+		return nil
+	}
+	return []any{q.params}
+}
+
+// bindings are the values one statement binds, under the names its Cypher refers to
+// them by ($id, $v3).
+type bindings map[string]any
+
+// bind adds v under a fresh name and returns the reference to write in its place.
+func (b bindings) bind(v any) string {
+	name := "v" + strconv.Itoa(len(b))
+	b[name] = v
+	return "$" + name
+}
+
+// cypherSQL wraps a Cypher body in a cypher() call against this store's graph, using a
+// randomized dollar-quote tag the body provably cannot contain, and binds b as the call's
+// parameter map. The body refers to every value by name; nothing in b is written into it.
+func (s *Store) cypherSQL(inner, asSpec string, b bindings) (cypherStmt, error) {
+	tag, err := dollarTag(inner)
+	if err != nil {
+		return cypherStmt{}, err
+	}
+	if len(b) == 0 {
+		return cypherStmt{sql: fmt.Sprintf("SELECT * FROM cypher('%s', %s %s %s) AS (%s)",
+			s.graph, tag, inner, tag, asSpec)}, nil
+	}
+	params, err := agtypeMap(b)
+	if err != nil {
+		return cypherStmt{}, err
+	}
+	return cypherStmt{sql: fmt.Sprintf("SELECT * FROM cypher('%s', %s %s %s, $1) AS (%s)",
+		s.graph, tag, inner, tag, asSpec), params: params}, nil
+}
+
+// dollarTag returns a Postgres dollar-quote tag that does not occur in body, so body can
+// never end the quoted text early. A body holds no value, so the fixed $pg$ almost always
+// fits, and the same statement keeps the same text - which is what lets writeTx prepare
+// it once. Only a property name could contain $pg$; then a random $pg<hex>$ is drawn.
 func dollarTag(body string) (string, error) {
+	const fixed = "$pg$"
+	if !strings.Contains(body, fixed) {
+		return fixed, nil
+	}
 	var b [9]byte
 	for i := 0; i < 5; i++ {
 		if _, err := rand.Read(b[:]); err != nil {
@@ -1232,64 +1367,107 @@ func dollarTag(body string) (string, error) {
 	return "", errors.New("age: could not generate a collision-free dollar-quote tag")
 }
 
-func cypherQuote(s string) string {
-	s = strings.ReplaceAll(s, `\`, `\\`)
-	s = strings.ReplaceAll(s, `'`, `\'`)
-	return "'" + s + "'"
+// cypherKey writes a property name as a backtick-quoted Cypher name, safe for any key
+// ("repo-slug/x" included): a backtick inside it is doubled, which is how Cypher escapes
+// one.
+func cypherKey(k string) string {
+	return "`" + strings.ReplaceAll(k, "`", "``") + "`"
 }
 
-// cypherMap renders a property bag as a Cypher map literal with backtick-quoted
-// keys (safe for any key, e.g. "repo-slug/x") and typed values. Keys are sorted
-// for deterministic output.
-func cypherMap(m map[string]any) string {
+// propertyMap writes a property bag as a Cypher map literal - AGE takes the map of
+// `SET n +=` only as a literal, never as a parameter - with the keys written out and each
+// value bound in b: {`name`: $v1, `region`: $v2}. Keys are sorted, so the same keys give
+// the same statement.
+func propertyMap(m map[string]any, b bindings) string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	var b strings.Builder
-	b.WriteByte('{')
+	var sb strings.Builder
+	sb.WriteByte('{')
 	for i, k := range keys {
 		if i > 0 {
-			b.WriteByte(',')
+			sb.WriteString(", ")
 		}
-		b.WriteByte('`')
-		b.WriteString(strings.ReplaceAll(k, "`", "``"))
-		b.WriteString("`:")
-		b.WriteString(cypherValue(m[k]))
+		sb.WriteString(cypherKey(k))
+		sb.WriteString(": ")
+		sb.WriteString(b.bind(m[k]))
 	}
-	b.WriteByte('}')
-	return b.String()
+	sb.WriteByte('}')
+	return sb.String()
 }
 
-func cypherValue(v any) string {
+// agtypeMap writes the bindings as the agtype map cypher() is passed: JSON, keys sorted,
+// each value written by agtypeValue.
+func agtypeMap(b bindings) (string, error) {
+	names := make([]string, 0, len(b))
+	for k := range b {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	var sb strings.Builder
+	sb.WriteByte('{')
+	for i, k := range names {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		v, err := agtypeValue(b[k])
+		if err != nil {
+			return "", fmt.Errorf("age: binding %s: %w", k, err)
+		}
+		sb.WriteString(jsonString(k))
+		sb.WriteByte(':')
+		sb.WriteString(v)
+	}
+	sb.WriteByte('}')
+	return sb.String(), nil
+}
+
+// jsonNumber is a number as JSON writes one, which is how agtype reads one too.
+var jsonNumber = regexp.MustCompile(`^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$`)
+
+// agtypeValue writes one value as agtype text by the rules the values inlined into the
+// Cypher used to follow, so what is stored keeps the type it always had: an integer stays
+// an integer, a float a float - 1.7e+09, where json.Marshal would write 1700000000 and
+// agtype would read an integer - and a list or a map is stored as its JSON text.
+func agtypeValue(v any) (string, error) {
 	switch x := v.(type) {
 	case nil:
-		return "null"
+		return "null", nil
 	case bool:
-		if x {
-			return "true"
-		}
-		return "false"
+		return strconv.FormatBool(x), nil
 	case string:
-		return cypherQuote(x)
+		return jsonString(x), nil
 	case float64:
-		return strconv.FormatFloat(x, 'g', -1, 64)
+		if math.IsNaN(x) || math.IsInf(x, 0) {
+			return "", fmt.Errorf("%v is not a number the graph can store", x)
+		}
+		return strconv.FormatFloat(x, 'g', -1, 64), nil
 	case int:
-		return strconv.Itoa(x)
+		return strconv.Itoa(x), nil
 	case int64:
-		return strconv.FormatInt(x, 10)
+		return strconv.FormatInt(x, 10), nil
 	case json.Number:
-		return x.String()
+		if !jsonNumber.MatchString(x.String()) {
+			return "", fmt.Errorf("%q is not a number", x.String())
+		}
+		return x.String(), nil
 	default:
-		// Arrays/maps/anything exotic: store as a JSON string - safe and
-		// round-trippable as text (lossy on the original type, but rare here).
+		// Arrays, maps and anything exotic: stored as their JSON text - round-trippable
+		// as text, if lossy on the original type, and rare here.
 		b, err := json.Marshal(x)
 		if err != nil {
-			return "''"
+			return jsonString(""), nil
 		}
-		return cypherQuote(string(b))
+		return jsonString(string(b)), nil
 	}
+}
+
+// jsonString writes s as a JSON string.
+func jsonString(s string) string {
+	b, _ := json.Marshal(s) // a string always marshals
+	return string(b)
 }
 
 // nativeProps parses an agtype properties() map and drops the reserved
