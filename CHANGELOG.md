@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.39.3](https://github.com/luiacuaniello/perspectivegraph/compare/v1.39.2...v1.39.3) (2026-11-10)
+
+
+### Bug Fixes
+
+* **caddy:** build the single-VM Caddy with klauspost/compress 1.20.4 ([#416](https://github.com/luiacuaniello/perspectivegraph/issues/416)) ([3a45e86](https://github.com/luiacuaniello/perspectivegraph/commit/3a45e86c5f1c0d5c77c9262ea965bcd72439c3c3))
+
 ## [1.39.2](https://github.com/luiacuaniello/perspectivegraph/compare/v1.39.1...v1.39.2) (2026-10-28)
 
 
