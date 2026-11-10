@@ -97,6 +97,9 @@ GOTOOLCHAIN=go1.27.3 CGO_ENABLED=0 go build ./... && go vet ./... && go test ./.
 go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 go run github.com/securego/gosec/v2/cmd/gosec@latest -quiet -exclude=G104 ./...
 
+# The Caddy the single-VM recipe builds, a module of its own: dependency vulns
+(cd ../deploy/caddy && go run golang.org/x/vuln/cmd/govulncheck@latest ./...)
+
 # Frontend: types, build, unit tests
 cd ../frontend && npx tsc --noEmit && npm run build && npm test
 ```

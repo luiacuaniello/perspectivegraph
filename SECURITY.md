@@ -140,11 +140,12 @@ auth or persistence is left off.
 
 The project holds itself to the bar it sets: CI runs `gosec` (SAST), **CodeQL**
 (semantic taint analysis of the Go and TypeScript code, and of the workflows themselves),
-`gitleaks` (secret scan), `govulncheck`, and a Trivy image scan; backend images are
-distroless, non-root, read-only-rootfs, and digest-pinned. GitHub Actions are pinned to
-commit SHAs, and Dependabot keeps them current along with every base image and the
-compose files' images; a test fails when a Dockerfile has no Dependabot entry. An OpenSSF
-Scorecard workflow tracks the repo's posture.
+`gitleaks` (secret scan), `govulncheck` (on the engine and on the Caddy the single-VM
+recipe builds), and a Trivy image scan; backend images are distroless, non-root,
+read-only-rootfs, and digest-pinned. GitHub Actions are pinned to commit SHAs, and
+Dependabot keeps them current along with every base image and the compose files' images; a
+test fails when a Dockerfile has no Dependabot entry. An OpenSSF Scorecard workflow tracks
+the repo's posture.
 
 The collector **parse boundary** - where attacker-influenceable scanner/cloud/cluster
 dumps become events - is **fuzzed** (`internal/ingestion/fuzz`, Go native fuzzing, OSS-Fuzz
