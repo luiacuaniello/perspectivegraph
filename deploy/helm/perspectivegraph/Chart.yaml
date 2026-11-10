@@ -61,7 +61,7 @@ annotations:
     - name: postgres-age
       image: ghcr.io/luiacuaniello/perspectivegraph-postgres:v1.39.2 # x-release-please-version
     - name: nats
-      image: nats:2.15.2-scratch@sha256:fa66a072dc5dc67213f5d3e9b9efbf5b6de73798f8b2f1965727c1bbdf588ff9
+      image: nats:2.15.2-scratch@sha256:965fc69c168a39f2bfd63a68361288beb0cc64ca60c8c308bf6c0eb74f463b1d
     - name: governance-init
       image: busybox:1.37@sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028
   artifacthub.io/links: |
