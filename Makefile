@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help chart-install up up-full up-demo up-aws prod-init prod-restore prod-smoke demo demo-needs demo-build demo-run up-search down logs run-backend build-backend test bench bench-cloudgoat mcp reachability-lab-aws redteam-aws boundary-lab-aws entrypoints-lab-aws public-access-lab-aws terraform-lab-aws tidy run-frontend install-frontend lockfile docs-site seed seed-discovery seed-load clean
+.PHONY: help chart-install up up-full up-demo up-aws prod-init prod-restore prod-smoke demo demo-needs demo-build demo-run up-search down logs run-backend build-backend test bench bench-cloudgoat mcp reachability-lab-aws redteam-aws boundary-lab-aws entrypoints-lab-aws public-access-lab-aws terraform-lab-aws tidy run-frontend install-frontend lockfile sync-pins docs-site seed seed-discovery seed-load clean
 
 # CGO is disabled so the Go binaries link statically (Go's pure-Go DNS resolver
 # instead of the system one). This also sidesteps a macOS system-linker bug on
@@ -168,6 +168,10 @@ lockfile:
 	@echo ""
 	@echo "→ regenerated frontend/ and site/ package-lock.json on linux. Verify before committing:"
 	@echo "    git diff --stat frontend/package-lock.json site/package-lock.json"
+
+## sync-pins: carry the NATS pin from the chart's values.yaml, and the Keycloak pin from docker-compose.yml, to the files that pin the same image and Dependabot does not read. A Dependabot pull request for either fails CI until they match: run this on its branch.
+sync-pins:
+	python3 scripts/sync-pins.py
 
 ## docs-site: build the documentation site (docs.a3thinker.it) from docs/ - fails on any broken link or anchor
 docs-site:

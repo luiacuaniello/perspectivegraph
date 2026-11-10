@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -91,6 +92,21 @@ type slowSealer struct{ per time.Duration }
 func (s slowSealer) Seal(b []byte) ([]byte, error) { time.Sleep(s.per); return b, nil }
 func (slowSealer) Open(b []byte) ([]byte, error)   { return b, nil }
 func (slowSealer) Enabled() bool                   { return true }
+
+// countingSealer is slowSealer that counts what it seals - one record per append - so a
+// test can tell how far the writer has got.
+type countingSealer struct {
+	per    time.Duration
+	sealed atomic.Int64
+}
+
+func (s *countingSealer) Seal(b []byte) ([]byte, error) {
+	time.Sleep(s.per)
+	s.sealed.Add(1)
+	return b, nil
+}
+func (*countingSealer) Open(b []byte) ([]byte, error) { return b, nil }
+func (*countingSealer) Enabled() bool                 { return true }
 
 // blockingSealer holds every append until released, standing in for a database that has
 // stopped answering altogether.
@@ -245,22 +261,25 @@ func TestAnEmptyChainVerifies(t *testing.T) {
 // to be watching the attack would become the thing that amplifies it.
 func TestRecordDoesNotBlockOnASlowDatabase(t *testing.T) {
 	_, db := pgLog(t)
-	l, err := OpenPG(db, WithSealer(slowSealer{per: 5 * time.Millisecond}))
+	sealer := &countingSealer{per: 5 * time.Millisecond}
+	l, err := OpenPG(db, WithSealer(sealer))
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
 
-	// 200 denials against a backend that needs ~1s to absorb them.
-	start := time.Now()
+	// 200 denials against a backend that needs ~1s to absorb them. Judged by what the writer
+	// had absorbed when the calls returned, not by a deadline: a request path waiting on the
+	// database could only return once every denial was written, while a loaded machine
+	// slows the calls and the writer alike.
 	for i := 0; i < 200; i++ {
 		l.Record(ctx, "auth.deny", "mallory", "", "acme", map[string]any{"i": i})
 	}
-	elapsed := time.Since(start)
-	if elapsed > 100*time.Millisecond {
-		t.Fatalf("200 denials took %v to record - the request path is waiting for the database", elapsed)
+	if absorbed := sealer.sealed.Load(); absorbed >= 100 {
+		t.Fatalf("the writer had absorbed %d of 200 denials when the calls returned - the request path is waiting for the database", absorbed)
+	} else {
+		t.Logf("200 denials recorded while the writer had absorbed %d", absorbed)
 	}
-	t.Logf("200 denials recorded in %v", elapsed)
 
 	settled(t, l)
 	// Verified with the same sealer it was written with: sealed fields are base64 inside

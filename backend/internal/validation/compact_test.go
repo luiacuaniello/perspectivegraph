@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -19,6 +20,21 @@ type slowSealer struct{ per time.Duration }
 func (s slowSealer) Seal(b []byte) ([]byte, error) { time.Sleep(s.per); return b, nil }
 func (slowSealer) Open(b []byte) ([]byte, error)   { return b, nil }
 func (slowSealer) Enabled() bool                   { return true }
+
+// countingSealer is slowSealer that counts what it seals, so a test can tell how far a
+// compaction's lock-free phase - which seals every record it rewrites - has got.
+type countingSealer struct {
+	per    time.Duration
+	sealed atomic.Int64
+}
+
+func (s *countingSealer) Seal(b []byte) ([]byte, error) {
+	time.Sleep(s.per)
+	s.sealed.Add(1)
+	return b, nil
+}
+func (*countingSealer) Open(b []byte) ([]byte, error) { return b, nil }
+func (*countingSealer) Enabled() bool                 { return true }
 
 // failAfterSealer fails once it has sealed n blobs, so a compaction can be made to fail
 // in the middle of writing its snapshot.
@@ -117,32 +133,40 @@ func TestWritesDuringCompactionSurviveTheSwap(t *testing.T) {
 
 // The reason for moving the encode out of the critical section. A reader must not wait
 // for a compaction: it used to block for the full rewrite - 137 ms at 100k records.
+//
+// Judged by how far the compaction had got when the reads returned, not by a deadline on
+// them: a reader serialised behind it could only return once its lock-free phase had sealed
+// every record, while a loaded machine slows the reads and the compaction alike - the
+// 40 ms this once allowed measured the machine as much as the lock.
 func TestReadersAreNotBlockedByCompaction(t *testing.T) {
-	s, err := New(filepath.Join(t.TempDir(), "v.log"), WithSealer(slowSealer{per: 2 * time.Millisecond}))
+	sealer := &countingSealer{per: 2 * time.Millisecond}
+	s, err := New(filepath.Join(t.TempDir(), "v.log"), WithSealer(sealer))
 	if err != nil {
 		t.Fatal(err)
 	}
 	seed(t, s, 60) // ~120ms of phase 2
+	sealer.sealed.Store(0)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() { defer wg.Done(); _ = s.compact() }()
 	waitUntilCompacting(t, s)
 
-	start := time.Now()
-	for i := 0; i < 50; i++ {
+	for i := 0; i < 5; i++ {
 		_, _ = s.List(context.Background(), "acme")
 		_, _ = s.Metrics(context.Background(), "acme")
 	}
-	elapsed := time.Since(start)
+	during := sealer.sealed.Load()
 	wg.Wait()
+	total := sealer.sealed.Load()
 
-	// 100 reads during a ~120ms compaction. If readers were serialised behind it they
-	// would inherit its latency; unblocked they finish in single-digit milliseconds.
-	if elapsed > 40*time.Millisecond {
-		t.Fatalf("100 reads took %v during a compaction - readers are blocked by it", elapsed)
+	if total == 0 {
+		t.Fatal("the compaction sealed nothing: this test no longer reaches its lock-free phase")
 	}
-	t.Logf("100 reads during compaction: %v", elapsed)
+	if during >= total {
+		t.Fatalf("the reads returned only after the compaction had sealed all %d records - readers are blocked by it", total)
+	}
+	t.Logf("reads returned when the compaction had sealed %d of %d records", during, total)
 }
 
 // A failed compaction must leave the store exactly as it was. The current log already
@@ -186,28 +210,47 @@ func TestFailedCompactionLeavesTheLogIntact(t *testing.T) {
 
 // Two compactions must not run at once: the second would snapshot state the first is
 // already rewriting, and whichever renamed last would win with a stale file.
+//
+// Judged by what was sealed, not by how fast the second call returned: declining, it
+// returns while the first is still sealing and seals nothing itself, so the two together
+// seal what one compaction does.
 func TestOnlyOneCompactionRunsAtATime(t *testing.T) {
-	s, err := New(filepath.Join(t.TempDir(), "v.log"), WithSealer(slowSealer{per: 2 * time.Millisecond}))
+	sealer := &countingSealer{per: 2 * time.Millisecond}
+	s, err := New(filepath.Join(t.TempDir(), "v.log"), WithSealer(sealer))
 	if err != nil {
 		t.Fatal(err)
 	}
 	seed(t, s, 60)
+	sealer.sealed.Store(0)
+	if err := s.compact(); err != nil {
+		t.Fatal(err)
+	}
+	one := sealer.sealed.Load() // what one compaction of this store seals
+	sealer.sealed.Store(0)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() { defer wg.Done(); _ = s.compact() }()
 	waitUntilCompacting(t, s)
 
-	// While the first is in phase 2, a second must decline immediately rather than
-	// start its own snapshot.
-	start := time.Now()
+	// While the first is in phase 2, a second must decline rather than start its own
+	// snapshot.
 	if err := s.compact(); err != nil {
 		t.Fatalf("the declined compaction returned an error: %v", err)
 	}
-	if d := time.Since(start); d > 20*time.Millisecond {
-		t.Fatalf("the second compaction took %v - it did not decline, it ran", d)
-	}
+	during := sealer.sealed.Load()
 	wg.Wait()
+	total := sealer.sealed.Load()
+
+	if one == 0 {
+		t.Fatal("a compaction sealed nothing: this test no longer reaches its lock-free phase")
+	}
+	if during >= one {
+		t.Fatalf("the second compaction returned only after %d records were sealed, a whole compaction's %d - it did not decline", during, one)
+	}
+	if total != one {
+		t.Fatalf("the two compactions sealed %d records, one compaction seals %d - the second ran", total, one)
+	}
 }
 
 // Everything at once, which is what -race is for: concurrent writers, deleters and

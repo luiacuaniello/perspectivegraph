@@ -212,6 +212,10 @@ licence named without its text.
   build uses, because npm records the transitive dependencies of optional
   platform-specific packages only for the platform it runs on: regenerating on macOS
   silently drops entries the Linux build needs, and `npm ci` then fails in CI.
+- **NATS and Keycloak are pinned in several files, and Dependabot updates one.** It moves
+  NATS in the chart's `values.yaml` and Keycloak in `docker-compose.yml`; the same tag and
+  digest also sit in files no Dependabot ecosystem reads, and a Go test fails until they
+  match. On the pull request's branch, `make sync-pins` carries the pin across.
 - **Node is pinned once, and npm comes with it.** The only place Node is named is the
   build stage of `frontend/Dockerfile`, by exact version and digest - Node 24.21.0, which
   ships npm 11.19.0. CI's `setup-node` and `make lockfile` read it through

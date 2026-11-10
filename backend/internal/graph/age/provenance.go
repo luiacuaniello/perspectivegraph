@@ -65,11 +65,11 @@ func (s *Store) prepareProvenance(ctx context.Context) error {
 		return err
 	}
 	t, r, prefix := s.provRef(), s.removalsRef(), sanitizeIdent(s.graph+"_prov")
-	nodeQ, err := s.cypherSQL(`MATCH (n) RETURN n.id`, `id agtype`)
+	nodeQ, err := s.cypherSQL(`MATCH (n) RETURN n.id`, `id agtype`, nil)
 	if err != nil {
 		return err
 	}
-	edgeQ, err := s.cypherSQL(`MATCH (a)-[e]->(b) RETURN type(e), a.id, b.id`, `etype agtype, src agtype, dst agtype`)
+	edgeQ, err := s.cypherSQL(`MATCH (a)-[e]->(b) RETURN type(e), a.id, b.id`, `etype agtype, src agtype, dst agtype`, nil)
 	if err != nil {
 		return err
 	}
@@ -106,7 +106,7 @@ func (s *Store) prepareProvenance(ctx context.Context) error {
 		}
 		// First time in this graph: everything already here predates provenance.
 		var legacy []elemKey
-		rows, err := tx.QueryContext(ctx, nodeQ)
+		rows, err := tx.QueryContext(ctx, nodeQ.sql, nodeQ.args()...)
 		if err != nil {
 			return fmt.Errorf("provenance backfill: %w", err)
 		}
@@ -119,7 +119,7 @@ func (s *Store) prepareProvenance(ctx context.Context) error {
 			legacy = append(legacy, nodeKey(agString(id)))
 		}
 		rows.Close()
-		erows, err := tx.QueryContext(ctx, edgeQ)
+		erows, err := tx.QueryContext(ctx, edgeQ.sql, edgeQ.args()...)
 		if err != nil {
 			return fmt.Errorf("provenance backfill: %w", err)
 		}
@@ -299,16 +299,17 @@ func (s *Store) Sweep(ctx context.Context, source, scope string, taken time.Time
 		}
 
 		gone := map[elemKey]bool{}
+		wtx := newWriteTx(tx)
 		for _, k := range edges {
 			gone[k] = true
-			n, err := s.removeEdge(ctx, tx, k)
+			n, err := s.removeEdge(ctx, wtx, k)
 			if err != nil {
 				return err
 			}
 			stats.Edges += n
 		}
 		for _, k := range nodes {
-			removed, err := s.removeNode(ctx, tx, k.a, gone, &stats)
+			removed, err := s.removeNode(ctx, wtx, k.a, gone, &stats)
 			if err != nil {
 				return err
 			}
@@ -329,17 +330,17 @@ func (s *Store) Sweep(ctx context.Context, source, scope string, taken time.Time
 
 // removeEdge deletes one edge, from the graph or from the parked edges, and reports how
 // many copies it removed.
-func (s *Store) removeEdge(ctx context.Context, tx *sql.Tx, k elemKey) (int, error) {
+func (s *Store) removeEdge(ctx context.Context, tx *writeTx, k elemKey) (int, error) {
 	if !ontology.IsValidEdgeType(ontology.EdgeType(k.a)) {
 		return 0, nil // only valid edges are ever written; nothing to remove otherwise
 	}
-	q, err := s.cypherSQL(fmt.Sprintf(`MATCH (x)-[e:%s]->(y) WHERE x.id = %s AND y.id = %s DELETE e RETURN 1`,
-		k.a, cypherQuote(k.b), cypherQuote(k.c)), `v agtype`)
+	q, err := s.cypherSQL(fmt.Sprintf(`MATCH (x)-[e:%s]->(y) WHERE x.id = $from AND y.id = $to DELETE e RETURN 1`, k.a),
+		`v agtype`, bindings{"from": k.b, "to": k.c})
 	if err != nil {
 		return 0, err
 	}
 	n := 0
-	removed, err := execReturnsRow(ctx, tx, q)
+	removed, err := tx.returnsRow(ctx, q)
 	if err != nil {
 		return 0, fmt.Errorf("sweep edge: %w", err)
 	}
@@ -360,18 +361,18 @@ func (s *Store) removeEdge(ctx context.Context, tx *sql.Tx, k elemKey) (int, err
 
 // removeNode deletes one node. Its edges go with it; each one another origin still
 // asserts is parked instead, to land again if the node comes back.
-func (s *Store) removeNode(ctx context.Context, tx *sql.Tx, id string, gone map[elemKey]bool, stats *graph.SweepStats) (bool, error) {
-	qid := cypherQuote(id)
+func (s *Store) removeNode(ctx context.Context, tx *writeTx, id string, gone map[elemKey]bool, stats *graph.SweepStats) (bool, error) {
+	b := bindings{"id": id}
 	var incident []ontology.Edge
-	for _, pattern := range []string{
-		`MATCH (x)-[e]->(y) WHERE x.id = %s RETURN type(e), x.id, y.id, properties(e)`,
-		`MATCH (y)-[e]->(x) WHERE x.id = %s RETURN type(e), y.id, x.id, properties(e)`,
+	for _, body := range []string{
+		`MATCH (x)-[e]->(y) WHERE x.id = $id RETURN type(e), x.id, y.id, properties(e)`,
+		`MATCH (y)-[e]->(x) WHERE x.id = $id RETURN type(e), y.id, x.id, properties(e)`,
 	} {
-		q, err := s.cypherSQL(fmt.Sprintf(pattern, qid), `etype agtype, src agtype, dst agtype, props agtype`)
+		q, err := s.cypherSQL(body, `etype agtype, src agtype, dst agtype, props agtype`, b)
 		if err != nil {
 			return false, err
 		}
-		rows, err := tx.QueryContext(ctx, q)
+		rows, err := tx.query(ctx, q)
 		if err != nil {
 			return false, fmt.Errorf("sweep node edges: %w", err)
 		}
@@ -403,7 +404,7 @@ func (s *Store) removeNode(ctx context.Context, tx *sql.Tx, id string, gone map[
 			return false, err
 		}
 		if asserted {
-			if err := s.parkEdge(ctx, tx, e, nil); err != nil {
+			if err := s.parkEdge(ctx, tx.Tx, e, nil); err != nil {
 				return false, err
 			}
 			stats.Parked++
@@ -411,7 +412,7 @@ func (s *Store) removeNode(ctx context.Context, tx *sql.Tx, id string, gone map[
 			stats.Edges++
 		}
 	}
-	count, err := s.cypherSQL(fmt.Sprintf(`MATCH (n) WHERE n.id = %s RETURN count(n)`, qid), `c agtype`)
+	count, err := s.cypherSQL(`MATCH (n) WHERE n.id = $id RETURN count(n)`, `c agtype`, b)
 	if err != nil {
 		return false, err
 	}
@@ -419,11 +420,11 @@ func (s *Store) removeNode(ctx context.Context, tx *sql.Tx, id string, gone map[
 	if err != nil || n == 0 {
 		return false, err
 	}
-	del, err := s.cypherSQL(fmt.Sprintf(`MATCH (n) WHERE n.id = %s DETACH DELETE n`, qid), `a agtype`)
+	del, err := s.cypherSQL(`MATCH (n) WHERE n.id = $id DETACH DELETE n`, `a agtype`, b)
 	if err != nil {
 		return false, err
 	}
-	if _, err := tx.ExecContext(ctx, del); err != nil {
+	if err := tx.exec(ctx, del); err != nil {
 		return false, fmt.Errorf("sweep node: %w", err)
 	}
 	return true, nil
