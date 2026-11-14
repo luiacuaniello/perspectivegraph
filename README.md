@@ -85,7 +85,7 @@ On Kubernetes, the chart is an
 ```bash
 helm install perspectivegraph oci://ghcr.io/luiacuaniello/charts/perspectivegraph \
   --set secrets.generate=true \
-  --version 1.39.3 # x-release-please-version
+  --version 1.39.4 # x-release-please-version
 ```
 
 A default install is authenticated, and the chart will not render one that does not say
@@ -221,7 +221,7 @@ to find and cut routes; don't put its percentage in front of a board. If you run
 [tell us how it went](https://github.com/luiacuaniello/perspectivegraph/discussions/286).
 [Positioning](docs/POSITIONING.md) spells out what is and isn't claimed.
 
-**What is measured today, as of v1.39.3.** <!-- x-release-please-version -->
+**What is measured today, as of v1.39.4.** <!-- x-release-please-version -->
 `make bench-cloudgoat` grades the engine in CI on four
 [CloudGoat-shaped scenarios](backend/testdata/cloudgoat/README.md):
 

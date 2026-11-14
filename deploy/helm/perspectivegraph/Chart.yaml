@@ -5,8 +5,8 @@ name: perspectivegraph
 # the colon inside it would otherwise end the scalar.
 description: 'Attack-path analysis in the pull request: from internet exposure, through too much privilege, to a sensitive asset.'
 type: application
-version: 1.39.3 # x-release-please-version
-appVersion: "1.39.3" # x-release-please-version
+version: 1.39.4 # x-release-please-version
+appVersion: "1.39.4" # x-release-please-version
 # The floor is policy/v1 PodDisruptionBudget, which went GA in 1.21; everything else
 # here (networking.k8s.io/v1, seccompProfile, topologySpreadConstraints) is older.
 #
@@ -59,11 +59,11 @@ annotations:
       description: A caller limited to some applications no longer reads other applications' crown jewels in the cached risk simulation
   artifacthub.io/images: |
     - name: backend
-      image: ghcr.io/luiacuaniello/perspectivegraph:v1.39.3 # x-release-please-version
+      image: ghcr.io/luiacuaniello/perspectivegraph:v1.39.4 # x-release-please-version
     - name: dashboard
-      image: ghcr.io/luiacuaniello/perspectivegraph-dashboard:v1.39.3 # x-release-please-version
+      image: ghcr.io/luiacuaniello/perspectivegraph-dashboard:v1.39.4 # x-release-please-version
     - name: postgres-age
-      image: ghcr.io/luiacuaniello/perspectivegraph-postgres:v1.39.3 # x-release-please-version
+      image: ghcr.io/luiacuaniello/perspectivegraph-postgres:v1.39.4 # x-release-please-version
     - name: nats
       image: nats:2.15.2-scratch@sha256:965fc69c168a39f2bfd63a68361288beb0cc64ca60c8c308bf6c0eb74f463b1d
     - name: governance-init
