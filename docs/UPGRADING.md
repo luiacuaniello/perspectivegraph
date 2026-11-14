@@ -17,6 +17,36 @@ digest, take the backup, stage it.
 
 ---
 
+## 1.39.4
+
+### Single VM: Caddy is built with Go 1.27.4 and OpenTelemetry 1.47.0
+
+**Affects you if** you run the single-VM recipe (`make prod-init`). Nothing else contains
+Caddy: neither the Helm chart nor the other compose files use it. The engine's images are
+built with Go 1.27.4 as well, and need only the usual upgrade.
+
+The recipe compiled Caddy with Go 1.27.3, whose `net/http` carries GO-2026-6859
+(CVE-2026-97054): once a `MaxBytesReader` limit is exceeded, Go sets `Connection: close` on
+the response without synchronisation, and an HTTP/1 server whose handler reads the request
+body while a response header is being written can panic on the race. `govulncheck` traces
+calls from Caddy into the package, as it does from the engine, and Go 1.27.4 fixes it.
+
+The same build moves OpenTelemetry's `sdk`, `sdk/log` and `trace` to 1.47.0, out of
+GHSA-q7gw-24fr-5p69 (CVE-2026-128085): `AttributeValueLengthLimit` did not shorten a value
+made of U+FFFD runes. In Caddy only the `tracing` directive sets up the SDK that applies the
+limit, and the recipe's Caddyfile does not use it, so this one is not reached; the bump keeps
+the image clear of it all the same.
+
+What to do: upgrade as [the recipe describes](manual/single-vm.md#upgrade). `make prod-init`
+rebuilds Caddy's image; `docker compose up -d` on its own keeps the old one running. To see
+what the running Caddy was built with:
+
+```bash
+docker compose exec caddy caddy build-info | grep -E '^go[[:space:]]|otel/sdk[[:space:]]'
+```
+
+The two lines name `go1.27.4` and `v1.47.0` once the upgrade is done.
+
 ## 1.39.3
 
 ### Single VM: Caddy is built with klauspost/compress 1.20.4
