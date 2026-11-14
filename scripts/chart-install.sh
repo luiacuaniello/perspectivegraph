@@ -12,6 +12,13 @@
 #
 # A render is not an install. This installs.
 #
+# It installs what a default install is: the production profile, with the credentials the
+# chart generates - a default install has to say where they come from, and
+# secrets.generate is the shortest answer - and the NetworkPolicies on. Then it checks
+# that the API and ingest refuse a caller without credentials and accept the generated
+# ones, and that the bus admits no pod but the backend, and the backend only with its
+# password.
+#
 #   NODE_IMAGE=kindest/node:v1.33.12  bash scripts/chart-install.sh
 #   DATABASE=cloudnativepg            the database run by the CloudNativePG operator
 #   CONNECTOR=kubernetes              the backend reads the cluster it runs in
@@ -59,7 +66,7 @@ PG_CONTEXT=deploy/postgres
 die() { echo "chart-install: $*" >&2; exit 1; }
 ok()  { echo "chart-install: $*"; }
 
-for tool in kind kubectl helm docker; do
+for tool in kind kubectl helm docker curl openssl; do
   command -v "$tool" >/dev/null 2>&1 || die "$tool is required"
 done
 
@@ -214,9 +221,10 @@ YAML
              --set connectors.interval=20s --set backend.analyzerInterval=10s)
 fi
 
-ok "helm install with default values (database: $DATABASE${CONNECTOR:+, connector: $CONNECTOR})"
+ok "helm install with default values and generated credentials (database: $DATABASE${CONNECTOR:+, connector: $CONNECTOR})"
 if ! helm install "$RELEASE" "$CHART" \
       --kube-context "kind-$CLUSTER" \
+      --set secrets.generate=true \
       "${DB_ARGS[@]}" \
       "${CONN_ARGS[@]}" \
       --set backend.image.repository=perspectivegraph-backend \
@@ -251,6 +259,51 @@ not_ready=$(kc get pods \
   -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{"\n"}{end}' \
   | grep -v -E ' (Running|Succeeded)$' || true)
 [ -z "$not_ready" ] || die "pods not Running:\n$not_ready"
+
+# The production profile is the default, so the release runs on the credentials the chart
+# generated. Read them back the way NOTES tells an operator to.
+secret="${RELEASE}-perspectivegraph-secrets"
+field() { kc get secret "$secret" -o "jsonpath={.data.$1}" | base64 --decode; }
+API_TOKEN=$(field API_TOKENS | cut -d: -f1)
+INGEST_SECRET=$(field INGEST_HMAC_SECRET)
+{ [ -n "$API_TOKEN" ] && [ -n "$INGEST_SECRET" ]; } || die "the chart generated no API token or no ingest secret"
+
+# The v2 signature internal/auth.SignV2 verifies, as the header carries it ("v2=<hex>"):
+# HMAC-SHA256, under the ingest secret, of the timestamp, the method, the path, the
+# canonical query and the body's SHA-256.
+sign_v2() { # sign_v2 <unix seconds> <path> <canonical query> <body>
+  local sum
+  sum=$(printf '%s' "$4" | shasum -a 256 | cut -d' ' -f1)
+  printf 'v2\n%s\nPOST\n%s\n%s\n%s' "$1" "$2" "$3" "$sum" \
+    | openssl dgst -sha256 -hmac "$INGEST_SECRET" | sed 's/^.* /v2=/'
+}
+
+# Both halves of what the production profile refuses to start without, from the outside:
+# a caller with nothing is turned away, and one with the generated credentials is let in.
+ok "checking that the API and ingest refuse a caller without credentials"
+kc port-forward "svc/${RELEASE}-perspectivegraph-backend" 18090:8080 18091:8081 >/dev/null 2>&1 &
+authpf=$!
+trap 'kill $authpf 2>/dev/null || true; wait $authpf 2>/dev/null || true; cleanup' EXIT
+for _ in $(seq 1 30); do curl -s -o /dev/null http://localhost:18090/healthz && break; sleep 1; done
+status() { curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' "$@"; }
+query='{"query":"{ __typename }"}'
+got=$(status http://localhost:18090/graphql -d "$query")
+[ "$got" = 401 ] || die "the API answered a caller with no token (HTTP $got, want 401)"
+got=$(status http://localhost:18090/graphql -H "Authorization: Bearer $API_TOKEN" -d "$query")
+[ "$got" = 200 ] || die "the API refused the token the chart generated (HTTP $got)"
+report='{"apiVersion":"v1","kind":"List","items":[{"apiVersion":"v1","kind":"ServiceAccount","metadata":{"name":"auth-probe","namespace":"probe"}}]}'
+url='http://localhost:18091/ingest/k8s?cluster=authprobe'
+got=$(status "$url" --data-binary "$report")
+[ "$got" = 401 ] || die "ingest accepted an unsigned report (HTTP $got, want 401)"
+ts=$(date +%s)
+got=$(status "$url" --data-binary "$report" -H "X-PerspectiveGraph-Timestamp: $ts" \
+  -H "X-PerspectiveGraph-Signature-V2: $(sign_v2 "$ts" /ingest/k8s cluster=authprobe "$report")")
+[ "$got" = 202 ] || die "ingest refused a report signed with the generated secret (HTTP $got, want 202)"
+# Reaped here, or bash reports the killed job ("Terminated: 15") in the middle of the log.
+kill "$authpf" 2>/dev/null || true
+wait "$authpf" 2>/dev/null || true
+trap cleanup EXIT
+ok "they do, and they accept the credentials the chart generated"
 
 # The database is the reason this image is built here at all: prove the extension is
 # actually loadable, not merely that the container started.
@@ -315,8 +368,13 @@ else
   payload='{"apiVersion":"v1","kind":"List","items":[{"apiVersion":"v1","kind":"ServiceAccount","metadata":{"name":"failover-probe","namespace":"probe"}}]}'
   written=0
   for _ in $(seq 1 30); do
+    # Signed afresh each time: a v2 signature is accepted once.
+    ts=$(date +%s)
     kc run "ingestprobe-$RANDOM" --rm -i --restart=Never --quiet --image="$probe_image" --command -- \
-      wget -q -O /dev/null --header 'Content-Type: application/json' --post-data "$payload" \
+      wget -q -O /dev/null --header 'Content-Type: application/json' \
+      --header "X-PerspectiveGraph-Timestamp: $ts" \
+      --header "X-PerspectiveGraph-Signature-V2: $(sign_v2 "$ts" /ingest/k8s cluster=failover "$payload")" \
+      --post-data "$payload" \
       "http://${RELEASE}-perspectivegraph-backend:8081/ingest/k8s?cluster=failover" >/dev/null 2>&1 || true
     n=$(sql "$promoted" "LOAD 'age'; SET search_path = ag_catalog, public; SELECT count(*) FROM cypher('perspective', \$\$MATCH (n) WHERE n.name = 'probe/failover-probe' RETURN n\$\$) AS (n agtype)")
     if [ "${n:-0}" -gt 0 ]; then written=1; break; fi
@@ -337,11 +395,12 @@ if [ "$CONNECTOR" = "kubernetes" ]; then
 
   kc port-forward "svc/${RELEASE}-perspectivegraph-backend" 18080:8080 >/dev/null 2>&1 &
   pf=$!
-  trap 'kill $pf 2>/dev/null; cleanup' EXIT
+  trap 'kill $pf 2>/dev/null || true; wait $pf 2>/dev/null || true; cleanup' EXIT
   for _ in $(seq 1 30); do curl -s -o /dev/null http://localhost:18080/healthz && break; sleep 1; done
   # The routes through the workload to cluster-admin, one per line.
   admin_routes() {
     curl -s -X POST http://localhost:18080/graphql -H 'Content-Type: application/json' \
+      -H "Authorization: Bearer $API_TOKEN" \
       -d '{"query":"{ attackPaths(limit:200){ nodes { name } } }"}' |
       jq -r '.data.attackPaths[] | [.nodes[].name]
              | select(index("cluster-admin") and index("shop/web-sa")) | join(" -> ")'
@@ -359,14 +418,27 @@ fi
 
 # The bus must refuse a client without credentials: events on it are trusted, and the
 # ingest webhook's signature check runs before them, not after. The backend reaching it at
-# all (--wait above) proves the password works; this proves it is required.
-ok "checking that NATS refuses an unauthenticated client"
-reply=$(kubectl --context "kind-$CLUSTER" run natsprobe --rm -i --restart=Never --quiet \
-  --image="$probe_image" --command -- sh -c \
-  "printf 'CONNECT {\"verbose\":true}\r\nPING\r\n' | nc -w 5 ${RELEASE}-perspectivegraph-nats 4222" 2>&1 || true)
+# all (--wait above) proves the password works; this proves it is required - asked from a
+# pod wearing the backend's labels, which the NetworkPolicy admits. A pod without them
+# tests the policy itself: on by default, it keeps every pod but the backend off the bus.
+nats_probe() { # nats_probe <pod name> [kubectl run flags]
+  local name=$1
+  shift
+  kubectl --context "kind-$CLUSTER" run "$name" --rm -i --restart=Never --quiet "$@" \
+    --image="$probe_image" --command -- sh -c \
+    "printf 'CONNECT {\"verbose\":true}\r\nPING\r\n' | nc -w 5 ${RELEASE}-perspectivegraph-nats 4222" 2>&1 || true
+}
+ok "checking that NATS refuses an unauthenticated client, even one the NetworkPolicy admits"
+reply=$(nats_probe natsprobe --labels="app.kubernetes.io/instance=${RELEASE},app.kubernetes.io/component=backend")
 case "$reply" in
   *"Authorization Violation"*) ok "nats refused it" ;;
   *) die "nats did not refuse an unauthenticated client:\n$reply" ;;
+esac
+ok "checking that the NetworkPolicy keeps every other pod off the bus"
+reply=$(nats_probe natsprobe-outsider)
+case "$reply" in
+  *INFO*|*"Authorization Violation"*) die "a pod that is not the backend reached NATS:\n$reply" ;;
+  *) ok "the connection never got through" ;;
 esac
 
 count=$(kubectl --context "kind-$CLUSTER" get pods --no-headers | wc -l | tr -d ' ')

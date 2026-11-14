@@ -66,6 +66,8 @@ func TestATokenWithoutATenantIsRefusedWhereSeveralAreServed(t *testing.T) {
 		"several, a claim that is not a string": {require: true, tenant: 42, ok: false},
 		"several, the claim names a tenant":     {require: true, tenant: "acme", ok: true, wantTenant: "acme"},
 		"several, the claim names the default":  {require: true, tenant: DefaultTenant, ok: true, wantTenant: DefaultTenant},
+		// The tenant has one spelling past authentication, whatever the IdP writes.
+		"the claim spells the tenant its own way": {require: true, tenant: "Acme-Corp", ok: true, wantTenant: "acme_corp"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			p, ok := authn(c.require).Authenticate(token(c.tenant))

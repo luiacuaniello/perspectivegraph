@@ -101,8 +101,11 @@ func Open(path string, opts ...Option) (*Log, error) {
 }
 
 // encodeLine renders a record line for the file: plaintext JSON when the sealer
-// is off, else base64(sealed(json)). decodeLine inverts it, treating a line that
-// starts with '{' as plaintext (base64 output never does), so mixed files read.
+// is off, else base64(sealed(json)). decodeLine inverts it. A line that starts with
+// '{' is plaintext (base64 output never does): read as such with the sealer off, and
+// refused with it on - the chain's hashes carry no key, so a log rewritten in plaintext
+// from the first line would verify. Lines written before the key are sealed once, by
+// seal-stores.
 func encodeLine(line []byte, sealer cryptostore.Sealer) ([]byte, error) {
 	if !sealer.Enabled() {
 		return line, nil
@@ -116,7 +119,10 @@ func encodeLine(line []byte, sealer cryptostore.Sealer) ([]byte, error) {
 
 func decodeLine(line []byte, sealer cryptostore.Sealer) ([]byte, error) {
 	if len(line) > 0 && line[0] == '{' {
-		return line, nil // plaintext JSON (sealer off, or a pre-encryption record)
+		if sealer.Enabled() {
+			return nil, cryptostore.ErrPlaintext
+		}
+		return line, nil
 	}
 	raw, err := base64.StdEncoding.DecodeString(string(line))
 	if err != nil {
@@ -279,6 +285,12 @@ func tail(path string, sealer cryptostore.Sealer) (int64, string, error) {
 // whose hash or back-link doesn't match - i.e. evidence of tampering.
 func Verify(path string, opts ...Option) (records int, err error) {
 	sealer := sealerFrom(opts)
+	return verifyFile(path, func(line []byte) ([]byte, error) { return decodeLine(line, sealer) })
+}
+
+// verifyFile is Verify with the decoding of each line handed in: seal-stores walks the
+// chain with one that also reads the lines written before the key, before it seals them.
+func verifyFile(path string, decode func([]byte) ([]byte, error)) (records int, err error) {
 	f, err := os.Open(path) // #nosec G304 -- operator-configured audit-log path, not attacker-controlled
 	if os.IsNotExist(err) {
 		return 0, nil
@@ -297,7 +309,7 @@ func Verify(path string, opts ...Option) (records int, err error) {
 		if len(line) == 0 {
 			continue
 		}
-		dec, err := decodeLine(line, sealer)
+		dec, err := decode(line)
 		if err != nil {
 			return records, fmt.Errorf("record %d: %w", records+1, err)
 		}

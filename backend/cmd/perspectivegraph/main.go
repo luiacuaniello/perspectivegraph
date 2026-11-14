@@ -88,6 +88,20 @@ func main() {
 		return
 	}
 
+	// Operator utility: seal, once, what the stores hold from before STORE_ENCRYPTION_KEY
+	// was set, and exit. Dispatched on the subcommand alone, as verify-audit is. See
+	// runSealStores.
+	if len(os.Args) >= 2 && os.Args[1] == "seal-stores" {
+		if err := runSealStores(os.Args[2:], os.Stdout); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return
+			}
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	// Scale/load utility: generate a large synthetic attack surface and POST it to
 	// the ingest webhook, so the analyzer's scaling can be exercised end-to-end on a
 	// running stack. See runGenload for flags. Exits when done.
@@ -238,7 +252,11 @@ func main() {
 	defer stop()
 
 	if err := run(ctx, cfg); err != nil && !errors.Is(err, context.Canceled) {
-		slog.Error("fatal", "err", err)
+		if errors.Is(err, cryptostore.ErrPlaintext) {
+			slog.Error("fatal", "err", err, "fix", plaintextFix)
+		} else {
+			slog.Error("fatal", "err", err)
+		}
 		os.Exit(1)
 	}
 	slog.Info("shutdown complete")
@@ -431,6 +449,11 @@ func run(parent context.Context, cfg config.Config) error {
 	govDB, err := openGovernancePool(ctx, cfg, &cl)
 	if err != nil {
 		return err
+	}
+	if cfg.StoreSealExisting {
+		if err := sealExisting(ctx, cfg, sealer, govDB); err != nil {
+			return err
+		}
 	}
 	historyStore, err := openHistory(cfg, govDB, sealer)
 	if err != nil {

@@ -12,6 +12,9 @@
 
 # Locally-built images loaded into the cluster (see the recipe); never pull.
 backend:
+  # The demo profile, by name: the recipe seeds the graph with `make seed`, which posts
+  # unsigned reports to the port-forwarded ingest port. Sign-in is still OIDC.
+  env: demo
   image:
     repository: perspectivegraph-backend
     tag: local

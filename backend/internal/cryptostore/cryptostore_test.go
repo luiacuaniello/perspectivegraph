@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -71,16 +72,60 @@ func TestPassphraseDerivation(t *testing.T) {
 	}
 }
 
-func TestOpenReadsPreEncryptionPlaintext(t *testing.T) {
-	// Enabling encryption must still read files written before it was on.
+// With encryption on, data the key did not seal is refused, not read: passing it through
+// was what let anyone who could write to a store's file add a record nobody sealed - a
+// suppression, say, that hides a path. What was written before the key is sealed once,
+// explicitly (seal-stores), which IsSealed is for.
+func TestOpenRefusesWhatTheKeyDidNotSeal(t *testing.T) {
 	s, _ := New("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-	plain := []byte(`{"legacy":true}`)
-	out, err := s.Open(plain)
+	for _, plain := range [][]byte{
+		[]byte(`{"legacy":true}`),
+		[]byte(`{"records":[{"path_id":"ap-1","reason":"accepted risk"}]}`),
+		[]byte("PGSEAL2\nnot ours"),
+		[]byte("not json at all, and longer than the prefix"),
+	} {
+		out, err := s.Open(plain)
+		if !errors.Is(err, ErrPlaintext) {
+			t.Errorf("Open(%q) = %q, %v; want ErrPlaintext", plain, out, err)
+		}
+		if out != nil {
+			t.Errorf("Open(%q) returned data alongside the refusal: %q", plain, out)
+		}
+		if IsSealed(plain) {
+			t.Errorf("IsSealed(%q) = true", plain)
+		}
+	}
+
+	sealed, err := s.Seal([]byte(`{"records":[]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(out, plain) {
-		t.Fatal("must passthrough non-magic (plaintext) data for migration")
+	if !IsSealed(sealed) {
+		t.Error("IsSealed is false for what Seal wrote")
+	}
+	// The passthrough sealer has nothing to refuse with: encryption off reads plaintext.
+	if out, err := Nop().Open([]byte(`{"a":1}`)); err != nil || string(out) != `{"a":1}` {
+		t.Errorf("Nop().Open = %q, %v", out, err)
+	}
+}
+
+// A write torn inside the prefix leaves a sealed blob cut short, not plaintext, and must
+// not be reported as one: the validation log drops a torn final record but reports a
+// plaintext one, and it tells them apart by this error.
+func TestABlobCutInsideThePrefixIsTornNotPlaintext(t *testing.T) {
+	s, _ := New("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	sealed, err := s.Seal([]byte("data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for n := 1; n < len(magic); n++ {
+		if _, err := s.Open(sealed[:n]); err == nil || errors.Is(err, ErrPlaintext) {
+			t.Errorf("a sealed blob cut to %d byte(s): %v, want a too-short error that is not ErrPlaintext", n, err)
+		}
+	}
+	// Cut after the prefix, it fails authentication - corrupt, never plaintext either.
+	if _, err := s.Open(sealed[:len(sealed)-1]); err == nil || errors.Is(err, ErrPlaintext) {
+		t.Errorf("a sealed blob missing its last byte: %v, want a decrypt error", err)
 	}
 }
 

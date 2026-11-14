@@ -8,6 +8,8 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
+
+	tnt "github.com/luiacuaniello/perspectivegraph/internal/tenant"
 )
 
 // PGStore keeps remediation tickets in PostgreSQL, so every replica sees the same work.
@@ -41,6 +43,7 @@ func (p *PGStore) Dispatches() bool { return p != nil && p.webhookURL != "" }
 // this path to be owned by somebody, and it already is. Two engineers clicking the same
 // button should converge on one ticket, not see a failure.
 func (p *PGStore) Create(ctx context.Context, t Ticket) (Ticket, error) {
+	t.Tenant = tnt.Normalize(t.Tenant)
 	if p == nil || p.db == nil {
 		return Ticket{}, errors.New("ticket: store not configured")
 	}
@@ -75,6 +78,7 @@ func (p *PGStore) Create(ctx context.Context, t Ticket) (Ticket, error) {
 // Close marks a ticket done. Closing one that is already closed is not an error - the
 // end state is the same, and on several replicas another may have got there first.
 func (p *PGStore) Close(ctx context.Context, tenant, id string) (Ticket, error) {
+	tenant = tnt.Normalize(tenant)
 	if p == nil || p.db == nil {
 		return Ticket{}, errors.New("ticket: store not configured")
 	}
@@ -95,6 +99,7 @@ func (p *PGStore) Close(ctx context.Context, tenant, id string) (Ticket, error) 
 // List returns a tenant's tickets, newest first - closed ones included, because the work
 // board shows what was done as well as what is outstanding.
 func (p *PGStore) List(ctx context.Context, tenant string) ([]Ticket, error) {
+	tenant = tnt.Normalize(tenant)
 	if p == nil || p.db == nil {
 		return nil, errors.New("ticket: store not configured")
 	}
@@ -121,6 +126,7 @@ func (p *PGStore) List(ctx context.Context, tenant string) ([]Ticket, error) {
 // OpenForPath reports the open ticket for a path, if there is one. This is the check
 // that stops a second ticket being opened for work somebody already owns.
 func (p *PGStore) OpenForPath(ctx context.Context, tenant, pathID string) (Ticket, bool, error) {
+	tenant = tnt.Normalize(tenant)
 	if p == nil || p.db == nil {
 		return Ticket{}, false, errors.New("ticket: store not configured")
 	}

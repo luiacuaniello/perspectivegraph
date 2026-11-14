@@ -3,13 +3,14 @@ package graph
 import (
 	"context"
 	"sort"
-	"strings"
 	"sync"
+
+	"github.com/luiacuaniello/perspectivegraph/internal/tenant"
 )
 
 // DefaultTenant is the tenant a single-tenant deployment (and any event with no
 // tenant) maps to.
-const DefaultTenant = "default"
+const DefaultTenant = tenant.Default
 
 // StoreFactory creates the backing store for a tenant (e.g. an Apache AGE graph
 // named per-tenant, or a fresh in-memory store).
@@ -100,20 +101,6 @@ func (m *Manager) Close() error {
 }
 
 // NormalizeTenant lowercases and reduces a tenant id to [a-z0-9_], so it is safe
-// to embed in a graph/index name; empty → DefaultTenant.
-func NormalizeTenant(t string) string {
-	t = strings.ToLower(strings.TrimSpace(t))
-	if t == "" {
-		return DefaultTenant
-	}
-	var b strings.Builder
-	for _, r := range t {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_':
-			b.WriteRune(r)
-		default:
-			b.WriteRune('_')
-		}
-	}
-	return b.String()
-}
+// to embed in a graph/index name; empty → DefaultTenant. It is tenant.Normalize, the one
+// spelling every store keys a tenant by.
+func NormalizeTenant(t string) string { return tenant.Normalize(t) }

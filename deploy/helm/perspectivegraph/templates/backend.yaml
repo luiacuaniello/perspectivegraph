@@ -1,3 +1,12 @@
+{{- /*
+  The production profile is the default, and the backend refuses to start in it without an
+  API credential and an ingest secret. Rendering anyway would leave a release that never
+  becomes ready, so the chart stops here instead and names the choices. demo is one of
+  them, but only by name: an install nobody configured is not a trial nobody asked for.
+*/}}
+{{- if and (include "perspectivegraph.production" .) (not (include "perspectivegraph.credentialsSourced" .)) }}
+{{- fail "backend.env is production, the default, and no credential is configured: the backend would refuse to start rather than serve /graphql, this environment's map of how to breach it, and /ingest, which lets anyone forge what the engine reasons over, without authentication. Name where the credentials come from: secrets.generate=true has the chart generate them and keep them across upgrades (helm install and helm upgrade only, not helm template, Argo CD or Flux); secrets.existingSecret names a Secret you manage, carrying API_TOKENS and INGEST_HMAC_SECRET; or set auth.apiTokens (or auth.oidc.jwksUrl with issuer and audience) and ingest.hmacSecret. For an unauthenticated trial inside a cluster you trust, set backend.env=demo" }}
+{{- end }}
 {{- if and (ne .Values.service.type "ClusterIP") (not (include "perspectivegraph.credentialsConfigured" .)) }}
 {{- fail "service.type publishes the backend outside the cluster - /graphql is this environment's map of how to breach it, and /ingest lets anyone forge what the engine reasons over - and no credential is configured. Set auth.apiTokens or auth.oidc.jwksUrl, and ingest.hmacSecret or ingest.hmacSecrets; or supply them through secrets.existingSecret. To publish an open instance deliberately, set ingress.allowUnauthenticated: true." -}}
 {{- end }}

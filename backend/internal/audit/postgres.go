@@ -13,6 +13,7 @@ import (
 
 	_ "github.com/lib/pq"
 
+	"github.com/luiacuaniello/perspectivegraph/internal/cryptostore"
 	"github.com/luiacuaniello/perspectivegraph/internal/reqid"
 )
 
@@ -451,10 +452,17 @@ func (l *PGLog) PruneBefore(ctx context.Context, cutoff time.Time) (removed int6
 // forged checkpoint therefore cannot hide a deletion - it can only move where the chain is
 // expected to start, and the survivors still have to link to the hash it names.
 func VerifyPG(ctx context.Context, db *sql.DB, opts ...Option) (records int, err error) {
+	sealer := sealerFrom(opts)
+	return verifyPG(ctx, db, func(fields []byte) ([]byte, error) { return openFields(fields, sealer) })
+}
+
+// verifyPG is VerifyPG with the opening of each record's fields handed in: seal-stores
+// walks the chain with one that also reads the fields written before the key, before it
+// seals them.
+func verifyPG(ctx context.Context, db *sql.DB, open func([]byte) ([]byte, error)) (records int, err error) {
 	if db == nil {
 		return 0, errors.New("audit: nil database handle")
 	}
-	sealer := sealerFrom(opts)
 
 	prev := ""
 	var expectSeq int64 = 1
@@ -493,7 +501,7 @@ func VerifyPG(ctx context.Context, db *sql.DB, opts ...Option) (records int, err
 			return records, fmt.Errorf("record %d: prev_hash does not match the record before it", rec.Seq)
 		}
 
-		opened, err := openFields(fields, sealer)
+		opened, err := open(fields)
 		if err != nil {
 			return records, fmt.Errorf("record %d: %w", rec.Seq, err)
 		}
@@ -518,6 +526,13 @@ func VerifyPG(ctx context.Context, db *sql.DB, opts ...Option) (records int, err
 func openFields(b []byte, sealer sealerLike) ([]byte, error) {
 	if sealer == nil || !sealer.Enabled() {
 		return b, nil
+	}
+	// Fields written before the key are the record's own JSON - an object, or null for a
+	// record that had none - and never the string a sealed blob is wrapped in. They get
+	// the refusal the file log gives, so that seal-stores is what the operator is pointed
+	// at rather than a parse error.
+	if !sealedFields(b) {
+		return nil, fmt.Errorf("%w (the fields are not a sealed string)", cryptostore.ErrPlaintext)
 	}
 	var encoded string
 	if err := json.Unmarshal(b, &encoded); err != nil {

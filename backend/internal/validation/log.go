@@ -34,6 +34,7 @@ import (
 	"sort"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/atomicfile"
+	"github.com/luiacuaniello/perspectivegraph/internal/cryptostore"
 )
 
 // logMagicV2 is the plaintext first line that identifies the append-only format. It is
@@ -324,7 +325,10 @@ func (s *Store) replayLog(b []byte) error {
 		}
 		ev, err := s.decodeEvent(ln)
 		if err != nil {
-			if i == last {
+			// A torn tail is a sealed record cut short. A record the key never sealed is
+			// not one, wherever it sits: dropping it as torn would hide that someone wrote
+			// to the log without the key - or that it predates the key and was never sealed.
+			if i == last && !errors.Is(err, cryptostore.ErrPlaintext) {
 				break // torn tail from an interrupted append
 			}
 			return fmt.Errorf("validation: %s line %d: %w", s.path, i+1, err)
@@ -361,10 +365,14 @@ func (s *Store) decodeEvent(line []byte) (logEvent, error) {
 // applyEventLocked routes a replayed event through the SAME mutators a live call uses,
 // which is what guarantees a reloaded store and a running one agree.
 func (s *Store) applyEventLocked(ev logEvent) {
+	// Events written before the tenant had one spelling replay under the normalized one,
+	// which is the key every write since uses; the next compaction writes it out.
 	switch ev.Op {
 	case "put":
-		s.applyPutLocked(*ev.Rec)
+		rec := *ev.Rec
+		rec.Tenant = tenantKey(rec.Tenant)
+		s.applyPutLocked(rec)
 	case "del":
-		s.applyDeleteLocked(ev.Tenant, ev.ID)
+		s.applyDeleteLocked(tenantKey(ev.Tenant), ev.ID)
 	}
 }

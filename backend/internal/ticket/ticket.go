@@ -26,6 +26,7 @@ import (
 
 	"github.com/luiacuaniello/perspectivegraph/internal/atomicfile"
 	"github.com/luiacuaniello/perspectivegraph/internal/cryptostore"
+	tnt "github.com/luiacuaniello/perspectivegraph/internal/tenant"
 )
 
 // Status is a ticket's lifecycle state.
@@ -150,6 +151,7 @@ func tenantKey(t string) string {
 // double-click can't fork the work. The new ticket is dispatched to the external
 // tracker when one is configured.
 func (s *Store) Create(ctx context.Context, t Ticket) (Ticket, error) {
+	t.Tenant = tnt.Normalize(t.Tenant)
 	if s == nil {
 		return Ticket{}, errors.New("ticket: store not configured")
 	}
@@ -188,6 +190,7 @@ func (s *Store) Create(ctx context.Context, t Ticket) (Ticket, error) {
 
 // Close marks a ticket done (the path was remediated).
 func (s *Store) Close(_ context.Context, tenant, id string) (Ticket, error) {
+	tenant = tnt.Normalize(tenant)
 	if s == nil {
 		return Ticket{}, errors.New("ticket: store not configured")
 	}
@@ -213,6 +216,7 @@ func (s *Store) Close(_ context.Context, tenant, id string) (Ticket, error) {
 
 // List returns a tenant's tickets, newest first.
 func (s *Store) List(_ context.Context, tenant string) ([]Ticket, error) {
+	tenant = tnt.Normalize(tenant)
 	if s == nil {
 		return nil, nil
 	}
@@ -230,6 +234,7 @@ func (s *Store) List(_ context.Context, tenant string) ([]Ticket, error) {
 // OpenForPath returns the open ticket for a path, if any - what the dashboard
 // reads to show a "ticketed" badge.
 func (s *Store) OpenForPath(_ context.Context, tenant, pathID string) (Ticket, bool, error) {
+	tenant = tnt.Normalize(tenant)
 	if s == nil {
 		return Ticket{}, false, nil
 	}
@@ -316,6 +321,7 @@ func (s *Store) load() error {
 		return fmt.Errorf("ticket: parse %s: %w", s.path, err)
 	}
 	for _, t := range f.Tickets {
+		t.Tenant = tnt.Normalize(t.Tenant) // written before the tenant had one spelling
 		if s.byTenant[t.Tenant] == nil {
 			s.byTenant[t.Tenant] = map[string]Ticket{}
 		}

@@ -37,6 +37,10 @@ And because tenant names are normalized to `[a-z0-9_]`, the engine refuses to st
 two configured names become one: `acme-corp` and `acme.corp` would otherwise share a graph,
 and the second ingest secret would replace the first.
 
+Past authentication a tenant has one spelling. A token, an OIDC claim and an ingest
+signature that name `Acme-Corp` all act as `acme_corp`, which is what `/auth/me` reports
+and what the graph, the analyzer and every governance store key the tenant by.
+
 Login is **runtime, not baked in**. The dashboard reads a public `GET /auth/config`
 (auth mode + the IdP's public coordinates - no secrets) and renders the right gate,
 so a *single* build serves an open, token-secured, or SSO-secured backend with no
@@ -319,10 +323,15 @@ Beyond the container surface, the backend itself is built defensively:
 - **At-rest encryption of its own sensitive-asset data.** `STORE_ENCRYPTION_KEY`
   encrypts the governance stores (suppressions/tickets/validations/history) **and
   the audit log** with AES-256-GCM, so a stolen volume or backup doesn't hand over
-  the attack map plus who-viewed-it in plaintext. (Reads pre-encryption files
-  transparently - a one-way migration.) Use a random key of 64 hex characters: a
-  passphrase becomes the key through a single SHA-256, so whoever holds a backup can
-  test guesses at hashing speed, and `PG_ENV=production` refuses one.
+  the attack map plus who-viewed-it in plaintext. AES-GCM also authenticates what it
+  opens, so with the key set a record it did not seal is **refused**, not read:
+  someone who can write to the volume without the key cannot add a suppression, or
+  rewrite the audit chain, whose hashes carry no key. Stores written before the key
+  are sealed once, with the engine stopped - `perspectivegraph seal-stores`
+  (`-dry-run` lists what it finds) - or by one start with `STORE_SEAL_EXISTING=true`.
+  Use a random key of 64 hex characters: a passphrase becomes the key through a
+  single SHA-256, so whoever holds a backup can test guesses at hashing speed, and
+  `PG_ENV=production` refuses one.
 - **Signed exports.** With `EXPORT_SIGNING_KEY` (Ed25519) the OSCAL/SIEM exports
   carry a detached signature (`X-PerspectiveGraph-Signature`); a consumer fetches
   the public key at **`GET /export/pubkey`** and verifies integrity + origin.

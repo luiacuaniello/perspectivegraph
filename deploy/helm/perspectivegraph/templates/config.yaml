@@ -100,6 +100,7 @@ data:
   ALERT_WEBHOOK_URL: {{ .Values.alert.webhookUrl | default "" | quote }}
   ALERT_WEBHOOK_FORMAT: {{ .Values.alert.webhookFormat | default "" | quote }}
   PG_ENV: {{ .Values.backend.env | quote }}
+  STORE_SEAL_EXISTING: {{ .Values.crypto.sealExisting | quote }}
   API_RATE_RPS: {{ .Values.auth.apiRateRps | quote }}
   INGEST_HMAC_ACCEPT_V1: {{ .Values.ingest.hmacAcceptV1 | quote }}
   INGEST_RATE_RPS: {{ .Values.auth.ingestRateRps | quote }}

@@ -17,8 +17,24 @@ dashboard behind nginx and, unless you bring your own, PostgreSQL with
 
 ```console
 helm install perspectivegraph oci://ghcr.io/luiacuaniello/charts/perspectivegraph \
-  --namespace perspectivegraph --create-namespace
+  --namespace perspectivegraph --create-namespace \
+  --set secrets.generate=true
 ```
+
+A default install runs the production profile: the API and the ingest endpoint are
+authenticated, and only the backend may reach the bundled database and broker. So the chart
+won't render until you say where the credentials come from, and there are three answers:
+
+- `secrets.generate=true`, as above: the chart generates an admin token, the ingest secret
+  and the encryption keys, and keeps them across upgrades. The install notes print how to
+  read the token back. It works with `helm install` and `helm upgrade`, not with
+  `helm template` (Argo CD, Flux), which would draw new ones on every render.
+- `secrets.existingSecret`: a Secret you manage, with the keys `values-production.yaml`
+  lists. This is the way that works under Argo CD and Flux.
+- `auth.apiTokens` (or `auth.oidc.*`) together with `ingest.hmacSecret`, set as values.
+
+For a trial in a cluster you trust, `--set backend.env=demo` installs it unauthenticated
+instead: anyone who can reach the service can read your attack paths.
 
 The chart and the images are signed with cosign. To check the chart's signature before
 installing:
@@ -88,17 +104,18 @@ no managed PostgreSQL offers AGE, add `--set postgres.cloudnativepg.enabled=true
 
 | Key | Default | What it does |
 |---|---|---|
-| `auth.apiTokens` / `auth.oidc` | empty | Authentication stays off until you set one of them. Without it, anyone who can reach the service can read your attack paths. |
+| `backend.env` | `production` | The backend refuses to start without an API credential and an ingest secret, and the chart refuses to render without a source for them (see [Install](#install)). `demo` runs open - an unauthenticated API and unsigned ingest - for a trial in a cluster you trust. |
+| `auth.apiTokens` / `auth.oidc` | empty | Static bearer tokens, or SSO. With `ingest.hmacSecret`, one of the three ways to give a default install its credentials; under `backend.env: demo` and left empty, anyone who can reach the service can read your attack paths. |
 | `auth.anonymousRole` | empty | `viewer` publishes the install read-only, like the live demo: visitors can look around and every change is refused. Set `backend.trustedProxyCidrs` to your ingress controller's pod network as well, so rate limits apply to each visitor rather than to all of them at once. |
 | `postgres.enabled` | `true` | The bundled database, meant for trying things out. In production, set it to `false` and point `postgres.externalHost` (or `postgres.dsn`) at your own PostgreSQL+AGE. |
 | `postgres.cloudnativepg.enabled` | `false` | Hands the database to the [CloudNativePG](https://cloudnative-pg.io) operator, installed beforehand: a primary with replicas and failover, TLS the backend verifies, and continuous backups to object storage when `backup.objectStore` names a Barman Cloud `ObjectStore`. The answer on AWS and GCP, where no managed PostgreSQL offers AGE. Replaces the bundled database; see [the guide](https://docs.a3thinker.it/manual/kubernetes/#a-production-database-cloudnativepg). |
-| `secrets.generate` | `false` | Fills every credential left empty with a generated one, kept across upgrades: an admin API token (unless OIDC is set), the ingest HMAC secret, the encryption and signing keys. With `values-production.yaml`, add `--set secrets.existingSecret="" --set secrets.generate=true` to install without preparing a Secret - plus `postgres.auth.password`, which only your database knows, unless `postgres.cloudnativepg.enabled` runs it. Not for `helm template` (Argo CD, Flux), which would draw new values every render. |
+| `secrets.generate` | `false` | The shortest way to give a default install its credentials. Fills every credential left empty with a generated one, kept across upgrades: an admin API token (unless OIDC is set), the ingest HMAC secret, the encryption and signing keys. With `values-production.yaml`, add `--set secrets.existingSecret="" --set secrets.generate=true` to install without preparing a Secret - plus `postgres.auth.password`, which only your database knows, unless `postgres.cloudnativepg.enabled` runs it. Not for `helm template` (Argo CD, Flux), which would draw new values every render. |
 | `serviceAccount` | created | The backend's own service account, with no Kubernetes API token mounted (no pod in the chart mounts one). On EKS, bind the AWS connector's read-only role to it with EKS Pod Identity, or IRSA via `serviceAccount.annotations`; `deploy/aws` in the repository has the role. |
 | `connectors.enabled` | empty | `kubernetes` reads the cluster the chart is installed in, on a schedule, instead of waiting for a posted dump; set `connectors.kubernetes.clusterName` too (on EKS, the EKS name). The backend's service account gets `get`/`list` on pods, services, service accounts, nodes, ingresses and RBAC objects, and the `aws-auth` config map by name - never secrets. `aws` and `azure` read cloud accounts. |
 | `postgres.auth.password` | generated | Empty gives the bundled database a random password, kept across upgrades; an existing install keeps the one it has. Required for an external database. With `helm template` (Argo CD, Flux) set it, or use `secrets.existingSecret`: a render without the cluster cannot keep a generated one. |
 | `nats.auth` | on, generated | The bundled NATS requires `nats.auth.user` and a password generated into its own Secret (or `nats.auth.password` / `nats.auth.existingSecret`), and the backend presents them - without it any pod could publish events past the ingest signature check. An external NATS gets credentials only when you set them. |
 | `nats.persistence.enabled` | `true` | A volume for the event stream, so queued events and dead letters survive a NATS restart. |
-| `networkPolicy.enabled` | `false` | Only the backend may reach the bundled NATS and Postgres (`postgresFrom` adds, say, a backup job). `backendFrom` also limits who may call the backend - typically the ingress controller's namespace. On in `values-production.yaml`; inert on a CNI that does not enforce NetworkPolicy. |
+| `networkPolicy.enabled` | `true` | Only the backend may reach the bundled NATS and Postgres (`postgresFrom` adds, say, a backup job). The backend and the dashboard stay open to the cluster, so the ingress controller reaches them; `backendFrom` limits who may call the backend - typically the ingress controller's namespace. Inert on a CNI that does not enforce NetworkPolicy, which is why NATS authenticates too. |
 | `governanceBackend` | `file` | Where triage decisions, tickets, validation verdicts and the audit log are kept. `postgres` is what makes more than one backend replica possible. |
 | `persistence.enabled` | `false` | A volume for the `file` backend, so that data survives restarts. It supports a single replica, and the chart won't render it with more. |
 | `backend.replicas` | `1` | More than one needs `governanceBackend: postgres`. |

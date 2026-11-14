@@ -114,16 +114,30 @@ nats://{{ include "perspectivegraph.natsHost" . }}:4222
 {{- end -}}
 {{- end -}}
 
+{{/* Whether the backend runs the production profile, compared the way the backend itself
+     reads PG_ENV: without case, and without the space around it. */}}
+{{- define "perspectivegraph.production" -}}
+{{- if eq (lower (trim (toString .Values.backend.env))) "production" -}}yes{{- end -}}
+{{- end -}}
+
+{{/* Whether this install knows where its credentials come from: a Secret the operator
+     supplies (which the chart cannot read, so it is trusted), the chart generating them,
+     or both halves given as values - an API credential and an ingest secret, the two the
+     production profile refuses to start without. */}}
+{{- define "perspectivegraph.credentialsSourced" -}}
+{{- if or .Values.secrets.existingSecret (include "perspectivegraph.generatesSecrets" .) -}}
+yes
+{{- else if and (or .Values.auth.apiTokens .Values.auth.oidc.jwksUrl) (or .Values.ingest.hmacSecret .Values.ingest.hmacSecrets) -}}
+yes
+{{- end -}}
+{{- end -}}
+
 {{/* Whether this install carries a credential, for the guards that fire when it becomes
      reachable. Non-empty means "configured, or deliberately waived, or supplied through a
      Secret this chart cannot read". Kept in one place because it is asked from two
      surfaces - the ingress and the Service type - and two copies would drift. */}}
 {{- define "perspectivegraph.credentialsConfigured" -}}
-{{- if or .Values.secrets.existingSecret .Values.ingress.allowUnauthenticated (include "perspectivegraph.generatesSecrets" .) -}}
-yes
-{{- else if and (or .Values.auth.apiTokens .Values.auth.oidc.jwksUrl) (or .Values.ingest.hmacSecret .Values.ingest.hmacSecrets) -}}
-yes
-{{- end -}}
+{{- if or .Values.ingress.allowUnauthenticated (include "perspectivegraph.credentialsSourced" .) -}}yes{{- end -}}
 {{- end -}}
 
 

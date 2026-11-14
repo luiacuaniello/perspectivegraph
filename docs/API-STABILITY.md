@@ -43,7 +43,8 @@ can build on it and know what a version bump means.
    breaking.
 5. **CLI.** The subcommands `perspectivegraph help` lists, and their documented flags:
    `gate`, `ingest`, `redteam`, `mcp`, `awscollect`, `verify-audit` (`<file>` or
-   `-postgres`), `healthz`, `importverdicts`, `ingestreal`, `andprobe`, `genload`,
+   `-postgres`), `seal-stores` (`-dry-run`), `healthz`, `importverdicts`, `ingestreal`,
+   `andprobe`, `genload`,
    `genverdicts`, `version` and `help`. For `gate` the **exit code** is part of it,
    because a pipeline branches on nothing else: `0` clean, `1` blocked, `2` not
    analysed, `3` the gate itself failed. A new subcommand or flag is minor; removing or

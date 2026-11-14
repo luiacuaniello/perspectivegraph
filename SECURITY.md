@@ -124,7 +124,8 @@ full trust-boundary and asset analysis and the operator checklist. The controls 
 - **`INGEST_HMAC_SECRET`** - signed ingestion so scanner data can't be forged.
 - **`STORE_ENCRYPTION_KEY`** - AES-256-GCM at-rest encryption of the governance
   stores and the audit log, with a random key of 64 hex characters (a production
-  deployment refuses a passphrase).
+  deployment refuses a passphrase). A record the key did not seal is refused;
+  `perspectivegraph seal-stores` seals, once, what was written before the key.
 - **`EXPORT_SIGNING_KEY`** - Ed25519-signed OSCAL/SIEM exports a consumer can verify.
 - **`AUDIT_LOG_PATH`** - tamper-evident, hash-chained audit log of reads and writes
   (verify with `perspectivegraph verify-audit <file>`, or `verify-audit -postgres` when
@@ -132,9 +133,12 @@ full trust-boundary and asset analysis and the operator checklist. The controls 
 - **`AUTH_LOCKOUT_THRESHOLD` / `EXFIL_ALERT_THRESHOLD`** - brute-force lockout and
   exfiltration alerting.
 
-A default install is unauthenticated by design for a trusted-cluster demo; the
-process logs a loud warning, and the Helm chart prints one in its notes, whenever
-auth or persistence is left off.
+A default Helm install is authenticated: the chart runs the production profile and will
+not render until the API credential and the ingest secret have a source (generated,
+your own Secret, or values). Only the demo profile, asked for by name
+(`backend.env=demo`, or `make demo`), runs open, for a trusted-cluster trial; the process
+logs a loud warning, and the Helm chart prints one in its notes, whenever auth or
+persistence is left off.
 
 ## Our own supply chain
 

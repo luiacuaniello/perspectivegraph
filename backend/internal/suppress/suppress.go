@@ -25,6 +25,7 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/atomicfile"
 	"github.com/luiacuaniello/perspectivegraph/internal/auth"
 	"github.com/luiacuaniello/perspectivegraph/internal/cryptostore"
+	tnt "github.com/luiacuaniello/perspectivegraph/internal/tenant"
 )
 
 // Reason is the closed set of triage dispositions. Keeping it closed makes the
@@ -132,6 +133,7 @@ type Suppressions interface {
 // UTC. Shared by both backends so a suppression written to Postgres cannot be accepted
 // under rules the file store would have rejected, or the reverse.
 func normalize(r Record, now func() time.Time) (Record, error) {
+	r.Tenant = tnt.Normalize(r.Tenant)
 	if r.PathID == "" {
 		return Record{}, ErrMissingPathID
 	}
@@ -206,6 +208,7 @@ func (s *Store) Put(_ context.Context, r Record) (Record, error) {
 // Delete removes a suppression (un-suppresses the path). Removing one that does
 // not exist is not an error - the desired end state is reached either way.
 func (s *Store) Delete(_ context.Context, tenant, pathID string) error {
+	tenant = tnt.Normalize(tenant)
 	if s == nil {
 		return errors.New("suppress: store not configured")
 	}
@@ -221,6 +224,7 @@ func (s *Store) Delete(_ context.Context, tenant, pathID string) error {
 // Get returns the suppression for a path if one exists and is still in force.
 // Expired suppressions are reported as absent - the path is active again.
 func (s *Store) Get(_ context.Context, tenant, pathID string) (Record, bool, error) {
+	tenant = tnt.Normalize(tenant)
 	if s == nil {
 		return Record{}, false, nil
 	}
@@ -237,6 +241,7 @@ func (s *Store) Get(_ context.Context, tenant, pathID string) (Record, bool, err
 // List returns every suppression for a tenant - including expired ones, so the
 // triage board can show lapsed decisions - newest first.
 func (s *Store) List(_ context.Context, tenant string) ([]Record, error) {
+	tenant = tnt.Normalize(tenant)
 	if s == nil {
 		return nil, nil
 	}
@@ -262,6 +267,7 @@ func (s *Store) List(_ context.Context, tenant string) ([]Record, error) {
 // ActiveSet returns the in-force suppressions for a tenant keyed by path id, for
 // cheap O(1) decoration of a path list. Expired entries are excluded.
 func (s *Store) ActiveSet(_ context.Context, tenant string) (map[string]Record, error) {
+	tenant = tnt.Normalize(tenant)
 	if s == nil {
 		return nil, nil
 	}
@@ -304,8 +310,15 @@ func (s *Store) load() error {
 		return fmt.Errorf("suppress: parse %s: %w", s.path, err)
 	}
 	for _, r := range f.Records {
+		// A record written before the tenant had one spelling is keyed by the normalized
+		// one, as every write since is; the next write persists it. If two spellings of one
+		// tenant suppressed the same path, the later decision stands.
+		r.Tenant = tnt.Normalize(r.Tenant)
 		if s.byTenant[r.Tenant] == nil {
 			s.byTenant[r.Tenant] = map[string]Record{}
+		}
+		if prev, ok := s.byTenant[r.Tenant][r.PathID]; ok && prev.CreatedAt.After(r.CreatedAt) {
+			continue
 		}
 		s.byTenant[r.Tenant][r.PathID] = r
 	}
