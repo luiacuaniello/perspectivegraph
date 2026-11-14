@@ -59,7 +59,7 @@ the chart value that sets it.
 
 | Setting | What it does |
 |---|---|
-| `PG_ENV`<br>Default: `demo`<br>Helm: `backend.env` | `production` makes startup refuse an open API, open ingestion and a missing database (see above). It only ever adds checks, so it is safe anywhere that is not a demo. |
+| `PG_ENV`<br>Default: `demo`<br>Helm: `backend.env`, default `production` | `production` makes startup refuse an open API, open ingestion and a missing database (see above). It only ever adds checks, so it is safe anywhere that is not a demo. The Helm chart runs it by default, and refuses to render until the API credential and the ingest secret have a source; `demo` there has to be asked for by name. |
 
 ## Database: PostgreSQL + Apache AGE
 
@@ -139,7 +139,7 @@ mode is `verify-full`, and libpq's own `PGSSLROOTCERT` points the driver at the 
 | Setting | What it does |
 |---|---|
 | `INGEST_HMAC_SECRET`<br>Default: none<br>Helm: `ingest.hmacSecret` | *Secret.* Every ingest request must be signed with it ([how to sign](onboarding.md#authentication)). Required with `PG_ENV=production`. |
-| `INGEST_HMAC_SECRETS`<br>Default: none<br>Helm: `ingest.hmacSecrets` | *Secret.* One secret per tenant, `tenant-a:secretA,tenant-b:secretB`; the `X-Tenant` header picks it. Tenant names are normalized to `[a-z0-9_]`, so the engine refuses to start on two names that become one (`acme-corp` and `acme.corp`), here or across `API_TOKENS` and `CONNECTOR_TENANT`. |
+| `INGEST_HMAC_SECRETS`<br>Default: none<br>Helm: `ingest.hmacSecrets` | *Secret.* One secret per tenant, `tenant-a:secretA,tenant-b:secretB`; the `X-Tenant` header picks it, however it spells the tenant. Tenant names are normalized to `[a-z0-9_]`, so the engine refuses to start on two names that become one (`acme-corp` and `acme.corp`), here or across `API_TOKENS` and `CONNECTOR_TENANT`. |
 | `INGEST_HMAC_ACCEPT_V1`<br>Default: `false`<br>Helm: `ingest.hmacAcceptV1` | Whether the older signature over the body alone is accepted. It can be replayed, so it is refused unless set to `true` for a sender that cannot sign v2 yet; `perspectivegraph_ingest_signatures_total{version="v1"}` shows what still sends it. |
 | `INGEST_RATE_RPS`<br>Default: `30`<br>Helm: `auth.ingestRateRps` | Requests per second per client IP on ingestion. `0` disables the limit. |
 | `SCRUB_INGEST`<br>Default: `true`<br>Helm: `scrubIngest` | Redacts credentials that scanner output carries by accident (cloud keys, tokens, private keys) before they reach the graph. |
@@ -148,7 +148,8 @@ mode is `verify-full`, and libpq's own `PGSSLROOTCERT` points the driver at the 
 
 | Setting | What it does |
 |---|---|
-| `STORE_ENCRYPTION_KEY`<br>Default: none<br>Helm: `crypto.storeEncryptionKey` | *Secret.* Encrypts the file-backed stores and the audit log at rest (AES-256-GCM). 64 hex characters are the key itself; anything else is a passphrase, which becomes the key through a single SHA-256, so `PG_ENV=production` refuses one. Generate one with `openssl rand -hex 32`. |
+| `STORE_ENCRYPTION_KEY`<br>Default: none<br>Helm: `crypto.storeEncryptionKey` | *Secret.* Encrypts the file-backed stores and the audit log at rest (AES-256-GCM). 64 hex characters are the key itself; anything else is a passphrase, which becomes the key through a single SHA-256, so `PG_ENV=production` refuses one. Generate one with `openssl rand -hex 32`. With a key, a record it did not seal is refused, and the engine does not start on a store written before the key was set: seal those once with `perspectivegraph seal-stores`, or `STORE_SEAL_EXISTING`. |
+| `STORE_SEAL_EXISTING`<br>Default: `false`<br>Helm: `crypto.sealExisting` | Seals, at startup and before the stores open, what they hold from before `STORE_ENCRYPTION_KEY` was set, and logs it store by store - `perspectivegraph seal-stores` for an engine that is hard to stop and run a command against, a Kubernetes pod. For one start: left on, every start seals whatever plaintext it finds, which is what the refusal exists to stop. |
 | `EXPORT_SIGNING_KEY`<br>Default: none<br>Helm: `crypto.exportSigningKey` | *Secret.* Signs the OSCAL and SIEM exports (Ed25519); the public key is at `GET /export/pubkey`. |
 | `AUDIT_LOG_PATH`<br>Default: none<br>Helm: `persistence.enabled` | The tamper-evident audit log: who changed, viewed or exported which attack paths. Empty: kept in memory only. |
 | `AUDIT_RETENTION`<br>Default: kept forever<br>Helm: `auditRetention` | How long audit records are kept, e.g. `2160h` (90 days). Applies with `GOVERNANCE_BACKEND=postgres`; a file-backed log is rotated instead. |

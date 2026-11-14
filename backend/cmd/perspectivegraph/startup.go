@@ -213,6 +213,15 @@ func openGovernancePool(ctx context.Context, cfg config.Config, cl *closers) (*s
 		if merr != nil {
 			return nil, fmt.Errorf("governance store: %w", merr)
 		}
+		// Rows written before the tenant had one spelling move to it, so the normalized
+		// tenant every principal now carries finds them. A no-op once done.
+		moved, nerr := pgmigrate.NormalizeTenants(ctx, db)
+		if nerr != nil {
+			return nil, fmt.Errorf("governance store: %w", nerr)
+		}
+		if moved > 0 {
+			slog.Info("governance stores: rows re-keyed to the normalized tenant", "rows", moved)
+		}
 		slog.Info("governance stores: postgres-backed (replicas may exceed 1)", "migrations_applied", applied)
 		govDB = db
 	}

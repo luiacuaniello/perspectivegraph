@@ -26,10 +26,11 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/clientip"
 	"github.com/luiacuaniello/perspectivegraph/internal/metrics"
 	"github.com/luiacuaniello/perspectivegraph/internal/secwatch"
+	tnt "github.com/luiacuaniello/perspectivegraph/internal/tenant"
 )
 
 // DefaultTenant is the tenant used when auth is open or no tenant is specified.
-const DefaultTenant = "default"
+const DefaultTenant = tnt.Default
 
 // AnonymousSubject is the subject of a caller who presented no credential: on an open
 // instance, and on one published read-only (API_ANONYMOUS_ROLE). An API credential always
@@ -109,7 +110,9 @@ func ParseRole(s string) (Role, bool) { return parseRole(s) }
 type Principal struct {
 	Subject string // token fingerprint, JWT sub, or "hmac"
 	Role    Role
-	Tenant  string
+	// Tenant is normalized (tenant.Normalize) by whatever authenticated the principal, so
+	// it is the one spelling every store keys the tenant by: "Acme-Corp" is "acme_corp".
+	Tenant string
 	// Apps, when non-empty, restricts read access to attack paths / assets that
 	// touch one of these applications (object-level RBAC within a tenant). Empty
 	// means unrestricted (all applications in the tenant).
@@ -185,11 +188,16 @@ type TokenStore struct {
 type tokenEntry struct {
 	hashed    bool      // value is a sha256 hex digest, not the raw token
 	value     string    // raw token (plaintext) or lowercase hex digest (hashed)
-	principal Principal // role + tenant + apps resolved at parse time
+	principal Principal // role + tenant (normalized) + apps resolved at parse time
 	expiry    time.Time // zero = no expiry
+	// written is the tenant as API_TOKENS spells it. The principal carries the normalized
+	// form; the startup checks need this one, to tell two names that become one tenant
+	// from one name written in two cases.
+	written string
 }
 
-// Tenants lists the tenants the store's tokens name, each once, as they are written.
+// Tenants lists the tenants the store's tokens name, each once, as they are written. The
+// principals the store authenticates carry them normalized.
 func (ts *TokenStore) Tenants() []string {
 	if ts == nil {
 		return nil
@@ -197,7 +205,7 @@ func (ts *TokenStore) Tenants() []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, e := range ts.entries {
-		if t := e.principal.Tenant; !seen[t] {
+		if t := e.written; !seen[t] {
 			seen[t] = true
 			out = append(out, t)
 		}
@@ -259,8 +267,8 @@ func NewTokenStore(spec string) *TokenStore {
 			hashed, value = true, strings.ToLower(strings.TrimSpace(h))
 		}
 		ts.entries = append(ts.entries, tokenEntry{
-			hashed: hashed, value: value, expiry: expiry,
-			principal: Principal{Subject: "token:" + fingerprint(value), Role: role, Tenant: tenant, Apps: apps},
+			hashed: hashed, value: value, expiry: expiry, written: tenant,
+			principal: Principal{Subject: "token:" + fingerprint(value), Role: role, Tenant: tnt.Normalize(tenant), Apps: apps},
 		})
 	}
 	return ts

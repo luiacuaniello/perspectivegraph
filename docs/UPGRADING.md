@@ -19,6 +19,107 @@ digest, take the backup, stage it.
 
 ## 1.39.4
 
+### Helm: a default install runs the production profile, and names its credentials
+
+**Affects you if** you install or upgrade the chart with `backend.env` or
+`networkPolicy.enabled` left at their defaults. The single-VM recipe and `make demo` do not
+use the chart.
+
+`backend.env` now defaults to `production`, and `networkPolicy.enabled` to `true`. A release
+on the old defaults ran the demo profile: the API and ingest were open to every pod in the
+cluster, and to anyone the Service or an ingress let in. In the production profile the
+backend refuses to start without an API credential and an ingest secret, so the chart now
+refuses to render until it knows where they come from, with an error that names the choices:
+
+- `secrets.generate=true`: the chart generates an admin token, the ingest secret and the
+  encryption keys, and keeps them across upgrades. `helm install` and `helm upgrade` only;
+- `secrets.existingSecret`: a Secret you manage, the way that works under Argo CD and Flux;
+- `auth.apiTokens` (or `auth.oidc.*`) together with `ingest.hmacSecret`, as values;
+- `backend.env=demo`, to keep running unauthenticated in a cluster you trust.
+
+What to do before the next `helm upgrade`:
+
+- **To keep a release as it ran**, open, add `--set backend.env=demo`.
+- **To move it to the production profile**, pick one of the other three. From the next
+  start, every API caller needs the token and every scanner that posts to `/ingest` has to
+  sign with the secret. With `secrets.generate=true` the install notes print how to read
+  both back.
+- **NetworkPolicy** comes on either way: the bundled Postgres and NATS then accept the
+  backend alone. List anything else that connects to Postgres, a backup job say, in
+  `networkPolicy.postgresFrom`; the bus has no such list, so something else on it needs
+  `networkPolicy.enabled=false`. No policy selects the backend or the dashboard unless
+  `networkPolicy.backendFrom` is set, so the ingress controller reaches them as before.
+  Under CloudNativePG the operator must run in `postgres.cloudnativepg.operatorNamespace`
+  (`cnpg-system` by default), or it loses its instances.
+
+To see which profile a release runs:
+
+```bash
+kubectl get configmap <release>-perspectivegraph-config -o jsonpath='{.data.PG_ENV}'
+```
+
+### Encrypted stores refuse a record the key did not seal
+
+**Affects you if** `STORE_ENCRYPTION_KEY` is set and the stores already held data when it
+was: the file-backed governance stores (`SUPPRESSIONS_PATH`, `TICKETS_PATH`,
+`VALIDATIONS_PATH`, `HISTORY_PATH`) and the audit log - on `AUDIT_LOG_PATH`, or in the
+database under `GOVERNANCE_BACKEND=postgres`. Stores that had a key from their first
+write, as the single-VM recipe's do, are sealed already. A Helm release that moves to
+`secrets.generate=true` (above) with `persistence.enabled` gets a key for the first time,
+and is affected.
+
+With a key, the engine used to read a record it had not sealed, so that stores written
+before the key stayed readable. The same rule let anyone who could write to the volume,
+without the key, add a suppression that hides a path, or rewrite the audit chain, whose
+hashes carry no key. Such a record is now refused. On a file store or the audit log's
+file, the engine stops at startup with `data is not sealed with STORE_ENCRYPTION_KEY` and
+the way out in the log. In the database, where the engine appends without reading back,
+`verify-audit -postgres` fails on it.
+
+What to do: seal what predates the key, once, with the engine stopped. See what it finds
+first:
+
+```bash
+perspectivegraph seal-stores -dry-run
+perspectivegraph seal-stores
+```
+
+It reads the stores, the key and the governance backend from the environment, as the
+server does; with compose, run it as `docker compose --profile app run --rm backend
+seal-stores`. It reports each store it seals, and it refuses to seal an audit chain that
+does not verify. On Kubernetes, set `crypto.sealExisting=true` for one `helm upgrade`,
+check that the backend's log names each store as sealed, and set it back to `false`: left
+on, every start seals whatever plaintext it finds.
+
+A record that turns up in plaintext after the stores were sealed was not written by the
+engine. Compare the store with a backup before you seal anything.
+
+### A tenant has one spelling, from authentication on
+
+**Affects you if** a tenant name in `API_TOKENS`, the OIDC tenant claim, `X-Tenant` with
+`INGEST_HMAC_SECRETS`, or `CONNECTOR_TENANT` has capitals, spaces, or characters outside
+`[a-z0-9_]`. A deployment whose tenants are all written that way already sees no change.
+
+The engine normalizes a tenant's name (`Acme-Corp` is `acme_corp`), and the graph, the
+analyzer and the history always keyed it so. The suppressions, tickets and verdicts kept
+the name as the token spelt it instead. For the verdicts, two halves of the engine never
+met for such a tenant: the analyzer's calibration trend, read under the normalized name,
+left out every verdict posted through the API, and the dashboard, read under the token's
+spelling, left out the verdicts the KEV holdout records. Authentication now normalizes the
+tenant once, and every store keys it that way:
+
+- The records written under the old spelling move to the normalized one at startup. In
+  the database, the backend's log says `rows re-keyed to the normalized tenant`. In the
+  file stores they are read normalized, and written out at the next change.
+- Where two spellings of one tenant suppressed the same path, the later decision stands.
+- `/auth/me` and the audit records written from now on carry the normalized name. The
+  records already in the audit log keep the name they were written with, because the
+  chain covers it.
+
+What to do: nothing, for the upgrade itself. Before **rolling back** to an earlier release,
+restore the governance stores from a backup taken before this one: earlier releases look
+the moved records up under the old spelling, and would not find them.
+
 ### Single VM: Caddy is built with Go 1.27.4 and OpenTelemetry 1.47.0
 
 **Affects you if** you run the single-VM recipe (`make prod-init`). Nothing else contains

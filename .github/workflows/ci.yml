@@ -213,8 +213,44 @@ jobs:
         with:
           version: v3.16.4
 
+      # A default install has to say where its credentials come from, so the chart is linted
+      # with the shortest answer and with the demo profile, the one that needs none.
       - name: Lint
-        run: helm lint deploy/helm/perspectivegraph
+        run: |
+          set -euo pipefail
+          helm lint deploy/helm/perspectivegraph --set secrets.generate=true
+          helm lint deploy/helm/perspectivegraph --set backend.env=demo
+
+      # The production profile is the default, and the backend refuses to start in it
+      # without an API credential and an ingest secret - so a render that names neither
+      # must stop, with the message that lists the way out, and every way out must render.
+      # On by default too: the NetworkPolicies that close the bundled database and bus to
+      # everything but the backend.
+      - name: A default install names where its credentials come from
+        run: |
+          set -euo pipefail
+          chart=deploy/helm/perspectivegraph
+          if out=$(helm template pg "$chart" 2>&1); then
+            echo "a render with the default values succeeded, with no credential configured" >&2
+            exit 1
+          fi
+          grep -q 'backend.env is production, the default, and no credential is configured' <<<"$out" \
+            || { echo "a default render failed, but not on the credentials guard:" >&2; echo "$out" >&2; exit 1; }
+          # A token without an ingest secret is half of what the backend needs.
+          if helm template pg "$chart" --set auth.apiTokens=t:admin >/dev/null 2>&1; then
+            echo "an API token alone passed the guard; the backend would refuse to start" >&2
+            exit 1
+          fi
+          for choice in "--set secrets.generate=true" \
+                        "--set secrets.existingSecret=perspectivegraph-secrets" \
+                        "--set auth.apiTokens=t:admin --set ingest.hmacSecret=s" \
+                        "--set backend.env=demo"; do
+            # shellcheck disable=SC2086
+            rendered=$(helm template pg "$chart" $choice)
+            policies=$(grep -c '^kind: NetworkPolicy$' <<<"$rendered" || true)
+            [ "$policies" = 2 ] || { echo "$choice: $policies NetworkPolicies, want 2 (postgres, nats)" >&2; exit 1; }
+            echo "ok: $choice"
+          done
 
       # --require-hashes, not just a version: a version alone still trusts whatever
       # PyPI serves under it. Every Action here is pinned to a SHA and every image to a
@@ -223,17 +259,20 @@ jobs:
 
       # `restricted` is the Pod Security Standard most clusters this lands in enforce, and
       # a pod that misses one of its fields is refused admission rather than merely being
-      # less hardened - so this is a compatibility gate as much as a security one. The demo
-      # defaults and the production overlay are checked, each also with the database handed
-      # to CloudNativePG - a render that needs the operator's API, which --api-versions
-      # declares here because no cluster is there to answer.
+      # less hardened - so this is a compatibility gate as much as a security one. The
+      # defaults (with the credentials generated, the choice a default install has to make),
+      # the demo profile and the production overlay are checked, the first and the last also
+      # with the database handed to CloudNativePG - a render that needs the operator's API,
+      # which --api-versions declares here because no cluster is there to answer.
       - name: Admissible (restricted PSS) and self-healing (probes)
         run: |
           set -euo pipefail
           cnpg="--api-versions postgresql.cnpg.io/v1/Cluster --set postgres.cloudnativepg.enabled=true"
           prod="-f deploy/helm/perspectivegraph/values-production.yaml"
           generated="--set secrets.existingSecret= --set secrets.generate=true --set postgres.auth.password=ci"
-          for values in "" "$prod" "$cnpg" "$cnpg $prod" "$prod $generated"; do
+          default="--set secrets.generate=true"
+          demo="--set backend.env=demo"
+          for values in "$default" "$demo" "$prod" "$cnpg $default" "$cnpg $prod" "$prod $generated"; do
             # shellcheck disable=SC2086
             helm template pg deploy/helm/perspectivegraph $values \
               | python3 scripts/chart-check.py
@@ -249,7 +288,7 @@ jobs:
           set -euo pipefail
           render() {
             helm template pg deploy/helm/perspectivegraph \
-              --set ingress.enabled=true --set ingress.allowUnauthenticated=true "$@"
+              --set ingress.enabled=true --set secrets.generate=true "$@"
           }
           check() {
             python3 -c '
@@ -285,10 +324,11 @@ jobs:
       # lists is exactly what gets scanned and reported beside the chart. An annotation
       # that falls behind the templates therefore does not go stale quietly - it publishes
       # a security report for a set of images nobody installs. Listing fewer than the chart
-      # deploys is the failure that matters, and it is the flattering one.
+      # deploys is the failure that matters, and it is the flattering one. A default install
+      # has to name its credentials; generating them deploys no other image.
       - name: Artifact Hub images match what a default install deploys
         run: |
-          helm template pg deploy/helm/perspectivegraph > /tmp/rendered.yaml
+          helm template pg deploy/helm/perspectivegraph --set secrets.generate=true > /tmp/rendered.yaml
           python3 - <<'PY'
           import re, sys, yaml
           chart = yaml.safe_load(open("deploy/helm/perspectivegraph/Chart.yaml"))

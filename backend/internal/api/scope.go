@@ -13,43 +13,41 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/policy"
 	"github.com/luiacuaniello/perspectivegraph/internal/search"
 	"github.com/luiacuaniello/perspectivegraph/internal/suppress"
+	tnt "github.com/luiacuaniello/perspectivegraph/internal/tenant"
 	"github.com/luiacuaniello/perspectivegraph/internal/ticket"
 	"github.com/luiacuaniello/perspectivegraph/internal/validation"
 )
 
-// What a caller may read is decided here, once: which spelling of the caller's tenant each
-// store is read under, and what a caller limited to some applications may see. The GraphQL
-// resolvers read through view and take a tenant or an application list from nowhere else -
-// TestResolversReadThroughTheView fails on a schema file that asks the request context for
-// one, or reads a store directly.
+// What a caller may read is decided here, once: the caller's tenant, and what a caller
+// limited to some applications may see. The GraphQL resolvers read through view and take a
+// tenant or an application list from nowhere else - TestResolversReadThroughTheView fails
+// on a schema file that asks the request context for one, or reads a store directly.
 //
-// One tenant has two spellings because the stores were built apart. The governance stores
-// (suppressions, tickets, validations), the analyzer, the coverage ledger and the search
-// index are read under the tenant as its token spells it - the index normalizes it itself.
-// The history is read under the normalized form the analyzer writes it with. The October
-// fixes to search and history were resolvers that read a store under the other spelling,
-// and found nothing.
+// A tenant has one spelling, the normalized one (tenant.Normalize), which authentication
+// gives the principal and every store keys by. It used to have two: the governance stores
+// and the coverage ledger were read under the tenant as its token spelt it, the history
+// under the normalized form, and the October fixes to search and history were resolvers
+// that read a store under the other spelling and found nothing.
 
-// scoped is who is asking, in the forms the stores need.
+// scoped is who is asking.
 type scoped struct {
-	// tenant is the caller's tenant as its token spells it.
+	// tenant is the caller's tenant, normalized: "Acme-Corp" is "acme_corp" here.
 	tenant string
-	// graphTenant is the same tenant normalized (graph.NormalizeTenant): "Acme-Corp" is
-	// "acme_corp" here.
-	graphTenant string
 	// apps is the caller's application allowlist; empty is unrestricted.
 	apps []string
 }
 
 func scopeOf(ctx context.Context) scoped {
 	p := auth.PrincipalFromContext(ctx)
-	return scoped{tenant: p.Tenant, graphTenant: graph.NormalizeTenant(p.Tenant), apps: p.Apps}
+	// Authentication normalizes already; normalizing again keeps a principal made
+	// anywhere else - a test, an open instance's default - on the same spelling.
+	return scoped{tenant: tnt.Normalize(p.Tenant), apps: p.Apps}
 }
 
 // restricted reports whether the caller is limited to some applications.
 func (s scoped) restricted() bool { return len(s.apps) > 0 }
 
-// tenantOf is the caller's tenant as its token spells it.
+// tenantOf is the caller's tenant, normalized.
 func tenantOf(ctx context.Context) string { return scopeOf(ctx).tenant }
 
 // allowedApps is the caller's application allowlist (empty = unrestricted).
@@ -288,28 +286,28 @@ func (v view) batch(id string) (broker.BatchStatus, bool, error) {
 	if err != nil {
 		return broker.BatchStatus{}, false, err
 	}
-	if st.Messages == 0 || graph.NormalizeTenant(st.Tenant) != v.graphTenant {
+	if st.Messages == 0 || graph.NormalizeTenant(st.Tenant) != v.tenant {
 		return broker.BatchStatus{}, false, nil
 	}
 	return st, true, nil
 }
 
-// ── the history, under the normalized tenant ──
+// ── the history ──
 
 func (v view) pathHistory(pathID string) (history.PathRecord, bool) {
-	return v.a.history.Get(v.graphTenant, pathID)
+	return v.a.history.Get(v.tenant, pathID)
 }
 
 func (v view) postureHistory(points int) historyView {
 	return historyView{
-		Trend:      v.a.history.Trend(v.graphTenant, points),
-		Stats:      v.a.history.Stats(v.graphTenant),
+		Trend:      v.a.history.Trend(v.tenant, points),
+		Stats:      v.a.history.Stats(v.tenant),
 		Persistent: v.a.history.Persistent(),
 	}
 }
 
 func (v view) calibrationTrend(limit int) []history.CalibrationSample {
-	return v.a.history.CalibrationTrend(v.graphTenant, limit)
+	return v.a.history.CalibrationTrend(v.tenant, limit)
 }
 
 // The API's own reads, for the REST handlers: the same as the resolvers'.

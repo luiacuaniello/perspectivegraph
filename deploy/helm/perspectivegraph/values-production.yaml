@@ -1,7 +1,8 @@
-# Production values for the PerspectiveGraph chart - a secure-by-default starting
-# point. It inverts every demo default that is unsafe beyond a trusted boundary:
-# authentication and ingest HMAC on, TLS everywhere, an external managed
-# Postgres+AGE, durable audit log, and secrets sourced from your own manager.
+# Production values for the PerspectiveGraph chart. The chart's own defaults already run
+# the production profile - an authenticated API, signed ingest, a database and a broker
+# closed to everything but the backend - and this file goes the rest of the way for a
+# deployment beyond a trusted boundary: TLS everywhere, an external managed Postgres+AGE,
+# a durable audit log, and secrets sourced from your own manager.
 #
 #   helm upgrade --install perspectivegraph deploy/helm/perspectivegraph \
 #     -f deploy/helm/perspectivegraph/values-production.yaml \

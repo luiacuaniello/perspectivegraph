@@ -26,9 +26,13 @@ backend:
     #   memory: 512Mi
     # limits:
     #   memory: 2Gi   # no cpu limit: throttling an analyzer pass only lengthens it
-  # Deployment profile. "production" makes the backend refuse to start unless both
-  # the API and ingest are authenticated; "demo" keeps the permissive default.
-  env: demo
+  # Deployment profile. "production", the default, makes the backend refuse to start
+  # unless both the API and ingest are authenticated - and the chart refuses to render
+  # until it is told where those credentials come from: secrets.generate,
+  # secrets.existingSecret, or auth.* together with ingest.* below. "demo" is the
+  # permissive profile - an open API, unsigned ingest - for a trial inside a cluster you
+  # trust, and it has to be asked for by name.
+  env: production
   logLevel: info
   # text (human) or json (log pipelines). Production should be json.
   logFormat: text
@@ -354,9 +358,14 @@ scrubIngest: true
 # on graph exports. Both are secrets; empty ⇒ plaintext on disk / unsigned
 # exports. Generate with e.g. --set crypto.storeEncryptionKey="$(openssl rand -hex 32)".
 # A passphrase instead of 64 hex characters is refused with backend.env: production.
+# With a key, a record it did not seal is refused, so the backend does not start on stores
+# written to the persistence volume before the key was set. sealExisting seals them at the
+# next start: set it for one upgrade, check the backend's log says the stores were sealed,
+# then set it back to false - left on, every start seals whatever plaintext it finds.
 crypto:
   storeEncryptionKey: ""
   exportSigningKey: ""
+  sealExisting: false
 
 # Remediation ticketing: dispatch each new ticket to an external tracker
 # (Jira/GitHub/SOAR) over a webhook. Empty → local/dry-run (logged, tracked
@@ -376,11 +385,12 @@ secrets:
   existingSecret: ""
   # Fill every credential left empty with a generated one, kept across upgrades: an admin
   # API token (unless OIDC is set), the ingest HMAC secret, the at-rest encryption key and
-  # the export signing key. It is what lets `helm install -f values-production.yaml` start
-  # without a Secret prepared by hand - add --set secrets.existingSecret="" so the chart
-  # creates its own, and postgres.auth.password, which only an external database knows
-  # (under postgres.cloudnativepg the operator generates it). The release notes say how to
-  # read them back.
+  # the export signing key. It is the shortest of the choices a default install has to make
+  # (`helm install --set secrets.generate=true`), and what lets `helm install -f
+  # values-production.yaml` start without a Secret prepared by hand - add --set
+  # secrets.existingSecret="" so the chart creates its own, and postgres.auth.password,
+  # which only an external database knows (under postgres.cloudnativepg the operator
+  # generates it). The release notes say how to read them back.
   #
   # Only for `helm install` and `helm upgrade`, which can read the Secret they wrote. A
   # render without the cluster - `helm template`, Argo CD, Flux - draws new values every
@@ -403,11 +413,12 @@ serviceAccount:
   name: ""
   annotations: {}
 
-# A default install is UNAUTHENTICATED - acceptable only inside a trusted cluster
-# for a demo. PerspectiveGraph is a map of how to attack the org, so for ANY
-# deployment reachable beyond a trusted boundary set auth.apiTokens (and ideally
-# ingest.hmacSecret + persistence for the audit log). These land in the Secret;
-# an empty value means the control is OFF.
+# Who may read the attack map and write to it. PerspectiveGraph is a map of how to attack
+# the org, so the production profile (backend.env, the default) does not render until an
+# API credential and an ingest secret have a source: these values, secrets.generate, or
+# secrets.existingSecret. Only backend.env: demo runs without them, and then the API and
+# ingest are OPEN to whoever reaches the Service. These land in the Secret; an empty value
+# means the control is OFF.
 auth:
   # Bearer tokens → role[:tenant], comma-separated: "tok:viewer,tok2:admin:globex".
   # Empty ⇒ the read/write API is OPEN (no authentication). Generate with e.g.
@@ -545,16 +556,17 @@ graph:
   sweep: true
 
 # NetworkPolicy: the bundled Postgres and NATS accept connections from the backend only.
-# Off by default because it does nothing on a CNI that does not enforce it and breaks
-# whatever else talked to them (a backup job - add it to postgresFrom); on in
-# values-production.yaml. backendFrom, when set, also limits who may call the backend's
-# API and ingest ports to the dashboard plus these peers - typically the ingress
-# controller's namespace:
+# On by default. It does nothing on a CNI that does not enforce it - which is why NATS
+# authenticates as well - and it cuts off whatever else talked to them: a backup job, say,
+# which goes in postgresFrom. It leaves the backend and the dashboard open to the cluster,
+# so the ingress controller reaches them wherever it runs. backendFrom, when set, also
+# limits who may call the backend's API and ingest ports to the dashboard plus these peers
+# - typically the ingress controller's namespace:
 #   backendFrom:
 #     - namespaceSelector:
 #         matchLabels: { kubernetes.io/metadata.name: ingress-nginx }
 networkPolicy:
-  enabled: false
+  enabled: true
   postgresFrom: []
   backendFrom: []
 

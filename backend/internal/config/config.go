@@ -342,8 +342,16 @@ type Config struct {
 
 	// StoreEncryptionKey encrypts the file-backed governance stores and the audit
 	// log at rest (AES-256-GCM). A 64-hex-char value is the raw key; anything else
-	// is a passphrase. Empty (default) → plaintext on disk.
+	// is a passphrase. Empty (default) → plaintext on disk. With a key, a record it did
+	// not seal is refused.
 	StoreEncryptionKey string
+
+	// StoreSealExisting seals, at startup and before the stores open, what they hold
+	// from before StoreEncryptionKey was set (STORE_SEAL_EXISTING, default false): the
+	// seal-stores subcommand for an engine that is hard to stop and run a command
+	// against, a Kubernetes pod. For one start - left on, every start seals whatever
+	// plaintext it finds.
+	StoreSealExisting bool
 
 	// ExportSigningKey is an Ed25519 private key (64-hex seed) used to sign the
 	// OSCAL/SIEM exports so a consumer can verify integrity + origin. Empty → unsigned.
@@ -507,6 +515,7 @@ func Load() Config {
 		GraphQLIntrospection: strings.ToLower(strings.TrimSpace(getenv("GRAPHQL_INTROSPECTION", ""))),
 
 		StoreEncryptionKey: sec.get("STORE_ENCRYPTION_KEY", ""),
+		StoreSealExisting:  getbool("STORE_SEAL_EXISTING", false),
 		ExportSigningKey:   sec.get("EXPORT_SIGNING_KEY", ""),
 
 		AuthLockoutThreshold: getint("AUTH_LOCKOUT_THRESHOLD", 50),

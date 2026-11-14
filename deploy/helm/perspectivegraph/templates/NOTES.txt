@@ -50,15 +50,18 @@ Credentials were generated into Secret {{ include "perspectivegraph.secretName" 
   the audit log. A render without the cluster (helm template, Argo CD, Flux) would draw new
   values - there, use secrets.existingSecret instead.
 {{- end }}
+{{- /* Only outside the production profile: there, the chart does not render without a
+     credential at all. */}}
 {{- if not (or .Values.auth.apiTokens .Values.auth.oidc.jwksUrl .Values.secrets.existingSecret (include "perspectivegraph.generatesSecrets" .)) }}
 
-⚠  SECURITY: auth.apiTokens is empty - the API and ingestion are UNAUTHENTICATED.
-   PerspectiveGraph is a map of how to attack the org: anyone who can reach the
-   Service/Ingress can read every attack path and write suppressions/tickets.
-   Before exposing this beyond a trusted cluster, set a token, e.g.
-     --set auth.apiTokens="$(openssl rand -hex 16):admin"
-   and sign ingestion with --set ingest.hmacSecret=... - or let the chart generate
-   both with --set secrets.generate=true.
+⚠  SECURITY: backend.env={{ .Values.backend.env }} and no credential is set - the API and
+   ingestion are UNAUTHENTICATED. PerspectiveGraph is a map of how to attack the org:
+   anyone who can reach the Service/Ingress can read every attack path and write
+   suppressions/tickets. Before exposing this beyond a trusted cluster, go back to the
+   production profile and let the chart generate the credentials:
+     --set backend.env=production --set secrets.generate=true
+   or set a token and an ingest secret yourself, e.g.
+     --set auth.apiTokens="$(openssl rand -hex 16):admin" --set ingest.hmacSecret="$(openssl rand -hex 32)"
 {{- end }}
 {{- if not .Values.persistence.enabled }}
 

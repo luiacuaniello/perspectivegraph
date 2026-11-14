@@ -902,10 +902,12 @@ brings up backend + dashboard + Postgres+AGE + NATS in one command (or point it 
 external Postgres/NATS with `postgres.enabled=false`/`nats.enabled=false` - see
 [the database matrix](../OPERATIONS.md#3-the-database-postgresql--apache-age) for which
 services can host AGE at all). The
-default install is *unauthenticated with in-memory governance* - fine for a demo
-inside a trusted cluster, but for anything reachable beyond it, turn the controls
-on: `--set auth.apiTokens="$(openssl rand -hex 16):admin"` (bearer auth),
-`--set ingest.hmacSecret=…` (signed ingestion), and `--set persistence.enabled=true`
+default install is *authenticated, with in-memory governance*: the chart won't render
+until the credentials have a source - `--set secrets.generate=true` generates them, or
+`--set auth.apiTokens="$(openssl rand -hex 16):admin"` (bearer auth) with
+`--set ingest.hmacSecret=…` (signed ingestion) sets them - and `backend.env=demo` is the
+unauthenticated trial, for a cluster you trust. For anything reachable beyond one, add
+`--set persistence.enabled=true`
 so suppressions, tickets, validations, MTTR history and the **audit log** persist
 across restarts. All of those except the audit log can live in Postgres instead
 (`GOVERNANCE_BACKEND=postgres`, shared by every replica); the audit log is a

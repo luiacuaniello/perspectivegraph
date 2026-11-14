@@ -8,6 +8,8 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
+
+	tnt "github.com/luiacuaniello/perspectivegraph/internal/tenant"
 )
 
 // PGStore keeps suppressions in PostgreSQL, so every replica sees the same triage
@@ -73,6 +75,7 @@ func (p *PGStore) Put(ctx context.Context, r Record) (Record, error) {
 // desired end state is reached either way, and on several replicas the other one may
 // simply have got there first.
 func (p *PGStore) Delete(ctx context.Context, tenant, pathID string) error {
+	tenant = tnt.Normalize(tenant)
 	if p == nil || p.db == nil {
 		return errors.New("suppress: store not configured")
 	}
@@ -88,6 +91,7 @@ func (p *PGStore) Delete(ctx context.Context, tenant, pathID string) error {
 // because the path is active again - the row is kept so the board can still show that
 // the decision was made and has lapsed.
 func (p *PGStore) Get(ctx context.Context, tenant, pathID string) (Record, bool, error) {
+	tenant = tnt.Normalize(tenant)
 	if p == nil || p.db == nil {
 		return Record{}, false, errors.New("suppress: store not configured")
 	}
@@ -110,6 +114,7 @@ func (p *PGStore) Get(ctx context.Context, tenant, pathID string) (Record, bool,
 // List returns every suppression for a tenant, expired ones included, newest first - the
 // triage board shows lapsed decisions so an analyst can see what was let back on.
 func (p *PGStore) List(ctx context.Context, tenant string) ([]Record, error) {
+	tenant = tnt.Normalize(tenant)
 	if p == nil || p.db == nil {
 		return nil, errors.New("suppress: store not configured")
 	}
@@ -137,6 +142,7 @@ func (p *PGStore) List(ctx context.Context, tenant string) ([]Record, error) {
 // path list. Expiry is evaluated by the DATABASE rather than here, so every replica
 // agrees on what has lapsed even when their clocks do not.
 func (p *PGStore) ActiveSet(ctx context.Context, tenant string) (map[string]Record, error) {
+	tenant = tnt.Normalize(tenant)
 	if p == nil || p.db == nil {
 		return nil, errors.New("suppress: store not configured")
 	}

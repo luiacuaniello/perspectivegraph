@@ -191,6 +191,7 @@ hands it to the same collector, so what it finds is what the dump finds.
 
 ```bash
 helm install perspective oci://ghcr.io/luiacuaniello/charts/perspectivegraph \
+  --set secrets.generate=true \
   --set 'connectors.enabled={kubernetes}' \
   --set connectors.kubernetes.clusterName=prod-eu     # on EKS: the EKS cluster's name
 ```

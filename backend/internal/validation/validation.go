@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/cryptostore"
+	tnt "github.com/luiacuaniello/perspectivegraph/internal/tenant"
 )
 
 // Outcome is the closed set of validation verdicts.
@@ -253,12 +254,10 @@ func normalize(r Record, now func() time.Time, newID func() string) (Record, err
 
 func (s *Store) Persistent() bool { return s != nil && s.path != "" }
 
-func tenantKey(t string) string {
-	if t == "" {
-		return "default"
-	}
-	return t
-}
+// tenantKey is the one spelling a tenant is stored and read under (tenant.Normalize):
+// every write and every read of both backends goes through it, so "Acme-Corp" from a
+// token and "acme_corp" from the analyzer are one tenant. Empty is the default tenant.
+func tenantKey(t string) string { return tnt.Normalize(t) }
 
 // Put records a verdict. A confirmed/refuted/partial verdict references a real
 // path (PathID) and replaces any prior verdict for that path (latest test wins);
@@ -477,6 +476,7 @@ func (s *Store) load() error {
 		return fmt.Errorf("validation: parse %s: %w", s.path, err)
 	}
 	for _, r := range f.Records {
+		r.Tenant = tenantKey(r.Tenant) // written before the tenant had one spelling
 		s.byTenant[r.Tenant] = append(s.byTenant[r.Tenant], r)
 	}
 	// Loading is read-only: an operator who starts the binary against an existing file

@@ -1,10 +1,11 @@
 {{- if .Values.ingress.enabled }}
 {{- /*
   Enabling the ingress is the moment this install becomes reachable, and this ingress
-  routes BOTH /graphql (the attack map) and /ingest (the write side). The backend already
-  refuses to start unauthenticated when PG_ENV=production, but that gate only fires for an
-  operator who declared production - so an install left on the demo default was reachable
-  and open, with nothing but a startup warning that scrolls past.
+  routes BOTH /graphql (the attack map) and /ingest (the write side). The production
+  profile, the default, is already covered: the backend refuses to start unauthenticated
+  in it, and the guard in backend.yaml refuses to render. The demo profile is not, and an
+  install on it was reachable and open, with nothing but a startup warning that scrolls
+  past.
   This fires at the one moment the chart can be certain exposure is intended. The same
   condition guards service.type in backend.yaml, through a shared helper, because it is the
   same exposure by another route. It cannot see inside secrets.existingSecret, so an

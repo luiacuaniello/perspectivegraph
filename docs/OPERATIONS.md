@@ -622,7 +622,7 @@ capability to gain.
 - [ ] `/metrics` scraped; alerts on the SLOs above.
 - [ ] Images verified (cosign signature + SBOM + provenance) before rollout.
 - [ ] Engine behind a gateway/WAF; network policy between components (`networkPolicy.enabled`,
-      and `networkPolicy.backendFrom` naming the ingress controller's namespace).
+      on by default, and `networkPolicy.backendFrom` naming the ingress controller's namespace).
 - [ ] NATS authenticates its clients: the chart's does on its own; an external one needs
       `NATS_USER`/`NATS_PASSWORD`. Rendering with `helm template` (Argo CD, Flux), pin
       `postgres.auth.password` and `nats.auth.password` (or bring the Secrets), since a

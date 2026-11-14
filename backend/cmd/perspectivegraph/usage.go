@@ -21,6 +21,7 @@ var commands = []struct{ name, does string }{
 	{"mcp", "serve the engine's read-only tools to an AI agent, over stdio"},
 	{"awscollect", "read an AWS account once and show what the engine finds exposed"},
 	{"verify-audit", "verify the audit log's hash chain"},
+	{"seal-stores", "seal, once, what the stores hold from before STORE_ENCRYPTION_KEY was set"},
 	{"healthz", "probe the local API and exit 0 or 1 (the container's healthcheck)"},
 	{"importverdicts", "record a red-team or BAS report's outcomes against the engine's paths"},
 	{"ingestreal", "scan a real vulnerable image with Trivy and place it on a path"},

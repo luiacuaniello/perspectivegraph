@@ -9,10 +9,19 @@ version you can pin, verify and name in a change record:
 ```bash
 # Install a pinned release straight from the registry
 helm install perspective oci://ghcr.io/luiacuaniello/charts/perspectivegraph \
+  --set secrets.generate=true \
   --set github.token=$GITHUB_TOKEN \
   --set opensearch.url="" \
   --version 1.39.3 # x-release-please-version
 ```
+
+A default install runs the production profile: the API and ingest are authenticated, and
+NetworkPolicies let only the backend reach the bundled database and broker. So the chart
+won't render until it knows where the credentials come from. `secrets.generate=true`, above,
+has it generate them and keep them across upgrades, and the install notes print how to read
+the admin token back; [hardening a real deployment](#hardening-a-real-deployment-beyond-a-trusted-cluster)
+has the other ways. For a trial in a cluster you trust, `--set backend.env=demo` installs it
+unauthenticated instead.
 
 The chart is cosign-signed like the images. Verify it before it templates anything into
 your cluster - a chart is a description of what will run with cluster credentials, so an
@@ -32,6 +41,7 @@ the `oci://…` reference for `deploy/helm/perspectivegraph`:
 
 ```bash
 helm install perspective deploy/helm/perspectivegraph \
+  --set secrets.generate=true \
   --set github.token=$GITHUB_TOKEN
 ```
 
@@ -44,6 +54,7 @@ means an instance you run - or one the chart hands to CloudNativePG, the
 
 ```bash
 helm install perspective deploy/helm/perspectivegraph \
+  --set secrets.generate=true \
   --set postgres.enabled=false \
   --set postgres.externalHost=my-postgres.example.internal \
   --set postgres.auth.user=perspective --set postgres.auth.password=… \
@@ -132,7 +143,7 @@ and the backend's credentials come from the Secret the operator generates, so ne
 `postgres.auth.password` nor a `POSTGRES_PASSWORD` in `secrets.existingSecret` is used.
 `instances`, `storage.size`, `storage.storageClass`, `resources` and `parameters` size it;
 [`values.yaml`](../../deploy/helm/perspectivegraph/values.yaml) has every value. With
-`networkPolicy.enabled`, the database pods accept only the backend, each other
+`networkPolicy.enabled`, on by default, the database pods accept only the backend, each other
 (replication) and the operator's namespace (`operatorNamespace`, default `cnpg-system`).
 Without `backup.objectStore` there are no backups, and the release notes say so.
 
@@ -225,22 +236,28 @@ Demo only: locally-built images + Keycloak in `start-dev`.
 
 ## Hardening a real deployment (beyond a trusted cluster)
 
-The default chart runs **unauthenticated with in-memory governance** - fine for a
-demo inside a trusted cluster, but this tool is a *map of how to attack the org*,
-so anything reachable beyond that boundary must turn the controls on. The chart
-surfaces them as first-class values:
+The default chart runs the **production profile**: it authenticates the API and ingest,
+and closes the bundled database and broker to everything but the backend. It still keeps
+**governance in memory** until a volume holds it, and the credentials have to come from
+somewhere you choose. This tool is a *map of how to attack the org*, so anything reachable
+beyond a trusted cluster needs all of it. The chart surfaces the controls as first-class
+values:
 
 ```bash
 helm install perspective deploy/helm/perspectivegraph \
   --set auth.apiTokens="$(openssl rand -hex 16):admin" \   # bearer auth on the API (token:role[:tenant])
   --set ingest.hmacSecret="$(openssl rand -hex 16)" \      # scanners must sign ingest bodies
   --set persistence.enabled=true \                         # PVC for the governance stores + audit log
-  --set graph.ttl=168h \                                   # prune stale assets (phantom paths)
-  --set networkPolicy.enabled=true                         # only the backend reaches NATS and Postgres
+  --set graph.ttl=168h                                     # prune stale assets (phantom paths)
 ```
 
-- **`auth.apiTokens` / `auth.oidc.*`** - without a token the API is open; set
-  static tokens and/or OIDC (`issuer`/`audience`/`jwksUrl`). `auth.apiRateRps` /
+`backend.env: demo` turns the authentication off, for a trial in a cluster you trust: the
+chart then renders without any credential, and the release notes carry a ⚠.
+
+- **`auth.apiTokens` / `auth.oidc.*`** - static tokens and/or OIDC (`issuer`/`audience`/
+  `jwksUrl`). With `ingest.hmacSecret` they are one way to give the production profile its
+  credentials; `secrets.generate` and `secrets.existingSecret`, below, are the others, and
+  the chart refuses to render with none of the three. `auth.apiRateRps` /
   `auth.ingestRateRps` cap per-IP request rates (0 disables).
 - **`ingest.hmacSecret` / `ingest.hmacSecrets`** - HMAC-sign ingestion so nobody
   can forge scanner data on the open ingest port.
@@ -280,15 +297,17 @@ helm install perspective deploy/helm/perspectivegraph \
   own). Both are kept across `helm upgrade`; a `helm template` render (Argo CD, Flux)
   cannot read the cluster, so there set `postgres.auth.password` and
   `nats.auth.password` - or bring `secrets.existingSecret` and `nats.auth.existingSecret`.
-- **`networkPolicy.enabled`** - only the backend may open a connection to the bundled
-  NATS and Postgres; `networkPolicy.backendFrom` (the ingress controller's namespace,
-  say) also closes the backend to the rest of the cluster. It needs a CNI that enforces
-  NetworkPolicy - which is why NATS authenticates too.
+- **`networkPolicy.enabled`** (on by default) - only the backend may open a connection to
+  the bundled NATS and Postgres; anything else that talked to them, a backup job say, goes
+  in `networkPolicy.postgresFrom`. The backend and the dashboard stay open to the cluster,
+  so the ingress controller reaches them wherever it runs; `networkPolicy.backendFrom` (the
+  ingress controller's namespace, say) closes the backend to everyone else. It needs a CNI
+  that enforces NetworkPolicy - which is why NATS authenticates too.
 - **`nats.persistence.enabled`** (default on) keeps the event stream on a volume, so a
   NATS restart does not lose queued events, dead letters, or the record a merge gate
   waits on.
-- The release prints a ⚠ in `NOTES` whenever auth or persistence is left off, so
-  an insecure exposure is never silent.
+- The release prints a ⚠ in `NOTES` whenever auth (in the demo profile) or persistence
+  is left off, so an insecure exposure is never silent.
 - **Startup ordering** - the backend has `initContainers` that block on the bundled
   Postgres:5432 and NATS:4222 before it boots, so a fresh install connects to
   Apache AGE on the first try instead of crash-looping on NATS or *silently* falling

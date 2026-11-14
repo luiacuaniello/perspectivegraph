@@ -20,6 +20,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/luiacuaniello/perspectivegraph/internal/httpx"
+	tnt "github.com/luiacuaniello/perspectivegraph/internal/tenant"
 )
 
 // JWTConfig configures OIDC/JWT authentication.
@@ -119,7 +120,7 @@ func (j *JWTAuthenticator) Authenticate(r *http.Request) (Principal, bool) {
 	role := j.roleFrom(claims)
 	tenant := DefaultTenant
 	if v, ok := claims[j.cfg.TenantClaim].(string); ok && v != "" {
-		tenant = v
+		tenant = tnt.Normalize(v)
 	} else if j.cfg.RequireTenant {
 		if j.warnedNoTenant.CompareAndSwap(false, true) {
 			slog.Warn("OIDC token refused: it names no tenant, and this deployment serves several. Set the claim "+

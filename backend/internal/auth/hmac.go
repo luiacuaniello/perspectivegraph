@@ -17,6 +17,7 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/audit"
 	"github.com/luiacuaniello/perspectivegraph/internal/clientip"
 	"github.com/luiacuaniello/perspectivegraph/internal/metrics"
+	tnt "github.com/luiacuaniello/perspectivegraph/internal/tenant"
 )
 
 // SignatureHeader carries "sha256=<hex>"; TenantHeader selects the tenant whose
@@ -117,7 +118,14 @@ type HMACVerifier struct {
 // ips resolves the address recorded in the audit trail. Nil trusts no proxy. v1
 // signatures are refused unless WithAcceptV1(true).
 func NewHMACVerifier(secrets map[string]string, maxBody int64, ips *clientip.Resolver) *HMACVerifier {
-	return &HMACVerifier{secrets: secrets, maxBody: maxBody, ips: ips, now: time.Now,
+	// Keyed by the normalized tenant, as X-Tenant is looked up: a sender's tenant is one
+	// tenant however its header spells it. Two configured names that normalize alike never
+	// reach here - startup refuses them (checkTenantNames).
+	byTenant := make(map[string]string, len(secrets))
+	for t, s := range secrets {
+		byTenant[tnt.Normalize(t)] = s
+	}
+	return &HMACVerifier{secrets: byTenant, maxBody: maxBody, ips: ips, now: time.Now,
 		seen: map[string]time.Time{}}
 }
 
@@ -140,10 +148,7 @@ func (h *HMACVerifier) Require(rec audit.Recorder, next http.Handler) http.Handl
 		rec = audit.Nop{}
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		tenant := r.Header.Get(TenantHeader)
-		if tenant == "" {
-			tenant = DefaultTenant
-		}
+		tenant := tnt.Normalize(r.Header.Get(TenantHeader)) // empty: the default tenant
 		secret, ok := h.secrets[tenant]
 		if !ok {
 			metrics.AuthDenied.WithLabelValues("ingest", "unknown_tenant").Inc()

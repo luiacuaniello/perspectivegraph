@@ -84,8 +84,14 @@ On Kubernetes, the chart is an
 
 ```bash
 helm install perspectivegraph oci://ghcr.io/luiacuaniello/charts/perspectivegraph \
+  --set secrets.generate=true \
   --version 1.39.3 # x-release-please-version
 ```
+
+A default install is authenticated, and the chart will not render one that does not say
+where its credentials come from: `secrets.generate=true` generates them and keeps them
+across upgrades, and the install notes print how to read the admin token back.
+[The chart's page](deploy/helm/perspectivegraph/README.md#install) has the other choices.
 
 On one machine - a VM with Docker and a DNS name - one command sets up TLS, generated
 credentials, an authenticated bus and daily backups, and starts it:

@@ -49,7 +49,7 @@ func runVerifyAudit(args []string, out io.Writer) error {
 		note    string // what retention has removed, printed under the result
 	)
 	if *postgres {
-		db, derr := openGovernanceDB()
+		db, derr := openGovernanceDB("verify-audit")
 		if derr != nil {
 			return derr
 		}
@@ -92,27 +92,28 @@ func runVerifyAudit(args []string, out io.Writer) error {
 // never run against - surfaces as a query failure from the verifier, which the caller
 // would then report as "audit chain INVALID". Telling an operator their audit log has
 // been tampered with because they mistyped a database name is the one wrong answer this
-// command must never give.
-func openGovernanceDB() (*sql.DB, error) {
+// command must never give. cmd names the command in the errors (verify-audit,
+// seal-stores).
+func openGovernanceDB(cmd string) (*sql.DB, error) {
 	db, err := sql.Open("postgres", config.Load().PostgresDSN)
 	if err != nil {
-		return nil, fmt.Errorf("verify-audit: open the governance database: %w", err)
+		return nil, fmt.Errorf("%s: open the governance database: %w", cmd, err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("verify-audit: reach the governance database: %w", err)
+		return nil, fmt.Errorf("%s: reach the governance database: %w", cmd, err)
 	}
 
 	var table sql.NullString
 	if err := db.QueryRowContext(ctx, `SELECT to_regclass('audit_log')::text`).Scan(&table); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("verify-audit: look for the audit chain: %w", err)
+		return nil, fmt.Errorf("%s: look for the audit chain: %w", cmd, err)
 	}
 	if !table.Valid {
 		_ = db.Close()
-		return nil, errors.New("verify-audit: this database has no audit_log table - check POSTGRES_DSN, or the backend has never run against it with GOVERNANCE_BACKEND=postgres")
+		return nil, errors.New(cmd + ": this database has no audit_log table - check POSTGRES_DSN, or the backend has never run against it with GOVERNANCE_BACKEND=postgres")
 	}
 	return db, nil
 }

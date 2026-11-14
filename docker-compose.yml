@@ -207,6 +207,7 @@ services:
       # At-rest encryption + export signing (security hardening). Empty → plaintext
       # on disk / unsigned exports.
       STORE_ENCRYPTION_KEY: ${STORE_ENCRYPTION_KEY:-}
+      STORE_SEAL_EXISTING: ${STORE_SEAL_EXISTING:-}
       EXPORT_SIGNING_KEY: ${EXPORT_SIGNING_KEY:-}
       # Data hygiene: redact secret-looking values out of scanner output before the
       # store (default on).

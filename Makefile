@@ -297,7 +297,7 @@ import-verdicts:
 validate-harness:
 	@bash scripts/validate-harness.sh
 
-## chart-install: install the Helm chart on a throwaway kind cluster with the DEFAULT values and wait for every pod to be Ready, then check that Apache AGE is loadable inside it. `helm lint` and `helm template` cannot catch an image whose USER is root under runAsNonRoot - that combination made `helm install` impossible while CI stayed green. NODE_IMAGE=<kindest/node:vX> tests another Kubernetes version; DATABASE=cloudnativepg installs the CloudNativePG operator, runs the database under it and fails over the primary to check a write still lands; KEEP=1 leaves the cluster up. Needs kind + kubectl + helm.
+## chart-install: install the Helm chart on a throwaway kind cluster with the DEFAULT values - the production profile and its NetworkPolicies, with the credentials the chart generates - and wait for every pod to be Ready, then check that Apache AGE is loadable inside it, that the API and ingest refuse a caller without credentials and accept the generated ones, and that only the backend reaches NATS, and only with its password. `helm lint` and `helm template` cannot catch an image whose USER is root under runAsNonRoot - that combination made `helm install` impossible while CI stayed green. NODE_IMAGE=<kindest/node:vX> tests another Kubernetes version; DATABASE=cloudnativepg installs the CloudNativePG operator, runs the database under it and fails over the primary to check a write still lands; KEEP=1 leaves the cluster up. Needs kind + kubectl + helm + docker + curl + openssl.
 chart-install:
 	@bash scripts/chart-install.sh
 
