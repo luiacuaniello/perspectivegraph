@@ -9,6 +9,14 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.39.4](https://github.com/luiacuaniello/perspectivegraph/compare/v1.39.3...v1.39.4) (2026-11-14)
+
+
+### Bug Fixes
+
+* **api:** show an app-scoped caller only its own crown jewels ([#418](https://github.com/luiacuaniello/perspectivegraph/issues/418)) ([8d27bba](https://github.com/luiacuaniello/perspectivegraph/commit/8d27bba37675c6c1c853020a0672470821d14c86))
+* build with Go 1.27.4 for the net/http advisory GO-2026-6859 ([#423](https://github.com/luiacuaniello/perspectivegraph/issues/423)) ([16839bb](https://github.com/luiacuaniello/perspectivegraph/commit/16839bb55d280285f4e7bea341ee61f14ec7d942))
+
 ## [1.39.3](https://github.com/luiacuaniello/perspectivegraph/compare/v1.39.2...v1.39.3) (2026-11-10)
 
 
