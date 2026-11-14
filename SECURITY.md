@@ -161,7 +161,7 @@ run them:
 ```bash
 # The release you run; the dashboard and database images (perspectivegraph-dashboard,
 # perspectivegraph-postgres) verify the same way.
-IMG=ghcr.io/luiacuaniello/perspectivegraph:v1.39.3 # x-release-please-version
+IMG=ghcr.io/luiacuaniello/perspectivegraph:v1.39.4 # x-release-please-version
 ID_RE="^https://github.com/luiacuaniello/perspectivegraph/.github/workflows/"
 ISSUER=https://token.actions.githubusercontent.com
 
