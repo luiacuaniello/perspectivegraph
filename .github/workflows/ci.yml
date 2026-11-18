@@ -155,7 +155,7 @@ jobs:
         run: |
           set -euo pipefail
           docker run -d --name nats -p 4222:4222 \
-            nats:2.15.2-scratch@sha256:965fc69c168a39f2bfd63a68361288beb0cc64ca60c8c308bf6c0eb74f463b1d -js
+            nats:2.15.3-scratch@sha256:cf783105b65fd68ed9c40fdae8f624f97177c1fc1b705b4939eb25f27df22019 -js
           for _ in $(seq 1 30); do
             if nc -z localhost 4222; then echo "nats up"; exit 0; fi
             sleep 1
