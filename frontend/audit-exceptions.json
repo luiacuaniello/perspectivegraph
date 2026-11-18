@@ -1,0 +1,8 @@
+[
+  {
+    "id": "GHSA-fc5q-39xc-vjpf",
+    "package": "picomatch",
+    "reason": "a ReDoS on extglob patterns. picomatch reaches the dashboard only through its build and test tooling - vite, vitest, typescript-eslint - which match the repository's own file globs, never anything a user sends; none of it ships, and the production dependencies are audited without exceptions. No fixed release exists: since 2026-11-17 the advisory covers every version through 4.0.7, the latest.",
+    "reviewBy": "2026-12-18"
+  }
+]

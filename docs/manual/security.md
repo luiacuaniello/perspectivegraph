@@ -290,10 +290,14 @@ The images and the compose stack are built to the bar you'd expect in a review:
   `condition: service_healthy`, which in turn waits on Postgres/NATS being healthy -
   so `make up-full` comes up in the right order, every time.
 - **CI scans the supply chain** - `govulncheck`, `npm audit`, and a Trivy image scan
-  gate the build, plus an **AGE store integration job** (Postgres+AGE service
-  container) that exercises the real, hand-written Cypher path - including an
-  injection round-trip - that unit tests with the in-memory store can't cover
-  (see [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)).
+  gate the build. `npm audit` fails on any high or critical advisory: in the
+  dashboard's production dependencies without exception, and in build tooling unless
+  the package's `audit-exceptions.json` names it, with the reason it does not apply
+  and a date by which it must be looked at again. Plus an **AGE store integration
+  job** (Postgres+AGE service container) that exercises the real, hand-written
+  Cypher path - including an injection round-trip - that unit tests with the
+  in-memory store can't cover (see
+  [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)).
 
 ### Application hardening
 
