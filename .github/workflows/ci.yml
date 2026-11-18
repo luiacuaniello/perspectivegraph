@@ -565,38 +565,15 @@ jobs:
       - run: npm run build
       - name: Unit tests (Vitest)
         run: npm test
-      # Supply-chain gate: fail on a high/critical advisory in the JS deps.
-      #
-      # Retried, because `npm audit` exits non-zero for two unrelated reasons - an advisory
-      # was found, and the registry could not be reached - and npmjs.org has answered 503
-      # twice on this repository in one day, on both the legacy and the current endpoint.
-      # A retry is the whole fix: the gate still FAILS if the registry is genuinely down,
-      # so a build never passes without having been audited. It just does not fail on a
-      # blip. The two outcomes are told apart by the shape of the output rather than by
-      # npm's error schema, which is theirs to change: a well-formed report is judged on
-      # its counts, anything else is a failed attempt.
+      # Supply-chain gate: fail on a high/critical advisory in the JS deps - in the
+      # production dependencies without exception, in the build and test tooling unless
+      # frontend/audit-exceptions.json names it, with its reason and a date it must be
+      # reviewed by. The script is the documentation site's, and so is its retry: npm audit
+      # exits non-zero both when it finds something and when the registry does not answer
+      # (npmjs.org answered 503 twice on this repository in one day), and only a well-formed
+      # report is judged - a build never passes without having been audited.
       - name: npm audit (high/critical)
-        run: |
-          set -uo pipefail
-          for delay in 0 10 30; do
-            if [ "$delay" -gt 0 ]; then
-              echo "the registry did not return a report; retrying in ${delay}s"
-              sleep "$delay"
-            fi
-            out="$(npm audit --json 2>/dev/null || true)"
-            if printf '%s' "$out" | jq -e '.metadata.vulnerabilities.high' >/dev/null 2>&1; then
-              n="$(printf '%s' "$out" | jq '.metadata.vulnerabilities.high + .metadata.vulnerabilities.critical')"
-              if [ "$n" -gt 0 ]; then
-                echo "::error::$n high/critical advisory(ies) in the npm dependency tree"
-                npm audit --audit-level=high || true
-                exit 1
-              fi
-              echo "npm audit: no high or critical advisories"
-              exit 0
-            fi
-          done
-          echo "::error::npm audit could not get a report from the registry after 3 attempts. The gate did not run, so this build fails rather than passing unaudited - re-run the job."
-          exit 1
+        run: node ../scripts/npm-audit.mjs --strict-production
 
   # Dependency licences. An Apache-2.0 project that ships binaries and images has to
   # know what it is redistributing, and "we would have noticed" is not a control: a
