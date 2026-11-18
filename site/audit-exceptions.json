@@ -1,8 +1,8 @@
 [
   {
-    "id": "GHSA-ch52-4w7c-c8xp",
-    "package": "http-cache-semantics",
-    "reason": "the flaw lets one user read another's response from a shared HTTP cache; Astro depends on the library to cache what it fetches while building, and this site is static, built in CI from this repository, with no shared cache serving anyone. No fixed release exists (every version through 4.2.0 is affected).",
-    "reviewBy": "2026-11-30"
+    "id": "GHSA-fc5q-39xc-vjpf",
+    "package": "picomatch",
+    "reason": "a ReDoS on extglob patterns. picomatch reaches the site through Astro's and Vite's build, which match this repository's own file globs, never anything a visitor sends: the site is static, built in CI from this repository. No fixed release exists: since 2026-11-17 the advisory covers every version through 4.0.7, the latest.",
+    "reviewBy": "2026-12-18"
   }
 ]
