@@ -47,9 +47,11 @@ maintainers:
 #
 # What did change is the two images that carried the findings. The bundled database was
 # `apache/age`, whose Debian base held fourteen criticals with no fix available for
-# thirteen of them; it is now built here from Alpine (deploy/postgres/Dockerfile). NATS
-# moved from -alpine to -scratch. Both are rebuilt with every release, which is what keeps
-# them clean rather than merely clean today.
+# thirteen of them; it is now built here from Alpine (deploy/postgres/Dockerfile), and
+# rebuilt with every release, which is what keeps it clean rather than merely clean today.
+# NATS moved from -alpine to -scratch, but it is still upstream's image, pinned by digest:
+# a finding in it leaves the report beside the chart only when Dependabot has moved the
+# pin and a release carries the new one (RELEASES.md).
 annotations:
   artifacthub.io/category: security
   artifacthub.io/license: Apache-2.0
