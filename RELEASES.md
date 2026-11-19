@@ -25,8 +25,10 @@ release, and their subjects decide the version:
 
 Dependabot titles its updates `chore(deps)` and `chore(ci)`, so an update never cuts a
 release by itself. When one fixes something in what a release ships - a Go toolchain with a
-standard-library fix, say - merge it as a `fix:` that names what it fixes, as 1.38.3 did for
-Go 1.27.3.
+standard-library fix, say, or an image the chart deploys, whose findings Artifact Hub
+reports beside the chart - merge it as a `fix:` that names what it fixes, as 1.38.3 did for
+Go 1.27.3. Once one has gone in as `chore(deps)`, nothing releases it until a `fix:` commit
+names it, as the one that cut 1.39.5 did for NATS 2.15.3.
 
 Two footers ask for more than a version. `BREAKING CHANGE:` is the Conventional Commits one;
 `BEHAVIOUR CHANGE:` is this project's, for a change that alters what a deployment does
