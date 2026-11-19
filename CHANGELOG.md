@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.39.5](https://github.com/luiacuaniello/perspectivegraph/compare/v1.39.4...v1.39.5) (2026-11-19)
+
+
+### Bug Fixes
+
+* **deps:** ship NATS 2.15.3, built with Go 1.27.4 for GO-2026-6859 ([#437](https://github.com/luiacuaniello/perspectivegraph/issues/437)) ([d7e78ea](https://github.com/luiacuaniello/perspectivegraph/commit/d7e78eaabbe153ca48005d521d84e549fb1cb36c))
+
 ## [1.39.4](https://github.com/luiacuaniello/perspectivegraph/compare/v1.39.3...v1.39.4) (2026-11-14)
 
 
