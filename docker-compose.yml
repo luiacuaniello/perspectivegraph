@@ -319,7 +319,7 @@ services:
   # ── Optional full-text index: OpenSearch ────────────────────────────
   opensearch:
     <<: *hardening
-    image: opensearchproject/opensearch:3.9.0@sha256:3b55f6b6249cfdb92b52ee59adc8a266203ba9ef9f5d82544fad6f1af2f3609e
+    image: opensearchproject/opensearch:3.10.0@sha256:02d6d6e40c820ae08233b60540aa5d3d9364d64e2dc724e38d6c8c794879b2a0
     container_name: perspective-opensearch
     environment:
       - discovery.type=single-node
@@ -343,7 +343,7 @@ services:
   # Dev image/flags (start-dev, in-memory) - for local testing only, not production.
   keycloak:
     <<: *hardening
-    image: quay.io/keycloak/keycloak:26.8@sha256:c68e286cacd87b942ac1939a0a1481461109d6acd3a57dc496969a319a76bbf0
+    image: quay.io/keycloak/keycloak:26.8@sha256:7e66a96e4739239070aeaf72e4c5decf0f7f682cfc725b9f7ea2b336eaba38b3
     container_name: perspective-keycloak
     command: ["start-dev", "--import-realm", "--http-port=8080"]
     environment:
