@@ -907,6 +907,36 @@
 					"response": []
 				},
 				{
+					"name": "Engine version (which release answers)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{apiUrl}}/graphql",
+							"host": [
+								"{{apiUrl}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "{ engine { version } }",
+								"variables": ""
+							}
+						},
+						"description": "Which release the engine runs: the release tag (vX.Y.Z) of a published build, otherwise the module version or the VCS revision it was built from, or \"dev\". The same string as `perspectivegraph version` and perspectivegraph_build_info, readable by any role; the dashboard shows it at the foot of every page."
+					},
+					"response": []
+				},
+				{
 					"name": "Merge gate verdict for one commit (prVerdict)",
 					"request": {
 						"method": "POST",

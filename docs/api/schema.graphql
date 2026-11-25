@@ -159,6 +159,10 @@ input EdgeCutInput {
   type: String
 }
 
+type Engine {
+  version: String!
+}
+
 type Fix {
   content: String
   coveragePct: Float
@@ -305,6 +309,7 @@ type Query {
   attackPaths(app: String, limit: Int, offset: Int): [AttackPath]
   calibration: Calibration
   calibrationTrend(points: Int): [CalibrationTrendPoint]
+  engine: Engine!
   graph(app: String, limit: Int, offset: Int): GraphView
   history(points: Int): History
   ingestBatch(id: String!): IngestBatch

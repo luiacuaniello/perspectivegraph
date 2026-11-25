@@ -17,6 +17,7 @@ import { useIntroDismissed } from "./components/useIntroDismissed";
 import EmptyState from "./components/EmptyState";
 import Button from "./components/ui/Button";
 import DashboardSkeleton from "./components/DashboardSkeleton";
+import EngineVersion from "./components/EngineVersion";
 import ThemeToggle from "./components/ThemeToggle";
 import { InfoIcon } from "./components/icons";
 import { hasRuntimeToken, signOut } from "./api/client";
@@ -543,6 +544,8 @@ export default function App() {
             )}
           </div>
         )}
+
+        <EngineVersion live={!error} />
       </main>
 
       <BottomBar

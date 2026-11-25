@@ -33,6 +33,7 @@ type schemaTypes struct {
 	riskSimulationType        *graphql.Object
 	whatIfResultType          *graphql.Object
 	statusType                *graphql.Object
+	engineType                *graphql.Object
 	posturePointType          *graphql.Object
 	historyType               *graphql.Object
 	validationMetricsType     *graphql.Object
