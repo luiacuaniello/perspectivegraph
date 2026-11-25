@@ -9,6 +9,18 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.40.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.39.5...v1.40.0) (2026-11-25)
+
+
+### Features
+
+* show which release the engine runs ([#448](https://github.com/luiacuaniello/perspectivegraph/issues/448)) ([6bafdfc](https://github.com/luiacuaniello/perspectivegraph/commit/6bafdfc02444fbd0c43da9c297dfc4d25ab47e07))
+
+
+### Bug Fixes
+
+* **deps:** serve the dashboard with nginx 1.31.9 for ten nginx CVEs ([b4339e6](https://github.com/luiacuaniello/perspectivegraph/commit/b4339e628f8d500fd5bf69227539b1fde8f6117d))
+
 ## [1.39.5](https://github.com/luiacuaniello/perspectivegraph/compare/v1.39.4...v1.39.5) (2026-11-19)
 
 

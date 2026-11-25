@@ -12,7 +12,7 @@ helm install perspective oci://ghcr.io/luiacuaniello/charts/perspectivegraph \
   --set secrets.generate=true \
   --set github.token=$GITHUB_TOKEN \
   --set opensearch.url="" \
-  --version 1.39.5 # x-release-please-version
+  --version 1.40.0 # x-release-please-version
 ```
 
 A default install runs the production profile: the API and ingest are authenticated, and
@@ -31,7 +31,7 @@ unverified one is a larger hole than an unverified image:
 cosign verify \
   --certificate-identity-regexp 'https://github.com/luiacuaniello/perspectivegraph/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  ghcr.io/luiacuaniello/charts/perspectivegraph:1.39.5 # x-release-please-version
+  ghcr.io/luiacuaniello/charts/perspectivegraph:1.40.0 # x-release-please-version
 ```
 
 The chart declares `kubeVersion: >= 1.21.0-0` (the floor is `policy/v1`
