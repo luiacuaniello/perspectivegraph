@@ -165,6 +165,20 @@ func (a *API) postureTypes(t *schemaTypes) {
 		},
 	})
 
+	engineType := graphql.NewObject(graphql.ObjectConfig{
+		Name:        "Engine",
+		Description: "The engine answering this API.",
+		Fields: graphql.Fields{
+			"version": &graphql.Field{
+				Type:        graphql.NewNonNull(graphql.String),
+				Description: "What this binary is: the release tag (vX.Y.Z) of a published build; otherwise the module version or the VCS revision it was built from, or \"dev\" when the toolchain recorded neither. The same string as `perspectivegraph version`, the startup log line and perspectivegraph_build_info.",
+				Resolve: func(graphql.ResolveParams) (any, error) {
+					return a.version, nil
+				},
+			},
+		},
+	})
+
 	posturePointType := graphql.NewObject(graphql.ObjectConfig{
 		Name:        "PosturePoint",
 		Description: "One sample of the exposure trend over time.",
@@ -208,6 +222,7 @@ func (a *API) postureTypes(t *schemaTypes) {
 	t.riskSimulationType = riskSimulationType
 	t.whatIfResultType = whatIfResultType
 	t.statusType = statusType
+	t.engineType = engineType
 	t.posturePointType = posturePointType
 	t.historyType = historyType
 }
@@ -263,6 +278,13 @@ func (a *API) postureQueries(t *schemaTypes) graphql.Fields {
 			Description: "Cheap analysis fingerprint; poll this and only refetch the full dashboard when it changes.",
 			Resolve: func(p graphql.ResolveParams) (any, error) {
 				return a.view(p.Context).status(), nil
+			},
+		},
+		"engine": &graphql.Field{
+			Type:        graphql.NewNonNull(t.engineType),
+			Description: "Which release the engine runs. The dashboard shows it at the foot of every page; a deployment can also be asked without shell access to its pods.",
+			Resolve: func(graphql.ResolveParams) (any, error) {
+				return struct{}{}, nil
 			},
 		},
 		"history": &graphql.Field{

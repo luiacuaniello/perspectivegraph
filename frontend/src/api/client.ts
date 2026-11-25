@@ -802,6 +802,17 @@ export const fetchStatus = () =>
     `query Status { status { version passes paths analyzedAt prunedNodes prunedEdges lastPrunedAt } }`,
   ).then((d) => d.status);
 
+export interface Engine {
+  // The release tag of a published build (v1.40.0); otherwise a module version, a
+  // commit, or "dev".
+  version: string;
+}
+
+// Which release the engine runs, for the foot of the page. Asked on its own: an engine
+// older than the field answers with an error, and that must not take the dashboard's
+// own queries down with it.
+export const fetchEngine = () => gql<{ engine: Engine }>(`query Engine { engine { version } }`).then((d) => d.engine);
+
 // The temporal view (trend + MTTR + aging). Polled on its own light cadence so
 // the exposure trend stays live even when the graph (and the heavy dashboard)
 // hasn't changed - the trend evolving over a steady graph is itself the point.

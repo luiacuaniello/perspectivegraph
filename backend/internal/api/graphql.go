@@ -79,6 +79,8 @@ type API struct {
 	// by source, and the normalizer a change goes through. nil collectors → disabled.
 	gateCollectors map[string]ingestion.Collector
 	gateNormalizer func(*graph.Manager) *normalization.Normalizer
+	// version is what GraphQL's engine { version } reports; see WithVersion.
+	version string
 }
 
 func New(manager *graph.Manager, svc *analyzer.Service, idx search.Indexer) *API {
@@ -98,7 +100,19 @@ func New(manager *graph.Manager, svc *analyzer.Service, idx search.Indexer) *API
 		// WithCORSOrigins from CORS_ALLOWED_ORIGINS.
 		corsOrigins: []string{"http://localhost:5173", "http://localhost:3000"},
 		heavySlots:  make(chan struct{}, heavyConcurrency()),
+		version:     "dev",
 	}
+}
+
+// WithVersion sets the version GraphQL's engine { version } reports. The binary passes
+// what `perspectivegraph version` prints: the release tag of a published build, otherwise
+// the module version or the VCS revision. An empty string keeps "dev". Returns the API
+// for chaining.
+func (a *API) WithVersion(v string) *API {
+	if v != "" {
+		a.version = v
+	}
+	return a
 }
 
 // WithValidation attaches the red-team/BAS validation store the API reads for
