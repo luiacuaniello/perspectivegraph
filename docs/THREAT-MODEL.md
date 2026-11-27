@@ -8,10 +8,11 @@ Method: enumerate the trust boundaries and assets, then walk each attack surface
 STRIDE (Spoofing, Tampering, Repudiation, Information disclosure, Denial of service,
 Elevation of privilege), recording the existing control and the residual risk.
 
-> Honesty note: the bundled `docker compose` / Helm defaults are **demo-grade**. Several
+> Honesty note: the bundled `docker compose` defaults are **demo-grade**. Several
 > controls below (HMAC on ingest, auth on the API, TLS, encryption at rest) are opt-in
-> and off in the demo. A production deployment must turn them on - see the "Operator
-> assumptions" section and [Project status & maturity](../README.md#project-status--maturity).
+> and off in the demo. The Helm chart defaults to production and will not render without
+> credentials. A production deployment must turn them on - see the "Operator
+> assumptions" section and the [pre-production checklist](OPERATIONS.md#10-pre-production-checklist).
 
 ## System overview and trust boundaries
 
