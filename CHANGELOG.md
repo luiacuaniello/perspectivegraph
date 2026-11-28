@@ -9,6 +9,13 @@ When a release needs you to **do** something - set a new variable, change a requ
 send - that is in [docs/UPGRADING.md](docs/UPGRADING.md). Read it before upgrading; a
 version absent from it needs no action.
 
+## [1.41.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.40.0...v1.41.0) (2026-11-28)
+
+
+### Features
+
+* commit verdict page, keyboard triage, other routes, ATT&CK card ([#453](https://github.com/luiacuaniello/perspectivegraph/issues/453)) ([fdea681](https://github.com/luiacuaniello/perspectivegraph/commit/fdea68107e3f924b86dd55f543005907cd4e2c71))
+
 ## [1.40.0](https://github.com/luiacuaniello/perspectivegraph/compare/v1.39.5...v1.40.0) (2026-11-25)
 
 
