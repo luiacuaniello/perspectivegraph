@@ -114,7 +114,7 @@ On Kubernetes, the chart is an
 ```bash
 helm install perspectivegraph oci://ghcr.io/luiacuaniello/charts/perspectivegraph \
   --set secrets.generate=true \
-  --version 1.40.0 # x-release-please-version
+  --version 1.41.0 # x-release-please-version
 ```
 
 A default install requires authentication. `secrets.generate=true` creates the credentials and
