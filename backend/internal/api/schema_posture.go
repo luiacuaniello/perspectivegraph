@@ -52,9 +52,45 @@ func (a *API) postureTypes(t *schemaTypes) {
 	// which is NOT the same as "no attack path". A gate that could not tell those apart
 	// would report a green light for a pipeline whose scanner output never arrived, which
 	// is the false negative this whole product is built to make visible.
+	// commitRouteType is one route's standing with the commit, under the rule the engine's
+	// own commit status applies. criticalPaths and paths keep the per-commit rule the gates
+	// built on prVerdict read; this is what lets the dashboard's verdict page agree with the
+	// red check instead of listing every route through the commit as its doing.
+	commitRouteType := graphql.NewObject(graphql.ObjectConfig{
+		Name:        "CommitRoute",
+		Description: "How one route stands with one commit.",
+		Fields: graphql.Fields{
+			"pathId": &graphql.Field{Type: graphql.String, Description: "The route, as AttackPath.id names it."},
+			"counts": &graphql.Field{
+				Type:        graphql.Boolean,
+				Description: "Whether it counts against the commit: the routes that turn the commit status red.",
+			},
+			"change": &graphql.Field{
+				Type: graphql.String,
+				Description: "Why it counts, or why not: introduced (the commit opened it), worsened (the commit made it likelier), " +
+					"later (it appeared through the commit's assets after the commit arrived), recorded (the engine holds no " +
+					"estate from before the commit, so every route through it counts), or preexisting (it was there before the " +
+					"commit, and does not count).",
+			},
+			"previousScore": &graphql.Field{
+				Type:        graphql.Float,
+				Description: "The route's score before the commit made it likelier; 0 when it did not.",
+			},
+		},
+	})
+
 	prVerdictType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "PRVerdict",
 		Fields: graphql.Fields{
+			"attribution": &graphql.Field{
+				Type: graphql.String,
+				Description: "The rule routes is judged by, the one the engine's own commit status applies (PR_ATTRIBUTION): " +
+					"\"diff\" counts the routes the commit opened or made likelier, \"commit\" every route through it.",
+			},
+			"routes": &graphql.Field{
+				Type:        graphql.NewList(commitRouteType),
+				Description: "How each of paths stands with this commit under that rule, in the same order.",
+			},
 			"slug": &graphql.Field{Type: graphql.String, Description: "Repository the verdict is about (\"owner/name\")."},
 			"sha":  &graphql.Field{Type: graphql.String, Description: "Commit the verdict is about."},
 			"analysed": &graphql.Field{
@@ -383,10 +419,22 @@ func (a *API) postureQueries(t *schemaTypes) graphql.Fields {
 				if at := v.status().AnalyzedAt; !at.IsZero() {
 					analysedAt = at.UTC().Format(time.RFC3339Nano)
 				}
+				routes := make([]map[string]any, 0, len(hit))
+				for _, ap := range hit {
+					s := v.commitStanding(slug, sha, ap)
+					change := string(s.Change)
+					if !s.Counts {
+						change = "preexisting"
+					}
+					routes = append(routes, map[string]any{
+						"pathId": ap.ID, "counts": s.Counts, "change": change, "previousScore": s.PreviousScore,
+					})
+				}
 				return map[string]any{
 					"slug": slug, "sha": sha,
 					"analysed": analysed, "criticalPaths": len(hit), "paths": hit,
-					"analysedAt": analysedAt,
+					"analysedAt":  analysedAt,
+					"attribution": v.attribution(), "routes": routes,
 				}, nil
 			},
 		},

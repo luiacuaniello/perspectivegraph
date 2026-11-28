@@ -14,6 +14,10 @@ already work, so PerspectiveGraph plugs straight into the PR:
   that goes **red** when the change opens an internet→sensitive-asset path and **green**
   once it no longer does. Make it a *required* status check in branch protection
   and it **blocks the merge** - shift-left, not a comment you can scroll past.
+  With `DASHBOARD_URL` set, its Details link opens that commit's page in the dashboard
+  (`#verdict/<owner>/<repo>/<sha>`): whether the commit was analysed and when, the routes
+  it opened or made likelier, and the ones that run through it but were there before it.
+  The page also takes a repository and a commit by hand, at `#verdict`.
 - **Remediation-as-PR** - `POST /remediation/pr` (or the **Open fix PR** button on
   a path) branches off the default branch, commits the generated fix
   (NetworkPolicy / Terraform / IAM policy), and opens a pull request. The fix

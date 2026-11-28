@@ -42,6 +42,7 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/graph/age"
 	"github.com/luiacuaniello/perspectivegraph/internal/graph/memory"
 	"github.com/luiacuaniello/perspectivegraph/internal/history"
+	"github.com/luiacuaniello/perspectivegraph/internal/impact"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion"
 	"github.com/luiacuaniello/perspectivegraph/internal/kevholdout"
 	"github.com/luiacuaniello/perspectivegraph/internal/metrics"
@@ -522,7 +523,7 @@ func run(parent context.Context, cfg config.Config) error {
 		provider, model := ai.Provider(aiCfg)
 		slog.Info("AI-native layer enabled", "provider", provider, "model", model)
 	}
-	apiHandler, err := buildAPI(manager, analyzerSvc, indexer, authn, auditRec, apiLimiter, suppressStore, historyStore, ticketStore, validationStore, cfg.CORSAllowedOrigins, exportSigner, exfilWatcher, authGuard, authInfoFromConfig(cfg, authn.Enabled()), prOpener, aiClient, aiLimiter, bus, coverageStore, degradedReason(backend, cfg.Env), cfg.MetricsAddr != "", ips, cfg.GraphQLIntrospection, gateNormalizer)
+	apiHandler, err := buildAPI(manager, analyzerSvc, indexer, authn, auditRec, apiLimiter, suppressStore, historyStore, ticketStore, validationStore, cfg.CORSAllowedOrigins, exportSigner, exfilWatcher, authGuard, authInfoFromConfig(cfg, authn.Enabled()), prOpener, aiClient, aiLimiter, bus, coverageStore, degradedReason(backend, cfg.Env), cfg.MetricsAddr != "", ips, cfg.GraphQLIntrospection, gateNormalizer, attribution)
 	if err != nil {
 		return err
 	}
@@ -809,8 +810,8 @@ func authInfoFromConfig(cfg config.Config, authEnabled bool) api.AuthInfo {
 	return info
 }
 
-func buildAPI(manager *graph.Manager, svc *analyzer.Service, idx search.Indexer, authn auth.Authenticator, rec audit.Recorder, limiter *ratelimit.Limiter, suppressStore suppress.Suppressions, historyStore history.Temporal, ticketStore ticket.Tickets, validationStore validation.Verdicts, corsOrigins []string, exportSigner *exportsign.Signer, exfilWatcher, authGuard *secwatch.Watcher, authInfo api.AuthInfo, prOpener action.PROpener, aiClient ai.Client, aiLimiter *ratelimit.Limiter, batches api.BatchTracker, coverageStore *coverage.Store, degraded string, metricsElsewhere bool, ips *clientip.Resolver, introspection string, gateNormalizer func(*graph.Manager) *normalization.Normalizer) (http.Handler, error) {
-	return api.New(manager, svc, idx).WithVersion(buildVersion()).WithGate(allCollectors(), gateNormalizer).WithAuth(authn, rec).WithRateLimit(limiter).WithSuppress(suppressStore).WithHistory(historyStore).WithTickets(ticketStore).WithValidation(validationStore).WithCORSOrigins(corsOrigins).WithExportSigner(exportSigner).WithAbuseWatchers(exfilWatcher, authGuard).WithClientIP(ips).WithIntrospection(introspection).WithAuthInfo(authInfo).WithRemediationPR(prOpener).WithAI(aiClient).WithAIRateLimit(aiLimiter).WithIngestBatches(batches).WithCoverage(coverageStore).WithDegraded(degraded).WithMetricsElsewhere(metricsElsewhere).Handler()
+func buildAPI(manager *graph.Manager, svc *analyzer.Service, idx search.Indexer, authn auth.Authenticator, rec audit.Recorder, limiter *ratelimit.Limiter, suppressStore suppress.Suppressions, historyStore history.Temporal, ticketStore ticket.Tickets, validationStore validation.Verdicts, corsOrigins []string, exportSigner *exportsign.Signer, exfilWatcher, authGuard *secwatch.Watcher, authInfo api.AuthInfo, prOpener action.PROpener, aiClient ai.Client, aiLimiter *ratelimit.Limiter, batches api.BatchTracker, coverageStore *coverage.Store, degraded string, metricsElsewhere bool, ips *clientip.Resolver, introspection string, gateNormalizer func(*graph.Manager) *normalization.Normalizer, attribution *impact.Ledger) (http.Handler, error) {
+	return api.New(manager, svc, idx).WithVersion(buildVersion()).WithAttribution(attribution).WithGate(allCollectors(), gateNormalizer).WithAuth(authn, rec).WithRateLimit(limiter).WithSuppress(suppressStore).WithHistory(historyStore).WithTickets(ticketStore).WithValidation(validationStore).WithCORSOrigins(corsOrigins).WithExportSigner(exportSigner).WithAbuseWatchers(exfilWatcher, authGuard).WithClientIP(ips).WithIntrospection(introspection).WithAuthInfo(authInfo).WithRemediationPR(prOpener).WithAI(aiClient).WithAIRateLimit(aiLimiter).WithIngestBatches(batches).WithCoverage(coverageStore).WithDegraded(degraded).WithMetricsElsewhere(metricsElsewhere).Handler()
 }
 
 // serveHTTP runs srv until ctx ends. A listener that fails - a port already taken, a

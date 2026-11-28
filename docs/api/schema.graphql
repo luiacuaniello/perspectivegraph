@@ -104,6 +104,13 @@ type CalibrationTrendPoint {
   samples: Int
 }
 
+type CommitRoute {
+  change: String
+  counts: Boolean
+  pathId: String
+  previousScore: Float
+}
+
 type CrownJewelRisk {
   ciHigh: Float
   ciLow: Float
@@ -261,8 +268,10 @@ type Node {
 type PRVerdict {
   analysed: Boolean
   analysedAt: String
+  attribution: String
   criticalPaths: Int
   paths: [AttackPath]
+  routes: [CommitRoute]
   sha: String
   slug: String
 }

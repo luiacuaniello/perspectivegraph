@@ -10,6 +10,7 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/coverage"
 	"github.com/luiacuaniello/perspectivegraph/internal/graph"
 	"github.com/luiacuaniello/perspectivegraph/internal/history"
+	"github.com/luiacuaniello/perspectivegraph/internal/impact"
 	"github.com/luiacuaniello/perspectivegraph/internal/policy"
 	"github.com/luiacuaniello/perspectivegraph/internal/search"
 	"github.com/luiacuaniello/perspectivegraph/internal/suppress"
@@ -269,6 +270,21 @@ func (v view) calibration() (validation.Calibration, error) {
 // ── the analyzer's and the feeds' aggregates of the tenant, which name nothing ──
 
 func (v view) status() analyzer.Status { return v.a.analyzer.Status(v.tenant) }
+
+// commitStanding is how one route stands with one commit under the rule the engine's own
+// commit status applies: the ledger's verdict, for the caller's tenant. A nil ledger is the
+// per-commit rule, where every route through the commit counts.
+func (v view) commitStanding(slug, sha string, p analyzer.AttackPath) impact.Verdict {
+	return v.a.ledger.Judge(v.tenant, slug, sha, p)
+}
+
+// attribution names that rule, as PR_ATTRIBUTION does.
+func (v view) attribution() string {
+	if v.a.ledger.Enabled() {
+		return "diff"
+	}
+	return "commit"
+}
 
 // violationCount is how many policy invariants the tenant violates: a count, which names
 // nothing, so it is the tenant's whatever the caller's applications.

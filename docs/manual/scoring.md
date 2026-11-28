@@ -167,7 +167,10 @@ technique is read in the route's context: initial access is credited to the hop 
 access is gained (the exploit when the route has one, the exposure otherwise), and an
 exploit after the attacker is already inside is lateral movement (T1210). Facts about
 software - an image that ships a library, a library that has a CVE - carry none, and IAM
-privilege escalation is T1098.003 (additional cloud roles). The path also carries
+privilege escalation is T1098.003 (additional cloud roles). Today turns the mapping
+around: its **ATT&CK techniques on these routes** card lists the techniques the open
+routes use and how many routes use each, so a detection written for the one at the top
+watches the most routes. The path also carries
 `confidence` + a `confidenceLabel` (**high / medium / low**) - the mean trustworthiness
 of its hops. So *"58%, **low confidence** - rests
 mostly on severity heuristics, here are the assumed hops to validate"* replaces a
@@ -275,7 +278,9 @@ harder questions, and PerspectiveGraph answers them:
   qualitatively.
 - **K-shortest paths** (`kShortestPaths`) - Yen's algorithm lists the top-K routes
   to a sensitive asset, so you see the near-best alternates a single edge-cut would
-  leave standing.
+  leave standing. In the dashboard, **Look for other routes** at the foot of a route's
+  detail asks for them: most probable first (not by priority), with the ones taken off
+  the board marked, and the ones on the list a click away.
 - **What-if simulation** (`whatIf`) - propose a set of edges to cut and get the
   surviving paths and the **residual risk** (before → after, with enough trials
   to make the delta meaningful): *"cut this edge → account compromise 100% →

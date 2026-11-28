@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createSuppression, createTicket, type AttackPath, type SuppressionReason } from "../api/client";
 import { routeLabel } from "./routeChannels";
 
@@ -17,7 +17,8 @@ import { routeLabel } from "./routeChannels";
 //
 // Revealed on hover and on keyboard focus. `focus-within` matters more than hover here:
 // an action you can only reach with a mouse is not an action for someone tabbing the
-// queue.
+// queue. The list's t and a keys open them too (see AttackPathList), as the first of the
+// two steps: the options appear, and nothing is saved until one is chosen.
 
 const REASONS: { value: SuppressionReason; label: string; hint: string }[] = [
   { value: "accept-risk", label: "Accept risk", hint: "A human accepts this exposure, eyes open." },
@@ -32,8 +33,28 @@ const OWNER_KEY = "pg-owner";
 
 type Mode = "idle" | "triage" | "assign";
 
-export default function RouteActions({ path, onChanged }: { path: AttackPath; onChanged: () => void }) {
-  const [mode, setMode] = useState<Mode>("idle");
+export type OpenMode = Exclude<Mode, "idle">;
+
+export default function RouteActions({
+  path,
+  onChanged,
+  initialMode,
+}: {
+  path: AttackPath;
+  onChanged: () => void;
+  // Set when a key on the list opened these options. The list remounts the component for
+  // each key press, so this is read once, as the first click would have set it.
+  initialMode?: OpenMode;
+}) {
+  const [mode, setMode] = useState<Mode>(initialMode ?? "idle");
+  const group = useRef<HTMLDivElement>(null);
+  // Opened from the keyboard, the options take the focus: the name field when one is
+  // asked for (it focuses itself), otherwise the group, from which Tab reaches the first
+  // option. Not the first option itself: Enter on "Accept risk" a moment after "t" is the
+  // two-step rule reduced to one hurried keystroke.
+  useEffect(() => {
+    if (initialMode && !group.current?.querySelector("input")) group.current?.focus();
+  }, [initialMode]);
   const [owner, setOwner] = useState(() => localStorage.getItem(OWNER_KEY) ?? "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -108,7 +129,15 @@ export default function RouteActions({ path, onChanged }: { path: AttackPath; on
   }
 
   return (
-    <div className="flex shrink-0 flex-wrap items-center justify-end gap-1" onClick={swallow}>
+    <div
+      ref={group}
+      role="group"
+      aria-label={mode === "triage" ? `Triage ${route}` : `Assign ${route}`}
+      tabIndex={-1}
+      onKeyDown={(e) => e.key === "Escape" && close()}
+      className="flex shrink-0 flex-wrap items-center justify-end gap-1 rounded-md outline-hidden focus-visible:ring-1 focus-visible:ring-accent/60"
+      onClick={swallow}
+    >
       {mode === "triage" ? (
         <>
           {/* Asked once, then remembered - the same name the ticket flow uses. */}

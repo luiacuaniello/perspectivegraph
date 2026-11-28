@@ -18,10 +18,13 @@ import EmptyState from "./components/EmptyState";
 import Button from "./components/ui/Button";
 import DashboardSkeleton from "./components/DashboardSkeleton";
 import EngineVersion from "./components/EngineVersion";
+import CommitVerdictView from "./components/CommitVerdictView";
+import ShortcutsDialog from "./components/ShortcutsDialog";
 import ThemeToggle from "./components/ThemeToggle";
 import { InfoIcon } from "./components/icons";
 import { hasRuntimeToken, signOut } from "./api/client";
-import { hashFor, parseHash } from "./routeHash";
+import { hashFor, parseHash, type CommitRef } from "./routeHash";
+import { plainKey } from "./keyboard";
 
 const POLL_MS = 5000;
 
@@ -42,6 +45,10 @@ const VIEW_META: Record<View, { title: string; subtitle: string }> = {
     title: "AI assistant",
     subtitle: "Ask about your attack surface and brief the board - grounded in the live graph (Claude).",
   },
+  verdict: {
+    title: "Commit verdict",
+    subtitle: "What the merge gate says about one commit, and the routes it is answerable for.",
+  },
 };
 
 export default function App() {
@@ -53,6 +60,10 @@ export default function App() {
   const [selectedPathId, setSelectedPathId] = useState<string | null>(() => parseHash(window.location.hash).pathId);
   // The route a cold-loaded link named, until the first data arrives - see revealDetail.
   const linkedOnLoad = useRef(parseHash(window.location.hash).pathId);
+  // The commit the verdict page shows: #verdict/<owner>/<repo>/<sha>, a pull request
+  // check's link. null on that page is the form for asking about one by hand.
+  const [commit, setCommit] = useState<CommitRef | null>(() => parseHash(window.location.hash).commit ?? null);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   // "" = whole environment; otherwise scope paths + graph to one application.
   const [app, setApp] = useState<string>("");
   const [analyzedAt, setAnalyzedAt] = useState<string | null>(null);
@@ -104,8 +115,9 @@ export default function App() {
   // would push a duplicate entry and trap the reader in their own history.
   useEffect(() => {
     const onHashChange = () => {
-      const { view, pathId } = parseHash(window.location.hash);
+      const { view, pathId, commit } = parseHash(window.location.hash);
       setViewState(view);
+      if (view === "verdict") setCommit(commit ?? null);
       // A hash that names no route leaves the choice alone: back from #accuracy to #paths
       // should find the route that was open, not the top of the list.
       if (pathId) setSelectedPathId(pathId);
@@ -116,7 +128,8 @@ export default function App() {
 
   // Command palette shortcuts. Search moved off the nav and onto the keyboard, so
   // it has to answer to the chord people already try (⌘K / Ctrl-K) and close on
-  // escape like every other palette they use.
+  // escape like every other palette they use. "?" lists every key, as it does on most
+  // sites that have any; the route list's own keys live in AttackPathList.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
@@ -124,6 +137,10 @@ export default function App() {
         setSearchOpen((v) => !v);
       } else if (e.key === "Escape") {
         setSearchOpen(false);
+        setShortcutsOpen(false);
+      } else if (e.key === "?" && plainKey(e)) {
+        e.preventDefault();
+        setShortcutsOpen((v) => !v);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -208,6 +225,8 @@ export default function App() {
     [allPaths, showSuppressed],
   );
   const suppressedCount = useMemo(() => allPaths.filter((p) => p.suppressed).length, [allPaths]);
+  // The routes the list has a page for: what "Other routes to ..." can open.
+  const listedIds = useMemo(() => new Set(allPaths.map((p) => p.id)), [allPaths]);
 
   const { highlightNodes, highlightEdges } = useMemo(() => {
     const n = new Set<string>();
@@ -287,6 +306,14 @@ export default function App() {
     setViewState("paths");
     window.location.hash = hashFor("paths", id);
     showDetail();
+  };
+
+  // The verdict page, for a commit or for the form that asks for one. A navigation like any
+  // other, so back returns to where it started.
+  const openVerdict = (c: CommitRef | null) => {
+    setCommit(c);
+    setViewState("verdict");
+    window.location.hash = hashFor("verdict", null, c);
   };
 
   const meta = VIEW_META[view];
@@ -378,19 +405,27 @@ export default function App() {
           </div>
         </header>
 
-        {!data && !error && (
+        {view === "verdict" && (
+          // Not behind the dashboard's own data: it asks for one commit, and a developer who
+          // arrives from a check needs the answer, not the estate loading first.
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-6 sm:px-8">
+            <CommitVerdictView commit={commit} analyzedAt={analyzedAt} onLookup={openVerdict} onOpenPath={openPath} />
+          </div>
+        )}
+
+        {view !== "verdict" && !data && !error && (
           <div className="min-h-0 flex-1 px-4 pb-6 sm:px-8">
             <DashboardSkeleton />
           </div>
         )}
 
-        {data && data.posture.nodes === 0 && (
+        {view !== "verdict" && data && data.posture.nodes === 0 && (
           <div className="min-h-0 flex-1 px-4 pb-6 sm:px-8">
             <EmptyState />
           </div>
         )}
 
-        {data && data.posture.nodes > 0 && (
+        {view !== "verdict" && data && data.posture.nodes > 0 && (
           <div className="min-h-0 flex-1 px-4 pb-6 sm:px-8">
             {view === "today" && (
               <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto pr-1">
@@ -432,6 +467,12 @@ export default function App() {
                       Show suppressed ({suppressedCount})
                     </label>
                   )}
+                  {/* Only where a keyboard is likely: a phone has no use for the hint. */}
+                  <p className="mb-2 hidden text-[12px] text-muted lg:block">
+                    Press{" "}
+                    <kbd className="rounded border border-edge px-1 text-[12px] text-slate-500">?</kbd> for keyboard
+                    shortcuts
+                  </p>
                   <AttackPathList
                     paths={visiblePaths}
                     selectedId={selected?.id ?? null}
@@ -439,6 +480,7 @@ export default function App() {
                       selectPath(p.id);
                       showDetail();
                     }}
+                    onMove={(p) => selectPath(p.id)}
                     onChanged={() => setReloadKey((k) => k + 1)}
                   />
                 </div>
@@ -512,6 +554,11 @@ export default function App() {
                       }}
                       onTriaged={reload}
                       aiEnabled={data.aiEnabled}
+                      isListed={(id) => listedIds.has(id)}
+                      onOpenPath={(id) => {
+                        selectPath(id);
+                        showDetail();
+                      }}
                     />
                   ) : (
                     <div className="rounded-xl border border-edge bg-panel shadow-card p-6 text-sm text-slate-500">
@@ -554,6 +601,8 @@ export default function App() {
         pathCount={data?.posture.activePaths ?? 0}
         aiEnabled={data?.aiEnabled ?? false}
       />
+
+      {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
 
       {searchOpen && (
         <div

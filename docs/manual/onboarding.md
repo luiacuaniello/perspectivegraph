@@ -850,6 +850,11 @@ edit. Set `SUPPRESSIONS_PATH` so decisions survive a restart (otherwise they are
 in-memory only). In the dashboard, use **⊘ suppress / triage** on any path and
 the **Show suppressed** toggle on the list.
 
+From the keyboard, on the attack paths list: `j` and `k` move down and up the routes,
+Enter opens one, and `t` and `a` open the selected route's Triage and Assign. Those
+still take a second step: the key shows the options, and nothing is saved until you
+choose one. `?` lists every key, anywhere in the dashboard.
+
 > Tip: when a kill chain shows a **"⚠ heuristic join · N%"** badge, the link was
 > *inferred* (e.g. container→image by tag/name, not digest) - verify it before
 > acting, or mark the path **false-positive** if the correlation is wrong.

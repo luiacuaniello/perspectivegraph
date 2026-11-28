@@ -108,8 +108,8 @@ type Config struct {
 	HFModel   string
 	HFBaseURL string
 
-	// DashboardURL, when set, deep-links a PR check back to the dashboard
-	// (target_url on the GitHub status). Optional.
+	// DashboardURL, when set, is the dashboard's address: a PR check's target_url opens
+	// that commit's verdict page there (#verdict/<owner>/<repo>/<sha>). Optional.
 	DashboardURL string
 	GitHubToken  string
 	GitHubAPIURL string

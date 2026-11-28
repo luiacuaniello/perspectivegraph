@@ -38,6 +38,7 @@ import Badge from "./ui/Badge";
 import { ModelAttribution } from "./ModelAttribution";
 import { hopReason, hopVerb, pathSummary, typeName } from "./pathLanguage";
 import { linkToPath } from "../routeHash";
+import OtherRoutes from "./OtherRoutes";
 
 interface Props {
   path: AttackPath;
@@ -46,6 +47,10 @@ interface Props {
   onTriaged?: () => void;
   // Show the "Explain (AI)" control only when the backend has Claude configured.
   aiEnabled?: boolean;
+  // The other routes to the same asset open here when they are on the list. Without these,
+  // that section is not offered.
+  isListed?: (id: string) => boolean;
+  onOpenPath?: (id: string) => void;
 }
 
 const REASONS: { value: SuppressionReason; label: string; hint: string }[] = [
@@ -687,7 +692,7 @@ const QUIET_FACTORS = new Set(["sensitive asset target", "runtime-confirmed (act
 
 type Tab = "fix" | "detect" | "evidence";
 
-export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEnabled }: Props) {
+export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEnabled, isListed, onOpenPath }: Props) {
   const readOnly = useReadOnly();
   const entry = path.nodes[0];
   const target = path.nodes[path.nodes.length - 1];
@@ -1174,6 +1179,9 @@ export default function AttackPathDetail({ path, onShowInGraph, onTriaged, aiEna
           )}
         </div>
       </section>
+
+      {/* ── Other routes to the same asset (asked for; see OtherRoutes) ───────── */}
+      {isListed && onOpenPath && <OtherRoutes key={path.id} path={path} isListed={isListed} onOpenPath={onOpenPath} />}
     </div>
   );
 }

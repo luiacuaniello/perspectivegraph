@@ -24,6 +24,7 @@ import (
 	"github.com/luiacuaniello/perspectivegraph/internal/exportsign"
 	"github.com/luiacuaniello/perspectivegraph/internal/graph"
 	"github.com/luiacuaniello/perspectivegraph/internal/history"
+	"github.com/luiacuaniello/perspectivegraph/internal/impact"
 	"github.com/luiacuaniello/perspectivegraph/internal/ingestion"
 	"github.com/luiacuaniello/perspectivegraph/internal/normalization"
 	"github.com/luiacuaniello/perspectivegraph/internal/ratelimit"
@@ -81,6 +82,9 @@ type API struct {
 	gateNormalizer func(*graph.Manager) *normalization.Normalizer
 	// version is what GraphQL's engine { version } reports; see WithVersion.
 	version string
+	// ledger is the rule the engine's own commit status judges a commit by; prVerdict
+	// reports it per route. nil is the per-commit rule. See WithAttribution.
+	ledger *impact.Ledger
 }
 
 func New(manager *graph.Manager, svc *analyzer.Service, idx search.Indexer) *API {
@@ -112,6 +116,16 @@ func (a *API) WithVersion(v string) *API {
 	if v != "" {
 		a.version = v
 	}
+	return a
+}
+
+// WithAttribution gives prVerdict the ledger the engine's commit statuses are judged by
+// (PR_ATTRIBUTION=diff), so the dashboard's verdict page can tell the routes a commit
+// opened from the ones that were there before it, as the red check does. nil keeps the
+// per-commit rule, where every route through the commit counts. Returns the API for
+// chaining.
+func (a *API) WithAttribution(l *impact.Ledger) *API {
+	a.ledger = l
 	return a
 }
 

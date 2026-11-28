@@ -1,6 +1,7 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { AttackPath } from "../api/client";
-import RouteActions from "./RouteActions";
+import { plainKey } from "../keyboard";
+import RouteActions, { type OpenMode } from "./RouteActions";
 import { useReadOnly } from "../auth/readOnly";
 import { ChevronRightIcon, ZapIcon } from "./icons";
 import { groupByTarget, routeStatus } from "./routeChannels";
@@ -13,6 +14,17 @@ interface Props {
   // Called after a row action changed something server-side, so the queue reflects the
   // new state immediately rather than at the next poll.
   onChanged?: () => void;
+  // j and k: the selection moves without the scroll a click does on a phone. Enter on the
+  // focused line opens it as a click does. Absent, they select as a click would.
+  onMove?: (p: AttackPath) => void;
+}
+
+// A key press asking one line to open its actions. The nonce remounts that line's actions,
+// so pressing the key again opens them again.
+interface ActionRequest {
+  id: string;
+  mode: OpenMode;
+  nonce: number;
 }
 
 function scoreTone(score: number): string {
@@ -30,9 +42,41 @@ function scoreTone(score: number): string {
 // Rows are grouped by the sensitive asset they reach (see groupByTarget): a group is one
 // thing you stand to lose, its lines the ways in, most urgent first.
 
-export default function AttackPathList({ paths, selectedId, onSelect, onChanged }: Props) {
+export default function AttackPathList({ paths, selectedId, onSelect, onChanged, onMove }: Props) {
   const readOnly = useReadOnly();
   const uid = useId();
+  const list = useRef<HTMLDivElement>(null);
+  const [request, setRequest] = useState<ActionRequest | null>(null);
+
+  // The queue from the keyboard: j and k move down and up the lines as they are drawn
+  // (asset groups in order, then the refuted ones when that section is open), t and a open
+  // the selected line's Triage and Assign. Never while typing, with a modifier held, or
+  // inside a dialog (see plainKey).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!plainKey(e) || e.shiftKey) return;
+      const lines = Array.from(list.current?.querySelectorAll<HTMLButtonElement>("button[data-route-id]") ?? []);
+      if (e.key === "j" || e.key === "k") {
+        if (lines.length === 0) return;
+        const at = lines.findIndex((b) => b.dataset.routeId === selectedId);
+        const step = e.key === "j" ? 1 : -1;
+        const next = at < 0 ? (step > 0 ? 0 : lines.length - 1) : Math.min(lines.length - 1, Math.max(0, at + step));
+        const p = paths.find((x) => x.id === lines[next].dataset.routeId);
+        if (!p) return;
+        e.preventDefault();
+        (onMove ?? onSelect)(p);
+        lines[next].focus();
+      } else if ((e.key === "t" || e.key === "a") && !readOnly && selectedId) {
+        const line = lines.find((b) => b.dataset.routeId === selectedId);
+        if (!line) return;
+        e.preventDefault();
+        line.scrollIntoView?.({ block: "nearest" });
+        setRequest({ id: selectedId, mode: e.key === "t" ? "triage" : "assign", nonce: Date.now() });
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [paths, selectedId, onSelect, onMove, readOnly]);
   // The reader's last open/close of the refuted section, and the route chosen when they
   // made it. Their choice holds while they move around the list; a refuted route chosen
   // afresh - a link to it, a click from Today - opens the section, since a selection hidden
@@ -64,12 +108,13 @@ export default function AttackPathList({ paths, selectedId, onSelect, onChanged 
         readOnly={!!readOnly}
         onSelect={onSelect}
         onChanged={onChanged}
+        request={request?.id === p.id ? request : null}
       />
     </li>
   );
 
   return (
-    <div className="flex flex-col gap-2">
+    <div ref={list} className="flex flex-col gap-2">
       {groups.map((g, i) => {
         const headingId = `${uid}-asset-${i}`;
         const holdsSelection = g.routes.some((p) => p.id === selectedId);
@@ -132,6 +177,7 @@ function RouteLine({
   readOnly,
   onSelect,
   onChanged,
+  request,
 }: {
   path: AttackPath;
   selected: boolean;
@@ -140,6 +186,8 @@ function RouteLine({
   readOnly: boolean;
   onSelect: (p: AttackPath) => void;
   onChanged?: () => void;
+  // A t or a pressed on the list while this line was selected.
+  request: ActionRequest | null;
 }) {
   const entry = p.nodes[0];
   const target = p.nodes[p.nodes.length - 1];
@@ -219,7 +267,12 @@ function RouteLine({
           shows its actions, disabled, with the reason. */}
       {!readOnly && (
         <div className="absolute bottom-1.5 right-2 flex justify-end">
-          <RouteActions path={p} onChanged={() => onChanged?.()} />
+          <RouteActions
+            key={request?.nonce ?? "idle"}
+            path={p}
+            initialMode={request?.mode}
+            onChanged={() => onChanged?.()}
+          />
         </div>
       )}
     </div>
