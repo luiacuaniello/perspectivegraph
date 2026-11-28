@@ -14,7 +14,10 @@ import { Logo } from "./icons";
 // They are tabs, not a sidebar. A 224px column held three entries and cost the attack-path
 // list the width it needed to show a route's name, and on a phone it hid all three behind a
 // hamburger. Desktop gets a top bar; a phone gets a tab bar at the bottom, where a thumb is.
-export type View = "today" | "paths" | "accuracy" | "assistant";
+//
+// verdict is a page, not a tab: one commit's merge-gate answer, opened from the pull
+// request's check, so it is reached by its link (#verdict/<owner>/<repo>/<sha>).
+export type View = "today" | "paths" | "accuracy" | "assistant" | "verdict";
 
 type IconProps = { className?: string };
 

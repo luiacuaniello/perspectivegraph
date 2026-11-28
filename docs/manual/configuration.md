@@ -223,7 +223,7 @@ Suppressions, tickets, red-team verdicts and posture history. Each lives in memo
 | `GITHUB_TOKEN`<br>Default: none<br>Helm: `github.token` | *Secret.* Pull request comments, the merge-gate commit status and fix pull requests. Empty: logged, not posted. |
 | `GITHUB_API_URL`<br>Default: `https://api.github.com`<br>Helm: `github.apiUrl` | For GitHub Enterprise Server. |
 | `GITHUB_DRY_RUN`<br>Default: `false`<br>Helm: `github.dryRun` | Logs instead of posting, even with a token. |
-| `DASHBOARD_URL`<br>Default: none<br>Helm: `github.dashboardUrl` | Links the commit status back to the dashboard. |
+| `DASHBOARD_URL`<br>Default: none<br>Helm: `github.dashboardUrl` | The dashboard's address. A commit status's Details link opens that commit's page there (`#verdict/<owner>/<repo>/<sha>`): its verdict, and the routes it opened or made likelier. |
 | `GITLAB_TOKEN`<br>Default: none<br>Helm: `gitlab.token` | *Secret.* Merge request comments. Empty: logged, not posted. |
 | `GITLAB_API_URL`<br>Default: `https://gitlab.com/api/v4`<br>Helm: `gitlab.apiUrl` | For a self-managed GitLab. |
 | `GITLAB_DRY_RUN`<br>Default: `false`<br>Helm: `gitlab.dryRun` | Logs instead of posting, even with a token. |

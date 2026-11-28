@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hashFor, linkToPath, parseHash } from "./routeHash";
+import { hashFor, linkToPath, parseHash, validSha, validSlug } from "./routeHash";
 
 describe("routeHash", () => {
   it("names one route on the paths view", () => {
@@ -32,5 +32,33 @@ describe("routeHash", () => {
     expect(linkToPath("ap-1", { origin: "https://demo.example", pathname: "/", search: "" })).toBe(
       "https://demo.example/#paths/ap-1",
     );
+  });
+
+  it("names a commit on the verdict page, the SHA last", () => {
+    expect(parseHash("#verdict/acme/payments-api/3f2a91c")).toEqual({
+      view: "verdict",
+      pathId: null,
+      commit: { slug: "acme/payments-api", sha: "3f2a91c" },
+    });
+    // A GitLab project path has subgroups.
+    expect(parseHash("#verdict/group/sub/project/abcdef1234").commit).toEqual({ slug: "group/sub/project", sha: "abcdef1234" });
+    expect(parseHash("#verdict/acme/my%2Erepo/3f2a91c").commit).toEqual({ slug: "acme/my.repo", sha: "3f2a91c" });
+  });
+
+  it("opens the form, not a guess, for a commit that cannot exist", () => {
+    expect(parseHash("#verdict")).toEqual({ view: "verdict", pathId: null, commit: null });
+    expect(parseHash("#verdict/acme/3f2a91c").commit).toBeNull();
+    expect(parseHash("#verdict/acme/web/main").commit).toBeNull();
+    expect(parseHash("#verdict/acme/../3f2a91c").commit).toBeNull();
+    expect(parseHash("#verdict/acme/web%3Fx%3D1/3f2a91c").commit).toBeNull();
+  });
+
+  it("round-trips a commit through its link", () => {
+    const commit = { slug: "group/sub/project", sha: "3f2a91c0d4" };
+    expect(hashFor("verdict", null, commit)).toBe("verdict/group/sub/project/3f2a91c0d4");
+    expect(parseHash(`#${hashFor("verdict", null, commit)}`).commit).toEqual(commit);
+    expect(hashFor("verdict")).toBe("verdict");
+    expect(validSlug("acme/web") && validSha("3f2a91c")).toBe(true);
+    expect(validSlug("acme") || validSha("3f2a91")).toBe(false);
   });
 });

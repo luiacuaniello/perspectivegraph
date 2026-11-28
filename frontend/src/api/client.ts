@@ -475,6 +475,36 @@ export interface WhatIfResult {
 
 const NODE_FIELDS = `id label name account internetExposed exposedPorts exposedManagementPorts crownJewel crownJewelBasis classification secretsScrubbed runtimeAlert severity cvss kev epss resolutionMethod resolutionConfidence resolutionAlias signed slsaLevel sbomComponents`;
 
+// Everything a route carries, for the list and the detail. The commit page asks for the same,
+// so a route opened from it is the route the paths view shows.
+const PATH_FIELDS = `
+      id
+      score
+      runtimeConfirmed
+      directAccess
+      confidence
+      confidenceLabel
+      scoreUpperBound
+      correlatedHops
+      scoreCiLow
+      scoreCiHigh
+      mixtureScore
+      profileScores { profile prior score }
+      priority
+      priorityLabel
+      priorityFactors
+      priorityReason
+      suppressed
+      suppression { reason owner note createdAt expiresAt }
+      firstSeen openForSeconds reopens
+      ticket { id owner status externalUrl }
+      validation { outcome source evidence testedAt }
+      nodes { ${NODE_FIELDS} }
+      steps { edgeType from to probability resolutionMethod resolutionConfidence weightBasis weightConfidence attack { id name tactic tacticId url } }
+      remediations { title kind filename rationale content cut { from to type } }
+      detections { kind title filename rationale content }
+`;
+
 // PATH_LIMIT bounds how many attack paths the dashboard pulls per refresh. The
 // analyzer returns them priority-first, so this is the Top-N a human can actually
 // work through - not a truncation of the answer. Everything that must reflect the
@@ -510,33 +540,7 @@ const dashboardQuery = (app?: string) => {
     searchEnabled
     aiEnabled
     applications
-    attackPaths${pathScope} {
-      id
-      score
-      runtimeConfirmed
-      directAccess
-      confidence
-      confidenceLabel
-      scoreUpperBound
-      correlatedHops
-      scoreCiLow
-      scoreCiHigh
-      mixtureScore
-      profileScores { profile prior score }
-      priority
-      priorityLabel
-      priorityFactors
-      priorityReason
-      suppressed
-      suppression { reason owner note createdAt expiresAt }
-      firstSeen openForSeconds reopens
-      ticket { id owner status externalUrl }
-      validation { outcome source evidence testedAt }
-      nodes { ${NODE_FIELDS} }
-      steps { edgeType from to probability resolutionMethod resolutionConfidence weightBasis weightConfidence attack { id name tactic tacticId url } }
-      remediations { title kind filename rationale content cut { from to type } }
-      detections { kind title filename rationale content }
-    }
+    attackPaths${pathScope} { ${PATH_FIELDS} }
     remediationPlan${scope} {
       title kind filename rationale content pathCount riskCovered coveragePct
     }
@@ -801,6 +805,69 @@ export const fetchStatus = () =>
   gql<{ status: Status }>(
     `query Status { status { version passes paths analyzedAt prunedNodes prunedEdges lastPrunedAt } }`,
   ).then((d) => d.status);
+
+// A route as the "other routes" list draws it: where it starts, how long it is, how likely,
+// and whether someone took it off the board.
+export interface RouteSketch {
+  id: string;
+  score: number;
+  suppressed?: boolean | null;
+  nodes: { id: string; name: string; label: string }[];
+  steps: { edgeType: string }[];
+}
+
+// The engine's most probable routes to one sensitive asset (Yen's algorithm), best first.
+// Ranked by probability, not by priority, and suppressed routes included: it answers "how
+// else can an attacker get there", which a list of open findings does not. A heavy query
+// on the server, so the dashboard asks only when someone asks for it.
+export const fetchOtherRoutes = (target: string, k = 6) =>
+  gql<{ kShortestPaths: RouteSketch[] | null }>(
+    `query OtherRoutes($target: String!, $k: Int) {
+       kShortestPaths(target: $target, k: $k) { id score suppressed nodes { id name label } steps { edgeType } }
+     }`,
+    { target, k },
+  ).then((d) => d.kShortestPaths ?? []);
+
+// How one route stands with one commit, under the rule the engine's own commit status
+// applies (CommitVerdict.attribution).
+export interface CommitRoute {
+  pathId: string;
+  // Whether it counts against the commit: the routes that turn its status red.
+  counts: boolean;
+  // introduced | worsened | later | recorded | preexisting
+  change: string;
+  // The score before the commit made the route likelier; 0 when it did not.
+  previousScore: number;
+}
+
+// What the merge gate says about one commit: the page a red check links to.
+export interface CommitVerdict {
+  slug: string;
+  sha: string;
+  // False: nothing from this commit has reached the graph, and the gate answers unknown.
+  analysed: boolean;
+  analysedAt: string | null;
+  // "diff" counts the routes the commit opened or made likelier; "commit", every route
+  // through it (PR_ATTRIBUTION).
+  attribution: string;
+  // Every route through an asset stamped with the commit, and how each stands with it.
+  paths: AttackPath[];
+  routes: CommitRoute[];
+}
+
+// Variables, not interpolation: the repository and the commit arrive in a link anyone can
+// send.
+export const fetchVerdict = (slug: string, sha: string) =>
+  gql<{ prVerdict: CommitVerdict | null }>(
+    `query Verdict($slug: String!, $sha: String!) {
+       prVerdict(slug: $slug, sha: $sha) {
+         slug sha analysed analysedAt attribution
+         routes { pathId counts change previousScore }
+         paths { ${PATH_FIELDS} }
+       }
+     }`,
+    { slug, sha },
+  ).then((d) => d.prVerdict);
 
 export interface Engine {
   // The release tag of a published build (v1.40.0); otherwise a module version, a

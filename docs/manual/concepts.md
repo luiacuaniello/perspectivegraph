@@ -66,7 +66,8 @@ asset open to anyone - and every route says in one sentence why it sits where it
 **Merge gate.** The check on a pull request. It answers one of three things: *clean* (analysed, opens
 no route), *blocked* (opens or worsens a route, and names it), or *unknown* - nobody analysed this
 change, because a scan or an upload went wrong. Unknown fails the build by default, so a broken
-pipeline cannot pass as a clean one.
+pipeline cannot pass as a clean one. With the engine deployed, the check's Details link opens the
+commit's page in the dashboard: the routes it opened, and the ones that were there before it.
 [The merge gate](ci-gate.md#the-merge-gate-github-action-cli-and-trivy-plugin)
 
 **Fix.** A ready-to-apply change that cuts one hop of a route: a Kubernetes NetworkPolicy, a

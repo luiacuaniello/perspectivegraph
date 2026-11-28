@@ -360,8 +360,8 @@ code is actually reachable in the running stack:
   to run the Authorization-Code + PKCE flow (the `issuer`/`audience`/`jwksUrl` trio
   above does the server-side token verification).
 - **Dev workflow** - `github.token` turns the PR comment / merge-gate status and
-  remediation-as-PR from dry-run into live; `github.dashboardUrl` is the link those
-  comments point back to.
+  remediation-as-PR from dry-run into live; `github.dashboardUrl` is the dashboard's
+  address, where a merge-gate status links to that commit's page.
 - **AI-native layer (Claude or HuggingFace)** - `ai.apiKey` (Anthropic) enables
   `/ai/*` (NL query, exec summary, path explain); empty keeps it self-gated off.
   `ai.hf.token` is the free OpenAI-compatible alternative, used when `ai.apiKey` is

@@ -276,8 +276,8 @@ opensearch:
   url: ""
 
 # Action layer: PR/MR commenters. Tokens go into a Secret; empty → dry-run.
-# dashboardUrl is the public dashboard base the PR comment / merge-gate status
-# links back to (e.g. https://perspectivegraph.example.com). Empty → no link.
+# dashboardUrl is the dashboard's public address (e.g. https://perspectivegraph.example.com):
+# a merge-gate commit status links to that commit's page there. Empty → no link.
 # Repositories the engine may write to: PR comments, merge-gate commit statuses
 # and remediation PRs, on GitHub and GitLab alike. Entries are "owner/repo" or
 # "owner/*". REQUIRED for any real write - the destination otherwise comes from

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -39,8 +40,8 @@ type statusPoster interface {
 // 1.22, kept by PR_ATTRIBUTION=commit.
 type StatusReporter struct {
 	p         statusPoster
-	allow     *RepoAllow // where writes are permitted; nil denies everything
-	targetURL string
+	allow     *RepoAllow     // where writes are permitted; nil denies everything
+	dashboard string         // the dashboard's address; each status links to its commit there
 	judge     *impact.Ledger // nil: every route through a commit counts against it
 	mu        sync.Mutex
 	// failing holds the commits currently red, per tenant, with the description posted -
@@ -56,8 +57,26 @@ type failingStatus struct {
 	desc string
 }
 
-func newStatusReporter(p statusPoster, allow *RepoAllow, targetURL string) *StatusReporter {
-	return &StatusReporter{p: p, allow: allow, targetURL: targetURL, failing: map[string]failingStatus{}}
+func newStatusReporter(p statusPoster, allow *RepoAllow, dashboard string) *StatusReporter {
+	return &StatusReporter{p: p, allow: allow, dashboard: dashboard, failing: map[string]failingStatus{}}
+}
+
+// verdictLink is the address a commit status's "Details" opens: the dashboard's page for
+// that one commit (#verdict/<owner>/<repo>/<sha>), which lists the routes the commit opened
+// and the ones that were there before it. The dashboard's front page, where the link used
+// to go, left the developer to find their change among every route in the estate. Empty
+// when no dashboard is configured. The slug has passed ValidSlug and a SHA is hex, but both
+// come from ingested data, so every segment is escaped all the same.
+func verdictLink(dashboard, slug, sha string) string {
+	if dashboard == "" {
+		return ""
+	}
+	base, _, _ := strings.Cut(dashboard, "#")
+	parts := strings.Split(slug, "/")
+	for i, part := range parts {
+		parts[i] = url.PathEscape(part)
+	}
+	return strings.TrimRight(base, "/") + "/#verdict/" + strings.Join(parts, "/") + "/" + url.PathEscape(sha)
 }
 
 // permitted reports whether a status may be posted on this repository. The slug is a
@@ -126,7 +145,7 @@ func (s *StatusReporter) OnCriticalPaths(ctx context.Context, tenant string, pat
 		if unchanged {
 			continue
 		}
-		if err := s.p.postStatus(ctx, t.ref.slug, t.ref.sha, "failure", desc, s.targetURL); err != nil {
+		if err := s.p.postStatus(ctx, t.ref.slug, t.ref.sha, "failure", desc, verdictLink(s.dashboard, t.ref.slug, t.ref.sha)); err != nil {
 			slog.Error("pr check failed", "forge", s.p.forge(), "slug", t.ref.slug, "sha", short(t.ref.sha), "err", err)
 			continue
 		}
@@ -159,7 +178,7 @@ func (s *StatusReporter) OnCriticalPaths(ctx context.Context, tenant string, pat
 				desc += fmt.Sprintf(" (%d already there pass through it)", t.preexisting)
 			}
 		}
-		if err := s.p.postStatus(ctx, ref.slug, ref.sha, "success", desc, s.targetURL); err != nil {
+		if err := s.p.postStatus(ctx, ref.slug, ref.sha, "success", desc, verdictLink(s.dashboard, ref.slug, ref.sha)); err != nil {
 			slog.Error("pr check resolve failed", "forge", s.p.forge(), "slug", ref.slug, "err", err)
 			continue
 		}
@@ -215,8 +234,9 @@ func short(sha string) string {
 // ── GitHub commit-status poster ──────────────────────────────────────
 
 // NewGitHubChecker returns a StatusReporter that posts GitHub commit statuses.
-// targetURL (optional) deep-links the check back to the dashboard.
-func NewGitHubChecker(cfg GitHubConfig, targetURL string) *StatusReporter {
+// dashboard (optional, DASHBOARD_URL) is the dashboard's address: each status links to
+// that commit's verdict page there.
+func NewGitHubChecker(cfg GitHubConfig, dashboard string) *StatusReporter {
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = "https://api.github.com"
 	}
@@ -224,7 +244,7 @@ func NewGitHubChecker(cfg GitHubConfig, targetURL string) *StatusReporter {
 		slog.Warn("github pr check: no token set, running in dry-run (status logged, not posted)")
 		cfg.DryRun = true
 	}
-	r := newStatusReporter(&githubStatusPoster{cfg: cfg, http: &http.Client{Timeout: 10 * time.Second}}, cfg.Allow, targetURL)
+	r := newStatusReporter(&githubStatusPoster{cfg: cfg, http: &http.Client{Timeout: 10 * time.Second}}, cfg.Allow, dashboard)
 	r.judge = cfg.Attribution
 	return r
 }
@@ -246,8 +266,8 @@ func (g *githubStatusPoster) postStatus(ctx context.Context, slug, sha, state, d
 	if targetURL != "" {
 		body["target_url"] = targetURL
 	}
-	url := fmt.Sprintf("%s/repos/%s/statuses/%s", g.cfg.BaseURL, slug, sha)
-	return requestJSON(ctx, g.http, http.MethodPost, url, githubHeaders(g.cfg.Token), body, nil)
+	endpoint := fmt.Sprintf("%s/repos/%s/statuses/%s", g.cfg.BaseURL, slug, sha)
+	return requestJSON(ctx, g.http, http.MethodPost, endpoint, githubHeaders(g.cfg.Token), body, nil)
 }
 
 // clampDesc keeps a status description within GitHub's 140-char limit.

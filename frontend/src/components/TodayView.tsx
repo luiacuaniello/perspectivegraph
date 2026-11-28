@@ -6,6 +6,7 @@ import { isProvisional, PROVISIONAL_BELOW } from "./accuracyVerdict";
 import { StatusPill, TargetIcon, NodeName } from "./routeChannelViews";
 import { riskBandNote, shareRound } from "./todayNumbers";
 import { ZapIcon } from "./icons";
+import AttackTechniques from "./AttackTechniques";
 
 // Today is the decision surface. The old overview opened with a tutorial, then a
 // saturated "100%" that can never move, and buried the product's best sentence -
@@ -92,6 +93,7 @@ export default function TodayView({
           <AccuracyCard calibration={calibration} onOpen={onOpenAccuracy} />
           {calibration?.detection && calibration.detection.tested > 0 && <DetectionCard detection={calibration.detection} />}
           {violations.length > 0 && <ViolationCard count={violations.length} violations={violations} />}
+          <AttackTechniques paths={paths} openRoutes={posture.activePaths} />
         </div>
       </div>
 
